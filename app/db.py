@@ -497,6 +497,37 @@ def _seed_production(conn):
             (line_ids.get(lname), issue, sev, qty, st, utcnow()))
 
 
+# The four externally-hosted integrated systems: key -> (port, health_path).
+# Used to derive base/health URLs when re-pointing to public addresses.
+_INTEGRATION_ENDPOINTS = {
+    "itsm":         (5000, "/health"),
+    "assets":       (5001, "/api/health"),
+    "monitoring":   (5002, "/health"),
+    "commandtrack": (5003, "/"),
+}
+
+
+def apply_integration_overrides(conn):
+    """Re-point the four integrated systems to PUBLIC URLs so a cloud deploy can
+    reach them. Sources, in priority: a per-system URL (Config.SYSTEM_URLS, e.g.
+    TC_URL_ITSM), else TC_INTEGRATION_HOST when it is a real host (not localhost).
+    The correct health path is appended automatically. Systems with nothing
+    configured keep their stored value (so Admin -> Integrations edits survive)."""
+    host = (Config.INTEGRATION_HOST or "").strip()
+    scheme = (getattr(Config, "INTEGRATION_SCHEME", "http") or "http").strip()
+    host_is_real = host and host not in ("127.0.0.1", "localhost", "0.0.0.0", "::1")
+    overrides = getattr(Config, "SYSTEM_URLS", {}) or {}
+    for key, (port, health_path) in _INTEGRATION_ENDPOINTS.items():
+        base = (overrides.get(key) or "").strip().rstrip("/")
+        if not base and host_is_real:
+            base = f"{scheme}://{host}:{port}"
+        if not base:
+            continue  # nothing configured; leave the stored value untouched
+        health = base + "/" if health_path in ("", "/") else base + health_path
+        conn.execute("UPDATE systems SET base_url=?, health_url=? WHERE key=?",
+                     (base, health, key))
+
+
 def init_db():
     """Create tables and seed first-run data. Idempotent and non-destructive."""
     conn = get_db()
@@ -536,6 +567,9 @@ def init_db():
             _seed_notifications(conn)
         if conn.execute("SELECT COUNT(*) AS c FROM production_lines").fetchone()["c"] == 0:
             _seed_production(conn)
+        # Re-point integrated systems to public URLs when configured via env vars
+        # (runs every startup so a redeploy with new URLs takes effect).
+        apply_integration_overrides(conn)
         conn.commit()
         # Maintenance & Spare Parts (CMMS) module — create + seed if empty
         from app.maintenance.schema import create_and_seed as _mnt_create_and_seed

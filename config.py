@@ -76,7 +76,21 @@ class Config:
     ADMIN_PASSWORD = os.getenv("TC_ADMIN_PASSWORD", "Admin@12345")
 
     INTEGRATION_HOST = os.getenv("TC_INTEGRATION_HOST", "127.0.0.1")
+    INTEGRATION_SCHEME = os.getenv("TC_INTEGRATION_SCHEME", "http")  # http | https
     HEALTH_TIMEOUT = float(os.getenv("TC_HEALTH_TIMEOUT", "3"))
+
+    # Per-system PUBLIC base URLs (optional). When set, they re-point the four
+    # integrated systems so a cloud deploy can reach them over the internet.
+    # Give the base URL only (e.g. https://itsm.example.com or http://1.2.3.4:5000);
+    # the correct health path is appended automatically. Leave blank to keep the
+    # value already stored (seeded from TC_INTEGRATION_HOST). Editable later in
+    # Admin -> Integrations too.
+    SYSTEM_URLS = {
+        "itsm": (os.getenv("TC_URL_ITSM", "") or "").strip().rstrip("/"),
+        "assets": (os.getenv("TC_URL_ASSETS", "") or "").strip().rstrip("/"),
+        "monitoring": (os.getenv("TC_URL_MONITORING", "") or "").strip().rstrip("/"),
+        "commandtrack": (os.getenv("TC_URL_COMMANDTRACK", "") or "").strip().rstrip("/"),
+    }
 
     # Writable data dir — local: project folder; Render: TC_DATA_DIR (a disk on
     # paid plans, or an ephemeral path like /tmp on free tier).
