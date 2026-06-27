@@ -100,6 +100,15 @@ def diag():
         return f"login.html rendered ({len(html)} bytes)"
     step("render_login", _render)
 
+    # report the host auto-discovery actually connected to (may differ from the
+    # configured env var when an internal host was auto-upgraded to external)
+    try:
+        from app import db as _db
+        resolved = _db._RESOLVED_PG_URL or ""
+        out["resolved_host_part"] = resolved.split("@", 1)[1] if "@" in resolved else ""
+    except Exception:
+        out["resolved_host_part"] = ""
+
     return jsonify(out)
 
 

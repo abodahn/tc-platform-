@@ -10,6 +10,7 @@ sqlite3 behaviour (RETURNING-id lastrowid, hybrid index/key rows).
 import re
 import sqlite3
 from datetime import datetime, timezone
+from urllib.parse import urlsplit, urlunsplit
 
 from werkzeug.security import generate_password_hash
 
@@ -25,15 +26,48 @@ def _is_pg():
     return url.startswith(("postgres://", "postgresql://"))
 
 
-def _pg_url():
-    url = Config.DATABASE_URL.strip()
-    url = "postgresql://" + url.split("://", 1)[1]  # normalise scheme for psycopg2
-    # Render's *external* database host (…-a.<region>-postgres.render.com) requires
-    # SSL. The internal host accepts it too, so adding sslmode=require is safe for
-    # both and lets the External Database URL be used region-independently.
+# Render external Postgres region domains. Used to auto-recover when DATABASE_URL
+# is a cross-region *internal* host that cannot resolve. Oregon first (Render's
+# default region, and the common mismatch source).
+_RENDER_REGIONS = ("oregon", "virginia", "ohio", "frankfurt", "singapore")
+
+
+def _add_ssl(url):
+    """Render's external host requires SSL; the internal host accepts it too."""
     if "render.com" in url and "sslmode=" not in url:
-        url += ("&" if "?" in url else "?") + "sslmode=require"
+        return url + ("&" if "?" in url else "?") + "sslmode=require"
     return url
+
+
+def _pg_url():
+    """Primary normalised connection URL (scheme fixed, SSL added for render)."""
+    url = "postgresql://" + Config.DATABASE_URL.strip().split("://", 1)[1]
+    return _add_ssl(url)
+
+
+def _swap_host(url, new_host):
+    """Return url with its host replaced, preserving user:pass, port, path, query."""
+    p = urlsplit(url)
+    userinfo = ""
+    if p.username:
+        userinfo = p.username + (f":{p.password}" if p.password else "") + "@"
+    netloc = f"{userinfo}{new_host}" + (f":{p.port}" if p.port else "")
+    return urlunsplit((p.scheme, netloc, p.path, p.query, p.fragment))
+
+
+def _pg_candidates():
+    """Connection URLs to try, in order. When DATABASE_URL is a Render *internal*
+    host (dpg-xxxx-a, no domain) — which only resolves inside the database's own
+    region — also offer the *external* host for each region, so a cross-region
+    deploy self-heals automatically without changing any environment variable."""
+    primary = _pg_url()
+    candidates = [primary]
+    host = urlsplit(primary).hostname or ""
+    if host.startswith("dpg-") and "." not in host:
+        for region in _RENDER_REGIONS:
+            ext_host = f"{host}.{region}-postgres.render.com"
+            candidates.append(_add_ssl(_swap_host(primary, ext_host)))
+    return candidates
 
 
 # Tables whose primary key is NOT `id` (so we never append RETURNING id).
@@ -150,11 +184,33 @@ class _PGConn:
         self.close()
 
 
+_RESOLVED_PG_URL = None  # cached working URL once discovered (host probing is one-time)
+
+
 def get_db():
-    """Return a connection. PostgreSQL when DATABASE_URL is set, else SQLite."""
+    """Return a connection. PostgreSQL when DATABASE_URL is set, else SQLite.
+
+    For PostgreSQL it auto-discovers a reachable host: it tries the configured
+    URL first, then — if that is an unreachable Render internal host — the
+    external host for each region, caching whichever connects. This makes a
+    cross-region deploy work without editing the DATABASE_URL env var."""
+    global _RESOLVED_PG_URL
     if _is_pg():
         import psycopg2
-        return _PGConn(psycopg2.connect(_pg_url()))
+        if _RESOLVED_PG_URL:
+            try:
+                return _PGConn(psycopg2.connect(_RESOLVED_PG_URL, connect_timeout=10))
+            except psycopg2.OperationalError:
+                _RESOLVED_PG_URL = None  # previously-good host failed; re-probe
+        last_err = None
+        for cand in _pg_candidates():
+            try:
+                conn = _PGConn(psycopg2.connect(cand, connect_timeout=8))
+                _RESOLVED_PG_URL = cand
+                return conn
+            except psycopg2.OperationalError as exc:
+                last_err = exc
+        raise last_err
     conn = sqlite3.connect(Config.DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
