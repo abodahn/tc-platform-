@@ -11,9 +11,9 @@
 databases:
   - name: tc-platform-db
     plan: free
-    region: frankfurt          # MUST match the web service region (internal DB
-    databaseName: tc_platform   # hostnames only resolve within the same region)
-    user: tc_platform
+    region: frankfurt          # ideally same region as the web service, but the
+    databaseName: tc_platform   # app uses the EXTERNAL Database URL (see below),
+    user: tc_platform           # which resolves region-independently.
 
 services:
   - type: web
@@ -45,7 +45,17 @@ services:
         sync: false                # set at deploy time
       - key: TC_ADMIN_PASSWORD
         sync: false                # set a STRONG password (not Admin@12345)
+      # DATABASE_URL is set MANUALLY to the database's *External Database URL*
+      # (Render ▸ tc-platform-db ▸ Info ▸ External Database URL). The external
+      # host resolves over the public internet regardless of region, which avoids
+      # the cross-region "could not translate host name" failure that the internal
+      # connection string causes when the DB and web service are in different
+      # regions. sync:false keeps your manual value safe across Blueprint re-syncs.
+      #
+      # To switch back to the internal URL (only valid if DB + web are SAME
+      # region), replace the two lines below with:
+      #   fromDatabase:
+      #     name: tc-platform-db
+      #     property: connectionString
       - key: DATABASE_URL
-        fromDatabase:
-          name: tc-platform-db
-          property: connectionString
+        sync: false

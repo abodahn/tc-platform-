@@ -99,7 +99,13 @@ To keep uploads, upgrade the web service to `starter` and uncomment the `disk:` 
 2. **Render ▸ New ▸ Blueprint** → connect the repo → pick `render-deploy`. Render reads
    `render.yaml` and lists the web service + PostgreSQL database.
 3. **Enter prompted secrets:** `TC_ADMIN_USER` + a strong `TC_ADMIN_PASSWORD`.
-   `TC_SECRET_KEY` is auto-generated; `DATABASE_URL` auto-wired.
+   `TC_SECRET_KEY` is auto-generated.
+3a. **Set `DATABASE_URL` to the External Database URL** (region-proof):
+   Render ▸ `tc-platform-db` ▸ **Info** ▸ copy **External Database URL** →
+   Render ▸ `tc-platform` web service ▸ **Environment** ▸ `DATABASE_URL` ▸ paste ▸ Save.
+   The external host resolves over the internet regardless of region, avoiding the
+   internal-host `could not translate host name` error when DB and web differ in region.
+   (The app auto-appends `sslmode=require` for the external host.)
 4. **Apply.** DB provisions first; web service builds (`pip install`) and starts (`gunicorn`).
 5. **Health check** at `/api/health` goes green → live at `https://tc-platform.onrender.com`
    (schema auto-creates + seeds on first boot).
@@ -118,7 +124,7 @@ pytest                                   # same suite must pass on Postgres
 ### Env vars on Render
 | Variable | Source | Notes |
 |---|---|---|
-| `DATABASE_URL` | auto `fromDatabase` | managed Postgres connection string |
+| `DATABASE_URL` | manual (`sync:false`) | paste the **External** Database URL; region-proof, SSL auto-added |
 | `TC_ENV` | `production` | secure cookies on |
 | `TC_SECRET_KEY` | `generateValue: true` | stable across restarts |
 | `TC_ADMIN_USER`/`TC_ADMIN_PASSWORD` | prompted (`sync:false`) | strong password |
