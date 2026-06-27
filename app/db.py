@@ -59,6 +59,11 @@ def _translate_sql(sql):
                  "to_char((now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD')", sql, flags=re.I)
     was_ignore = bool(re.search(r"INSERT\s+OR\s+IGNORE", sql, flags=re.I))
     sql = re.sub(r"INSERT\s+OR\s+IGNORE", "INSERT", sql, flags=re.I)
+    # psycopg2 does %-style interpolation whenever a params tuple is given, so any
+    # LITERAL % in the SQL (e.g. a hardcoded LIKE 'Low stock:%') must be doubled to
+    # %% or it raises "unsupported format character". Do this BEFORE turning ? into
+    # %s so the real placeholders we add are not escaped. (No-op for SQLite.)
+    sql = sql.replace("%", "%%")
     sql = sql.replace("?", "%s")  # bound-param placeholder (no literal ? in this codebase)
     return sql, was_ignore
 

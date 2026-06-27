@@ -239,7 +239,10 @@ def repeated_failures(conn, window_days=90, threshold=3):
     rows = conn.execute(
         "SELECT machine_id, machine_code, COUNT(*) c FROM mnt_tickets "
         "WHERE machine_id IS NOT NULL AND created_at >= date('now', ?) "
-        "GROUP BY machine_id HAVING c >= ? ORDER BY c DESC",
+        # PostgreSQL requires every non-aggregated column in GROUP BY and forbids
+        # output aliases in HAVING (SQLite allows both). machine_code is functionally
+        # dependent on machine_id, so grouping by both yields identical rows.
+        "GROUP BY machine_id, machine_code HAVING COUNT(*) >= ? ORDER BY c DESC",
         (f"-{window_days} day", threshold)).fetchall()
     return [dict(r) for r in rows]
 
