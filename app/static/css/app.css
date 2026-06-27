@@ -253,7 +253,15 @@ a { color: inherit; text-decoration: none; }
 .embed-offline .card { text-align: center; max-width: 460px; }
 .embed-offline .ic { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center;
   margin: 0 auto 18px; background: var(--crit-bg); color: var(--crit); }
-@media (max-width: 900px) { .embed-bar { padding: 8px 14px; } .embed-bar .eb-meta { display: none; } }
+@media (max-width: 900px) {
+  /* module embed page: wrap the toolbar + give the iframe a real height
+     (on mobile .main is block, which breaks the flex height chain). */
+  .embed-bar { padding: 8px 12px; flex-wrap: wrap; gap: 6px 8px; }
+  .embed-bar .eb-meta { display: none; }
+  .embed-bar .spacer { display: none; }
+  .embed-content { min-height: 0; }
+  .embed-stage { min-height: 78vh; }
+}
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
 .page-head h1 { font-size: var(--fs-2xl); margin: 0 0 4px; letter-spacing: -.3px; }
 .page-head .sub { color: var(--muted); font-size: 13.5px; }
