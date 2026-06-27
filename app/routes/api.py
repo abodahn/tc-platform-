@@ -4,9 +4,11 @@ TC Platform — JSON API.
   GET /api/health          platform self health (public, lightweight)
   GET /api/status          live status of every integrated system (auth)
   GET /api/status/<key>    live status of one system (auth)
+  GET /api/diag?token=...  TEMPORARY deployment diagnostics (remove after fix)
 """
 import sys
-from flask import Blueprint, jsonify
+import traceback
+from flask import Blueprint, jsonify, request
 
 from config import Config
 from app.db import get_db
@@ -14,6 +16,91 @@ from app.auth import login_required
 from app.services import health as health_svc
 
 bp = Blueprint("api", __name__, url_prefix="/api")
+
+# Temporary token to gate the diagnostic endpoint (not a real secret).
+_DIAG_TOKEN = "tcdiag2026"
+
+
+@bp.route("/diag")
+def diag():
+    """TEMPORARY: surface the exact deployment problem as JSON. Each step is
+    isolated so one failure does not hide the others. Returns no secrets.
+    Visit /api/diag?token=tcdiag2026 . REMOVE this route once the app is healthy."""
+    if request.args.get("token") != _DIAG_TOKEN:
+        return jsonify({"error": "add ?token=tcdiag2026"}), 403
+
+    url = (Config.DATABASE_URL or "")
+    masked = ""
+    if "@" in url:
+        masked = url.split("@", 1)[1]  # host/db part only, never user:pass
+    engine = "postgresql" if url.startswith(("postgres://", "postgresql://")) else "sqlite"
+    out = {
+        "engine": engine,
+        "db_host_part": masked,
+        "sslmode_in_url": "sslmode=" in url,
+        "python": sys.version.split()[0],
+        "env": Config.ENV,
+        "steps": {},
+    }
+
+    def step(name, fn):
+        try:
+            out["steps"][name] = {"ok": True, "result": fn()}
+        except Exception:
+            out["steps"][name] = {"ok": False, "error": traceback.format_exc()[-1500:]}
+
+    # 1) raw connect + trivial query
+    def _connect():
+        c = get_db()
+        try:
+            c.execute("SELECT 1").fetchone()
+            return "connected"
+        finally:
+            c.close()
+    step("connect", _connect)
+
+    # 2) list existing tables (works on both engines)
+    def _tables():
+        c = get_db()
+        try:
+            if engine == "postgresql":
+                rows = c.execute(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema='public' ORDER BY table_name").fetchall()
+                return [r["table_name"] for r in rows]
+            rows = c.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+            return [r["name"] for r in rows]
+        finally:
+            c.close()
+    step("tables", _tables)
+
+    # 3) the exact query the login/current_user path runs
+    def _users():
+        c = get_db()
+        try:
+            n = c.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+            c.execute("SELECT * FROM users WHERE id = ? AND is_active = 1", (1,)).fetchone()
+            return f"users table OK, count={n}"
+        finally:
+            c.close()
+    step("users_query", _users)
+
+    # 4) (re)run schema bootstrap and report any error
+    def _init():
+        from app.db import init_db
+        init_db()
+        return "init_db ok"
+    step("init_db", _init)
+
+    # 5) render the login template exactly as the page does
+    def _render():
+        from flask import render_template
+        html = render_template("login.html", next="")
+        return f"login.html rendered ({len(html)} bytes)"
+    step("render_login", _render)
+
+    return jsonify(out)
 
 
 @bp.route("/health")
