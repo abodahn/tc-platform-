@@ -128,6 +128,15 @@
     if (topToggle) topToggle.addEventListener("click", toggleRail);
     if (railToggle) railToggle.addEventListener("click", toggleRail);
 
+    // On mobile, close the drawer when tapping the backdrop or a nav link
+    document.addEventListener("click", function (e) {
+      if (window.innerWidth > 900 || !app.classList.contains("mobile-open")) return;
+      if (e.target.closest("#sidebarToggle, #railToggle")) return;
+      if (!e.target.closest(".sidebar") || e.target.closest(".nav-item")) {
+        app.classList.remove("mobile-open");
+      }
+    });
+
     // Collapsible sections (persisted by section key)
     let collapsed = [];
     try { collapsed = JSON.parse(localStorage.getItem(LS.sections) || "[]"); } catch (e) {}

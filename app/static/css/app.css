@@ -521,10 +521,36 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .qr-card img { width: 150px; height: 150px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: #fff; }
 @media print { .sidebar, .topbar, .page-head .btn { display: none !important; } }
 
-/* responsive sidebar (mobile = overlay) */
+/* responsive sidebar (mobile = overlay) + mobile layout */
 @media (max-width: 900px) {
-  .sidebar { position: fixed; inset-inline-start: 0; top: 0; transform: translateX(-105%); box-shadow: var(--shadow-strong); }
+  .sidebar {
+    position: fixed; inset-inline-start: 0; top: 0; height: 100vh; z-index: 300;
+    width: min(84vw, 290px); flex-basis: min(84vw, 290px);
+    transform: translateX(-105%); transition: transform .25s ease;
+    box-shadow: var(--shadow-strong);
+  }
   [dir="rtl"] .sidebar { transform: translateX(105%); }
   .app.mobile-open .sidebar { transform: translateX(0); }
-  .content { padding: 18px; }
+  /* keep the full sidebar on mobile even if the desktop "rail" flag is set */
+  .app.collapsed .sidebar { width: min(84vw, 290px); flex-basis: min(84vw, 290px); }
+  .app.collapsed .brand-text,
+  .app.collapsed .nav-label span,
+  .app.collapsed .nav-label .chev { display: revert; }
+  /* dim backdrop behind the open drawer (tap to close, handled in app.js) */
+  .app.mobile-open::before {
+    content: ""; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 250;
+  }
+  .main { width: 100%; min-width: 0; }
+  .content { padding: 16px; }
+  #sidebarToggle { display: inline-flex !important; }
+  /* stack multi-column grids on small screens */
+  .content [class*="grid"], .kpi-grid, .cards, .tiles, .stat-grid { grid-template-columns: 1fr !important; }
+  /* wide tables scroll instead of breaking the page */
+  .content table { display: block; width: 100%; overflow-x: auto; white-space: nowrap; }
+  .topbar { flex-wrap: wrap; gap: 8px; }
+}
+@media (max-width: 560px) {
+  .content { padding: 11px; }
+  .topbar { padding: 8px 10px; }
+  .page-head { flex-wrap: wrap; gap: 8px; }
 }
