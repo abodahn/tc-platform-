@@ -11,7 +11,8 @@
 databases:
   - name: tc-platform-db
     plan: free
-    databaseName: tc_platform
+    region: frankfurt          # MUST match the web service region (internal DB
+    databaseName: tc_platform   # hostnames only resolve within the same region)
     user: tc_platform
 
 services:
