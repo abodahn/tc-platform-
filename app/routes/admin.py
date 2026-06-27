@@ -112,6 +112,15 @@ def edit_system(sid):
         row = conn.execute("SELECT key FROM systems WHERE id=?", (sid,)).fetchone()
         if not row:
             abort(404)
+        # Convenience: if only the Base URL is provided, auto-derive the Health URL
+        # from the known endpoint path for this system, so an admin can paste just
+        # one address per system (e.g. a Cloudflare tunnel URL).
+        if base_url and not health_url:
+            from app.db import _INTEGRATION_ENDPOINTS
+            ep = _INTEGRATION_ENDPOINTS.get(row["key"])
+            if ep:
+                _p, hpath = ep
+                health_url = base_url.rstrip("/") + ("/" if hpath in ("", "/") else hpath)
         conn.execute(
             """UPDATE systems SET base_url=?, health_url=?, port=?, launch_mode=?,
                enabled=?, owner=? WHERE id=?""",
