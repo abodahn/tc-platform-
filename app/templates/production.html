@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% block title %}Production Visibility{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow">Manufacturing</div>
+    <h1 data-i18n="nav.production">Production Visibility</h1>
+    <div class="sub">{{ about[1] if about }}</div>
+  </div>
+  {% if can_edit %}
+  <button class="btn btn-primary" onclick="prodOpenLine()">
+    <svg class="ico"><use href="#i-factory"></use></svg><span data-i18n="prod.add_line">Add line</span>
+  </button>
+  {% else %}
+  <span class="tag" data-i18n="prod.view_only">View only</span>
+  {% endif %}
+</div>
+
+{# ---------------- KPI dashboard ---------------- #}
+<div class="grid cols-4">
+  <div class="kpi good"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-factory"></use></svg></div></div>
+    <div class="kval" data-count="{{ kpis.lines_running }}">0</div><div class="klabel"><span data-i18n="prod.lines_running">Lines running</span> / {{ kpis.lines_total }}</div></div>
+  <div class="kpi {{ 'good' if kpis.avg_efficiency >= 85 else 'warn' }}"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-trend"></use></svg></div></div>
+    <div class="kval" data-count="{{ kpis.avg_efficiency }}" data-suffix="%">0</div><div class="klabel" data-i18n="prod.avg_efficiency">Avg efficiency</div></div>
+  <div class="kpi warn"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-clock"></use></svg></div></div>
+    <div class="kval" data-count="{{ kpis.downtime_minutes }}">0</div><div class="klabel" data-i18n="prod.downtime_min">Downtime (min)</div></div>
+  <div class="kpi {{ 'warn' if kpis.quality_open else 'good' }}"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-alert"></use></svg></div></div>
+    <div class="kval" data-count="{{ kpis.quality_open }}">0</div><div class="klabel" data-i18n="prod.quality_open">Open quality issues</div></div>
+</div>
+
+{% if about %}
+<div class="panel" style="border-style:dashed;background:var(--panel-2);margin:18px 0">
+  <div class="panel-pad flex gap center">
+    <svg class="ico" style="width:20px;height:20px;color:var(--tc-red)"><use href="#i-rocket"></use></svg>
+    <span class="muted" style="font-size:13px"><b>{{ about[0] }}</b> — {{ about[3] }}</span>
+  </div>
+</div>
+{% endif %}
+
+{# ---------------- Tabs ---------------- #}
+<div class="seg" style="width:max-content;margin-bottom:16px" id="prodTabs">
+  <button class="on" data-tab="lines" data-i18n="prod.lines">Lines</button>
+  <button data-tab="downtime" data-i18n="prod.downtime">Downtime</button>
+  <button data-tab="quality" data-i18n="prod.quality">Quality</button>
+</div>
+
+{# ---------------- LINES ---------------- #}
+<section data-panel="lines" id="lines">
+  <div class="panel accent">
+    <div class="panel-head"><h3 data-i18n="prod.lines">Production Lines</h3><span class="muted">{{ lines|length }}</span></div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="prod.line">Line</th><th data-i18n="prod.area">Area</th>
+          <th data-i18n="admin.status">Status</th><th data-i18n="prod.shift">Shift</th>
+          <th data-i18n="prod.output">Output / Target</th><th data-i18n="prod.efficiency">Efficiency</th>
+          <th data-i18n="prod.operators">Ops</th>{% if can_edit %}<th data-i18n="admin.action">Action</th>{% endif %}
+        </tr></thead>
+        <tbody>
+          {% for l in lines %}
+          <tr>
+            <td><b>{{ l.name }}</b></td>
+            <td>{{ l.area or '—' }}</td>
+            <td><span class="badge b-{{ l.status }}"><span class="dot"></span>{{ l.status }}</span></td>
+            <td>{{ l.shift }}</td>
+            <td>{{ '{:,}'.format(l.actual_output) }} / {{ '{:,}'.format(l.target_output) }}</td>
+            <td>
+              {% if l.efficiency is not none %}
+              <div class="eff {{ 'good' if l.efficiency >= 85 else ('warn' if l.efficiency >= 60 else '') }}">
+                <div class="track"><div class="fill" style="width:{{ [l.efficiency,100]|min }}%"></div></div>
+                <b style="font-size:12px">{{ l.efficiency }}%</b>
+              </div>
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td>{{ l.operators }}</td>
+            {% if can_edit %}
+            <td>
+              <div class="flex gap" style="gap:6px">
+                <button class="btn btn-ghost btn-sm" onclick='prodOpenLine({{ l|tojson }})' data-i18n="admin.save" title="Edit">✎</button>
+                <form method="post" action="{{ url_for('production.delete_line', lid=l.id) }}" onsubmit="return confirm('Delete this line?')" style="display:inline">
+                  <button class="btn btn-ghost btn-sm" type="submit" title="Delete">✕</button>
+                </form>
+              </div>
+            </td>
+            {% endif %}
+          </tr>
+          {% else %}
+          <tr><td colspan="8"><div class="empty">No production lines yet.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{# ---------------- DOWNTIME ---------------- #}
+<section data-panel="downtime" id="downtime" style="display:none">
+  {% if can_edit %}
+  <div class="panel accent" style="margin-bottom:18px">
+    <div class="panel-head"><h3 data-i18n="prod.log_downtime">Log downtime</h3></div>
+    <form class="panel-pad" method="post" action="{{ url_for('production.add_downtime') }}">
+      <div class="grid cols-4">
+        <div class="field"><label data-i18n="prod.line">Line</label>
+          <select name="line_id">{% for l in lines %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="prod.reason">Reason</label><input name="reason" required></div>
+        <div class="field"><label data-i18n="prod.category">Category</label>
+          <select name="category">{% for c in dt_categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="prod.minutes">Minutes</label><input name="minutes" type="number" min="0" value="0"></div>
+      </div>
+      <button class="btn btn-primary btn-sm" type="submit" data-i18n="prod.add">Add</button>
+    </form>
+  </div>
+  {% endif %}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="prod.downtime_events">Downtime events</h3></div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th data-i18n="prod.line">Line</th><th data-i18n="prod.reason">Reason</th><th data-i18n="prod.category">Category</th><th data-i18n="prod.minutes">Minutes</th><th data-i18n="health.last_check">When</th>{% if can_edit %}<th></th>{% endif %}</tr></thead>
+        <tbody>
+          {% for d in downtime %}
+          <tr>
+            <td><b>{{ d.line_name or '—' }}</b></td><td>{{ d.reason }}</td>
+            <td><span class="tag">{{ d.category }}</span></td><td>{{ d.minutes }}</td>
+            <td class="muted">{{ d.occurred_at }}</td>
+            {% if can_edit %}<td><form method="post" action="{{ url_for('production.delete_downtime', did=d.id) }}" style="display:inline"><button class="btn btn-ghost btn-sm" title="Delete">✕</button></form></td>{% endif %}
+          </tr>
+          {% else %}<tr><td colspan="6"><div class="empty">No downtime logged.</div></td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{# ---------------- QUALITY ---------------- #}
+<section data-panel="quality" id="quality" style="display:none">
+  {% if can_edit %}
+  <div class="panel accent" style="margin-bottom:18px">
+    <div class="panel-head"><h3 data-i18n="prod.log_quality">Log quality issue</h3></div>
+    <form class="panel-pad" method="post" action="{{ url_for('production.add_quality') }}">
+      <div class="grid cols-4">
+        <div class="field"><label data-i18n="prod.line">Line</label>
+          <select name="line_id">{% for l in lines %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="prod.issue">Issue</label><input name="issue" required></div>
+        <div class="field"><label data-i18n="prod.severity">Severity</label>
+          <select name="severity">{% for s in severities %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="prod.quantity">Quantity</label><input name="quantity" type="number" min="0" value="0"></div>
+      </div>
+      <button class="btn btn-primary btn-sm" type="submit" data-i18n="prod.add">Add</button>
+    </form>
+  </div>
+  {% endif %}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="prod.quality_issues">Quality issues</h3></div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th data-i18n="prod.line">Line</th><th data-i18n="prod.issue">Issue</th><th data-i18n="prod.severity">Severity</th><th data-i18n="prod.quantity">Qty</th><th data-i18n="admin.status">Status</th>{% if can_edit %}<th data-i18n="admin.action">Action</th>{% endif %}</tr></thead>
+        <tbody>
+          {% for q in quality %}
+          <tr>
+            <td><b>{{ q.line_name or '—' }}</b></td><td>{{ q.issue }}</td>
+            <td><span class="badge b-{{ q.severity }}">{{ q.severity }}</span></td>
+            <td>{{ q.quantity }}</td>
+            <td><span class="badge b-{{ q.status }}"><span class="dot"></span>{{ q.status }}</span></td>
+            {% if can_edit %}
+            <td>
+              <form method="post" action="{{ url_for('production.quality_status', qid=q.id) }}" style="display:inline-flex;gap:6px;align-items:center">
+                <select name="status" onchange="this.form.submit()" style="height:34px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)">
+                  {% for s in q_statuses %}<option value="{{ s }}" {{ 'selected' if q.status==s }}>{{ s }}</option>{% endfor %}
+                </select>
+              </form>
+              <form method="post" action="{{ url_for('production.delete_quality', qid=q.id) }}" style="display:inline"><button class="btn btn-ghost btn-sm" title="Delete">✕</button></form>
+            </td>
+            {% endif %}
+          </tr>
+          {% else %}<tr><td colspan="6"><div class="empty">No quality issues logged.</div></td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{# ---------------- Line add/edit modal ---------------- #}
+{% if can_edit %}
+<div class="modal-overlay" id="lineModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="lineModalTitle" data-i18n="prod.add_line">Add line</h3>
+      <div class="x" onclick="prodCloseLine()"><svg class="ico"><use href="#i-chevron"></use></svg></div>
+    </div>
+    <form method="post" id="lineForm">
+      <div class="modal-body">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="prod.line">Line name</label><input name="name" id="lf_name" required></div>
+          <div class="field"><label data-i18n="prod.area">Area</label><input name="area" id="lf_area"></div>
+          <div class="field"><label data-i18n="admin.status">Status</label>
+            <select name="status" id="lf_status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="prod.shift">Shift</label><input name="shift" id="lf_shift" value="A"></div>
+          <div class="field"><label data-i18n="prod.target">Target output</label><input name="target_output" id="lf_target" type="number" min="0" value="0"></div>
+          <div class="field"><label data-i18n="prod.actual">Actual output</label><input name="actual_output" id="lf_actual" type="number" min="0" value="0"></div>
+          <div class="field"><label data-i18n="prod.operators">Operators</label><input name="operators" id="lf_ops" type="number" min="0" value="0"></div>
+          <div class="field"><label data-i18n="common.description">Notes</label><input name="notes" id="lf_notes"></div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" onclick="prodCloseLine()" data-i18n="prod.cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" data-i18n="admin.save">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+<script>
+  (function(){
+    // Tabs
+    const tabs=document.getElementById('prodTabs'); const panels=document.querySelectorAll('[data-panel]');
+    function show(n){ panels.forEach(p=>p.style.display=p.getAttribute('data-panel')===n?'':'none');
+      tabs.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.getAttribute('data-tab')===n)); }
+    tabs.addEventListener('click',e=>{ if(e.target.dataset.tab) show(e.target.dataset.tab); });
+    const h=location.hash.replace('#',''); if(['lines','downtime','quality'].includes(h)) show(h);
+  })();
+
+  const ADD_URL = "{{ url_for('production.add_line') }}";
+  function prodOpenLine(line){
+    const m=document.getElementById('lineModal'); if(!m) return;
+    const form=document.getElementById('lineForm');
+    if(line && line.id){
+      form.action = "{{ url_for('production.index') }}lines/"+line.id+"/edit";
+      document.getElementById('lineModalTitle').textContent = "Edit line";
+      lf_name.value=line.name||''; lf_area.value=line.area||''; lf_status.value=line.status||'running';
+      lf_shift.value=line.shift||'A'; lf_target.value=line.target_output||0; lf_actual.value=line.actual_output||0;
+      lf_ops.value=line.operators||0; lf_notes.value=line.notes||'';
+    } else {
+      form.action = ADD_URL; document.getElementById('lineModalTitle').textContent = "Add line";
+      form.reset(); lf_status.value='running'; lf_shift.value='A';
+    }
+    m.classList.add('open');
+  }
+  function prodCloseLine(){ document.getElementById('lineModal').classList.remove('open'); }
+  document.getElementById('lineModal') && document.getElementById('lineModal').addEventListener('click',e=>{ if(e.target.id==='lineModal') prodCloseLine(); });
+</script>
+{% endblock %}

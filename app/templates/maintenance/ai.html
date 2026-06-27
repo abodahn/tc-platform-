@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}AI Insights{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="nav.maint_ai">AI Insights — Predictive Maintenance</h1>
+    <div class="sub"><span class="badge b-live"><span class="dot" style="background:var(--ok)"></span><span data-i18n="m.ai_offline">On-premise · works offline</span></span>
+      <span class="muted" style="font-size:12.5px" data-i18n="m.ai_sub">No cloud, no internet — predictions run locally on your data.</span></div>
+  </div>
+</div>
+
+<div class="grid cols-4">
+  <div class="kpi {{ 'warn' if high else 'good' }}"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-alert"></use></svg></div></div>
+    <div class="kval" data-count="{{ high|length }}">0</div><div class="klabel" data-i18n="m.ai_at_risk">Machines at risk</div></div>
+  <div class="kpi info"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-cart"></use></svg></div></div>
+    <div class="kval" data-count="{{ reorder|length }}">0</div><div class="klabel" data-i18n="m.ai_reorder">Reorder recommendations</div></div>
+  <div class="kpi warn"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-refresh"></use></svg></div></div>
+    <div class="kval" data-count="{{ repeated|length }}">0</div><div class="klabel" data-i18n="m.ai_repeated">Repeated-failure machines</div></div>
+  <div class="kpi good"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-sparkles"></use></svg></div></div>
+    <div class="kval" data-count="{{ risks|length }}">0</div><div class="klabel" data-i18n="m.ai_analyzed">Machines analyzed</div></div>
+</div>
+
+{# At-risk machines ranking #}
+<div class="panel accent mt-6">
+  <div class="panel-head"><h3 data-i18n="m.ai_risk_rank">Failure-risk ranking</h3>
+    <span class="muted" data-i18n="m.ai_confidence_note">Confidence grows with history</span></div>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="m.machine">Machine</th><th data-i18n="m.ai_risk">Risk</th>
+      <th data-i18n="m.ai_predicted">Predicted next failure</th><th>MTBF</th>
+      <th data-i18n="m.ai_recommendation">Recommended action</th><th data-i18n="m.ai_conf">Confidence</th></tr></thead>
+    <tbody>
+      {% for r in risks %}
+      <tr>
+        <td><a href="{{ url_for('maintenance.machine_profile', mid=r.machine_id) }}"><b>{{ r.code }}</b></a><br><span class="muted" style="font-size:11px">{{ r.name }}</span></td>
+        <td style="min-width:150px">
+          <div class="eff {{ 'good' if r.band=='low' else ('warn' if r.band=='medium' else '') }}">
+            <div class="track"><div class="fill" style="width:{{ r.risk }}%"></div></div>
+            <b style="font-size:12px">{{ r.risk }}%</b>
+          </div>
+          <span class="badge {{ 'b-critical' if r.band=='high' else ('b-warning' if r.band=='medium' else 'b-live') }}" style="margin-top:4px" data-i18n="m.ai_band_{{ r.band }}">{{ r.band }}</span>
+        </td>
+        <td>{% if r.next_failure %}{{ r.next_failure }}{% if r.predicted_days is not none %}<br><span class="muted" style="font-size:11px">~{{ r.predicted_days }} d</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{{ (r.mtbf_days ~ ' d') if r.mtbf_days else '—' }}</td>
+        <td>
+          <span data-i18n="m.{{ r.recommendation[0] }}">{{ r.recommendation[0]|mtext }}</span>
+          {% if 'days' in r.recommendation[1] %} (~{{ r.recommendation[1]['days'] }}d){% endif %}
+          {% if 'cause' in r.recommendation[1] %} — <span data-i18n="mx.{{ r.recommendation[1]['cause'] }}">{{ r.recommendation[1]['cause']|mtext }}</span>{% endif %}
+        </td>
+        <td><span class="tag" data-i18n="mx.{{ r.confidence }}">{{ r.confidence|mtext }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody></table></div>
+</div>
+
+<div class="grid cols-2 mt-6">
+  {# Reorder recommendations #}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="m.ai_reorder">Reorder recommendations</h3></div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th data-i18n="m.part">Part</th><th data-i18n="m.stock">Stock</th>
+        <th data-i18n="m.ai_runout">Run-out</th><th data-i18n="m.ai_suggest_qty">Order qty</th></tr></thead>
+      <tbody>{% for r in reorder %}
+        <tr><td><a href="{{ url_for('maintenance.spare_profile', sid=r.spare_id) }}">{{ r.code }}</a> · {{ r.name }}
+          {% if r.criticality=='critical' %}<span class="badge b-critical" style="margin-inline-start:4px" data-i18n="mx.critical">Critical</span>{% endif %}</td>
+          <td>{{ r.stock }}</td>
+          <td>{% if r.runout_days is not none %}~{{ r.runout_days }} d{% else %}<span class="muted" data-i18n="m.ai_low">low</span>{% endif %}</td>
+          <td><b>+{{ r.suggested_qty }}</b></td></tr>
+      {% else %}<tr><td colspan="4"><div class="empty muted" data-i18n="m.ai_no_reorder">Stock levels are healthy.</div></td></tr>{% endfor %}</tbody></table></div>
+  </div>
+
+  {# Repeated failures #}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="m.ai_repeated">Repeated-failure detection</h3>
+      <span class="muted" style="font-size:11.5px" data-i18n="m.ai_window">last 90 days</span></div>
+    <div class="panel-pad">
+      {% for r in repeated %}
+      <div class="mhealth"><svg class="ico" style="color:var(--crit)"><use href="#i-alert"></use></svg>
+        <div style="flex:1;font-size:13px"><b>{{ r.machine_code }}</b></div>
+        <span class="badge b-critical">{{ r.c }} ×</span></div>
+      {% else %}<div class="empty muted" data-i18n="m.ai_no_repeated">No recurring failures detected.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="grid cols-2 mt-6">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="m.ai_anomalies">Downtime anomalies</h3>
+      <span class="muted" style="font-size:11.5px" data-i18n="m.ai_anomaly_note">statistical outliers</span></div>
+    <div class="panel-pad">
+      {% for a in anomalies %}
+      <div class="mhealth"><svg class="ico" style="color:var(--crit)"><use href="#i-alert"></use></svg>
+        <div style="flex:1;font-size:12.5px"><b>{{ a.machine_code }}</b> · {{ a.ticket_no }}</div>
+        <span class="badge b-critical">{{ a.downtime }}m (z={{ a.z }})</span></div>
+      {% else %}<div class="empty muted" data-i18n="m.ai_no_anomaly">No downtime anomalies detected.</div>{% endfor %}
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="m.ai_pm_opt">PM interval optimizer</h3></div>
+    <div class="panel-pad">
+      {% for o in pm_opt %}
+      <div class="mhealth"><svg class="ico" style="color:var(--warn)"><use href="#i-refresh"></use></svg>
+        <div style="flex:1;font-size:12.5px"><b>{{ o.mcode }}</b> · {{ o.title }}<br>
+          <span class="muted" style="font-size:11px"><span data-i18n="m.ai_shorten">shorten</span> {{ o.current }}d → {{ o.suggested }}d (MTBF {{ o.mtbf }}d)</span></div></div>
+      {% else %}<div class="empty muted" data-i18n="m.ai_pm_ok">PM intervals look appropriate.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-6">
+  <div class="panel-head"><h3 data-i18n="m.ai_sla_panel">Tickets at SLA-breach risk</h3></div>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>#</th><th data-i18n="m.machine">Machine</th><th data-i18n="m.priority">Priority</th><th data-i18n="m.ai_sla_risk">SLA risk</th></tr></thead>
+    <tbody>{% for t in sla %}
+      <tr><td><a href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}">{{ t.ticket_no }}</a></td>
+        <td>{{ t.machine_code }}</td><td><span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span></td>
+        <td style="min-width:150px"><div class="eff {{ '' if t.risk>=80 else 'warn' }}">
+          <div class="track"><div class="fill" style="width:{{ [t.risk,100]|min }}%"></div></div><b style="font-size:12px">{{ t.risk }}%</b></div>
+          {% if t.breached %}<span class="badge b-critical" data-i18n="m.ai_breached">breached</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="4"><div class="empty muted" data-i18n="m.ai_no_sla">No tickets at SLA risk.</div></td></tr>{% endfor %}</tbody></table></div>
+</div>
+
+<p class="muted mt-4" style="font-size:12px" data-i18n="m.ai_method">Models: failure-risk from health + MTBF + recent failure rate + overdue PM; consumption forecast from issue history; recurring-failure detection by frequency. Fully explainable and offline.</p>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Reports & Analytics{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+  <h1 data-i18n="nav.maint_reports">Reports &amp; Analytics</h1>
+  <div class="sub">Live data exports (CSV). PDF/Excel via print and roadmap.</div></div></div>
+
+<div class="grid cols-3">
+  {% for key, spec in reports.items() %}
+  <div class="app-card">
+    <div class="ac-top"><div class="ac-icon"><svg class="ico" style="width:24px;height:24px"><use href="#i-report"></use></svg></div>
+      <span class="tag">CSV</span></div>
+    <h3>{{ spec[0] }}</h3>
+    <div class="ac-desc">{{ spec[1]|length }} columns · live from the maintenance database.</div>
+    <div class="ac-actions">
+      <a class="btn btn-primary btn-sm" style="flex:1;justify-content:center" href="{{ url_for('maintenance.report_export', key=key) }}">
+        <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.export">CSV</span></a>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.report_pdf', key=key) }}">
+        <svg class="ico"><use href="#i-report"></use></svg> PDF</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

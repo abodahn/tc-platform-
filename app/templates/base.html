@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="{{ cu.lang_pref if cu else 'en' }}" data-theme="{{ cu.theme_pref if cu else 'light' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}TC Platform{% endblock %} · TC Platform</title>
+  <meta name="theme-color" content="#07080b">
+  <link rel="icon" href="{{ url_for('static', filename='img/favicon.png') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon-192.png') }}">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="TC Platform">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <script>
+    window.TC_CFG = {
+      staticBase: "{{ url_for('static', filename='')|trim('/') }}",
+      authed: {{ 'true' if cu else 'false' }},
+      lang: "{{ cu.lang_pref if cu else '' }}",
+      theme: "{{ cu.theme_pref if cu else '' }}"
+    };
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+    window.TC_FLASH = [{% for cat, m in msgs %}{cat:"{{ cat }}", msg:"{{ m }}"}{{ "," if not loop.last }}{% endfor %}];
+    {% endwith %}
+  </script>
+</head>
+<body>
+{% include "_icons.html" %}
+<div class="app">
+
+  {# ---------------- Sidebar ---------------- #}
+  <aside class="sidebar">
+    <a class="brand" href="{{ url_for('main.dashboard') }}">
+      <div class="brand-logo"><img src="{{ url_for('static', filename=brand_logo) }}" alt="T&amp;C Garments"></div>
+      <div class="brand-text">
+        <b>TC Platform</b>
+        <span data-i18n="brand.tagline">Operations Platform</span>
+      </div>
+    </a>
+    <nav class="nav">
+      {% for section in nav %}
+      {% set has_active = section['items']|selectattr('0','equalto',active)|list|length > 0 %}
+      <div class="nav-section" data-section="{{ section.section }}">
+        <button class="nav-label" data-sec-toggle type="button">
+          <span data-i18n="{{ section.section }}">{{ section.section }}</span>
+          <svg class="ico chev"><use href="#i-chevron"></use></svg>
+        </button>
+        <div class="nav-items">
+        {% for key, i18n, icon, endpoint, perm in section['items'] %}
+          {% if endpoint == 'main.module' %}
+            {% set href = url_for('main.module', key=key) %}
+          {% else %}
+            {% set href = url_for(endpoint) %}
+          {% endif %}
+          <a class="nav-item {{ 'active' if active == key }}" href="{{ href }}" data-i18n-title="{{ i18n }}">
+            <svg class="ico"><use href="#i-{{ icon }}"></use></svg>
+            <span class="lbl" data-i18n="{{ i18n }}">{{ i18n }}</span>
+          </a>
+        {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </nav>
+    <div class="sidebar-foot">
+      <div class="sf-user">
+        <div class="avatar" style="width:32px;height:32px;flex:0 0 32px;border-radius:9px;font-size:12px">{{ (cu.full_name or cu.username)[:1]|upper }}</div>
+        <div class="sf-meta lbl">
+          <b>{{ cu.full_name or cu.username }}</b>
+          <span>{{ cu_role_label }}</span>
+        </div>
+      </div>
+      <button class="sf-collapse" id="railToggle" type="button" data-i18n-title="top.collapse" title="Collapse">
+        <svg class="ico"><use href="#i-chevrons-left"></use></svg>
+      </button>
+    </div>
+  </aside>
+
+  {# ---------------- Main ---------------- #}
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn" id="sidebarToggle" data-i18n-title="top.menu" title="Menu">
+        <svg class="ico"><use href="#i-menu"></use></svg>
+      </button>
+
+      <div class="search">
+        <svg class="ico"><use href="#i-search"></use></svg>
+        <input id="globalSearch" autocomplete="off" data-i18n-ph="top.search" placeholder="Search…">
+        <div class="search-results" id="searchResults"></div>
+      </div>
+
+      <div class="spacer"></div>
+
+      {# language switcher #}
+      <div class="seg" title="Language">
+        <button data-lang-btn="en">EN</button>
+        <button data-lang-btn="ar">ع</button>
+        <button data-lang-btn="tr">TR</button>
+      </div>
+
+      {# theme switcher #}
+      <div class="seg" title="Theme">
+        <button data-theme-btn="light"><svg class="ico" style="width:15px;height:15px"><use href="#i-sun"></use></svg></button>
+        <button data-theme-btn="dark"><svg class="ico" style="width:15px;height:15px"><use href="#i-moon"></use></svg></button>
+        <button data-theme-btn="auto"><svg class="ico" style="width:15px;height:15px"><use href="#i-monitor"></use></svg></button>
+      </div>
+
+      {# notifications #}
+      <button class="icon-btn" id="notifBtn" data-i18n-title="top.notifications" title="Notifications">
+        <svg class="ico"><use href="#i-bell"></use></svg>
+        {% if unread_count %}<span class="badge-count">{{ unread_count if unread_count < 100 else '99+' }}</span>{% endif %}
+      </button>
+      <div class="panel-pop" id="notifPanel">
+        <header>
+          <b data-i18n="top.notifications">Notifications</b>
+          <a class="tag" id="markRead" style="cursor:pointer" data-i18n="top.mark_read">Mark all read</a>
+        </header>
+        <div style="max-height:380px;overflow-y:auto">
+          {% for n in notifications %}
+          <div class="notif sev-{{ n.severity }}">
+            <div class="nicon"><svg class="ico" style="width:17px;height:17px"><use href="#i-{{ 'alert' if n.severity=='critical' else ('bell' if n.severity=='warning' else 'check') }}"></use></svg></div>
+            <div>
+              <div class="ntitle">{{ n.title }}</div>
+              <div class="nmsg">{{ n.message }}</div>
+              <div class="ntime">{{ n.module }} · {{ n.created_at }}</div>
+            </div>
+          </div>
+          {% else %}
+          <div class="empty"><span data-i18n="common.no_results">No notifications</span></div>
+          {% endfor %}
+        </div>
+      </div>
+
+      {# user menu #}
+      <div class="user" id="userBtn">
+        <div class="avatar">{{ (cu.full_name or cu.username)[:1]|upper }}</div>
+        <div class="meta">
+          <b>{{ cu.full_name or cu.username }}</b>
+          <span>{{ cu_role_label }}</span>
+        </div>
+      </div>
+      <div class="menu" id="userMenu">
+        <a href="{{ url_for('main.profile') }}">
+          <svg class="ico" style="width:16px;height:16px"><use href="#i-user"></use></svg>
+          <span data-i18n="top.profile">Profile</span>
+        </a>
+        {% if can('access_admin') %}
+        <a href="{{ url_for('admin.index') }}"><svg class="ico" style="width:16px;height:16px"><use href="#i-settings"></use></svg><span data-i18n="top.settings">Settings</span></a>
+        {% endif %}
+        <hr>
+        <a href="{{ url_for('auth.logout') }}"><svg class="ico" style="width:16px;height:16px"><use href="#i-logout"></use></svg><span data-i18n="top.logout">Sign out</span></a>
+      </div>
+    </header>
+
+    <main class="content {% block content_class %}{% endblock %}">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+  }
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

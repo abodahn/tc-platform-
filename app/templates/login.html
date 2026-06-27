@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>Sign in · TC Platform</title>
+  <link rel="icon" href="{{ url_for('static', filename='img/favicon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <script>
+    window.TC_CFG = { staticBase: "{{ url_for('static', filename='')|trim('/') }}", authed: false };
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+    window.TC_FLASH = [{% for cat, m in msgs %}{cat:"{{ cat }}", msg:"{{ m }}"}{{ "," if not loop.last }}{% endfor %}];
+    {% endwith %}
+  </script>
+</head>
+<body>
+{% include "_icons.html" %}
+<div class="login-wrap">
+
+  <div class="login-art">
+    <div class="la-top">
+      <div class="brand" style="padding:0;border:0">
+        <div class="brand-logo" style="width:46px;height:46px"><img src="{{ url_for('static', filename=brand_logo) }}" alt="T&amp;C"></div>
+        <div class="brand-text"><b style="font-size:18px">TC Platform</b><span style="color:rgba(255,255,255,.6)">T&amp;C Garments</span></div>
+      </div>
+    </div>
+    <div class="la-mid">
+      <h1 data-i18n="dash.hero_title">Unified Digital<br>Operations Platform</h1>
+      <p data-i18n="login.tagline">One ecosystem for IT, operations, finance and transformation.</p>
+      <div style="margin-top:26px">
+        <div class="feat"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red-2)"><use href="#i-check"></use></svg><span data-i18n="login.f1">Unified executive command center</span></div>
+        <div class="feat"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red-2)"><use href="#i-check"></use></svg><span data-i18n="login.f2">Service desk, assets, monitoring & work in one place</span></div>
+        <div class="feat"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red-2)"><use href="#i-check"></use></svg><span data-i18n="login.f3">Trilingual • Secure • Enterprise-grade</span></div>
+      </div>
+    </div>
+    <div class="la-bot">
+      <div class="seg" style="background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.16);width:max-content">
+        <button data-lang-btn="en">EN</button>
+        <button data-lang-btn="ar">ع</button>
+        <button data-lang-btn="tr">TR</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="login-form-side">
+    <div class="login-card">
+      <div class="lc-brand">
+        <div class="brand-logo"><img src="{{ url_for('static', filename=brand_logo) }}" alt="T&amp;C"></div>
+        <div class="brand-text"><b style="color:var(--ink);font-size:17px">TC Platform</b><span data-i18n="app.subtitle">Digital Operations</span></div>
+      </div>
+      <h2 data-i18n="login.welcome">Welcome back</h2>
+      <div class="muted" data-i18n="login.sub">Sign in to the T&amp;C Digital Operations Platform</div>
+
+      <form method="post" action="{{ url_for('auth.login') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="field">
+          <label data-i18n="login.username">Username</label>
+          <input name="username" autofocus autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label data-i18n="login.password">Password</label>
+          <input name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit" style="height:46px;margin-top:6px">
+          <svg class="ico"><use href="#i-logout"></use></svg>
+          <span data-i18n="login.signin">Sign in</span>
+        </button>
+      </form>
+
+      <div class="hint" data-i18n="login.hint">Default admin: admin — password set in .env</div>
+
+      <div class="flex center gap" style="justify-content:center;margin-top:18px">
+        <div class="seg">
+          <button data-theme-btn="light"><svg class="ico" style="width:15px;height:15px"><use href="#i-sun"></use></svg></button>
+          <button data-theme-btn="dark"><svg class="ico" style="width:15px;height:15px"><use href="#i-moon"></use></svg></button>
+          <button data-theme-btn="auto"><svg class="ico" style="width:15px;height:15px"><use href="#i-monitor"></use></svg></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

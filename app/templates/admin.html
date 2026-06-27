@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Admin Center{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="admin.eyebrow">Administration</div>
+    <h1 data-i18n="admin.title">Admin Center</h1>
+  </div>
+</div>
+
+<div class="grid cols-4" style="margin-bottom:18px">
+  <div class="kpi"><div class="kval" data-count="{{ counts.users }}">0</div><div class="klabel" data-i18n="admin.users">Users</div></div>
+  <div class="kpi good"><div class="kval" data-count="{{ counts.integrated }}">0</div><div class="klabel" data-i18n="health.integrations">Integrations</div></div>
+  <div class="kpi info"><div class="kval" data-count="{{ counts.systems }}">0</div><div class="klabel">Modules</div></div>
+  <div class="kpi warn"><div class="kval" data-count="{{ counts.audit }}">0</div><div class="klabel" data-i18n="admin.audit">Audit Logs</div></div>
+</div>
+
+<div class="seg" style="width:max-content;margin-bottom:18px" id="adminTabs">
+  <button class="on" data-tab="users" data-i18n="admin.users">Users</button>
+  <button data-tab="integrations" data-i18n="admin.integrations">Integrations</button>
+  <button data-tab="audit" data-i18n="admin.audit">Audit Logs</button>
+</div>
+
+{# ---------------- Users ---------------- #}
+<section data-panel="users" id="users">
+  {% if can('manage_users') %}
+  <div class="panel accent" style="margin-bottom:18px">
+    <div class="panel-head"><h3 data-i18n="admin.add_user">Add user</h3></div>
+    <form class="panel-pad" method="post" action="{{ url_for('admin.add_user') }}">
+      <div class="grid cols-3">
+        <div class="field"><label data-i18n="admin.username">Username</label><input name="username" required></div>
+        <div class="field"><label data-i18n="admin.name">Full name</label><input name="full_name"></div>
+        <div class="field"><label data-i18n="admin.email">Email</label><input name="email" type="email"></div>
+        <div class="field"><label data-i18n="admin.role">Role</label>
+          <select name="role">{% for k, lbl in roles %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="admin.password">Password</label><input name="password" type="password" required></div>
+        <div class="field" style="display:flex;align-items:flex-end"><button class="btn btn-primary btn-block" type="submit" data-i18n="admin.add_user">Add user</button></div>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>ID</th><th data-i18n="admin.username">Username</th><th data-i18n="admin.name">Name</th><th data-i18n="admin.role">Role</th><th data-i18n="admin.status">Status</th><th data-i18n="admin.action">Action</th></tr></thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td>{{ u.id }}</td>
+            <td><b>{{ u.username }}</b></td>
+            <td>{{ u.full_name or '—' }}</td>
+            <td><span class="tag">{{ u.role }}</span></td>
+            <td>{% if u.is_active %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.active">Active</span></span>{% else %}<span class="badge b-offline"><span class="dot"></span><span data-i18n="admin.disabled">Disabled</span></span>{% endif %}</td>
+            <td>
+              {% if can('manage_users') %}
+              <form method="post" action="{{ url_for('admin.toggle_user', uid=u.id) }}" style="display:inline">
+                <button class="btn btn-ghost btn-sm" type="submit" data-i18n="{{ 'admin.disable' if u.is_active else 'admin.enable' }}">{{ 'Disable' if u.is_active else 'Enable' }}</button>
+              </form>
+              {% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{# ---------------- Integrations ---------------- #}
+<section data-panel="integrations" id="integrations" style="display:none">
+  <div class="grid cols-2">
+    {% for s in systems %}
+    <div class="panel {{ 'accent' if s.is_integrated }}">
+      <div class="panel-head">
+        <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-{{ s.icon }}"></use></svg> {{ s.name_en }}</h3>
+        <span class="tag">{{ 'integrated' if s.is_integrated else 'module' }}</span>
+      </div>
+      {% if can('manage_integrations') %}
+      <form class="panel-pad" method="post" action="{{ url_for('admin.edit_system', sid=s.id) }}">
+        <div class="field"><label data-i18n="admin.base_url">Base URL</label><input name="base_url" value="{{ s.base_url or '' }}" placeholder="http://10.100.1.13:5000"></div>
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="launch.port">Port</label><input name="port" value="{{ s.port or '' }}"></div>
+          <div class="field"><label data-i18n="admin.launch_mode">Launch mode</label>
+            <select name="launch_mode">
+              <option value="new_tab" {{ 'selected' if s.launch_mode=='new_tab' }}>New tab</option>
+              <option value="same_tab" {{ 'selected' if s.launch_mode=='same_tab' }}>Same tab</option>
+              <option value="embed" {{ 'selected' if s.launch_mode=='embed' }}>Embed</option>
+            </select></div>
+        </div>
+        <div class="field"><label data-i18n="admin.health_url">Health URL</label><input name="health_url" value="{{ s.health_url or '' }}" placeholder="/health"></div>
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="common.owner">Owner</label><input name="owner" value="{{ s.owner or '' }}"></div>
+          <div class="field" style="display:flex;align-items:flex-end;gap:8px">
+            <label style="display:flex;align-items:center;gap:8px;margin:0"><input type="checkbox" name="enabled" {{ 'checked' if s.enabled }} style="width:auto;height:auto"> <span data-i18n="admin.enabled">Enabled</span></label>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" type="submit"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="admin.save">Save</span></button>
+      </form>
+      {% else %}
+      <div class="panel-pad muted">{{ s.base_url or '—' }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+{# ---------------- Audit ---------------- #}
+<section data-panel="audit" id="audit" style="display:none">
+  <div class="panel">
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>ID</th><th data-i18n="admin.username">User</th><th>Action</th><th data-i18n="common.description">Detail</th><th>IP</th><th data-i18n="health.last_check">Time</th></tr></thead>
+        <tbody>
+          {% for a in audit %}
+          <tr>
+            <td>{{ a.id }}</td><td><b>{{ a.username }}</b></td>
+            <td><span class="tag">{{ a.action }}</span></td>
+            <td>{{ a.detail }}</td><td class="muted">{{ a.ip }}</td><td class="muted">{{ a.created_at }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6"><div class="empty">No audit entries yet.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  (function(){
+    const tabs = document.getElementById('adminTabs');
+    const panels = document.querySelectorAll('[data-panel]');
+    function show(name){
+      panels.forEach(p => p.style.display = p.getAttribute('data-panel')===name ? '' : 'none');
+      tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.getAttribute('data-tab')===name));
+    }
+    tabs.addEventListener('click', e => { if(e.target.dataset.tab) show(e.target.dataset.tab); });
+    const hash = location.hash.replace('#','');
+    if(['users','integrations','audit'].includes(hash)) show(hash);
+  })();
+</script>
+{% endblock %}

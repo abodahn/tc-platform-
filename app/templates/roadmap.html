@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Roadmap{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="roadmap.eyebrow">Future Roadmap</div>
+    <h1 data-i18n="roadmap.title">Platform Roadmap</h1>
+    <div class="sub" data-i18n="roadmap.sub">Phased delivery from unified portal to AI &amp; control tower.</div>
+  </div>
+</div>
+
+<div class="grid cols-2">
+  {% for phase, name, status, desc in roadmap %}
+  <div class="panel {{ 'accent' if status=='in_progress' }}">
+    <div class="panel-pad">
+      <div class="flex between center">
+        <div class="flex gap center">
+          <div class="ac-icon" style="width:44px;height:44px;border-radius:12px">
+            <svg class="ico" style="width:22px;height:22px"><use href="#i-{{ 'check' if status=='done' else ('target' if status=='in_progress' else 'map') }}"></use></svg>
+          </div>
+          <div>
+            <div class="eyebrow">{{ phase }}</div>
+            <h3 style="margin:2px 0 0">{{ name }}</h3>
+          </div>
+        </div>
+        <span class="badge b-{{ status }}"><span class="dot"></span>{{ status|replace('_',' ') }}</span>
+      </div>
+      <p class="muted mt-4" style="font-size:13.5px">{{ desc }}</p>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

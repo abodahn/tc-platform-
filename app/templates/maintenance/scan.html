@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Scan QR{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="m.scan_qr">Scan Machine QR</h1>
+    <div class="sub" data-i18n="m.scan_hint">Point the camera at the machine's QR sticker to report a problem.</div></div>
+  <a class="btn btn-ghost" href="{{ url_for('maintenance.floor') }}"><span data-i18n="nav.maint_floor">My Work</span></a>
+</div>
+
+<div class="panel accent scan-stage">
+  <div class="panel-pad">
+    <video id="scanVideo" playsinline muted></video>
+    <div id="scanMsg" class="muted mt-3" style="font-size:13px" data-i18n="m.scan_starting">Starting camera…</div>
+
+    <div class="divider"></div>
+    <div class="muted" style="font-size:13px" data-i18n="m.scan_manual">Or enter the machine code manually</div>
+    <form method="get" class="flex gap center mt-3" style="justify-content:center">
+      <input name="code" placeholder="M-001" style="height:44px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 14px;font-size:16px;text-transform:uppercase">
+      <button class="btn btn-primary"><svg class="ico"><use href="#i-target"></use></svg><span data-i18n="m.go">Go</span></button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const video = document.getElementById('scanVideo');
+  const msg = document.getElementById('scanMsg');
+  function say(k, fallback){ const v = (window.tcT && window.tcT(k)) || fallback; msg.textContent = v; }
+  if (!('BarcodeDetector' in window)) {
+    msg.textContent = "Live scan isn't supported on this browser — use manual entry below.";
+    video.style.display = 'none';
+    return;
+  }
+  let stream, detector, stop = false;
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(s => {
+      stream = s; video.srcObject = s; video.play();
+      msg.textContent = "Scanning… hold steady over the QR code.";
+      detector = new BarcodeDetector({ formats: ['qr_code'] });
+      tick();
+    })
+    .catch(() => { msg.textContent = "Camera unavailable — use manual entry below."; video.style.display='none'; });
+  async function tick(){
+    if (stop) return;
+    try {
+      const codes = await detector.detect(video);
+      if (codes && codes.length) {
+        const val = codes[0].rawValue || '';
+        stop = true;
+        if (stream) stream.getTracks().forEach(t => t.stop());
+        // QR encodes a full platform URL (machine -> new ticket); navigate to it.
+        if (/^https?:\/\//.test(val)) { window.location.href = val; return; }
+        // otherwise treat as a code
+        window.location.href = "{{ url_for('maintenance.scan') }}?code=" + encodeURIComponent(val);
+        return;
+      }
+    } catch(e) {}
+    requestAnimationFrame(tick);
+  }
+})();
+</script>
+{% endblock %}

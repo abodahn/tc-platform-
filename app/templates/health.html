@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}System Health{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="health.eyebrow">System Health</div>
+    <h1 data-i18n="health.title">Technical Health &amp; Integrations</h1>
+  </div>
+  <button class="btn btn-ghost" onclick="location.reload()"><svg class="ico"><use href="#i-refresh"></use></svg><span data-i18n="health.refresh">Refresh now</span></button>
+</div>
+
+<div class="grid cols-4">
+  <div class="kpi good"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-check"></use></svg></div></div><div class="kval" style="font-size:20px;margin-top:14px" data-i18n="status.online">Online</div><div class="klabel" data-i18n="health.platform">Platform</div></div>
+  <div class="kpi {{ 'good' if info.db_ok else 'warn' }}"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-database"></use></svg></div></div><div class="kval" style="font-size:20px;margin-top:14px">{{ 'OK' if info.db_ok else 'Missing' }}</div><div class="klabel" data-i18n="health.database">Database</div></div>
+  <div class="kpi info"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-cpu"></use></svg></div></div><div class="kval" style="font-size:20px;margin-top:14px">{{ info.python }}</div><div class="klabel" data-i18n="health.python">Python</div></div>
+  <div class="kpi"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-settings"></use></svg></div></div><div class="kval" style="font-size:20px;margin-top:14px">{{ info.env }}</div><div class="klabel" data-i18n="health.env">Environment</div></div>
+</div>
+
+<div class="panel accent mt-6">
+  <div class="panel-head"><h3 data-i18n="health.integrations">Integrated Systems</h3></div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="health.system">System</th><th>URL</th><th data-i18n="health.system">Status</th>
+        <th>HTTP</th><th data-i18n="health.response">Response</th><th data-i18n="health.last_check">Last check</th>
+      </tr></thead>
+      <tbody>
+        {% for s in systems if s.is_integrated %}
+        {% set st = statuses.get(s.key, {}) %}
+        <tr>
+          <td><div class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-{{ s.icon }}"></use></svg> {{ s.name_en }}</div></td>
+          <td><code class="tag">{{ s.base_url or '—' }}</code></td>
+          <td><span class="badge b-{{ st.status or 'unknown' }}"><span class="dot"></span><span data-i18n="status.{{ st.status or 'unknown' }}">{{ st.status }}</span></span></td>
+          <td>{{ st.http or '—' }}{% if st.error %} <span class="muted">({{ st.error }})</span>{% endif %}</td>
+          <td>{{ st.response_ms ~ ' ms' if st.response_ms is not none else '—' }}</td>
+          <td class="muted">{{ st.checked_at or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel mt-6">
+  <div class="panel-head"><h3>Platform paths</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <tr><td class="muted">Database</td><td><code class="tag">{{ info.db_path }}</code> {% if info.db_ok %}<span class="badge b-online"><span class="dot"></span>OK</span>{% endif %}</td></tr>
+      <tr><td class="muted">Backup dir</td><td><code class="tag">{{ info.backup_dir }}</code> {% if info.backup_ok %}<span class="badge b-online"><span class="dot"></span>OK</span>{% else %}<span class="badge b-unknown">not created</span>{% endif %}</td></tr>
+      <tr><td class="muted">Platform</td><td>{{ info.platform }}</td></tr>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

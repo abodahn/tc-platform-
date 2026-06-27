@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ system.name_en }}{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ system.category|replace('_',' ')|title }}</div>
+    <h1 data-loc-en="{{ system.name_en }}" data-loc-ar="{{ system.name_ar }}" data-loc-tr="{{ system.name_tr }}">{{ system.name_en }}</h1>
+    <div class="sub" data-loc-en="{{ system.desc_en }}" data-loc-ar="{{ system.desc_ar }}" data-loc-tr="{{ system.desc_tr }}">{{ system.desc_en }}</div>
+  </div>
+  {% if system.base_url %}
+  <a class="btn btn-primary" href="{{ system.base_url }}" {{ 'target=_blank rel=noopener' if system.launch_mode != 'same_tab' }}>
+    <svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.open_app">Open application</span>
+  </a>
+  {% endif %}
+</div>
+
+<div class="grid cols-3">
+  <div class="panel span-2">
+    <div class="panel-head">
+      <h3 data-i18n="dash.system_health">System Health</h3>
+      <span class="badge b-{{ status.status }}" data-status-key="{{ system.key }}"><span class="dot"></span><span data-status-label data-i18n="status.{{ status.status }}">{{ status.status }}</span></span>
+    </div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="module.url">URL</td><td><code class="tag">{{ system.base_url or '—' }}</code></td></tr>
+        <tr><td class="muted" data-i18n="launch.port">Port</td><td>{{ system.port or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="module.health">Health</td><td>{{ system.health_url or '—' }}</td></tr>
+        <tr><td class="muted">HTTP</td><td>{{ status.http or '—' }}{% if status.error %} <span class="badge b-offline">{{ status.error }}</span>{% endif %}</td></tr>
+        <tr><td class="muted" data-i18n="module.response">Response time</td><td>{{ status.response_ms ~ ' ms' if status.response_ms is not none else '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="health.last_check">Last check</td><td>{{ status.checked_at }}</td></tr>
+        <tr><td class="muted" data-i18n="common.owner">Owner</td><td>{{ system.owner }}</td></tr>
+        <tr><td class="muted" data-i18n="module.criticality">Criticality</td><td><span class="badge b-{{ 'critical' if system.criticality=='critical' else ('warning' if system.criticality=='high' else 'unknown') }}">{{ system.criticality }}</span></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel accent">
+    <div class="panel-head"><h3 data-i18n="launch.open">Launch</h3></div>
+    <div class="panel-pad">
+      <p class="muted" style="font-size:13px">Choose how to open this integrated system. Cross-system single sign-on arrives in roadmap Phase 2.</p>
+      {% if system.base_url %}
+      <a class="btn btn-primary btn-block mt-3" href="{{ system.base_url }}"><svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.same_tab">Open in same tab</span></a>
+      <a class="btn btn-ghost btn-block mt-3" href="{{ system.base_url }}" target="_blank" rel="noopener"><svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.new_tab">Open in new tab</span></a>
+      {% else %}
+      <div class="empty"><span class="muted">No URL configured. Set it in the Admin Center.</span></div>
+      {% endif %}
+      {% if can('manage_integrations') %}
+      <a class="btn btn-ghost btn-block mt-3" href="{{ url_for('admin.index') }}#integrations"><svg class="ico"><use href="#i-settings"></use></svg><span data-i18n="launch.admin">Admin</span></a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

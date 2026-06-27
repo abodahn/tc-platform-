@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Spare Parts Inventory{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="nav.maint_spares">Spare Parts Inventory</h1></div>
+  <div class="flex gap">
+    <a class="btn btn-ghost" href="{{ url_for('maintenance.report_export', key='inventory') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.export">Export</span></a>
+    {% if mcan('maint_admin') %}<a class="btn btn-ghost" href="{{ url_for('maintenance.import_page', kind='spares') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.import">Import</span></a>{% endif %}
+    {% if mcan('maint_store') %}<button class="btn btn-primary" onclick="document.getElementById('sAdd').style.display='block'"><svg class="ico"><use href="#i-boxes"></use></svg><span data-i18n="m.add">Add</span></button>{% endif %}
+  </div>
+</div>
+
+{% if mcan('maint_store') %}
+<div class="panel accent" id="sAdd" style="margin-bottom:18px;display:none">
+  <div class="panel-head"><h3 data-i18n="m.add">Add spare part</h3></div>
+  <form method="post" class="panel-pad"><div class="grid cols-4">
+    <div class="field"><label data-i18n="m.part">Code</label><input name="code" required></div>
+    <div class="field"><label data-i18n="m.machine_name">Name</label><input name="name"></div>
+    <div class="field"><label data-i18n="m.category">Category</label>
+      <select name="category">{% for c in C.SPARE_CATEGORIES %}<option value="{{ c }}" data-i18n="mx.{{ c }}">{{ c|mtext }}</option>{% endfor %}</select></div>
+    <div class="field"><label data-i18n="m.uom">Unit</label>
+      <select name="uom">{% for u in C.UOM %}<option value="{{ u }}">{{ u }}</option>{% endfor %}</select></div>
+    <div class="field"><label data-i18n="m.stock">Stock</label><input name="stock_qty" type="number" step="any" value="0"></div>
+    <div class="field"><label data-i18n="m.min">Min</label><input name="min_level" type="number" step="any" value="0"></div>
+    <div class="field"><label data-i18n="m.reorder">Reorder</label><input name="reorder_level" type="number" step="any" value="0"></div>
+    <div class="field"><label data-i18n="m.cost">Avg cost</label><input name="avg_cost" type="number" step="any" value="0"></div>
+  </div><button class="btn btn-primary btn-sm" data-i18n="m.save">Save</button></form>
+</div>
+{% endif %}
+
+<div class="panel"><div class="tbl-wrap"><table class="tbl">
+  <thead><tr><th data-i18n="m.part">Code</th><th data-i18n="m.machine_name">Name</th><th data-i18n="m.category">Category</th>
+    <th data-i18n="m.stock">Stock</th><th data-i18n="m.reorder">Reorder</th><th data-i18n="m.criticality">Criticality</th>
+    <th data-i18n="m.cost">Avg cost</th><th data-i18n="m.actions">Actions</th></tr></thead>
+  <tbody>{% for s in spares %}
+    <tr><td><a href="{{ url_for('maintenance.spare_profile', sid=s.id) }}"><b>{{ s.code }}</b></a></td>
+      <td>{{ s.name }}</td><td><span class="tag">{{ s.category|mhuman }}</span></td>
+      <td><span class="badge {{ 'b-critical' if s.stock_qty<=0 else ('b-warning' if s.stock_qty<=s.reorder_level else 'b-live') }}">{{ s.stock_qty }} {{ s.uom }}</span></td>
+      <td>{{ s.reorder_level }}</td><td><span class="badge {{ mbadge(s.criticality) }}">{{ s.criticality|mhuman }}</span></td>
+      <td>{{ '%.2f'|format(s.avg_cost or 0) }}</td>
+      <td><a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.spare_profile', sid=s.id) }}" data-i18n="m.view">View</a></td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% endblock %}

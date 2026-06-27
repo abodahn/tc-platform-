@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Import{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="m.import">Excel Import</h1>
+    <div class="sub" data-i18n="m.import_sub">Bulk-load machines or spare parts from an Excel file.</div></div>
+  <a class="btn btn-ghost" href="{{ url_for('maintenance.settings') }}" data-i18n="nav.maint_settings">Settings</a>
+</div>
+
+<div class="seg" style="width:max-content;margin-bottom:18px">
+  <a class="{{ 'on' if kind=='machines' }}" href="{{ url_for('maintenance.import_page', kind='machines') }}" data-i18n="nav.maint_machines" style="padding:8px 14px">Machines</a>
+  <a class="{{ 'on' if kind=='spares' }}" href="{{ url_for('maintenance.import_page', kind='spares') }}" data-i18n="nav.maint_spares" style="padding:8px 14px">Spare parts</a>
+</div>
+
+<div class="grid cols-2">
+  <div class="panel accent">
+    <div class="panel-head"><h3 data-i18n="m.import_upload">Upload file</h3></div>
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('maintenance.import_run', kind=kind) }}" class="panel-pad">
+      <p class="muted" style="font-size:13px"><span data-i18n="m.import_step1">1) Download the template</span> ·
+        <a href="{{ url_for('maintenance.import_template', kind=kind) }}"><b data-i18n="m.import_template">Download template</b></a></p>
+      <div class="field"><label data-i18n="m.import_step2">2) Choose your filled .xlsx file</label>
+        <input type="file" name="file" accept=".xlsx" required style="height:auto;padding:10px;border:1px dashed var(--line);border-radius:var(--r-md);background:var(--panel);width:100%"></div>
+      <button class="btn btn-primary"><svg class="ico"><use href="#i-boxes"></use></svg><span data-i18n="m.import_run">Import</span></button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="m.import_columns">Expected columns</h3></div>
+    <div class="panel-pad">
+      <div class="flex gap wrap">
+        {% for col in (C.SPARE_CATEGORIES if False else []) %}{% endfor %}
+        {% set cols = ['code','name','type','brand','department','area','line_no','criticality','status'] if kind=='machines' else ['code','name','category','uom','stock_qty','min_level','reorder_level','max_level','avg_cost','criticality'] %}
+        {% for col in cols %}<span class="tag">{{ col }}</span>{% endfor %}
+      </div>
+      <p class="muted mt-3" style="font-size:12.5px" data-i18n="m.import_note">Rows with an existing code are skipped. Codes must be unique. Numbers must be valid.</p>
+    </div>
+  </div>
+</div>
+
+{% if result %}
+<div class="panel mt-6 {{ 'accent' if result.errors }}">
+  <div class="panel-head"><h3 data-i18n="m.import_result">Import result</h3></div>
+  <div class="panel-pad">
+    <div class="flex gap wrap" style="margin-bottom:12px">
+      <span class="badge b-live"><b>{{ result.added }}</b> <span data-i18n="m.import_added">added</span></span>
+      <span class="badge b-unknown"><b>{{ result.skipped }}</b> <span data-i18n="m.import_skipped">skipped (duplicates)</span></span>
+      <span class="badge {{ 'b-critical' if result.errors else 'b-unknown' }}"><b>{{ result.errors|length }}</b> <span data-i18n="m.import_errors">errors</span></span>
+    </div>
+    {% for e in result.errors %}<div class="muted" style="font-size:12.5px">• {{ e }}</div>{% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,97 @@
+"""
+TC Platform — Flask application factory.
+
+Wires up configuration, security headers, the database, and blueprints.
+"""
+import shutil
+from pathlib import Path
+
+from flask import Flask
+
+from config import Config
+from app.db import init_db
+
+
+def create_app():
+    app = Flask(__name__, static_folder="static", template_folder="templates")
+    app.config.from_object(Config)
+    app.secret_key = Config.SECRET_KEY
+    app.permanent_session_lifetime = Config.SESSION_MINUTES * 60
+
+    # Session cookie hardening + upload limit
+    app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=Config.IS_PRODUCTION,  # HTTPS-only in production
+        MAX_CONTENT_LENGTH=Config.MAX_CONTENT_LENGTH,
+    )
+    Config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Branding: if a logo file is dropped in the PROJECT ROOT (next to run.py),
+    # adopt it into static/img so the whole UI uses it. Easiest place for users.
+    try:
+        img_dir = Path(app.static_folder) / "img"
+        for ext in ("png", "svg", "jpg", "jpeg", "webp"):
+            src = Config.BASE_DIR / f"logo.{ext}"
+            if src.exists():
+                shutil.copyfile(src, img_dir / f"logo.{ext}")
+                break
+    except Exception:
+        pass
+
+    # Ensure metadata DB exists and is seeded (non-destructive, idempotent)
+    init_db()
+
+    # CSRF protection for all state-changing requests
+    from app.csrf import init_csrf
+    init_csrf(app)
+
+    # --- Security headers (defence in depth) ---
+    @app.after_request
+    def set_secure_headers(resp):
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        resp.headers.setdefault("X-XSS-Protection", "0")
+        return resp
+
+    # --- Blueprints ---
+    from app.routes.auth import bp as auth_bp
+    from app.routes.main import bp as main_bp
+    from app.routes.admin import bp as admin_bp
+    from app.routes.api import bp as api_bp
+    from app.routes.production import bp as production_bp
+    from app.routes.maintenance import bp as maintenance_bp
+
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(main_bp)
+    app.register_blueprint(admin_bp)
+    app.register_blueprint(api_bp)
+    app.register_blueprint(production_bp)
+    app.register_blueprint(maintenance_bp)
+
+    # --- Error handlers ---
+    from flask import render_template
+
+    @app.errorhandler(400)
+    def bad_request(e):
+        msg = getattr(e, "description", "Bad request.")
+        return render_template("error.html", code=400, message=msg), 400
+
+    @app.errorhandler(403)
+    def forbidden(e):
+        return render_template("error.html", code=403,
+                               message="You do not have permission to view this page."), 403
+
+    @app.errorhandler(413)
+    def too_large(e):
+        mb = Config.MAX_CONTENT_LENGTH // (1024 * 1024)
+        return render_template("error.html", code=413,
+                               message=f"The file is too large (max {mb} MB). Please upload a smaller photo."), 413
+
+    @app.errorhandler(404)
+    def not_found(e):
+        return render_template("error.html", code=404,
+                               message="The page you are looking for was not found."), 404
+
+    return app

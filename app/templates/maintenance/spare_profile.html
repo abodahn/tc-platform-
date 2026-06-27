@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{{ sp.code }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">{{ sp.category|mhuman }}</div>
+    <h1>{{ sp.code }} · {{ sp.name }}</h1>
+    <div class="sub">{{ sp.warehouse }} · {{ sp.bin }}</div></div>
+</div>
+
+<div class="grid cols-4">
+  <div class="kpi {{ 'warn' if sp.stock_qty<=sp.reorder_level else 'good' }}"><div class="kval">{{ sp.stock_qty }}</div><div class="klabel" data-i18n="m.stock">Stock ({{ sp.uom }})</div></div>
+  <div class="kpi"><div class="kval">{{ sp.reorder_level }}</div><div class="klabel" data-i18n="m.reorder">Reorder level</div></div>
+  <div class="kpi info"><div class="kval">{{ '%.2f'|format(sp.avg_cost or 0) }}</div><div class="klabel" data-i18n="m.cost">Avg cost</div></div>
+  <div class="kpi"><div class="kval" style="font-size:18px;margin-top:14px">{{ sp.criticality|mhuman }}</div><div class="klabel" data-i18n="m.criticality">Criticality</div></div>
+</div>
+
+<div class="grid cols-3 mt-6">
+  <div class="panel span-2"><div class="panel-head"><h3 data-i18n="nav.maint_stock">Stock Movements</h3></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th data-i18n="m.movement">Type</th>
+      <th data-i18n="m.qty_change">Qty</th><th data-i18n="m.before">Before</th><th data-i18n="m.after">After</th><th data-i18n="m.created">When</th></tr></thead>
+      <tbody>{% for mv in moves %}<tr><td>{{ mv.movement_no }}</td><td><span class="tag">{{ mv.type|mhuman }}</span></td>
+        <td><b style="color:var(--{{ 'ok' if mv.qty>=0 else 'crit' }})">{{ '%+g'|format(mv.qty) }}</b></td>
+        <td>{{ mv.before_qty }}</td><td>{{ mv.after_qty }}</td><td class="muted">{{ mv.created_at }}</td></tr>
+      {% else %}<tr><td colspan="6"><div class="empty muted" data-i18n="m.no_records">No records</div></td></tr>{% endfor %}</tbody></table></div></div>
+
+  <div>
+    {% if mcan('maint_store') %}
+    <div class="panel accent"><div class="panel-head"><h3>Stock actions</h3></div><div class="panel-pad">
+      <form method="post" action="{{ url_for('maintenance.spare_receive', sid=sp.id) }}">
+        <div class="field"><label>Receive qty</label><input name="qty" type="number" step="any" min="0" value="0"></div>
+        <div class="field"><label>Price</label><input name="price" type="number" step="any"></div>
+        <button class="btn btn-primary btn-block btn-sm">Receive stock</button></form>
+      <div class="divider"></div>
+      <form method="post" action="{{ url_for('maintenance.spare_adjust', sid=sp.id) }}">
+        <div class="field"><label>Adjust to qty</label><input name="new_qty" type="number" step="any" value="{{ sp.stock_qty }}"></div>
+        <div class="field"><label data-i18n="m.reason">Reason (required)</label><input name="reason" required></div>
+        <button class="btn btn-ghost btn-block btn-sm">Adjust stock</button></form>
+    </div></div>
+    {% endif %}
+    <div class="panel mt-4 qr-card"><div class="panel-pad">
+      <img src="{{ url_for('maintenance.qr', kind='spare', eid=sp.id) }}" alt="QR">
+      <button class="btn btn-ghost btn-sm mt-2" onclick="window.print()" data-i18n="m.print_qr">Print QR</button></div></div>
+    <div class="panel mt-4"><div class="panel-head"><h3>Compatible machines</h3></div><div class="panel-pad">
+      {% for mm in machines %}<div class="mhealth"><svg class="ico" style="color:var(--tc-red)"><use href="#i-factory"></use></svg>
+        <a href="{{ url_for('maintenance.machine_profile', mid=mm.id) }}" style="font-size:13px">{{ mm.code }} · {{ mm.name }}</a></div>
+      {% else %}<div class="empty muted" data-i18n="m.no_records">No records</div>{% endfor %}</div></div>
+
+    {# AI alternative parts (offline) #}
+    <div class="panel mt-4 {{ 'accent' if sp.stock_qty <= sp.reorder_level }}">
+      <div class="panel-head"><h3 class="flex gap center"><svg class="ico" style="width:16px;height:16px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg> <span data-i18n="m.ai_alternatives">Alternatives in stock</span></h3></div>
+      <div class="panel-pad">
+        {% for a in alternatives %}
+        <div class="mhealth"><svg class="ico" style="color:var(--ok)"><use href="#i-boxes"></use></svg>
+          <div style="flex:1;font-size:12.5px"><a href="{{ url_for('maintenance.spare_profile', sid=a.id) }}">{{ a.code }}</a> · {{ a.name }}
+            {% if a.shares_machine %}<span class="tag" data-i18n="m.ai_same_machine">same machine</span>{% endif %}</div>
+          <span class="badge b-live">{{ a.stock }} {{ a.uom }}</span></div>
+        {% else %}<div class="empty muted" data-i18n="m.ai_no_alt">No in-stock substitutes found.</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

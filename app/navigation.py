@@ -1,0 +1,57 @@
+"""
+TC Platform — sidebar navigation definition.
+
+Each item: (key, i18n_key, icon, endpoint, permission). Sections group items.
+Menu visibility is enforced by `permission` against the user's role.
+"""
+
+NAV = [
+    {"section": "nav.command", "items": [
+        ("command_center", "nav.command_center", "grid", "main.dashboard", "view_dashboard"),
+        ("launcher", "nav.launcher", "apps", "main.launcher", "open_module"),
+    ]},
+    {"section": "nav.operations", "items": [
+        ("itsm", "nav.service_desk", "headset", "main.module", "open_module"),
+        ("assets", "nav.assets", "boxes", "main.module", "open_module"),
+        ("monitoring", "nav.monitoring", "activity", "main.module", "open_module"),
+        ("commandtrack", "nav.work", "kanban", "main.module", "open_module"),
+    ]},
+    {"section": "nav.maintenance", "items": [
+        ("maint_floor", "nav.maint_floor", "target", "maintenance.floor", "maint_view"),
+        ("maint_dashboard", "nav.maint_dashboard", "grid", "maintenance.dashboard", "maint_view"),
+        ("maint_ai", "nav.maint_ai", "sparkles", "maintenance.ai_insights", "maint_view"),
+        ("maint_new", "nav.maint_new", "report", "maintenance.ticket_new", "maint_ticket_create"),
+        ("maint_tickets", "nav.maint_tickets", "kanban", "maintenance.tickets", "maint_view"),
+        ("maint_machines", "nav.maint_machines", "factory", "maintenance.machines", "maint_view"),
+        ("maint_spares", "nav.maint_spares", "boxes", "maintenance.spares", "maint_view"),
+        ("maint_requests", "nav.maint_requests", "cart", "maintenance.requests", "maint_view"),
+        ("maint_approvals", "nav.maint_approvals", "check", "maintenance.approvals", "maint_approve"),
+        ("maint_pm", "nav.maint_pm", "refresh", "maintenance.pm", "maint_view"),
+        ("maint_calendar", "nav.maint_calendar", "clock", "maintenance.calendar", "maint_view"),
+        ("maint_stock", "nav.maint_stock", "server", "maintenance.stock", "maint_view"),
+        ("maint_reports", "nav.maint_reports", "chart", "maintenance.reports", "maint_view"),
+        ("maint_settings", "nav.maint_settings", "settings", "maintenance.settings", "maint_admin"),
+    ]},
+    {"section": "nav.transformation", "items": [
+        ("ai_hub", "nav.ai_hub", "sparkles", "main.module", "open_module"),
+        ("finance", "nav.finance", "wallet", "main.module", "open_module"),
+        ("automation", "nav.automation", "robot", "main.module", "open_module"),
+        ("bi", "nav.bi", "chart", "main.module", "open_module"),
+        ("production", "nav.production", "factory", "production.index", "open_module"),
+    ]},
+    {"section": "nav.services", "items": [
+        ("hr", "nav.hr", "users", "main.module", "open_module"),
+        ("procurement", "nav.procurement", "cart", "main.module", "open_module"),
+        ("saplite", "nav.saplite", "server", "main.module", "open_module"),
+        ("kb", "nav.kb", "book", "main.module", "open_module"),
+    ]},
+    {"section": "nav.govern", "items": [
+        ("reports", "nav.reports", "report", "main.reports", "view_reports"),
+        ("governance", "nav.governance", "shield", "main.module", "open_module"),
+        ("health", "nav.health", "pulse", "main.health", "view_system_health"),
+        ("roadmap", "nav.roadmap", "map", "main.roadmap", "view_dashboard"),
+    ]},
+    {"section": "nav.admin", "items": [
+        ("admin", "nav.admin_center", "settings", "admin.index", "access_admin"),
+    ]},
+]

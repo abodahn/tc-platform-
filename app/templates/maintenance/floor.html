@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}My Work{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="nav.maint_floor">My Work</h1>
+    <div class="sub">{{ cu.full_name or cu.username }} · {{ cu_role_label }}</div>
+  </div>
+</div>
+
+{# Big primary actions — large touch targets for the factory floor #}
+<div class="floor-actions">
+  {% if mcan('maint_ticket_create') %}
+  <a class="floor-btn primary" href="{{ url_for('maintenance.ticket_new') }}">
+    <svg class="ico"><use href="#i-alert"></use></svg>
+    <span data-i18n="m.report_problem">Report a Problem</span>
+  </a>
+  {% endif %}
+  <a class="floor-btn" href="{{ url_for('maintenance.scan') }}">
+    <svg class="ico"><use href="#i-target"></use></svg>
+    <span data-i18n="m.scan_qr">Scan Machine QR</span>
+  </a>
+</div>
+
+{# My assigned work #}
+<h3 class="mt-6" data-i18n="m.my_work">My assigned work</h3>
+<div class="floor-list mt-3">
+  {% for t in mine %}
+  <a class="floor-card {{ t.priority }}" href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}">
+    <div class="fc-main">
+      <div class="fc-top"><b>{{ t.machine_code }}</b><span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span></div>
+      <div class="fc-desc">{{ (t.description or '')[:80] }}</div>
+      <span class="badge {{ mbadge(t.status) }}">{{ t.status|mhuman }}</span>
+    </div>
+    <svg class="ico fc-arrow"><use href="#i-external"></use></svg>
+  </a>
+  {% else %}
+  <div class="panel"><div class="empty">
+    <svg class="ico"><use href="#i-check"></use></svg>
+    <div data-i18n="m.no_assigned">No work assigned to you right now.</div>
+  </div></div>
+  {% endfor %}
+</div>
+
+{# Other open tickets #}
+<h3 class="mt-6" data-i18n="m.open_tickets">Open tickets</h3>
+<div class="floor-list mt-3">
+  {% for t in open_tickets %}
+  <a class="floor-card {{ t.priority }}" href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}">
+    <div class="fc-main">
+      <div class="fc-top"><b>{{ t.ticket_no }}</b> · {{ t.machine_code }}</div>
+      <span class="badge {{ mbadge(t.status) }}">{{ t.status|mhuman }}</span>
+    </div>
+    <svg class="ico fc-arrow"><use href="#i-external"></use></svg>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

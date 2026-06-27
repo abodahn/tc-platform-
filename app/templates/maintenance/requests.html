@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Spare Part Requests{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+  <h1 data-i18n="nav.maint_requests">Spare Part Requests</h1></div></div>
+
+<div class="grid cols-1" style="gap:14px">
+  {% for r in reqs %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3>{{ r.request_no }} <span class="badge {{ mbadge(r.status) }}">{{ r.status|mhuman }}</span></h3>
+      <span class="muted">{{ r.technician }} · {{ r.urgency|mhuman }} · {{ r.created_at }}</span>
+    </div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th data-i18n="m.part">Part</th><th data-i18n="m.qty">Requested</th>
+        <th data-i18n="m.qty_approved">Approved</th><th data-i18n="m.qty_issued">Issued</th><th>Avail@req</th></tr></thead>
+      <tbody>{% for it in items[r.id] %}<tr><td>{{ it.part_code }} · {{ it.part_name }}</td>
+        <td>{{ it.qty_requested }} {{ it.uom }}</td><td>{{ it.qty_approved }}</td><td>{{ it.qty_issued }}</td>
+        <td>{{ it.available_at_request }}</td></tr>{% endfor %}</tbody></table></div>
+    <div class="panel-pad flex gap wrap center">
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.ticket_detail', tid=r.ticket_id) }}" data-i18n="m.open_ticket">Open ticket</a>
+      {% if r.status=='approved' and mcan('maint_store') %}
+      <form method="post" action="{{ url_for('maintenance.request_issue', rid=r.id) }}" class="flex gap center">
+        <input name="received_by" placeholder="Received by (technician)" style="height:38px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px">
+        <button class="btn btn-primary btn-sm"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="m.issue">Issue</span></button>
+      </form>
+      {% elif r.status=='issued' and mcan('maint_technician') %}
+      <form method="post" action="{{ url_for('maintenance.request_receive', rid=r.id) }}">
+        <button class="btn btn-primary btn-sm" data-i18n="m.receive">Confirm receiving</button></form>
+      {% elif r.status=='out_of_stock' %}
+      <span class="badge b-critical" data-i18n="m.ai_out_purchase">Out of stock — purchase recommendation</span>
+      {% endif %}
+    </div>
+    {% if r.status=='out_of_stock' and alts.get(r.id) %}
+    <div class="panel-pad" style="border-top:1px solid var(--line-2)">
+      <div class="flex gap center" style="margin-bottom:8px"><svg class="ico" style="width:15px;height:15px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg>
+        <b style="font-size:12.5px" data-i18n="m.ai_alternatives">Alternatives in stock</b></div>
+      <div class="flex gap wrap">
+        {% for a in alts[r.id] %}
+        <a class="tag" href="{{ url_for('maintenance.spare_profile', sid=a.id) }}" style="padding:6px 10px">{{ a.code }} · {{ a.name }} <b>({{ a.stock }} {{ a.uom }})</b></a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}<div class="panel"><div class="empty" data-i18n="m.no_records">No requests yet</div></div>{% endfor %}
+</div>
+{% endblock %}

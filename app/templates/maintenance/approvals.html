@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Approvals Center{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+  <h1 data-i18n="nav.maint_approvals">Approvals Center</h1></div>
+  <span class="tag">{{ approvals|length }} pending</span></div>
+
+<div class="grid cols-1" style="gap:14px">
+  {% for a in approvals %}
+  <div class="panel accent">
+    <div class="panel-head"><h3>{{ a.request_no }} · L{{ a.level }} {{ a.approver_role|mhuman }}</h3>
+      <span class="muted">{{ a.machine_code }} · {{ a.created_at }}</span></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th data-i18n="m.part">Part</th><th data-i18n="m.qty">Qty</th><th>Avail</th></tr></thead>
+      <tbody>{% for it in items[a.request_id] %}<tr><td>{{ it.part_code }} · {{ it.part_name }}</td>
+        <td>{{ it.qty_requested }} {{ it.uom }}</td><td>{{ it.available_at_request }}</td></tr>{% endfor %}</tbody></table></div>
+    <form method="post" action="{{ url_for('maintenance.approval_decide', aid=a.id) }}" class="panel-pad">
+      <div class="field"><label data-i18n="m.comment">Comment (required for reject/return)</label><input name="comment"></div>
+      <div class="flex gap">
+        <button class="btn btn-primary btn-sm" name="decision" value="approve"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="m.approve">Approve</span></button>
+        <button class="btn btn-ghost btn-sm" name="decision" value="return" data-i18n="m.return">Return</button>
+        <button class="btn btn-ghost btn-sm" name="decision" value="reject" style="color:var(--crit)" data-i18n="m.reject">Reject</button>
+      </div>
+    </form>
+  </div>
+  {% else %}<div class="panel"><div class="empty" data-i18n="m.no_records">No pending approvals</div></div>{% endfor %}
+</div>
+
+{% if history %}
+<div class="panel mt-6"><div class="panel-head"><h3 data-i18n="m.audit">Approval history</h3></div>
+  <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Request</th><th>Level</th><th data-i18n="m.status">Status</th>
+    <th>Approver</th><th data-i18n="m.comment">Comment</th><th>When</th></tr></thead>
+    <tbody>{% for h in history %}<tr><td>{{ h.request_no }}</td><td>L{{ h.level }}</td>
+      <td><span class="badge {{ mbadge(h.status) }}">{{ h.status|mhuman }}</span></td>
+      <td>{{ h.approver_user or '—' }}</td><td>{{ h.comment or '' }}</td><td class="muted">{{ h.decided_at }}</td></tr>{% endfor %}</tbody></table></div></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Tickets & Work Orders{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="nav.maint_tickets">Tickets &amp; Work Orders</h1>
+  </div>
+  {% if mcan('maint_ticket_create') %}
+  <a class="btn btn-primary" href="{{ url_for('maintenance.ticket_new') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="nav.maint_new">New Ticket</span></a>
+  {% endif %}
+</div>
+
+{# Filters #}
+<form class="panel" style="margin-bottom:16px" method="get">
+  <div class="panel-pad flex gap wrap center">
+    <select name="status" onchange="this.form.submit()" style="height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px">
+      <option value="" data-i18n="m.all_statuses">All statuses</option>
+      {% for s in C.TICKET_STATUSES %}<option value="{{ s }}" data-i18n="mx.{{ s }}" {{ 'selected' if status==s }}>{{ s|mtext }}</option>{% endfor %}
+    </select>
+    <select name="priority" onchange="this.form.submit()" style="height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px">
+      <option value="" data-i18n="m.all_priorities">All priorities</option>
+      {% for p in C.PRIORITIES %}<option value="{{ p }}" data-i18n="mx.{{ p }}" {{ 'selected' if priority==p }}>{{ p|mtext }}</option>{% endfor %}
+    </select>
+    <span class="tag"><span data-count-plain>{{ tickets|length }}</span> <span data-i18n="nav.maint_tickets">tickets</span></span>
+    <div class="spacer"></div>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.report_export', key='tickets') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.export">Export CSV</span></a>
+  </div>
+</form>
+
+{# Kanban board grouped into logical columns #}
+{% set groups = [
+  ('m.col_new', 'New', ['submitted','under_review','reopened']),
+  ('m.col_assigned', 'Assigned / Diagnosis', ['assigned','diagnosis']),
+  ('m.col_spare', 'Spare & Approval', ['spare_required','waiting_stock','waiting_approval','approved_issue']),
+  ('m.col_repair', 'Repair / Testing', ['parts_issued','repair','testing']),
+  ('m.col_done', 'Resolved / Closed', ['resolved','closed','rejected','cancelled'])
+] %}
+<div class="mkanban">
+  {% for key, title, states in groups %}
+  {% set col = tickets|selectattr('status','in',states)|list %}
+  <div class="mkcol">
+    <h4><span data-i18n="{{ key }}">{{ title }}</span><span class="tag">{{ col|length }}</span></h4>
+    <div class="mkbody">
+      {% for t in col %}
+      <a class="mkcard" href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}">
+        <div class="flex between center"><span class="mk-no">{{ t.ticket_no }}</span><span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span></div>
+        <div class="mk-meta">{{ t.machine_code }} · {{ t.department or '—' }}</div>
+        <div style="font-size:12.5px;margin-top:6px">{{ (t.description or '')[:64] }}</div>
+        <div class="flex between center" style="margin-top:8px">
+          <span class="badge {{ mbadge(t.status) }}">{{ t.status|mhuman }}</span>
+          <span class="muted" style="font-size:11px">{{ t.assigned_to or '—' }}</span>
+        </div>
+      </a>
+      {% else %}<div class="empty muted" style="padding:18px;font-size:12px" data-i18n="m.no_records">No records</div>{% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

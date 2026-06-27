@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="reports.eyebrow">Reporting Center</div>
+    <h1 data-i18n="reports.title">Reports</h1>
+    <div class="sub" data-i18n="reports.sub">Executive and operational reporting across all modules.</div>
+  </div>
+</div>
+
+{% if can('export_reports') and exports %}
+<div class="panel accent" style="margin-bottom:18px">
+  <div class="panel-head">
+    <h3 data-i18n="reports.data_exports">Data exports (CSV)</h3>
+    <span class="muted" data-i18n="reports.data_exports_sub">Live data, ready to download</span>
+  </div>
+  <div class="panel-pad flex wrap gap">
+    {% for key, spec in exports.items() %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('main.export_csv', key=key) }}">
+      <svg class="ico"><use href="#i-report"></use></svg><span>{{ spec[0] }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="grid cols-3">
+  {% for name, source, desc in reports %}
+  <div class="app-card">
+    <div class="ac-top">
+      <div class="ac-icon"><svg class="ico" style="width:24px;height:24px"><use href="#i-report"></use></svg></div>
+      <span class="tag">{{ source }}</span>
+    </div>
+    <h3>{{ name }}</h3>
+    <div class="ac-desc">{{ desc }}</div>
+    <div class="ac-actions">
+      <button class="btn btn-ghost btn-sm" onclick="tcToast('CSV export — coming in Phase 4','')">CSV</button>
+      <button class="btn btn-ghost btn-sm" onclick="tcToast('Excel export — coming in Phase 4','')">Excel</button>
+      <button class="btn btn-ghost btn-sm" onclick="tcToast('PDF export — coming in Phase 4','')">PDF</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

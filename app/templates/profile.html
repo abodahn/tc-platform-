@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Profile{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="top.profile">Profile</div>
+    <h1>{{ cu.full_name or cu.username }}</h1>
+    <div class="sub">{{ cu_role_label }}</div>
+  </div>
+</div>
+
+<div class="grid cols-3">
+  <div class="panel span-2 accent">
+    <div class="panel-head"><h3 data-i18n="profile.change_password">Change password</h3></div>
+    <form class="panel-pad" method="post" action="{{ url_for('main.change_password') }}">
+      <div class="field">
+        <label data-i18n="profile.current">Current password</label>
+        <input type="password" name="current_password" autocomplete="current-password" required>
+      </div>
+      <div class="grid cols-2">
+        <div class="field">
+          <label data-i18n="profile.new">New password</label>
+          <input type="password" name="new_password" autocomplete="new-password" required>
+        </div>
+        <div class="field">
+          <label data-i18n="profile.confirm">Confirm new password</label>
+          <input type="password" name="confirm_password" autocomplete="new-password" required>
+        </div>
+      </div>
+      <p class="muted" style="font-size:12.5px;margin:0 0 14px" data-i18n="profile.policy">Minimum 8 characters, with at least one letter and one number.</p>
+      <button class="btn btn-primary" type="submit"><svg class="ico"><use href="#i-shield"></use></svg><span data-i18n="admin.save">Save</span></button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="top.profile">Account</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="admin.username">Username</td><td><b>{{ cu.username }}</b></td></tr>
+        <tr><td class="muted" data-i18n="admin.name">Name</td><td>{{ cu.full_name or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="admin.email">Email</td><td>{{ cu.email or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="admin.role">Role</td><td><span class="tag">{{ cu_role_label }}</span></td></tr>
+        <tr><td class="muted" data-i18n="top.language">Language</td><td>{{ cu.lang_pref|upper }}</td></tr>
+        <tr><td class="muted" data-i18n="top.theme">Theme</td><td>{{ cu.theme_pref|capitalize }}</td></tr>
+      </table>
+      <p class="muted" style="font-size:12px;margin-top:14px" data-i18n="profile.prefs_note">Language and theme are saved automatically from the top bar.</p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 120" fill="none">
+  <!-- Mark -->
+  <rect x="8" y="6" width="60" height="20" rx="2.5" fill="#ED1C24"/>
+  <path d="M70 32 C70 66 51 92 19 106 L12 106 C42 90 56 64 52 34 Z" fill="#ED1C24"/>
+  <!-- Wordmark (currentColor so it adapts to light/dark) -->
+  <text x="110" y="62" font-family="Segoe UI, Arial, sans-serif" font-size="52" font-weight="800" fill="currentColor" letter-spacing="-1">T&amp;C</text>
+  <text x="112" y="92" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="600" fill="currentColor" letter-spacing="6">GARMENTS</text>
+</svg>

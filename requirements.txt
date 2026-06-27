@@ -1,0 +1,24 @@
+# TC Platform — T&C Digital Operations Platform
+# Core runtime dependencies (Windows Server friendly, no compiler needed)
+
+Flask==3.0.3
+requests==2.32.3
+python-dotenv==1.0.1
+Werkzeug==3.0.3
+openpyxl==3.1.5           # Excel import/template (pure-python)
+qrcode==7.4.2            # machine/spare/ticket QR codes (pure-python)
+Pillow>=10.4             # QR rendering + logo/icon processing (unpinned: wheels vary by Python)
+reportlab>=4.0          # PDF reports (unpinned: wheels vary by Python)
+
+# --- Production WSGI servers ---
+waitress==3.0.0          # local Windows production (serve.py)
+gunicorn==23.0.0         # Render / Linux (wsgi:app)
+
+# --- PostgreSQL driver (used on Render when DATABASE_URL is set) ---
+# Linux-only marker: Render (Linux) installs it; local Windows skips it (uses SQLite),
+# so `pip install -r requirements.txt` works locally without a build toolchain.
+psycopg2-binary==2.9.10 ; sys_platform == "linux"
+
+# --- Optional / development ---
+# pytest==8.2.2            # backend tests
+# playwright==1.45.0       # UI screenshots

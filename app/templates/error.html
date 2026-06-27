@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ code }} · TC Platform</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+<div style="min-height:100vh;display:grid;place-items:center;padding:24px">
+  <div class="panel accent" style="max-width:480px;text-align:center;padding:40px">
+    <div class="brand-logo" style="margin:0 auto 20px;width:54px;height:54px"><img src="{{ url_for('static', filename=brand_logo) }}" alt="T&amp;C"></div>
+    <h1 style="font-size:48px;margin:0;color:var(--tc-red)">{{ code }}</h1>
+    <p class="muted">{{ message }}</p>
+    <a class="btn btn-primary mt-4" href="{{ url_for('main.dashboard') }}">Back to Command Center</a>
+  </div>
+</div>
+</body>
+</html>

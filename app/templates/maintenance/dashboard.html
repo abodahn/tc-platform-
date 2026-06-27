@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Maintenance Dashboard{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="nav.maintenance">Maintenance &amp; Spare Parts</div>
+    <h1 data-i18n="nav.maint_dashboard">Maintenance Dashboard</h1>
+    <div class="sub" data-i18n="m.subtitle">Paperless factory maintenance &amp; spare parts control</div>
+  </div>
+  {% if mcan('maint_ticket_create') %}
+  <a class="btn btn-primary" href="{{ url_for('maintenance.ticket_new') }}">
+    <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="nav.maint_new">New Ticket</span></a>
+  {% endif %}
+</div>
+
+{# KPI grid #}
+<div class="grid cols-4">
+  {% macro k(cls, icon, val, label, suf='') %}
+  <div class="kpi {{ cls }}"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-{{ icon }}"></use></svg></div></div>
+    <div class="kval" data-count="{{ val }}" data-suffix="{{ suf }}">0</div><div class="klabel" data-i18n="{{ label }}">{{ label }}</div></div>
+  {% endmacro %}
+  {{ k('', 'kanban', kpis.open_tickets, 'm.open_tickets') }}
+  {{ k('warn', 'alert', kpis.critical, 'm.critical') }}
+  {{ k('warn', 'factory', kpis.machines_stopped, 'm.machines_stopped') }}
+  {{ k('info', 'settings', kpis.under_maint, 'm.under_maint') }}
+  {{ k('warn', 'cart', kpis.waiting_spare, 'm.waiting_spare') }}
+  {{ k('info', 'check', kpis.pending_appr, 'm.pending_appr') }}
+  {{ k('warn', 'boxes', kpis.low_stock, 'm.low_stock') }}
+  {{ k('warn', 'alert', kpis.out_stock, 'm.out_stock') }}
+  {{ k('warn', 'refresh', kpis.pm_overdue, 'm.pm_overdue') }}
+  {{ k('', 'clock', kpis.downtime_month, 'm.downtime_month') }}
+  {{ k('good', 'trend', kpis.mttr, 'm.mttr') }}
+  {{ k('good', 'shield', kpis.sla, 'm.sla', '%') }}
+</div>
+
+<a class="ai-banner mt-6" href="{{ url_for('maintenance.ai_insights') }}">
+  <svg class="ico"><use href="#i-sparkles"></use></svg>
+  <div>
+    <b data-i18n="nav.maint_ai">AI Insights — Predictive Maintenance</b><br>
+    <span style="color:rgba(255,255,255,.8);font-size:12.5px">
+      <b>{{ kpis.ai_at_risk }}</b> <span data-i18n="m.ai_at_risk">machines at risk</span> ·
+      <span data-i18n="m.ai_offline">on-premise, works offline</span></span>
+  </div>
+  <span class="btn btn-primary"><span data-i18n="m.view">View</span></span>
+</a>
+
+<div class="grid cols-3 mt-6">
+  {# Tickets by status #}
+  <div class="panel accent">
+    <div class="panel-head"><h3 data-i18n="m.tickets_by_status">Tickets by Status</h3></div>
+    <div class="panel-pad">
+      {% set tmax = (by_status|map(attribute='c')|max) or 1 %}
+      {% for r in by_status %}
+      <div class="hbar"><span class="badge {{ mbadge(r.status) }}">{{ r.status|mhuman }}</span>
+        <div class="track"><div class="fill" style="width:{{ (r.c/tmax*100)|round }}%"></div></div><b>{{ r.c }}</b></div>
+      {% else %}<div class="empty" data-i18n="m.no_records">No records</div>{% endfor %}
+    </div>
+  </div>
+  {# Tickets by priority #}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="m.tickets_by_priority">By Priority</h3></div>
+    <div class="panel-pad">
+      {% set pmax = (by_priority|map(attribute='c')|max) or 1 %}
+      {% for r in by_priority %}
+      <div class="hbar"><span class="badge {{ mbadge(r.priority) }}">{{ r.priority|mhuman }}</span>
+        <div class="track"><div class="fill" style="width:{{ (r.c/pmax*100)|round }}%"></div></div><b>{{ r.c }}</b></div>
+      {% endfor %}
+    </div>
+  </div>
+  {# Downtime by machine #}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="m.downtime_by_machine">Downtime by Machine</h3></div>
+    <div class="panel-pad">
+      {% set dmax = (downtime_machine|map(attribute='d')|max) or 1 %}
+      {% for r in downtime_machine %}
+      <div class="hbar"><span>{{ r.machine_code }}</span>
+        <div class="track"><div class="fill" style="width:{{ (r.d/dmax*100)|round }}%"></div></div><b>{{ r.d }}</b></div>
+      {% else %}<div class="empty muted" data-i18n="m.no_records">No records</div>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="grid cols-3 mt-6">
+  {# Machine health #}
+  <div class="panel span-2">
+    <div class="panel-head"><h3 data-i18n="m.machine_health">Machine Health</h3>
+      <a class="tag" href="{{ url_for('maintenance.machines') }}" data-i18n="dash.view_all">View all</a></div>
+    <div class="panel-pad">
+      {% for m in machines %}
+      <div class="mhealth">
+        <span class="mh-dot" style="background:var(--{{ 'ok' if m.health_band=='good' else ('crit' if m.health_band=='crit' else 'warn') }})"></span>
+        <div style="flex:1"><b style="font-size:13px"><a href="{{ url_for('maintenance.machine_profile', mid=m.id) }}">{{ m.code }}</a></b>
+          <span class="muted" style="font-size:12px"> · {{ m.name }}</span></div>
+        <div class="eff {{ 'good' if m.health_band=='good' else ('warn' if m.health_band=='warn' else '') }}" style="width:120px">
+          <div class="track"><div class="fill" style="width:{{ m.health }}%"></div></div><b style="font-size:12px">{{ m.health }}</b>
+        </div>
+        <span class="badge {{ mbadge(m.status) }}">{{ m.status|mhuman }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {# Low stock #}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="m.low_stock">Low Stock</h3></div>
+    <div class="panel-pad">
+      {% for s in low %}
+      <div class="mhealth"><svg class="ico" style="color:var(--warn)"><use href="#i-boxes"></use></svg>
+        <div style="flex:1;font-size:12.5px"><a href="{{ url_for('maintenance.spare_profile', sid=s.id) }}">{{ s.code }}</a> · {{ s.name }}</div>
+        <span class="badge {{ 'b-critical' if s.stock_qty<=0 else 'b-warning' }}">{{ s.stock_qty }}/{{ s.reorder_level }}</span></div>
+      {% else %}<div class="empty muted" data-i18n="m.no_records">No records</div>{% endfor %}
+    </div>
+  </div>
+</div>
+
+{# Recent tickets #}
+<div class="panel mt-6">
+  <div class="panel-head"><h3 data-i18n="m.recent_tickets">Recent Tickets</h3>
+    <a class="tag" href="{{ url_for('maintenance.tickets') }}" data-i18n="dash.view_all">View all</a></div>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>#</th><th data-i18n="m.machine">Machine</th><th data-i18n="m.priority">Priority</th>
+      <th data-i18n="m.status">Status</th><th data-i18n="m.assigned_to">Assigned</th><th data-i18n="m.created">Created</th></tr></thead>
+    <tbody>{% for t in recent %}
+      <tr><td><a href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}"><b>{{ t.ticket_no }}</b></a></td>
+        <td>{{ t.machine_code }}</td><td><span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span></td>
+        <td><span class="badge {{ mbadge(t.status) }}">{{ t.status|mhuman }}</span></td>
+        <td>{{ t.assigned_to or '—' }}</td><td class="muted">{{ t.created_at }}</td></tr>
+    {% endfor %}</tbody></table></div>
+</div>
+{% endblock %}

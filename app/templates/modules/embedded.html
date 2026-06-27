@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ system.name_en }}{% endblock %}
+{% block content_class %}embed-content{% endblock %}
+{% block content %}
+
+<div class="embed-bar">
+  <div class="eb-title">
+    <span class="eb-icon"><svg class="ico" style="width:18px;height:18px"><use href="#i-{{ system.icon }}"></use></svg></span>
+    <span data-loc-en="{{ system.name_en }}" data-loc-ar="{{ system.name_ar }}" data-loc-tr="{{ system.name_tr }}">{{ system.name_en }}</span>
+    <span class="badge b-{{ status.status }}" data-status-key="{{ system.key }}" style="margin-inline-start:6px">
+      <span class="dot"></span><span data-status-label data-i18n="status.{{ status.status }}">{{ status.status }}</span>
+    </span>
+  </div>
+  <span class="eb-meta tag">{{ system.base_url }}</span>
+  <div class="spacer"></div>
+  {% if status.status != 'offline' and system.base_url %}
+  <button class="btn btn-ghost btn-sm" onclick="document.getElementById('appFrame').src=document.getElementById('appFrame').src">
+    <svg class="ico"><use href="#i-refresh"></use></svg><span data-i18n="module.refresh">Refresh</span>
+  </button>
+  {% endif %}
+  {% if system.base_url %}
+  <a class="btn btn-ghost btn-sm" href="{{ system.base_url }}" target="_blank" rel="noopener">
+    <svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.fullscreen">Full screen</span>
+  </a>
+  {% endif %}
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('main.module', key=system.key) }}?view=details" data-i18n="module.details">Details</a>
+</div>
+
+<div class="embed-stage">
+  {% if status.status == 'offline' or not system.base_url %}
+    <div class="embed-offline">
+      <div class="card">
+        <div class="ic"><svg class="ico" style="width:26px;height:26px"><use href="#i-alert"></use></svg></div>
+        <h2 style="margin:0 0 8px" data-i18n="module.offline_title">This system is offline</h2>
+        <p class="muted" data-i18n="module.offline_msg">The application is not reachable right now. Start the system or check its address in the Admin Center, then retry.</p>
+        <div class="flex gap center" style="justify-content:center;margin-top:18px">
+          <button class="btn btn-primary" onclick="location.reload()"><svg class="ico"><use href="#i-refresh"></use></svg><span data-i18n="module.retry">Retry</span></button>
+          {% if system.base_url %}<a class="btn btn-ghost" href="{{ system.base_url }}" target="_blank" rel="noopener"><svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.fullscreen">Full screen</span></a>{% endif %}
+          {% if can('manage_integrations') %}<a class="btn btn-ghost" href="{{ url_for('admin.index') }}#integrations"><svg class="ico"><use href="#i-settings"></use></svg><span data-i18n="launch.admin">Admin</span></a>{% endif %}
+        </div>
+        <div class="tag" style="margin-top:16px">{{ system.base_url or '—' }}</div>
+      </div>
+    </div>
+  {% else %}
+    <div class="embed-loading" id="embedLoading">
+      <div class="flex gap center"><div class="skeleton" style="width:120px;height:16px"></div></div>
+    </div>
+    <iframe id="appFrame" class="embed-frame" src="{{ system.base_url }}"
+            title="{{ system.name_en }}"
+            referrerpolicy="no-referrer"
+            allow="fullscreen; clipboard-read; clipboard-write"
+            onload="var l=document.getElementById('embedLoading'); if(l) l.classList.add('hidden');"></iframe>
+  {% endif %}
+</div>
+
+{% endblock %}

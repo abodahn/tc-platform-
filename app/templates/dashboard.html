@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Command Center{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="dash.eyebrow">Executive Command Center</div>
+    <h1 data-i18n="dash.title">Operations overview</h1>
+    <div class="sub">{{ cu.full_name or cu.username }} · {{ cu_role_label }}</div>
+  </div>
+  <a class="btn btn-ghost" href="{{ url_for('main.launcher') }}">
+    <svg class="ico"><use href="#i-apps"></use></svg><span data-i18n="nav.launcher">App Launcher</span>
+  </a>
+</div>
+
+{# ---------------- Hero ---------------- #}
+<div class="hero">
+  <h2 data-i18n="dash.hero_title">T&amp;C Digital Operations — Live Control Tower</h2>
+  <p data-i18n="dash.hero_sub">A single, secure ecosystem unifying service desk, assets, monitoring, work management and the digital transformation roadmap.</p>
+  <div class="chips">
+    <span class="chip"><span data-count="{{ kpis.servers_online }}">0</span>/{{ kpis.servers_total }} <span data-i18n="dash.system_health">systems</span></span>
+    <span class="chip">SLA <span data-count="{{ kpis.sla_health }}" data-suffix="%">0</span></span>
+    <span class="chip"><span data-i18n="kpi.pending_approvals">Approvals</span>: {{ kpis.pending_approvals }}</span>
+    <span class="chip"><span data-i18n="kpi.cost_saving">Saving</span>: {{ kpis.cost_saving }}</span>
+  </div>
+</div>
+
+{# ---------------- AI Daily Briefing (offline) ---------------- #}
+{% if briefing %}
+<div class="panel accent mt-6">
+  <div class="panel-head">
+    <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg>
+      <span data-i18n="sum_title">AI Daily Briefing</span></h3>
+    <span class="badge b-live"><span class="dot" style="background:var(--ok)"></span><span data-i18n="m.ai_offline">On-premise · offline</span></span>
+  </div>
+  <div class="panel-pad">
+    <div style="font-weight:700;font-size:15px;margin-bottom:12px" data-i18n="{{ briefing.headline }}">Status</div>
+    <div class="flex gap wrap">
+      {% for i in briefing.insights %}
+      <span class="badge {{ 'b-critical' if i.sev=='crit' else ('b-warning' if i.sev=='warn' else ('b-live' if i.sev=='good' else 'b-info')) }}" style="padding:7px 12px;font-size:12.5px">
+        <svg class="ico" style="width:14px;height:14px"><use href="#i-{{ i.icon }}"></use></svg>
+        {% if i.n != '' %}<b style="margin-inline-end:3px">{{ i.n }}</b>{% endif %}<span data-i18n="{{ i.key }}">{{ i.key }}</span>
+      </span>
+      {% endfor %}
+    </div>
+    {% if briefing.focus %}
+    <div class="mt-3 flex gap center" style="font-size:13px">
+      <svg class="ico" style="width:16px;height:16px;color:var(--tc-red)"><use href="#i-target"></use></svg>
+      <span data-i18n="sum_focus">Focus</span>: <b>{{ briefing.focus.code }}</b> — <span data-i18n="{{ briefing.focus.rec_key }}">action</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{# ---------------- KPI grid ---------------- #}
+<div class="flex between center mt-6" style="margin-bottom:-6px">
+  <h3 style="margin:0;font-size:15px" data-i18n="dash.kpis">Key indicators</h3>
+  <span class="tag" data-i18n="dash.kpis_demo">Sample figures — live adapters in Phase D · system status is live</span>
+</div>
+<div class="grid cols-4 mt-4">
+  {% macro kpi(klass, icon, val, label, suffix='', trend=None, tdir='up') %}
+  <div class="kpi {{ klass }}">
+    <div class="ktop">
+      <div class="kicon"><svg class="ico"><use href="#i-{{ icon }}"></use></svg></div>
+      {% if trend %}<span class="ktrend {{ tdir }}">{{ trend }}</span>{% endif %}
+    </div>
+    <div class="kval" data-count="{{ val }}" data-suffix="{{ suffix }}">0</div>
+    <div class="klabel" data-i18n="{{ label }}">{{ label }}</div>
+  </div>
+  {% endmacro %}
+
+  {{ kpi('', 'headset', kpis.open_tickets, 'kpi.open_tickets', trend='+4%', tdir='up') }}
+  {{ kpi('good', 'shield', kpis.sla_health, 'kpi.sla_health', suffix='%', trend='+2%') }}
+  {{ kpi('warn', 'alert', kpis.critical_tickets, 'kpi.critical_tickets') }}
+  {{ kpi('info', 'boxes', kpis.assets_total, 'kpi.assets_total') }}
+  {{ kpi('warn', 'settings', kpis.assets_maintenance, 'kpi.assets_maintenance') }}
+  {{ kpi('warn', 'cart', kpis.low_stock, 'kpi.low_stock') }}
+  {{ kpi('good', 'server', kpis.servers_online, 'kpi.servers_online') }}
+  {{ kpi('warn', 'cpu', kpis.cpu_alerts, 'kpi.cpu_alerts') }}
+  {{ kpi('', 'kanban', kpis.active_projects, 'kpi.active_projects') }}
+  {{ kpi('warn', 'clock', kpis.overdue_tasks, 'kpi.overdue_tasks') }}
+  {{ kpi('info', 'check', kpis.pending_approvals, 'kpi.pending_approvals') }}
+  {{ kpi('good', 'coins', 0, 'kpi.cost_saving') }}
+</div>
+<div class="grid cols-4" style="margin-top:-8px">
+  <div class="kpi good" style="grid-column:span 1"><div class="kval" style="font-size:22px;margin-top:8px">{{ kpis.cost_saving }}</div><div class="klabel" data-i18n="kpi.cost_saving">Projected Cost Saving</div></div>
+</div>
+
+{# ---------------- Transformation + System health ---------------- #}
+<div class="grid cols-3 mt-6">
+
+  {# Digital transformation progress #}
+  <div class="panel accent span-2">
+    <div class="panel-head"><h3 data-i18n="dash.transformation">Digital Transformation Progress</h3><span class="muted" data-i18n="nav.roadmap">Roadmap</span></div>
+    <div class="panel-pad">
+      {% macro prog(label, val) %}
+      <div class="flex between center" style="margin-bottom:6px"><span data-i18n="{{ label }}">{{ label }}</span><b>{{ val }}%</b></div>
+      <div class="bar" style="margin-bottom:18px"><i style="width:{{ val }}%"></i></div>
+      {% endmacro %}
+      {{ prog('kpi.finance_progress', kpis.finance_progress) }}
+      {{ prog('kpi.automation_progress', kpis.automation_progress) }}
+      {{ prog('kpi.ai_progress', kpis.ai_progress) }}
+      {{ prog('kpi.production_readiness', kpis.production_readiness) }}
+    </div>
+  </div>
+
+  {# SLA health ring #}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="kpi.sla_health">SLA Health</h3></div>
+    <div class="panel-pad" style="text-align:center">
+      <div class="ring-wrap">
+        <div class="ring" style="--val:{{ kpis.sla_health }}"><b>{{ kpis.sla_health }}%</b></div>
+      </div>
+      <div class="muted mt-3" data-i18n="dash.business_impact">Business Impact</div>
+      <div class="flex between mt-4" style="font-size:13px">
+        <div><b style="font-size:18px">{{ kpis.critical_tickets }}</b><br><span class="muted" data-i18n="kpi.critical_tickets">Critical</span></div>
+        <div><b style="font-size:18px">{{ kpis.overdue_tasks }}</b><br><span class="muted" data-i18n="kpi.overdue_tasks">Overdue</span></div>
+        <div><b style="font-size:18px">{{ kpis.pending_approvals }}</b><br><span class="muted" data-i18n="kpi.pending_approvals">Approvals</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ---------------- System health cards ---------------- #}
+<div class="flex between center mt-6" style="margin-bottom:14px">
+  <h3 style="margin:0" data-i18n="dash.system_health">System Health</h3>
+  <a class="tag" href="{{ url_for('main.health') if can('view_system_health') else url_for('main.launcher') }}" data-i18n="dash.view_all">View all</a>
+</div>
+<div class="grid cols-4">
+  {% for s in systems if s.is_integrated %}
+  {% set st = statuses.get(s.key, {}) %}
+  <div class="panel" style="padding:18px">
+    <div class="flex between center">
+      <div class="ac-icon" style="width:40px;height:40px;border-radius:11px"><svg class="ico" style="width:20px;height:20px"><use href="#i-{{ s.icon }}"></use></svg></div>
+      <span class="badge b-{{ st.status or 'unknown' }}" data-status-key="{{ s.key }}">
+        <span class="dot"></span><span data-status-label data-i18n="status.{{ st.status or 'unknown' }}">{{ st.status or 'unknown' }}</span>
+      </span>
+    </div>
+    <div style="font-weight:700;margin-top:12px">{{ s.name_en }}</div>
+    <div class="muted" style="font-size:12px">{{ s.owner }}</div>
+    <div class="flex between mt-3" style="font-size:12px" class="muted">
+      <span class="muted">{{ st.response_ms ~ ' ms' if st.response_ms is not none else '—' }}</span>
+      <code class="tag">:{{ s.port }}</code>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# ---------------- Today's focus / Critical ---------------- #}
+<div class="grid cols-2 mt-6">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="dash.today_focus">Today's Focus</h3><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-target"></use></svg></div>
+    <div class="panel-pad">
+      <div class="flex gap center" style="padding:8px 0"><svg class="ico" style="width:18px;height:18px;color:var(--warn)"><use href="#i-clock"></use></svg> Close {{ kpis.critical_tickets }} critical tickets before SLA breach</div>
+      <div class="divider"></div>
+      <div class="flex gap center" style="padding:8px 0"><svg class="ico" style="width:18px;height:18px;color:var(--info)"><use href="#i-check"></use></svg> Review {{ kpis.pending_approvals }} pending approvals in CommandTrack</div>
+      <div class="divider"></div>
+      <div class="flex gap center" style="padding:8px 0"><svg class="ico" style="width:18px;height:18px;color:var(--ok)"><use href="#i-coins"></use></svg> Advance finance digitalization ({{ kpis.finance_progress }}%)</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="dash.critical">Critical Attention Required</h3><svg class="ico" style="width:18px;height:18px;color:var(--crit)"><use href="#i-alert"></use></svg></div>
+    <div class="panel-pad">
+      {% for n in notifications if n.severity in ['critical','warning'] %}
+      <div class="flex gap center" style="padding:8px 0">
+        <span class="badge b-{{ 'critical' if n.severity=='critical' else 'warning' }}"><span class="dot"></span>{{ n.severity }}</span>
+        <span style="font-size:13px">{{ n.title }}</span>
+      </div>
+      {% if not loop.last %}<div class="divider"></div>{% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

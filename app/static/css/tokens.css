@@ -1,0 +1,99 @@
+/* ============================================================
+   TC Platform — Design Tokens
+   Brand: T&C Garments  •  Red #ED1C24  •  Navy #07080B
+   Light + Dark themes, RTL aware, 4K-ready.
+   ============================================================ */
+
+:root {
+  /* --- Brand --- */
+  --tc-red:        #ED1C24;
+  --tc-red-2:      #FF3154;
+  --tc-red-deep:   #C8102E;
+  --tc-red-dark:   #8F061C;
+
+  /* --- Neutral scale --- */
+  --ink:    #101114;
+  --ink-2:  #2b2d31;
+  --muted:  #667085;
+  --soft-ink: #8a8f99;
+  --line:   #e5e7eb;
+  --line-2: #eef1f5;
+
+  /* --- Status --- */
+  --ok:     #047857;
+  --ok-bg:  #ecfdf5;
+  --warn:   #b45309;
+  --warn-bg:#fffbeb;
+  --crit:   #be123c;
+  --crit-bg:#fff1f2;
+  --info:   #1d4ed8;
+  --info-bg:#eff6ff;
+
+  /* --- Typography --- */
+  --font: "Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif;
+  --font-rtl: "Segoe UI", Tahoma, "Helvetica Neue", Arial, sans-serif;
+  --fs-xs: 12px;  --fs-sm: 13px;  --fs-md: 14px;
+  --fs-lg: 16px;  --fs-xl: 20px;  --fs-2xl: 26px; --fs-3xl: 34px;
+
+  /* --- Spacing --- */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px;
+
+  /* --- Radius --- */
+  --r-sm: 8px; --r-md: 12px; --r-lg: 18px; --r-xl: 22px; --r-pill: 999px;
+
+  /* --- Shadows --- */
+  --shadow:       0 10px 30px rgba(15, 23, 42, .08);
+  --shadow-card:  0 14px 40px rgba(15, 23, 42, .07);
+  --shadow-strong:0 28px 70px rgba(15, 23, 42, .16);
+  --shadow-glass: 0 8px 32px rgba(2, 6, 23, .12);
+
+  /* --- Layout --- */
+  --sidebar-w: 280px;
+  --sidebar-collapsed: 78px;
+  --topbar-h: 70px;
+  --page-max: 1680px;
+
+  /* --- Surfaces (light default) --- */
+  --bg:       #f4f6fa;
+  --bg-grid:  rgba(17, 18, 20, .035);
+  --panel:    #ffffff;
+  --panel-2:  #f8fafc;
+  --panel-soft: #fbfbfd;
+  --topbar-bg: rgba(255, 255, 255, .82);
+  --sidebar-bg: linear-gradient(180deg, #0a0c12 0%, #07080b 100%);
+  --sidebar-ink: #c7ccd6;
+  --sidebar-ink-soft: #7e8694;
+  --sidebar-active: rgba(237, 28, 36, .16);
+  --on-red: #ffffff;
+  --glass: rgba(255, 255, 255, .65);
+}
+
+/* --- Dark theme --- */
+:root[data-theme="dark"] {
+  --ink:    #e8ecf3;
+  --ink-2:  #c4cad6;
+  --muted:  #8b93a3;
+  --soft-ink: #6b7280;
+  --line:   #232838;
+  --line-2: #1b2030;
+
+  --ok-bg:  rgba(4,120,87,.16);
+  --warn-bg:rgba(180,83,9,.18);
+  --crit-bg:rgba(190,18,60,.18);
+  --info-bg:rgba(29,78,216,.18);
+
+  --bg:       #070a12;
+  --bg-grid:  rgba(255, 255, 255, .03);
+  --panel:    #0f1320;
+  --panel-2:  #121726;
+  --panel-soft:#0c101b;
+  --topbar-bg: rgba(10, 13, 20, .78);
+  --sidebar-bg: linear-gradient(180deg, #0a0c12 0%, #05060a 100%);
+  --sidebar-ink: #c7ccd6;
+  --sidebar-ink-soft: #6b7280;
+  --sidebar-active: rgba(237, 28, 36, .22);
+  --glass: rgba(15, 19, 32, .6);
+  --shadow-card: 0 14px 40px rgba(0, 0, 0, .35);
+  --shadow-strong: 0 28px 70px rgba(0, 0, 0, .5);
+}

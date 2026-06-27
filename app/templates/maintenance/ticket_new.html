@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}New Maintenance Ticket{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="nav.maint_new">New Maintenance Ticket</h1>
+  </div>
+  <a class="btn btn-ghost" href="{{ url_for('maintenance.tickets') }}"><span data-i18n="nav.maint_tickets">Tickets</span></a>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="panel accent" style="max-width:980px">
+  <div class="panel-pad">
+    <div class="grid cols-3">
+      <div class="field" style="grid-column:span 1">
+        <label data-i18n="m.machine">Machine</label>
+        <select name="machine_id" id="machineSel">
+          <option value="">—</option>
+          {% for mm in machines %}<option value="{{ mm.id }}" {{ 'selected' if prefill and prefill|string==mm.id|string }}>{{ mm.code }} · {{ mm.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field"><label data-i18n="m.requester">Requester</label><input name="requester" value="{{ cu.full_name or cu.username }}"></div>
+      <div class="field"><label data-i18n="m.shift">Shift</label>
+        <select name="shift"><option>A</option><option>B</option><option>C</option></select></div>
+
+      <div class="field"><label data-i18n="m.department">Department</label><input name="department"></div>
+      <div class="field"><label data-i18n="m.area">Production area</label><input name="area"></div>
+      <div class="field"><label data-i18n="m.line">Line</label><input name="line_no"></div>
+
+      <div class="field"><label data-i18n="m.issue_category">Issue category</label>
+        <select name="issue_category">{% for c in C.ISSUE_CATEGORIES %}<option value="{{ c }}" data-i18n="mx.{{ c }}">{{ c|mtext }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="m.priority">Priority</label>
+        <select name="priority">{% for p in C.PRIORITIES %}<option value="{{ p }}" data-i18n="mx.{{ p }}" {{ 'selected' if p=='medium' }}>{{ p|mtext }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="m.severity">Severity</label>
+        <select name="severity">{% for s in C.SEVERITIES %}<option value="{{ s }}" data-i18n="mx.{{ s }}" {{ 'selected' if s=='moderate' }}>{{ s|mtext }}</option>{% endfor %}</select></div>
+    </div>
+
+    <div class="field"><label data-i18n="m.description">Issue description</label>
+      <input name="description" id="descInput" required style="height:auto;min-height:44px"></div>
+    <div id="triageBox" class="ai-suggest" style="display:none">
+      <div class="flex gap center" style="margin-bottom:6px">
+        <svg class="ico" style="width:15px;height:15px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg>
+        <b style="font-size:12px" data-i18n="m.ai_triage">AI triage suggestion</b>
+      </div>
+      <div id="triageBody" style="font-size:12.5px"></div>
+    </div>
+
+    <div class="grid cols-3">
+      <div class="field"><label data-i18n="m.est_downtime">Estimated downtime (min)</label><input name="est_downtime_min" type="number" min="0" value="0"></div>
+      <div class="field" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="safety_impact" style="width:auto;height:auto"> <span data-i18n="m.safety">Safety impact</span></label></div>
+      <div class="field" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="production_stopped" style="width:auto;height:auto"> <span data-i18n="m.prod_stopped">Production stopped</span></label></div>
+    </div>
+    <div class="field"><label data-i18n="m.remarks">Remarks</label><input name="remarks"></div>
+    <div class="field">
+      <label data-i18n="m.photos">Photos (issue)</label>
+      <input type="file" name="photos" accept="image/*" capture="environment" multiple
+             style="height:auto;padding:10px;border:1px dashed var(--line);border-radius:var(--r-md);background:var(--panel);width:100%">
+    </div>
+  </div>
+  <div class="modal-foot">
+    <a class="btn btn-ghost" href="{{ url_for('maintenance.dashboard') }}" data-i18n="m.cancel">Cancel</a>
+    <button class="btn btn-primary" type="submit"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="m.submit">Submit</span></button>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+  // auto-fill dept/area/line from the chosen machine
+  (function(){
+    var M = { {% for mm in machines %}"{{ mm.id }}":{d:"{{ mm.department or '' }}",a:"{{ mm.area or '' }}",l:"{{ mm.line_no or '' }}"}{{ "," if not loop.last }}{% endfor %} };
+    var sel=document.getElementById('machineSel');
+    function fill(){ var m=M[sel.value]; if(m){ var f=sel.form; if(!f.department.value)f.department.value=m.d; if(!f.area.value)f.area.value=m.a; if(!f.line_no.value)f.line_no.value=m.l; } }
+    sel.addEventListener('change', fill); fill();
+  })();
+
+  // AI Smart Triage — suggest priority/severity/tags from the description (offline, local)
+  (function(){
+    var desc=document.getElementById('descInput'), box=document.getElementById('triageBox'),
+        body=document.getElementById('triageBody'), form=desc.form, timer=null;
+    var TRIAGE="{{ url_for('maintenance.ai_triage') }}";
+    var prCls={critical:'b-critical',high:'b-warning',medium:'b-info',low:'b-unknown'};
+    function render(d){
+      body.innerHTML='';
+      var lbl=document.createElement('span'); lbl.setAttribute('data-i18n','m.ai_suggested'); lbl.textContent='Suggested'; lbl.style.marginInlineEnd='6px'; body.appendChild(lbl);
+      var pr=document.createElement('span'); pr.className='badge '+(prCls[d.priority]||'b-unknown'); pr.setAttribute('data-i18n','mx.'+d.priority); pr.textContent=d.priority; pr.style.margin='2px'; body.appendChild(pr);
+      var sv=document.createElement('span'); sv.className='tag'; sv.setAttribute('data-i18n','mx.'+d.severity); sv.textContent=d.severity; sv.style.margin='2px'; body.appendChild(sv);
+      (d.tags||[]).forEach(function(tg){ var s=document.createElement('span'); s.className='tag'; s.style.margin='2px'; s.setAttribute('data-i18n','mx.'+tg); s.textContent=tg; body.appendChild(s); });
+      var btn=document.createElement('button'); btn.type='button'; btn.className='btn btn-ghost btn-sm'; btn.style.marginInlineStart='8px'; btn.setAttribute('data-i18n','m.ai_apply'); btn.textContent='Apply';
+      btn.onclick=function(){ if(form.priority) form.priority.value=d.priority; if(form.severity) form.severity.value=d.severity; if(window.tcToast) window.tcToast((window.tcT&&window.tcT('m.ai_applied'))||'Applied','success'); };
+      body.appendChild(btn);
+      if(window.tcApplyI18n) window.tcApplyI18n();
+      box.style.display='block';
+    }
+    function run(){
+      var q=desc.value.trim(); if(q.length<4){ box.style.display='none'; return; }
+      var p=new URLSearchParams({desc:q, machine_id:(form.machine_id?form.machine_id.value:''),
+        stopped:(form.production_stopped&&form.production_stopped.checked)?'1':'0',
+        safety:(form.safety_impact&&form.safety_impact.checked)?'1':'0'});
+      fetch(TRIAGE+'?'+p.toString()).then(function(r){return r.json();}).then(render).catch(function(){});
+    }
+    desc.addEventListener('input', function(){ clearTimeout(timer); timer=setTimeout(run,400); });
+  })();
+</script>
+{% endblock %}

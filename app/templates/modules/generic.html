@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ system.name_en }}{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ system.category|replace('_',' ')|title }}</div>
+    <h1 data-loc-en="{{ system.name_en }}" data-loc-ar="{{ system.name_ar }}" data-loc-tr="{{ system.name_tr }}">{{ system.name_en }}</h1>
+    <div class="sub">{% if table %}<span data-i18n="{{ table.intro }}">{{ system.desc_en }}</span>{% else %}{{ system.desc_en }}{% endif %}</div>
+  </div>
+  <span class="tag" data-i18n="module.future">Future-ready module</span>
+</div>
+
+{% if about %}
+{# about = (heading, purpose, [capabilities], status_note) #}
+<div class="grid cols-3" style="margin-bottom:18px">
+  <div class="panel accent span-2">
+    <div class="panel-pad">
+      <div class="flex gap center" style="align-items:flex-start">
+        <div class="ac-icon" style="width:52px;height:52px;border-radius:14px;flex:0 0 52px">
+          <svg class="ico" style="width:26px;height:26px"><use href="#i-{{ system.icon }}"></use></svg>
+        </div>
+        <div>
+          <div class="eyebrow" data-i18n="module.what_is">What is this?</div>
+          <h3 style="margin:2px 0 6px;font-size:17px">{{ about[0] }}</h3>
+          <p class="muted" style="margin:0;font-size:13.5px;line-height:1.55">{{ about[1] }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="module.capabilities">What it does</h3></div>
+    <div class="panel-pad">
+      {% for cap in about[2] %}
+      <div class="flex gap center" style="padding:6px 0;font-size:13px">
+        <svg class="ico" style="width:16px;height:16px;color:var(--ok);flex:0 0 16px"><use href="#i-check"></use></svg>
+        <span>{{ cap }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+<div class="panel" style="border-style:dashed;background:var(--panel-2);margin-bottom:18px">
+  <div class="panel-pad flex gap center">
+    <svg class="ico" style="width:20px;height:20px;color:var(--tc-red)"><use href="#i-rocket"></use></svg>
+    <span class="muted" style="font-size:13px">{{ about[3] }}</span>
+  </div>
+</div>
+{% else %}
+<div class="panel" style="border-style:dashed;background:var(--panel-2);margin-bottom:18px">
+  <div class="panel-pad flex gap center">
+    <svg class="ico" style="width:22px;height:22px;color:var(--tc-red)"><use href="#i-{{ system.icon }}"></use></svg>
+    <span class="muted" data-i18n="module.future_note">This module is part of the TC Platform roadmap. The structure below is live and ready for integration with real data sources.</span>
+  </div>
+</div>
+{% endif %}
+
+{% if table %}
+<div class="panel accent">
+  <div class="panel-head"><h3 data-loc-en="{{ system.name_en }}" data-loc-ar="{{ system.name_ar }}" data-loc-tr="{{ system.name_tr }}">{{ system.name_en }}</h3>
+    <span class="muted">{{ table.rows|length }} records</span></div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>{% for c in table.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for row in table.rows %}
+        <tr>
+          {% for cell in row %}
+          <td>
+            {% if cell in ['live','active','done','in_progress','planned','research','running','idle','maintenance'] %}
+              <span class="badge b-{{ cell }}">{{ cell|replace('_',' ') }}</span>
+            {% elif cell in ['High','Medium','Low'] %}
+              <span class="badge b-{{ 'critical' if cell=='High' else ('warning' if cell=='Medium' else 'unknown') }}">{{ cell }}</span>
+            {% else %}
+              {{ cell }}
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="panel"><div class="empty"><svg class="ico"><use href="#i-{{ system.icon }}"></use></svg><div>Module placeholder ready for integration.</div></div></div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}App Launcher{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="launch.eyebrow">Application Launcher</div>
+    <h1 data-i18n="launch.title">All T&amp;C Systems</h1>
+    <div class="sub" data-i18n="launch.sub">Open any integrated system or transformation module.</div>
+  </div>
+</div>
+
+<div class="grid cols-3">
+  {% for s in systems %}
+  {% set st = statuses.get(s.key, {}) %}
+  <div class="app-card">
+    <div class="ac-top">
+      <div class="ac-icon"><svg class="ico" style="width:26px;height:26px"><use href="#i-{{ s.icon }}"></use></svg></div>
+      {% if s.is_integrated %}
+      <span class="badge b-{{ st.status or 'unknown' }}" data-status-key="{{ s.key }}">
+        <span class="dot"></span><span data-status-label data-i18n="status.{{ st.status or 'unknown' }}">{{ st.status or 'unknown' }}</span>
+      </span>
+      {% elif s.key == 'production' %}
+      <span class="badge b-live"><span class="dot" style="background:var(--ok)"></span><span data-i18n="prod.live">Live module</span></span>
+      {% else %}
+      <span class="tag" data-i18n="module.future">Future-ready</span>
+      {% endif %}
+    </div>
+
+    <h3 data-loc-en="{{ s.name_en }}" data-loc-ar="{{ s.name_ar }}" data-loc-tr="{{ s.name_tr }}">{{ s.name_en }}</h3>
+    <div class="ac-desc" data-loc-en="{{ s.desc_en }}" data-loc-ar="{{ s.desc_ar }}" data-loc-tr="{{ s.desc_tr }}">{{ s.desc_en }}</div>
+
+    <div class="ac-meta">
+      {% if s.port %}<span><b data-i18n="launch.port">Port</b>: <code>{{ s.port }}</code></span>{% endif %}
+      <span><b data-i18n="launch.owner">Owner</b>: {{ s.owner }}</span>
+      {% if s.is_integrated and st.checked_at %}<span><b data-i18n="launch.last_check">Last check</b>: {{ st.checked_at.split(' ')[1] }}</span>{% endif %}
+    </div>
+
+    <div class="ac-actions">
+      {% if s.is_integrated %}
+        <a class="btn btn-primary btn-sm" href="{{ url_for('main.module', key=s.key) }}" style="flex:1;justify-content:center">
+          <svg class="ico"><use href="#i-{{ s.icon }}"></use></svg><span data-i18n="launch.open">Open</span>
+        </a>
+        {% if s.base_url %}
+        <a class="btn btn-ghost btn-sm" href="{{ s.base_url }}" target="_blank" rel="noopener" data-i18n-title="module.fullscreen" title="Full screen">
+          <svg class="ico"><use href="#i-external"></use></svg>
+        </a>
+        {% endif %}
+      {% else %}
+        <a class="btn btn-primary btn-sm btn-block" href="{{ url_for('main.module', key=s.key) }}">
+          <svg class="ico"><use href="#i-{{ s.icon }}"></use></svg><span data-i18n="launch.open_module">Open module</span>
+        </a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

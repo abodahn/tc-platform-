@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Maintenance Settings{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+  <h1 data-i18n="nav.maint_settings">Settings / Master Data</h1></div></div>
+
+<div class="grid cols-3">
+  <div class="kpi"><div class="kval" data-count="{{ counts.machines }}">0</div><div class="klabel" data-i18n="nav.maint_machines">Machines</div></div>
+  <div class="kpi info"><div class="kval" data-count="{{ counts.spares }}">0</div><div class="klabel" data-i18n="nav.maint_spares">Spare parts</div></div>
+  <div class="kpi good"><div class="kval" data-count="{{ counts.tickets }}">0</div><div class="klabel" data-i18n="nav.maint_tickets">Tickets</div></div>
+</div>
+
+<div class="panel accent mt-6"><div class="panel-head"><h3>Approval matrix</h3></div>
+  <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Request type</th><th>Part criticality</th>
+    <th>Cost threshold</th><th>Levels</th><th>Escalation (h)</th><th data-i18n="m.status">Active</th></tr></thead>
+    <tbody>{% for r in matrix %}<tr><td><b>{{ r.name }}</b></td><td>{{ r.request_type|mhuman }}</td>
+      <td>{{ r.part_criticality|mhuman if r.part_criticality else '—' }}</td><td>{{ r.cost_threshold }}</td>
+      <td>{% for lv in r.levels.split(',') %}<span class="tag">{{ lv|mhuman }}</span> {% endfor %}</td>
+      <td>{{ r.escalation_hours }}</td><td><span class="badge {{ 'b-live' if r.active else 'b-unknown' }}">{{ 'Active' if r.active else 'Inactive' }}</span></td></tr>{% endfor %}</tbody></table></div></div>
+
+<div class="panel mt-6"><div class="panel-head"><h3>Module settings</h3></div>
+  <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Key</th><th>Value</th></tr></thead>
+    <tbody>{% for s in settings %}<tr><td>{{ s.key|mhuman }}</td><td><b>{{ s.value }}</b></td></tr>{% endfor %}</tbody></table></div></div>
+
+<div class="panel mt-6"><div class="panel-pad muted" style="font-size:13px">
+  Master-data categories (machine types, spare categories, root causes, issue categories, units) are
+  managed as controlled enumerations and rendered in all three languages. Roles, permissions and the
+  approval matrix integrate with the platform RBAC. Excel import/export for machines and spare parts
+  is on the module roadmap; CSV export is available now in Reports.
+</div></div>
+{% endblock %}

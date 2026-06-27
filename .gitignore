@@ -1,0 +1,17 @@
+# TC Platform
+.env
+.secret_key
+/logs/
+*.db
+*.sqlite3
+__pycache__/
+*.pyc
+.venv/
+venv/
+/backups/
+/instance/
+/uploads/
+.pytest_cache/
+.ruff_cache/
+screenshots/
+*.log

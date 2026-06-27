@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Stock Movements{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+  <h1 data-i18n="nav.maint_stock">Stock Movements</h1></div>
+  <a class="btn btn-ghost" href="{{ url_for('maintenance.report_export', key='stock') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.export">Export</span></a></div>
+
+<div class="panel"><div class="tbl-wrap"><table class="tbl">
+  <thead><tr><th>#</th><th data-i18n="m.movement">Type</th><th data-i18n="m.part">Part</th>
+    <th data-i18n="m.qty_change">Qty</th><th data-i18n="m.before">Before</th><th data-i18n="m.after">After</th>
+    <th>By</th><th data-i18n="m.created">When</th></tr></thead>
+  <tbody>{% for mv in moves %}
+    <tr><td>{{ mv.movement_no }}</td><td><span class="tag">{{ mv.type|mhuman }}</span></td>
+      <td>{{ mv.part_code or '—' }} {{ ('· '+mv.part_name) if mv.part_name }}</td>
+      <td><b style="color:var(--{{ 'ok' if mv.qty>=0 else 'crit' }})">{{ '%+g'|format(mv.qty) }}</b></td>
+      <td>{{ mv.before_qty }}</td><td>{{ mv.after_qty }}</td><td>{{ mv.performed_by }}</td><td class="muted">{{ mv.created_at }}</td></tr>
+  {% else %}<tr><td colspan="8"><div class="empty" data-i18n="m.no_records">No movements</div></td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

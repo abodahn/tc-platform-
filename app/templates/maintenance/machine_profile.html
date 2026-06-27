@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ m.code }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">{{ m.type or 'Machine' }}</div>
+    <h1>{{ m.code }} · {{ m.name }} <span class="badge {{ mbadge(m.status) }}" style="font-size:13px;vertical-align:middle">{{ m.status|mhuman }}</span></h1>
+    <div class="sub">{{ m.department }} · {{ m.area }} · {{ m.line_no }}</div></div>
+  {% if mcan('maint_ticket_create') %}<a class="btn btn-primary" href="{{ url_for('maintenance.ticket_new', machine=m.id) }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.open_ticket">Open ticket</span></a>{% endif %}
+</div>
+
+<div class="grid cols-4">
+  <div class="kpi"><div class="kval">{{ m.breakdowns }}</div><div class="klabel">Breakdowns</div></div>
+  <div class="kpi warn"><div class="kval">{{ m.total_downtime_min }}</div><div class="klabel">Downtime (min)</div></div>
+  <div class="kpi info"><div class="kval">{{ '%.0f'|format(m.cost_to_date or 0) }}</div><div class="klabel">Cost to date</div></div>
+  <div class="kpi {{ 'good' if health_band=='good' else 'warn' }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-activity"></use></svg></div>
+      <span class="ktrend {{ 'up' if health_band=='good' else 'down' }}">{{ health_band|upper }}</span></div>
+    <div class="kval">{{ health }}</div><div class="klabel" data-i18n="m.health">Health score</div></div>
+</div>
+
+<div class="grid cols-3 mt-6">
+  <div class="panel span-2">
+    <div class="panel-head"><h3>Maintenance history</h3></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th data-i18n="m.priority">Priority</th>
+      <th data-i18n="m.status">Status</th><th>Downtime</th><th data-i18n="m.created">Created</th></tr></thead>
+      <tbody>{% for t in tickets %}<tr><td><a href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}">{{ t.ticket_no }}</a></td>
+        <td><span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span></td>
+        <td><span class="badge {{ mbadge(t.status) }}">{{ t.status|mhuman }}</span></td>
+        <td>{{ t.total_downtime_min }}m</td><td class="muted">{{ t.created_at }}</td></tr>
+      {% else %}<tr><td colspan="5"><div class="empty muted" data-i18n="m.no_records">No records</div></td></tr>{% endfor %}</tbody></table></div>
+  </div>
+  <div>
+    <div class="panel qr-card"><div class="panel-pad">
+      <img src="{{ url_for('maintenance.qr', kind='machine', eid=m.id) }}" alt="QR">
+      <div class="muted mt-2" style="font-size:12px">Scan → new ticket for {{ m.code }}</div>
+      <button class="btn btn-ghost btn-sm mt-2" onclick="window.print()"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.print_qr">Print QR</span></button>
+    </div></div>
+    <div class="panel mt-4"><div class="panel-head"><h3>Info</h3></div><div class="panel-pad">
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="m.brand">Brand</td><td>{{ m.brand }} {{ m.model }}</td></tr>
+        <tr><td class="muted">Serial</td><td>{{ m.serial }}</td></tr>
+        <tr><td class="muted" data-i18n="m.location">Location</td><td>{{ m.location }}</td></tr>
+        <tr><td class="muted">Next PM</td><td>{{ m.next_pm_date or '—' }}</td></tr>
+      </table></div></div>
+  </div>
+</div>
+
+<div class="grid cols-2 mt-6">
+  <div class="panel"><div class="panel-head"><h3>Compatible spare parts</h3></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Code</th><th>Name</th><th data-i18n="m.stock">Stock</th></tr></thead>
+      <tbody>{% for s in spares %}<tr><td><a href="{{ url_for('maintenance.spare_profile', sid=s.id) }}">{{ s.code }}</a></td><td>{{ s.name }}</td>
+        <td><span class="badge {{ 'b-critical' if s.stock_qty<=0 else ('b-warning' if s.stock_qty<=s.reorder_level else 'b-live') }}">{{ s.stock_qty }}</span></td></tr>
+      {% else %}<tr><td colspan="3"><div class="empty muted" data-i18n="m.no_records">No records</div></td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="panel"><div class="panel-head"><h3>PM plans</h3></div><div class="panel-pad">
+    {% for p in pm %}<div class="mhealth"><svg class="ico" style="color:var(--info)"><use href="#i-refresh"></use></svg>
+      <div style="flex:1;font-size:13px">{{ p.title }}<br><span class="muted" style="font-size:11px">{{ p.frequency|mhuman }} · next {{ p.next_due }}</span></div></div>
+    {% else %}<div class="empty muted" data-i18n="m.no_records">No records</div>{% endfor %}</div></div>
+</div>
+
+{# Machine documents / photos #}
+<div class="panel mt-6">
+  <div class="panel-head"><h3 data-i18n="m.machine_docs">Documents &amp; photos</h3><span class="muted">{{ attachments|length }}</span></div>
+  <div class="panel-pad">
+    {% if attachments %}
+    <div class="mphotos">
+      {% for a in attachments %}
+      <a href="{{ url_for('maintenance.attachment', aid=a.id) }}" target="_blank" class="mphoto">
+        {% if (a.content_type or '').startswith('image') %}<img src="{{ url_for('maintenance.attachment', aid=a.id) }}" alt="doc">
+        {% else %}<div class="mphoto-file"><svg class="ico"><use href="#i-report"></use></svg></div>{% endif %}
+        <span class="mphoto-tag">{{ a.kind|mhuman }}</span></a>
+      {% endfor %}
+    </div>
+    {% else %}<div class="muted" style="font-size:13px" data-i18n="m.no_photos">No photos yet.</div>{% endif %}
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('maintenance.machine_attach', mid=m.id) }}" class="flex gap center mt-3">
+      <input type="file" name="photos" accept="image/*,application/pdf" capture="environment" multiple style="flex:1;height:auto;padding:9px;border:1px dashed var(--line);border-radius:10px;background:var(--panel)">
+      <button class="btn btn-ghost btn-sm"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.add">Add</span></button>
+    </form>
+  </div>
+</div>
+{% endblock %}

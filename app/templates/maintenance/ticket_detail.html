@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% block title %}{{ t.ticket_no }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ t.work_order_no or 'Work order' }}</div>
+    <h1>{{ t.ticket_no }} · <span class="badge {{ mbadge(t.status) }}" style="font-size:14px;vertical-align:middle">{{ t.status|mhuman }}</span>
+      {% if sla_risk and sla_risk >= 60 %}<span class="badge {{ 'b-critical' if sla_risk>=100 else 'b-warning' }}" style="font-size:13px;vertical-align:middle"><svg class="ico" style="width:12px;height:12px"><use href="#i-sparkles"></use></svg> <span data-i18n="m.ai_sla_risk">SLA risk</span> {{ sla_risk }}%</span>{% endif %}</h1>
+    <div class="sub">{{ t.machine_code }} · {{ t.department or '—' }} · <span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span></div>
+  </div>
+  <a class="btn btn-ghost" href="{{ url_for('maintenance.tickets') }}"><span data-i18n="nav.maint_tickets">Tickets</span></a>
+</div>
+
+<div class="grid cols-3">
+  {# ---- Left: info, diagnosis, requests, comments ---- #}
+  <div class="span-2">
+    <div class="panel accent">
+      <div class="panel-head"><h3 data-i18n="m.description">Issue</h3></div>
+      <div class="panel-pad">
+        <p style="margin:0 0 12px">{{ t.description }}</p>
+        <div class="grid cols-3" style="font-size:12.5px">
+          <div><div class="muted" data-i18n="m.requester">Requester</div><b>{{ t.requester or '—' }}</b></div>
+          <div><div class="muted" data-i18n="m.area">Area</div><b>{{ t.area or '—' }}</b></div>
+          <div><div class="muted" data-i18n="m.line">Line</div><b>{{ t.line_no or '—' }}</b></div>
+          <div><div class="muted" data-i18n="m.issue_category">Category</div><b>{{ t.issue_category|mhuman }}</b></div>
+          <div><div class="muted" data-i18n="m.safety">Safety</div><b>{{ 'Yes' if t.safety_impact else 'No' }}</b></div>
+          <div><div class="muted" data-i18n="m.prod_stopped">Prod. stopped</div><b>{{ 'Yes' if t.production_stopped else 'No' }}</b></div>
+          <div><div class="muted" data-i18n="m.assigned_to">Assigned</div><b>{{ t.assigned_to or '—' }}</b></div>
+          <div><div class="muted" data-i18n="m.shift">Shift</div><b>{{ t.shift or '—' }}</b></div>
+          <div><div class="muted" data-i18n="m.created">Created</div><b>{{ t.created_at }}</b></div>
+          <div><div class="muted flex gap center" style="gap:5px"><svg class="ico" style="width:12px;height:12px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg><span data-i18n="m.ai_est_repair">AI est. repair</span></div>
+            <b>{% if mttr.minutes %}~{{ mttr.minutes }} min{% else %}—{% endif %}</b></div>
+        </div>
+        {% if t.rejection_reason %}<div class="mt-3"><span class="badge b-critical">Rejected</span> {{ t.rejection_reason }}</div>{% endif %}
+      </div>
+    </div>
+
+    {# Diagnosis #}
+    {% if diag %}
+    <div class="panel mt-4">
+      <div class="panel-head"><h3 data-i18n="m.diagnosis">Diagnosis</h3></div>
+      <div class="panel-pad">
+        {% for d in diag %}
+        <div style="border-bottom:1px solid var(--line-2);padding-bottom:10px;margin-bottom:10px">
+          <div class="flex between"><b>{{ d.fault_found }}</b><span class="tag">{{ d.root_cause|mhuman }}</span></div>
+          <p class="muted" style="font-size:13px;margin:6px 0">{{ d.diagnosis }}</p>
+          <div style="font-size:12px"><b data-i18n="m.required_action">Action</b>: {{ d.required_action }} ·
+            <b data-i18n="m.spare_needed">Spare needed</b>: {{ 'Yes' if d.spare_needed else 'No' }} · {{ d.technician }} · {{ d.created_at }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# Spare requests + approval timeline #}
+    {% for r in reqs %}
+    <div class="panel mt-4">
+      <div class="panel-head"><h3>{{ r.request_no }} <span class="badge {{ mbadge(r.status) }}">{{ r.status|mhuman }}</span></h3>
+        <span class="muted">{{ r.urgency|mhuman }}</span></div>
+      <div class="panel-pad">
+        <table class="tbl"><thead><tr><th data-i18n="m.part">Part</th><th data-i18n="m.qty">Qty</th>
+          <th data-i18n="m.stock">Avail@req</th><th data-i18n="m.qty_issued">Issued</th></tr></thead>
+          <tbody>{% for it in req_items[r.id] %}<tr><td>{{ it.part_code }} · {{ it.part_name }}</td>
+            <td>{{ it.qty_requested }} {{ it.uom }}</td><td>{{ it.available_at_request }}</td><td>{{ it.qty_issued }}</td></tr>{% endfor %}</tbody></table>
+        {% if approvals[r.id] %}
+        <div class="mt-3"><b style="font-size:12.5px" data-i18n="m.approvals">Approvals</b>
+          <div class="mtimeline mt-2">
+            {% for a in approvals[r.id] %}
+            <div class="mtl-item {{ 'muted-dot' if a.status=='pending' }}">
+              <div class="mtl-time">L{{ a.level }} · {{ a.approver_role|mhuman }} {{ '· '+a.decided_at if a.decided_at }}</div>
+              <div class="mtl-body"><span class="badge {{ mbadge(a.status) }}">{{ a.status|mhuman }}</span> {{ a.comment or '' }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+        {% if r.status=='issued' and mcan('maint_technician') %}
+        <form method="post" action="{{ url_for('maintenance.request_receive', rid=r.id) }}" class="mt-3">
+          <button class="btn btn-primary btn-sm"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="m.receive">Confirm receiving</span></button></form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+
+    {# Photos / attachments #}
+    <div class="panel mt-4">
+      <div class="panel-head"><h3 data-i18n="m.photos">Photos</h3>
+        <span class="muted">{{ attachments|length }}</span></div>
+      <div class="panel-pad">
+        {% if attachments %}
+        <div class="mphotos">
+          {% for a in attachments %}
+          <a href="{{ url_for('maintenance.attachment', aid=a.id) }}" target="_blank" class="mphoto" title="{{ a.kind }}">
+            {% if (a.content_type or '').startswith('image') %}<img src="{{ url_for('maintenance.attachment', aid=a.id) }}" alt="{{ a.kind }}">
+            {% else %}<div class="mphoto-file"><svg class="ico"><use href="#i-report"></use></svg></div>{% endif %}
+            <span class="mphoto-tag">{{ a.kind|mhuman }}</span>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}<div class="muted" style="font-size:13px" data-i18n="m.no_photos">No photos yet.</div>{% endif %}
+        {% if mcan('maint_view') %}
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('maintenance.ticket_attach', tid=t.id) }}" class="flex gap center mt-3">
+          <input type="hidden" name="kind" value="photo">
+          <input type="file" name="photos" accept="image/*" capture="environment" multiple style="flex:1;height:auto;padding:9px;border:1px dashed var(--line);border-radius:10px;background:var(--panel)">
+          <button class="btn btn-ghost btn-sm"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.add">Add</span></button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Comments #}
+    <div class="panel mt-4">
+      <div class="panel-head"><h3 data-i18n="m.comment">Comments</h3></div>
+      <div class="panel-pad">
+        {% for c in comments %}<div style="padding:6px 0;border-bottom:1px solid var(--line-2);font-size:13px"><b>{{ c.username }}</b> <span class="muted" style="font-size:11px">{{ c.created_at }}</span><br>{{ c.body }}</div>{% endfor %}
+        <form method="post" action="{{ url_for('maintenance.ticket_comment', tid=t.id) }}" class="flex gap mt-3">
+          <input name="body" placeholder="..." data-i18n-ph="m.add_comment" style="flex:1;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px">
+          <button class="btn btn-ghost btn-sm" data-i18n="m.add">Add</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {# ---- Right: actions + timeline + QR ---- #}
+  <div>
+    {# Workflow actions (contextual) #}
+    <div class="panel accent">
+      <div class="panel-head"><h3 data-i18n="m.scenario">Workflow actions</h3></div>
+      <div class="panel-pad">
+        {% if t.status in ['submitted','under_review','reopened'] and mcan('maint_manage') %}
+          {% if tech_rec %}
+          <div class="ai-suggest">
+            <div class="flex gap center" style="margin-bottom:4px">
+              <svg class="ico" style="width:15px;height:15px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg>
+              <b style="font-size:12px" data-i18n="m.ai_recommends_tech">AI recommends</b>
+            </div>
+            <div style="font-size:12.5px"><b>{{ tech_rec[0].name }}</b>
+              <span class="muted">· <span data-i18n="m.ai_load">load</span> {{ tech_rec[0].open_load }} · <span data-i18n="m.ai_skill">skill</span> {{ tech_rec[0].skill }}</span></div>
+          </div>
+          <form method="post" action="{{ url_for('maintenance.ticket_assign', tid=t.id) }}">
+            <div class="field"><label data-i18n="m.technician">Technician</label>
+              <input name="technician" value="{{ tech_rec[0].name }}" list="techList" required>
+              <datalist id="techList">{% for tr in tech_rec %}<option value="{{ tr.name }}">{% endfor %}</datalist></div>
+          {% else %}
+          <form method="post" action="{{ url_for('maintenance.ticket_assign', tid=t.id) }}">
+            <div class="field"><label data-i18n="m.technician">Technician</label><input name="technician" value="Technician A" required></div>
+          {% endif %}
+            <div class="field"><label data-i18n="m.priority">Priority</label>
+              <select name="priority">{% for p in C.PRIORITIES %}<option value="{{ p }}" data-i18n="mx.{{ p }}" {{ 'selected' if p==t.priority }}>{{ p|mtext }}</option>{% endfor %}</select></div>
+            <button class="btn btn-primary btn-block"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="m.assign">Assign</span></button>
+          </form>
+          <details class="mt-3"><summary class="muted" style="cursor:pointer;font-size:12.5px" data-i18n="m.reject">Reject</summary>
+            <form method="post" action="{{ url_for('maintenance.ticket_reject', tid=t.id) }}" class="mt-2">
+              <div class="field"><input name="reason" data-i18n-ph="m.reject_reason" placeholder="Reason (required)" required></div>
+              <button class="btn btn-ghost btn-block btn-sm" data-i18n="m.reject">Reject</button></form></details>
+
+        {% elif t.status in ['assigned','diagnosis'] and mcan('maint_technician') %}
+          {% if rc_suggest and rc_suggest.causes %}
+          <div class="ai-suggest">
+            <div class="flex gap center" style="margin-bottom:4px">
+              <svg class="ico" style="width:15px;height:15px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg>
+              <b style="font-size:12px" data-i18n="m.ai_suggests">AI suggests</b>
+            </div>
+            <div style="font-size:12.5px">
+              {% for cause, cnt in rc_suggest.causes %}
+              <span class="badge b-info" style="margin:2px" data-i18n="mx.{{ cause }}">{{ cause|mtext }}</span>
+              {% endfor %}
+              <div class="muted" style="font-size:11px;margin-top:4px">
+                <span data-i18n="m.ai_based_on">Based on past failures of this {{ 'machine' if rc_suggest.scope=='machine' else 'machine type' }}</span></div>
+            </div>
+          </div>
+          {% endif %}
+          <form method="post" action="{{ url_for('maintenance.ticket_diagnosis', tid=t.id) }}">
+            <div class="field"><label data-i18n="m.fault">Fault found</label><input name="fault_found" required></div>
+            <div class="field"><label data-i18n="m.root_cause">Root cause</label>
+              <select name="root_cause">{% for rc in C.ROOT_CAUSES %}<option value="{{ rc }}" data-i18n="mx.{{ rc }}">{{ rc|mtext }}</option>{% endfor %}</select></div>
+            <div class="field"><label data-i18n="m.diagnosis">Diagnosis</label><input name="diagnosis"></div>
+            <div class="field"><label data-i18n="m.required_action">Required action</label><input name="required_action"></div>
+            <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px"><input type="checkbox" name="spare_needed" style="width:auto;height:auto"> <span data-i18n="m.spare_needed">Spare parts needed</span></label>
+            <button class="btn btn-primary btn-block"><span data-i18n="m.add_diagnosis">Add diagnosis</span></button>
+          </form>
+
+        {% elif t.status=='spare_required' and mcan('maint_technician') %}
+          <form method="post" action="{{ url_for('maintenance.ticket_request_parts', tid=t.id) }}">
+            <div class="field"><label data-i18n="m.part">Spare part</label>
+              <select name="spare_id" required>{% for s in spares %}<option value="{{ s.id }}">{{ s.code }} · {{ s.name }} ({{ s.stock_qty }} {{ s.uom }})</option>{% endfor %}</select></div>
+            <div class="grid cols-2">
+              <div class="field"><label data-i18n="m.qty">Quantity</label><input name="qty" type="number" min="1" step="any" value="1" required></div>
+              <div class="field"><label data-i18n="m.urgency">Urgency</label>
+                <select name="urgency">{% for u in C.URGENCIES %}<option value="{{ u }}" data-i18n="mx.{{ u }}">{{ u|mtext }}</option>{% endfor %}</select></div>
+            </div>
+            <div class="field"><label data-i18n="m.reason">Reason</label><input name="reason"></div>
+            <button class="btn btn-primary btn-block"><svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="m.request_parts">Request spare parts</span></button>
+          </form>
+
+        {% elif t.status=='repair' and mcan('maint_technician') %}
+          <form method="post" enctype="multipart/form-data" action="{{ url_for('maintenance.ticket_repair', tid=t.id) }}">
+            <div class="field"><label data-i18n="m.action_performed">Action performed</label><input name="action_performed" required></div>
+            <div class="field"><label data-i18n="m.machine_running">Machine running</label>
+              <select name="machine_running"><option>Yes</option><option>Partial</option><option>No</option></select></div>
+            <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px"><input type="checkbox" name="old_part_returned" style="width:auto;height:auto"> Old part returned</label>
+            <div class="field"><label>Final notes</label><input name="final_notes"></div>
+            <div class="field"><label data-i18n="m.proof_photo">Repair photo</label>
+              <input type="file" name="photos" accept="image/*" capture="environment" multiple style="height:auto;padding:9px;border:1px dashed var(--line);border-radius:var(--r-md);background:var(--panel);width:100%"></div>
+            <button class="btn btn-primary btn-block"><span data-i18n="m.complete_repair">Complete repair</span></button>
+          </form>
+
+        {% elif t.status=='testing' %}
+          <form method="post" action="{{ url_for('maintenance.ticket_test', tid=t.id) }}">
+            <div class="field"><label data-i18n="m.test_result">Test result</label>
+              <select name="test_result"><option>Pass</option><option>Fail</option></select></div>
+            <div class="field"><label data-i18n="m.safety">Safety check</label>
+              <select name="safety_check"><option>OK</option><option>Not OK</option></select></div>
+            <div class="field"><label data-i18n="m.machine_running">Machine running</label>
+              <select name="machine_running"><option>Yes</option><option>No</option></select></div>
+            <button class="btn btn-primary btn-block"><span data-i18n="m.record_test">Record test</span></button>
+          </form>
+
+        {% elif t.status=='resolved' and mcan('maint_manage') %}
+          <form method="post" action="{{ url_for('maintenance.ticket_close', tid=t.id) }}">
+            <p class="muted" style="font-size:12.5px">Repair tested &amp; resolved. Confirm closure.</p>
+            <button class="btn btn-primary btn-block"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="m.close">Close ticket</span></button>
+          </form>
+
+        {% elif t.status in ['parts_issued'] %}
+          <p class="muted" style="font-size:13px">Parts issued — technician to confirm receiving (see request above).</p>
+        {% elif t.status in ['waiting_approval','approved_issue','waiting_stock'] %}
+          <p class="muted" style="font-size:13px">Awaiting approval / storekeeper issue. See Approvals &amp; Requests.</p>
+        {% elif t.status=='closed' and mcan('maint_manage') %}
+          <form method="post" action="{{ url_for('maintenance.ticket_reopen', tid=t.id) }}">
+            <button class="btn btn-ghost btn-block btn-sm"><span data-i18n="m.reopen">Reopen</span></button></form>
+        {% else %}
+          <p class="muted" style="font-size:13px" data-i18n="m.view_only">No action available for your role at this stage.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {# QR #}
+    <div class="panel mt-4 qr-card">
+      <div class="panel-pad">
+        <img src="{{ url_for('maintenance.qr', kind='ticket', eid=t.id) }}" alt="QR">
+        <div class="muted mt-2" style="font-size:12px">{{ t.ticket_no }}</div>
+      </div>
+    </div>
+
+    {# Audit timeline #}
+    <div class="panel mt-4">
+      <div class="panel-head"><h3 data-i18n="m.timeline">Timeline</h3></div>
+      <div class="panel-pad">
+        <div class="mtimeline">
+          {% for a in audit %}
+          <div class="mtl-item"><div class="mtl-time">{{ a.created_at }} · {{ a.username }}</div>
+            <div class="mtl-body">{{ a.action|mhuman }}{% if a.new_value %} → <b>{{ a.new_value|mhuman }}</b>{% endif %}{% if a.comment %}<br><span class="muted" style="font-size:12px">{{ a.comment }}</span>{% endif %}</div></div>
+          {% else %}<div class="muted" data-i18n="m.no_records">No records</div>{% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Machine Registry{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="nav.maint_machines">Machine Registry</h1></div>
+  <div class="flex gap">
+    {% if mcan('maint_admin') %}<a class="btn btn-ghost" href="{{ url_for('maintenance.import_page', kind='machines') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.import">Import</span></a>{% endif %}
+    {% if mcan('maint_admin') %}<button class="btn btn-primary" onclick="document.getElementById('mAdd').style.display='block'"><svg class="ico"><use href="#i-factory"></use></svg><span data-i18n="m.add">Add</span></button>{% endif %}
+  </div>
+</div>
+
+{% if mcan('maint_admin') %}
+<div class="panel accent" id="mAdd" style="margin-bottom:18px;display:none" class="menu">
+  <div class="panel-head"><h3 data-i18n="m.add">Add machine</h3></div>
+  <form method="post" class="panel-pad"><div class="grid cols-4">
+    <div class="field"><label data-i18n="m.machine_code">Code</label><input name="code" required></div>
+    <div class="field"><label data-i18n="m.machine_name">Name</label><input name="name"></div>
+    <div class="field"><label data-i18n="m.type">Type</label><input name="type"></div>
+    <div class="field"><label data-i18n="m.brand">Brand</label><input name="brand"></div>
+    <div class="field"><label data-i18n="m.department">Department</label><input name="department"></div>
+    <div class="field"><label data-i18n="m.area">Area</label><input name="area"></div>
+    <div class="field"><label data-i18n="m.line">Line</label><input name="line_no"></div>
+    <div class="field"><label data-i18n="m.criticality">Criticality</label>
+      <select name="criticality">{% for c in C.CRITICALITY %}<option value="{{ c }}" data-i18n="mx.{{ c }}">{{ c|mtext }}</option>{% endfor %}</select></div>
+  </div><button class="btn btn-primary btn-sm" data-i18n="m.save">Save</button></form>
+</div>
+{% endif %}
+
+<div class="panel"><div class="tbl-wrap"><table class="tbl">
+  <thead><tr><th data-i18n="m.machine_code">Code</th><th data-i18n="m.machine_name">Name</th>
+    <th data-i18n="m.department">Dept</th><th data-i18n="m.criticality">Criticality</th>
+    <th data-i18n="m.status">Status</th><th>Breakdowns</th><th>Downtime</th><th data-i18n="m.actions">Actions</th></tr></thead>
+  <tbody>{% for m in machines %}
+    <tr><td><a href="{{ url_for('maintenance.machine_profile', mid=m.id) }}"><b>{{ m.code }}</b></a></td>
+      <td>{{ m.name }}</td><td>{{ m.department }}</td>
+      <td><span class="badge {{ mbadge(m.criticality) }}">{{ m.criticality|mhuman }}</span></td>
+      <td><span class="badge {{ mbadge(m.status) }}">{{ m.status|mhuman }}</span></td>
+      <td>{{ m.breakdowns }}</td><td>{{ m.total_downtime_min }}m</td>
+      <td><a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.machine_profile', mid=m.id) }}" data-i18n="m.view">View</a></td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% endblock %}

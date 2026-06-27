@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Maintenance Calendar{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+  <h1 data-i18n="nav.maint_calendar">Maintenance Calendar</h1></div></div>
+
+<div class="panel accent">
+  <div class="panel-head"><h3>Upcoming preventive maintenance</h3></div>
+  <div class="panel-pad">
+    {% for p in pm_plans %}
+    <div class="mhealth">
+      <div style="width:64px;text-align:center;flex:0 0 64px">
+        <div style="font-size:11px;color:var(--muted)">{{ (p.next_due or '')[5:7] }}</div>
+        <div style="font-size:20px;font-weight:800;color:var(--tc-red)">{{ (p.next_due or '--')[8:10] }}</div>
+      </div>
+      <div style="flex:1"><b style="font-size:13.5px">{{ p.title }}</b><br>
+        <span class="muted" style="font-size:12px">{{ p.mcode }} · {{ p.frequency|mhuman }} · {{ p.next_due }}</span></div>
+      <span class="badge b-info">{{ p.frequency|mhuman }}</span>
+    </div>
+    {% else %}<div class="empty" data-i18n="m.no_records">No scheduled maintenance</div>{% endfor %}
+  </div>
+</div>
+<p class="muted mt-4" style="font-size:12.5px">A full month grid and drag-to-reschedule will follow PM auto-generation (roadmap). This view lists upcoming PM by due date.</p>
+{% endblock %}

@@ -1,0 +1,50 @@
+# TC Platform — Render Blueprint (FREE tier)
+# New ▸ Blueprint ▸ connect this repo ▸ pick branch ▸ Apply.
+#
+# FREE-TIER NOTES:
+#  - Free web service sleeps after ~15 min idle (first request then cold-starts ~50s).
+#  - Free PostgreSQL has limited storage/connections and expires ~90 days after creation.
+#  - NO persistent disk on free tier: uploaded maintenance photos are stored on the
+#    ephemeral filesystem and are LOST on every redeploy/restart (the app keeps working).
+#    To keep uploads, upgrade the web service to 'starter' and add the disk block noted below.
+
+databases:
+  - name: tc-platform-db
+    plan: free
+    databaseName: tc_platform
+    user: tc_platform
+
+services:
+  - type: web
+    name: tc-platform
+    runtime: python
+    plan: free
+    region: frankfurt          # pick the region closest to your users
+    branch: render-deploy
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120"
+    healthCheckPath: /api/health
+    # --- To persist uploads, switch plan to 'starter' and uncomment: ---
+    # disk:
+    #   name: tc-uploads
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    envVars:
+      - key: TC_ENV
+        value: production
+      - key: TC_DEBUG
+        value: "false"
+      - key: TC_DATA_DIR
+        value: /tmp/tc-data        # ephemeral on free tier; set to /var/data with a disk
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: TC_SECRET_KEY
+        generateValue: true        # strong random key, stable across restarts
+      - key: TC_ADMIN_USER
+        sync: false                # set at deploy time
+      - key: TC_ADMIN_PASSWORD
+        sync: false                # set a STRONG password (not Admin@12345)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tc-platform-db
+          property: connectionString
