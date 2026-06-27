@@ -39,8 +39,26 @@ def create_app():
     except Exception:
         pass
 
-    # Ensure metadata DB exists and is seeded (non-destructive, idempotent)
-    init_db()
+    # Ensure metadata DB exists and is seeded (non-destructive, idempotent).
+    # NON-FATAL: if the database is briefly unreachable at boot (e.g. cold-start
+    # ordering on Render), the web service must still start so the health check
+    # passes — then we retry the schema bootstrap on the first request that
+    # successfully reaches the database.
+    app._db_ready = False
+    try:
+        init_db()
+        app._db_ready = True
+    except Exception as exc:  # noqa: BLE001
+        app.logger.warning("init_db deferred (database not ready yet): %s", exc)
+
+    @app.before_request
+    def _ensure_db_ready():
+        if not getattr(app, "_db_ready", False):
+            try:
+                init_db()
+                app._db_ready = True
+            except Exception:  # noqa: BLE001
+                pass
 
     # CSRF protection for all state-changing requests
     from app.csrf import init_csrf

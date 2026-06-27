@@ -27,7 +27,13 @@ def _is_pg():
 
 def _pg_url():
     url = Config.DATABASE_URL.strip()
-    return "postgresql://" + url.split("://", 1)[1]  # normalise scheme for psycopg2
+    url = "postgresql://" + url.split("://", 1)[1]  # normalise scheme for psycopg2
+    # Render's *external* database host (…-a.<region>-postgres.render.com) requires
+    # SSL. The internal host accepts it too, so adding sslmode=require is safe for
+    # both and lets the External Database URL be used region-independently.
+    if "render.com" in url and "sslmode=" not in url:
+        url += ("&" if "?" in url else "?") + "sslmode=require"
+    return url
 
 
 # Tables whose primary key is NOT `id` (so we never append RETURNING id).
