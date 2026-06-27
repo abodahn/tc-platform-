@@ -33,8 +33,16 @@ _RENDER_REGIONS = ("oregon", "virginia", "ohio", "frankfurt", "singapore")
 
 
 def _add_ssl(url):
-    """Render's external host requires SSL; the internal host accepts it too."""
-    if "render.com" in url and "sslmode=" not in url:
+    """Managed cloud Postgres (Render, Neon, Supabase, RDS, ...) requires SSL.
+    Add sslmode=require for any non-local FQDN host that doesn't already set it.
+    Bare internal hosts (e.g. Render's dpg-...-a, no domain) and localhost are
+    left untouched (internal/local connections don't need it forced)."""
+    if "sslmode=" in url:
+        return url
+    host = (urlsplit(url).hostname or "").lower()
+    is_local = host in ("", "localhost", "127.0.0.1", "::1")
+    is_bare = "." not in host  # internal short hostname with no domain
+    if not is_local and not is_bare:
         return url + ("&" if "?" in url else "?") + "sslmode=require"
     return url
 
