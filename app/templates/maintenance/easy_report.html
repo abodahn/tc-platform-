@@ -2,7 +2,7 @@
 {% block title %}Easy Report{% endblock %}
 {% block content %}
 <style>
-  .er-wrap { max-width: 720px; margin: 0 auto; }
+  .er-wrap { max-width: 760px; margin: 0 auto; }
   .er-head { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
   .er-back { width:48px; height:48px; border-radius:14px; border:1px solid var(--line); background:var(--panel);
              display:grid; place-items:center; cursor:pointer; font-size:22px; flex:0 0 auto; }
@@ -18,7 +18,7 @@
              text-align:center; cursor:pointer; transition:.12s; min-height:120px;
              display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; }
   .er-card:active, .er-card.sel { border-color:var(--tc-red); background:rgba(237,28,36,.06); transform:scale(.98); }
-  .er-emoji { font-size:44px; line-height:1; }
+  .er-emoji { font-size:46px; line-height:1; }
   .er-label { font-size:14px; font-weight:700; }
   .er-code { font-size:20px; font-weight:900; letter-spacing:.5px; }
   .er-sub { font-size:12px; color:var(--muted); }
@@ -39,7 +39,6 @@
   .er-done { text-align:center; padding:30px 16px; }
   .er-done .er-emoji { font-size:80px; }
   .er-prompt { font-size:1.15rem; font-weight:800; margin:6px 0 16px; }
-  .er-spk { background:none; border:0; cursor:pointer; font-size:20px; opacity:.6; padding:2px 6px; }
   #erPhoto { display:none; }
 </style>
 
@@ -48,12 +47,12 @@
     <button class="er-back" id="erBack" type="button" title="Back">←</button>
     <h1 class="er-title" data-i18n="m.easy_report">Report a Problem</h1>
     <div class="er-dots">
-      <span class="er-dot on" data-dot="0"></span><span class="er-dot" data-dot="1"></span>
-      <span class="er-dot" data-dot="2"></span><span class="er-dot" data-dot="3"></span>
+      <span class="er-dot on"></span><span class="er-dot"></span><span class="er-dot"></span>
+      <span class="er-dot"></span><span class="er-dot"></span>
     </div>
   </div>
 
-  <!-- STEP 1: machine -->
+  <!-- STEP 0: machine -->
   <div class="er-step on" data-step="0">
     <div class="er-prompt" data-i18n="m.easy_pick_machine">👆 Choose your machine</div>
     <div class="er-grid" id="erMachines">
@@ -69,51 +68,45 @@
     </div>
   </div>
 
-  <!-- STEP 2: problem -->
+  <!-- STEP 1: category -->
   <div class="er-step" data-step="1">
-    <div class="er-prompt" data-i18n="m.easy_pick_problem">👆 What is the problem?</div>
-    <div class="er-grid" id="erProblems"></div>
+    <div class="er-prompt" data-i18n="m.easy_pick_category">👆 What kind of problem?</div>
+    <div class="er-grid" id="erCats"></div>
+  </div>
+
+  <!-- STEP 2: subcategory -->
+  <div class="er-step" data-step="2">
+    <div class="er-prompt" data-i18n="m.easy_pick_detail">👆 Which part / detail?</div>
+    <div class="er-grid" id="erSubs"></div>
   </div>
 
   <!-- STEP 3: stopped / running -->
-  <div class="er-step" data-step="2">
+  <div class="er-step" data-step="3">
     <div class="er-prompt" data-i18n="m.easy_stopped_q">Is the machine stopped?</div>
     <div class="er-status">
-      <div class="er-bigbtn red" data-stopped="1">
-        <div class="er-emoji">🔴</div><div data-i18n="m.easy_stopped">STOPPED</div>
-      </div>
-      <div class="er-bigbtn green" data-stopped="0">
-        <div class="er-emoji">🟢</div><div data-i18n="m.easy_running">RUNNING</div>
-      </div>
+      <div class="er-bigbtn red" data-stopped="1"><div class="er-emoji">🔴</div><div data-i18n="m.easy_stopped">STOPPED</div></div>
+      <div class="er-bigbtn green" data-stopped="0"><div class="er-emoji">🟢</div><div data-i18n="m.easy_running">RUNNING</div></div>
     </div>
   </div>
 
   <!-- STEP 4: photo + voice + submit -->
-  <div class="er-step" data-step="3">
+  <div class="er-step" data-step="4">
     <div class="er-prompt" data-i18n="m.easy_add_proof">📸 Add a photo (and voice)</div>
     <div class="er-media">
-      <label class="er-mediabtn" id="erPhotoBtn" for="erPhoto">
-        <span class="er-emoji">📸</span><span data-i18n="m.easy_take_photo">Take a photo</span>
-      </label>
+      <label class="er-mediabtn" id="erPhotoBtn" for="erPhoto"><span class="er-emoji">📸</span><span data-i18n="m.easy_take_photo">Take a photo</span></label>
       <input type="file" id="erPhoto" accept="image/*" capture="environment">
-      <button class="er-mediabtn" id="erVoiceBtn" type="button">
-        <span class="er-emoji">🎤</span><span id="erVoiceLabel" data-i18n="m.easy_record_voice">Record voice (optional)</span>
-      </button>
-      <button class="er-submit" id="erSubmit" type="button" disabled>
-        <span class="er-emoji" style="font-size:26px">✅</span><span data-i18n="m.easy_send">SEND</span>
-      </button>
+      <button class="er-mediabtn" id="erVoiceBtn" type="button"><span class="er-emoji">🎤</span><span id="erVoiceLabel" data-i18n="m.easy_record_voice">Record voice (optional)</span></button>
+      <button class="er-submit" id="erSubmit" type="button" disabled><span class="er-emoji" style="font-size:26px">✅</span><span data-i18n="m.easy_send">SEND</span></button>
       <div class="er-sub" data-i18n="m.easy_need_photo">A photo is needed to send.</div>
     </div>
   </div>
 
   <!-- STEP 5: done -->
-  <div class="er-step" data-step="4">
+  <div class="er-step" data-step="5">
     <div class="er-done">
       <div class="er-emoji">✅</div>
       <div class="er-prompt" data-i18n="m.easy_done">Sent! Thank you.</div>
-      <button class="er-submit" style="background:var(--tc-red);max-width:320px;margin:10px auto" type="button" onclick="location.reload()">
-        <span data-i18n="m.easy_again">Report another</span>
-      </button>
+      <button class="er-submit" style="background:var(--tc-red);max-width:320px;margin:10px auto" type="button" onclick="location.reload()"><span data-i18n="m.easy_again">Report another</span></button>
     </div>
   </div>
 </div>
@@ -123,72 +116,99 @@
   var CSRF = "{{ csrf_token }}";
   var POST_URL = "{{ url_for('maintenance.ticket_new') }}";
   var FLOOR_URL = "{{ url_for('maintenance.floor') }}";
-  var PROBLEMS = [
-    {k:"mechanical", e:"⚙️", t:"Mechanical"}, {k:"electrical", e:"⚡", t:"Electrical"},
-    {k:"motor", e:"🔌", t:"Motor"}, {k:"belt", e:"🔗", t:"Belt"},
-    {k:"pneumatic", e:"💨", t:"Air"}, {k:"hydraulic", e:"💧", t:"Oil/Hydraulic"},
-    {k:"sensor", e:"📡", t:"Sensor"}, {k:"plc_control", e:"🖥️", t:"Control"},
-    {k:"quality", e:"🧵", t:"Stitch/Quality"}, {k:"safety", e:"⚠️", t:"Safety"},
-    {k:"other", e:"❓", t:"Other"}
+
+  // Category -> subcategory picture tree (be = backend issue_category; t = English text for the ticket)
+  var CATS = [
+    {k:"sew",   e:"🪡", t:"Sewing", be:"mechanical", subs:[
+      {k:"needle",e:"🪡",t:"Needle"},{k:"thread",e:"🧵",t:"Thread breaking"},{k:"skip",e:"〰️",t:"Skipped stitch"},{k:"tension",e:"🎚️",t:"Tension"}]},
+    {k:"mech",  e:"⚙️", t:"Mechanical", be:"mechanical", subs:[
+      {k:"belt",e:"🔗",t:"Belt"},{k:"noise",e:"🔊",t:"Noise / vibration"},{k:"jam",e:"🚫",t:"Jammed / stuck"}]},
+    {k:"elec",  e:"⚡", t:"Electrical", be:"electrical", subs:[
+      {k:"power",e:"🔌",t:"No power"},{k:"spark",e:"✨",t:"Sparks"},{k:"switch",e:"🎛️",t:"Switch / button"}]},
+    {k:"motor", e:"🌡️", t:"Motor / Heat", be:"motor", subs:[
+      {k:"hot",e:"🌡️",t:"Too hot"},{k:"mstop",e:"🛑",t:"Motor not running"},{k:"smell",e:"🔥",t:"Burning smell"}]},
+    {k:"air",   e:"💨", t:"Air", be:"pneumatic", subs:[
+      {k:"leak",e:"💨",t:"Air leak"},{k:"cyl",e:"🅿️",t:"Cylinder"},{k:"press",e:"🧯",t:"Low pressure"}]},
+    {k:"cut",   e:"✂️", t:"Cutting", be:"mechanical", subs:[
+      {k:"blade",e:"🔪",t:"Blade"},{k:"straight",e:"📏",t:"Not straight"}]},
+    {k:"safety",e:"⚠️", t:"Safety", be:"safety", subs:[
+      {k:"guard",e:"🛡️",t:"Guard / cover"},{k:"shock",e:"⚡",t:"Shock risk"}]},
+    {k:"other", e:"❓", t:"Other", be:"other", subs:[]}
   ];
   var MACHINE_EMOJI = [
     [/sew|stitch|lockstitch|needle/, "🪡"], [/overlock|serger/, "🧵"], [/cut/, "✂️"],
     [/embroid/, "🎀"], [/press|iron|finish|steam/, "👔"], [/button|kansai|bartack/, "🔘"]
   ];
-  var state = { mid:null, cat:null, stopped:null, photo:null, voice:null };
+
+  var state = { mid:null, cat:null, sub:null, stopped:null, photo:null, voice:null };
   var step = 0;
   var steps = document.querySelectorAll(".er-step");
   var dots = document.querySelectorAll(".er-dot");
-
   function show(n) {
     step = n;
     steps.forEach(function (s) { s.classList.toggle("on", +s.dataset.step === n); });
-    dots.forEach(function (d, i) { d.classList.toggle("on", i <= Math.min(n,3)); });
+    dots.forEach(function (d, i) { d.classList.toggle("on", i <= Math.min(n,4)); });
     window.scrollTo(0, 0);
   }
   document.getElementById("erBack").addEventListener("click", function () {
-    if (step <= 0) { location.href = FLOOR_URL; } else { show(Math.min(step,3) - 1); }
+    if (step <= 0) { location.href = FLOOR_URL; return; }
+    if (step === 4 && state.cat && !state.cat.subs.length) { show(1); return; } // skip empty subcat going back
+    show(Math.min(step,5) - 1);
   });
 
-  // pick machine emoji by type
+  // machine cards
   document.querySelectorAll("#erMachines .er-card").forEach(function (c) {
     var ty = c.dataset.mtype || "";
     for (var i=0;i<MACHINE_EMOJI.length;i++){ if (MACHINE_EMOJI[i][0].test(ty)) { c.querySelector(".er-m-emoji").textContent = MACHINE_EMOJI[i][1]; break; } }
     c.addEventListener("click", function () { state.mid = c.dataset.mid; show(1); });
   });
 
-  // build problem buttons
-  var pg = document.getElementById("erProblems");
-  PROBLEMS.forEach(function (p) {
+  // build category buttons
+  var cg = document.getElementById("erCats");
+  CATS.forEach(function (cat) {
     var d = document.createElement("div");
     d.className = "er-card";
-    d.innerHTML = '<div class="er-emoji">' + p.e + '</div><div class="er-label" data-i18n="mx.' + p.k + '">' + p.t + '</div>';
-    d.addEventListener("click", function () { state.cat = p.k; show(2); });
-    pg.appendChild(d);
+    d.innerHTML = '<div class="er-emoji">' + cat.e + '</div><div class="er-label" data-i18n="me.cat_' + cat.k + '">' + cat.t + '</div>';
+    d.addEventListener("click", function () {
+      state.cat = cat; state.sub = null;
+      if (cat.subs.length) { buildSubs(cat); show(2); } else { show(3); }   // "other" -> skip subcategory
+    });
+    cg.appendChild(d);
   });
+
+  // build subcategory buttons for a category
+  var sg = document.getElementById("erSubs");
+  function buildSubs(cat) {
+    sg.innerHTML = "";
+    cat.subs.forEach(function (sub) {
+      var d = document.createElement("div");
+      d.className = "er-card";
+      d.innerHTML = '<div class="er-emoji">' + sub.e + '</div><div class="er-label" data-i18n="me.sub_' + sub.k + '">' + sub.t + '</div>';
+      d.addEventListener("click", function () { state.sub = sub; show(3); });
+      sg.appendChild(d);
+    });
+    if (window.tcApplyI18n) window.tcApplyI18n();
+  }
   if (window.tcApplyI18n) window.tcApplyI18n();
 
   // stopped / running
   document.querySelectorAll('[data-stopped]').forEach(function (b) {
-    b.addEventListener("click", function () { state.stopped = b.dataset.stopped === "1"; show(3); });
+    b.addEventListener("click", function () { state.stopped = b.dataset.stopped === "1"; show(4); });
   });
 
   // photo
-  var photoInput = document.getElementById("erPhoto");
-  var photoBtn = document.getElementById("erPhotoBtn");
-  var submitBtn = document.getElementById("erSubmit");
+  var photoInput = document.getElementById("erPhoto"), photoBtn = document.getElementById("erPhotoBtn"), submitBtn = document.getElementById("erSubmit");
   photoInput.addEventListener("change", function () {
     if (photoInput.files && photoInput.files[0]) {
       state.photo = photoInput.files[0];
       photoBtn.classList.add("done");
-      photoBtn.querySelector("span:last-child").textContent = "✓ " + (state.photo.name.slice(0,18));
+      photoBtn.querySelector("span:last-child").textContent = "✓ " + state.photo.name.slice(0,18);
       submitBtn.disabled = false;
     }
   });
 
-  // voice (optional) via MediaRecorder
-  var voiceBtn = document.getElementById("erVoiceBtn");
-  var voiceLabel = document.getElementById("erVoiceLabel");
+  // voice (optional)
+  var voiceBtn = document.getElementById("erVoiceBtn"), voiceLabel = document.getElementById("erVoiceLabel");
   var rec = null, chunks = [], recording = false;
   voiceBtn.addEventListener("click", function () {
     if (!navigator.mediaDevices || !window.MediaRecorder) { voiceLabel.textContent = "Voice not supported"; return; }
@@ -197,12 +217,7 @@
         chunks = []; rec = new MediaRecorder(stream); recording = true;
         voiceBtn.classList.add("done"); voiceLabel.textContent = "● Recording… tap to stop";
         rec.ondataavailable = function (e) { if (e.data.size) chunks.push(e.data); };
-        rec.onstop = function () {
-          state.voice = new Blob(chunks, { type: "audio/webm" });
-          voiceLabel.textContent = "✓ Voice recorded (tap to redo)";
-          stream.getTracks().forEach(function (t) { t.stop(); });
-          recording = false;
-        };
+        rec.onstop = function () { state.voice = new Blob(chunks, { type:"audio/webm" }); voiceLabel.textContent = "✓ Voice recorded (tap to redo)"; stream.getTracks().forEach(function (t){t.stop();}); recording = false; };
         rec.start();
       }).catch(function () { voiceLabel.textContent = "Microphone blocked"; });
     } else { rec.stop(); }
@@ -210,23 +225,23 @@
 
   // submit
   submitBtn.addEventListener("click", function () {
-    if (!state.photo) return;
+    if (!state.photo || !state.cat) return;
     submitBtn.disabled = true;
-    var catT = (PROBLEMS.filter(function(p){return p.k===state.cat;})[0]||{}).t || state.cat;
+    var desc = "[Easy] " + state.cat.t + (state.sub ? " → " + state.sub.t : "") + (state.stopped ? " — machine STOPPED" : "");
     var fd = new FormData();
     fd.append("_csrf", CSRF);
     fd.append("machine_id", state.mid || "");
-    fd.append("issue_category", state.cat || "other");
+    fd.append("issue_category", state.cat.be || "other");
     fd.append("production_stopped", state.stopped ? "on" : "");
     fd.append("priority", state.stopped ? "high" : "medium");
     fd.append("severity", state.stopped ? "major" : "moderate");
     fd.append("requester", "{{ (cu.full_name or cu.username)|e }}");
     fd.append("shift", "A");
-    fd.append("description", "[Easy report] " + catT + (state.stopped ? " — machine STOPPED" : ""));
+    fd.append("description", desc);
     if (state.photo) fd.append("photos", state.photo);
     if (state.voice) fd.append("photos", state.voice, "voice.webm");
-    fetch(POST_URL, { method: "POST", body: fd, credentials: "same-origin" })
-      .then(function (r) { if (r.ok || r.redirected || r.status === 200 || r.status === 302) { show(4); } else { throw 0; } })
+    fetch(POST_URL, { method:"POST", body:fd, credentials:"same-origin" })
+      .then(function (r) { if (r.ok || r.redirected || r.status === 200 || r.status === 302) { show(5); } else { throw 0; } })
       .catch(function () { submitBtn.disabled = false; alert("Could not send. Please try again."); });
   });
 })();
