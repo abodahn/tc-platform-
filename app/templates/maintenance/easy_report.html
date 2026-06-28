@@ -6,24 +6,28 @@
   .er-head { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
   .er-back { width:48px; height:48px; border-radius:14px; border:1px solid var(--line); background:var(--panel);
              display:grid; place-items:center; cursor:pointer; font-size:22px; flex:0 0 auto; }
-  .er-title { font-size:1.25rem; font-weight:800; margin:0; }
+  .er-title { font-size:1.2rem; font-weight:800; margin:0; }
   .er-dots { display:flex; gap:6px; margin-inline-start:auto; }
   .er-dot { width:9px; height:9px; border-radius:50%; background:var(--line-2,#ddd); }
   .er-dot.on { background:var(--tc-red); }
   .er-step { display:none; }
   .er-step.on { display:block; }
+  .er-prompt { display:flex; align-items:center; gap:10px; font-size:1.15rem; font-weight:800; margin:6px 0 16px; }
   .er-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; }
   @media (min-width:560px){ .er-grid { grid-template-columns:repeat(3,1fr); } }
-  .er-card { border:2px solid var(--line); border-radius:18px; background:var(--panel); padding:18px 10px;
-             text-align:center; cursor:pointer; transition:.12s; min-height:120px;
+  .er-card { position:relative; border:2px solid var(--line); border-radius:18px; background:var(--panel); padding:18px 10px;
+             text-align:center; cursor:pointer; transition:.12s; min-height:124px;
              display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; }
   .er-card:active, .er-card.sel { border-color:var(--tc-red); background:rgba(237,28,36,.06); transform:scale(.98); }
   .er-emoji { font-size:46px; line-height:1; }
   .er-label { font-size:14px; font-weight:700; }
   .er-code { font-size:20px; font-weight:900; letter-spacing:.5px; }
   .er-sub { font-size:12px; color:var(--muted); }
+  .er-spk { position:absolute; top:6px; inset-inline-end:6px; width:34px; height:34px; border-radius:10px;
+            border:1px solid var(--line); background:var(--panel-2,#f3f3f3); cursor:pointer; font-size:17px; line-height:1; padding:0; }
+  .er-spk.flat { position:static; width:40px; height:40px; flex:0 0 auto; }
   .er-status { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-  .er-bigbtn { border:3px solid var(--line); border-radius:22px; padding:34px 10px; text-align:center; cursor:pointer;
+  .er-bigbtn { position:relative; border:3px solid var(--line); border-radius:22px; padding:34px 10px; text-align:center; cursor:pointer;
                font-weight:900; font-size:18px; display:flex; flex-direction:column; align-items:center; gap:12px; }
   .er-bigbtn .er-emoji { font-size:60px; }
   .er-bigbtn.red:active, .er-bigbtn.red.sel { border-color:#e0322f; background:rgba(224,50,47,.10); }
@@ -38,7 +42,6 @@
   .er-submit[disabled]{ opacity:.5; cursor:not-allowed; }
   .er-done { text-align:center; padding:30px 16px; }
   .er-done .er-emoji { font-size:80px; }
-  .er-prompt { font-size:1.15rem; font-weight:800; margin:6px 0 16px; }
   #erPhoto { display:none; }
 </style>
 
@@ -52,9 +55,8 @@
     </div>
   </div>
 
-  <!-- STEP 0: machine -->
   <div class="er-step on" data-step="0">
-    <div class="er-prompt" data-i18n="m.easy_pick_machine">👆 Choose your machine</div>
+    <div class="er-prompt"><span data-i18n="m.easy_pick_machine">👆 Choose your machine</span><button class="er-spk flat" type="button" data-speak>🔊</button></div>
     <div class="er-grid" id="erMachines">
       {% for mm in machines %}
       <div class="er-card" data-mid="{{ mm.id }}" data-mtype="{{ (mm.type or '')|lower }}">
@@ -68,30 +70,26 @@
     </div>
   </div>
 
-  <!-- STEP 1: category -->
   <div class="er-step" data-step="1">
-    <div class="er-prompt" data-i18n="m.easy_pick_category">👆 What kind of problem?</div>
+    <div class="er-prompt"><span data-i18n="m.easy_pick_category">👆 What kind of problem?</span><button class="er-spk flat" type="button" data-speak>🔊</button></div>
     <div class="er-grid" id="erCats"></div>
   </div>
 
-  <!-- STEP 2: subcategory -->
   <div class="er-step" data-step="2">
-    <div class="er-prompt" data-i18n="m.easy_pick_detail">👆 Which part / detail?</div>
+    <div class="er-prompt"><span data-i18n="m.easy_pick_detail">👆 Which part / detail?</span><button class="er-spk flat" type="button" data-speak>🔊</button></div>
     <div class="er-grid" id="erSubs"></div>
   </div>
 
-  <!-- STEP 3: stopped / running -->
   <div class="er-step" data-step="3">
-    <div class="er-prompt" data-i18n="m.easy_stopped_q">Is the machine stopped?</div>
+    <div class="er-prompt"><span data-i18n="m.easy_stopped_q">Is the machine stopped?</span><button class="er-spk flat" type="button" data-speak>🔊</button></div>
     <div class="er-status">
       <div class="er-bigbtn red" data-stopped="1"><div class="er-emoji">🔴</div><div data-i18n="m.easy_stopped">STOPPED</div></div>
       <div class="er-bigbtn green" data-stopped="0"><div class="er-emoji">🟢</div><div data-i18n="m.easy_running">RUNNING</div></div>
     </div>
   </div>
 
-  <!-- STEP 4: photo + voice + submit -->
   <div class="er-step" data-step="4">
-    <div class="er-prompt" data-i18n="m.easy_add_proof">📸 Add a photo (and voice)</div>
+    <div class="er-prompt"><span data-i18n="m.easy_add_proof">📸 Add a photo (and voice)</span><button class="er-spk flat" type="button" data-speak>🔊</button></div>
     <div class="er-media">
       <label class="er-mediabtn" id="erPhotoBtn" for="erPhoto"><span class="er-emoji">📸</span><span data-i18n="m.easy_take_photo">Take a photo</span></label>
       <input type="file" id="erPhoto" accept="image/*" capture="environment">
@@ -101,11 +99,10 @@
     </div>
   </div>
 
-  <!-- STEP 5: done -->
   <div class="er-step" data-step="5">
     <div class="er-done">
       <div class="er-emoji">✅</div>
-      <div class="er-prompt" data-i18n="m.easy_done">Sent! Thank you.</div>
+      <div class="er-prompt" style="justify-content:center" data-i18n="m.easy_done">Sent! Thank you.</div>
       <button class="er-submit" style="background:var(--tc-red);max-width:320px;margin:10px auto" type="button" onclick="location.reload()"><span data-i18n="m.easy_again">Report another</span></button>
     </div>
   </div>
@@ -117,7 +114,6 @@
   var POST_URL = "{{ url_for('maintenance.ticket_new') }}";
   var FLOOR_URL = "{{ url_for('maintenance.floor') }}";
 
-  // Category -> subcategory picture tree (be = backend issue_category; t = English text for the ticket)
   var CATS = [
     {k:"sew",   e:"🪡", t:"Sewing", be:"mechanical", subs:[
       {k:"needle",e:"🪡",t:"Needle"},{k:"thread",e:"🧵",t:"Thread breaking"},{k:"skip",e:"〰️",t:"Skipped stitch"},{k:"tension",e:"🎚️",t:"Tension"}]},
@@ -140,19 +136,41 @@
     [/embroid/, "🎀"], [/press|iron|finish|steam/, "👔"], [/button|kansai|bartack/, "🔘"]
   ];
 
+  // ---- read-aloud (audio signs) ----
+  function langCode() { var l = (document.documentElement.lang || "en").slice(0,2); return ({ ar:"ar-SA", tr:"tr-TR" })[l] || "en-US"; }
+  function speak(text) {
+    try {
+      if (!window.speechSynthesis || !text) return;
+      speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(String(text).replace(/[👆📸🔊🔴🟢→·]/g, "").trim());
+      u.lang = langCode(); u.rate = 0.92; speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+  function addSpeaker(card, label) {
+    var b = document.createElement("button");
+    b.className = "er-spk"; b.type = "button"; b.textContent = "🔊";
+    b.addEventListener("click", function (ev) { ev.stopPropagation(); speak(label); });
+    card.appendChild(b);
+  }
+  // prompt speaker buttons
+  document.querySelectorAll("[data-speak]").forEach(function (b) {
+    b.addEventListener("click", function (ev) { ev.stopPropagation(); speak(b.parentElement.textContent); });
+  });
+
   var state = { mid:null, cat:null, sub:null, stopped:null, photo:null, voice:null };
   var step = 0;
   var steps = document.querySelectorAll(".er-step");
   var dots = document.querySelectorAll(".er-dot");
-  function show(n) {
+  function show(n, talk) {
     step = n;
     steps.forEach(function (s) { s.classList.toggle("on", +s.dataset.step === n); });
     dots.forEach(function (d, i) { d.classList.toggle("on", i <= Math.min(n,4)); });
     window.scrollTo(0, 0);
+    if (talk !== false) { var pr = steps[n] && steps[n].querySelector(".er-prompt span") || (steps[n] && steps[n].querySelector(".er-prompt")); if (pr) speak(pr.textContent); }
   }
   document.getElementById("erBack").addEventListener("click", function () {
     if (step <= 0) { location.href = FLOOR_URL; return; }
-    if (step === 4 && state.cat && !state.cat.subs.length) { show(1); return; } // skip empty subcat going back
+    if (step === 3 && state.cat && !state.cat.subs.length) { show(1); return; }
     show(Math.min(step,5) - 1);
   });
 
@@ -160,23 +178,28 @@
   document.querySelectorAll("#erMachines .er-card").forEach(function (c) {
     var ty = c.dataset.mtype || "";
     for (var i=0;i<MACHINE_EMOJI.length;i++){ if (MACHINE_EMOJI[i][0].test(ty)) { c.querySelector(".er-m-emoji").textContent = MACHINE_EMOJI[i][1]; break; } }
+    var lbl = c.querySelector(".er-code").textContent + " " + c.querySelector(".er-sub").textContent;
+    addSpeaker(c, lbl);
     c.addEventListener("click", function () { state.mid = c.dataset.mid; show(1); });
   });
 
-  // build category buttons
+  // categories
   var cg = document.getElementById("erCats");
   CATS.forEach(function (cat) {
     var d = document.createElement("div");
     d.className = "er-card";
     d.innerHTML = '<div class="er-emoji">' + cat.e + '</div><div class="er-label" data-i18n="me.cat_' + cat.k + '">' + cat.t + '</div>';
+    addSpeaker(d, "");
     d.addEventListener("click", function () {
       state.cat = cat; state.sub = null;
-      if (cat.subs.length) { buildSubs(cat); show(2); } else { show(3); }   // "other" -> skip subcategory
+      if (cat.subs.length) { buildSubs(cat); show(2); } else { show(3); }
     });
     cg.appendChild(d);
+    d._lbl = d.querySelector(".er-label");
+    d.querySelector(".er-spk").addEventListener("click", function (ev) { ev.stopPropagation(); speak(d._lbl.textContent); });
   });
 
-  // build subcategory buttons for a category
+  // subcategories
   var sg = document.getElementById("erSubs");
   function buildSubs(cat) {
     sg.innerHTML = "";
@@ -184,6 +207,10 @@
       var d = document.createElement("div");
       d.className = "er-card";
       d.innerHTML = '<div class="er-emoji">' + sub.e + '</div><div class="er-label" data-i18n="me.sub_' + sub.k + '">' + sub.t + '</div>';
+      var lblEl = d.querySelector(".er-label");
+      var b = document.createElement("button"); b.className = "er-spk"; b.type = "button"; b.textContent = "🔊";
+      b.addEventListener("click", function (ev) { ev.stopPropagation(); speak(lblEl.textContent); });
+      d.appendChild(b);
       d.addEventListener("click", function () { state.sub = sub; show(3); });
       sg.appendChild(d);
     });
