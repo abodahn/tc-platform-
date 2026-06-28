@@ -321,3 +321,33 @@
     (window.TC_FLASH || []).forEach(f => toast(t(f.msg) !== f.msg ? t(f.msg) : f.msg, f.cat));
   });
 })();
+
+// Password show/hide eye toggle (adds a clickable eye to every password field)
+(function () {
+  function addEye(inp) {
+    if (inp.dataset.eyeDone) return;
+    inp.dataset.eyeDone = "1";
+    var wrap = document.createElement("span");
+    wrap.style.cssText = "position:relative;display:block;";
+    inp.parentNode.insertBefore(wrap, inp);
+    wrap.appendChild(inp);
+    inp.style.paddingInlineEnd = "42px";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.tabIndex = -1;
+    btn.setAttribute("aria-label", "Show or hide password");
+    btn.title = "Show / hide password";
+    btn.innerHTML = "👁"; // eye
+    btn.style.cssText = "position:absolute;top:50%;inset-inline-end:10px;transform:translateY(-50%);" +
+      "background:none;border:0;cursor:pointer;font-size:17px;line-height:1;opacity:.55;padding:4px;color:inherit;";
+    btn.addEventListener("click", function () {
+      var hidden = inp.type === "password";
+      inp.type = hidden ? "text" : "password";
+      btn.style.opacity = hidden ? "1" : ".55";
+    });
+    wrap.appendChild(btn);
+  }
+  function run() { document.querySelectorAll('input[type="password"]').forEach(addEye); }
+  if (document.readyState !== "loading") run();
+  else document.addEventListener("DOMContentLoaded", run);
+})();
