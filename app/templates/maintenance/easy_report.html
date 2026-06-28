@@ -43,10 +43,6 @@
   .er-done { text-align:center; padding:30px 16px; }
   .er-done .er-emoji { font-size:80px; }
   #erPhoto { display:none; }
-  .er-voicehint { display:flex; align-items:center; gap:10px; margin-bottom:14px; padding:10px 12px;
-                  background:rgba(255,200,87,.16); border:1px solid rgba(255,200,87,.55); border-radius:14px;
-                  font-size:12.5px; font-weight:600; line-height:1.35; }
-  .er-hint-x { margin-inline-start:auto; background:none; border:0; cursor:pointer; font-size:16px; opacity:.6; flex:0 0 auto; }
 </style>
 
 <div class="er-wrap">
@@ -57,12 +53,6 @@
       <span class="er-dot on"></span><span class="er-dot"></span><span class="er-dot"></span>
       <span class="er-dot"></span><span class="er-dot"></span>
     </div>
-  </div>
-
-  <div id="erVoiceHint" class="er-voicehint" style="display:none">
-    <span style="font-size:20px">🔇</span>
-    <span data-i18n="m.easy_voice_missing">This language's voice is not installed on this phone. The pictures still work — ask IT to add the voice in the phone's Text-to-Speech settings.</span>
-    <button type="button" class="er-hint-x" title="Hide">✕</button>
   </div>
 
   <div class="er-step on" data-step="0">
@@ -123,6 +113,7 @@
   var CSRF = "{{ csrf_token }}";
   var POST_URL = "{{ url_for('maintenance.ticket_new') }}";
   var FLOOR_URL = "{{ url_for('maintenance.floor') }}";
+  var AUDIO = "{{ url_for('static', filename='audio') }}";   // /static/audio
 
   var CATS = [
     {k:"sew",   e:"🪡", t:"Sewing", be:"mechanical", subs:[
@@ -146,55 +137,38 @@
     [/embroid/, "🎀"], [/press|iron|finish|steam/, "👔"], [/button|kansai|bartack/, "🔘"]
   ];
 
-  // ---- read-aloud (audio signs): speak in the language the user chose ----
+  // ---- audio: play a pre-generated neural clip in the chosen language (perfect accent) ----
+  function curLang() { var l = (document.documentElement.lang || "en").slice(0,2).toLowerCase(); return (["en","ar","tr"].indexOf(l) >= 0) ? l : "en"; }
+  // fallback only (e.g. machine names that have no clip): browser voice
   var VOICES = [];
   function loadVoices() { try { VOICES = window.speechSynthesis ? (speechSynthesis.getVoices() || []) : []; } catch (e) {} }
-  loadVoices();
-  if (window.speechSynthesis) { try { speechSynthesis.onvoiceschanged = loadVoices; } catch (e) {} }
-  // current UI language -> a speech locale (updated live when the user switches EN/ع/TR)
-  function langCode() { var l = (document.documentElement.lang || "en").slice(0,2).toLowerCase(); return ({ ar:"ar-SA", tr:"tr-TR" })[l] || "en-US"; }
-  // pick an actual installed voice for that language (so Arabic isn't read by an English voice)
-  function pickVoice(code) {
-    var two = code.slice(0,2).toLowerCase();
-    if (!VOICES.length) loadVoices();
-    return VOICES.filter(function (v) { return v.lang && v.lang.toLowerCase() === code.toLowerCase(); })[0]
-        || VOICES.filter(function (v) { return v.lang && v.lang.toLowerCase().slice(0,2) === two; })[0] || null;
-  }
-  function speak(text) {
+  loadVoices(); if (window.speechSynthesis) { try { speechSynthesis.onvoiceschanged = loadVoices; } catch (e) {} }
+  function pickVoice(code) { var two = code.slice(0,2).toLowerCase(); if (!VOICES.length) loadVoices();
+    return VOICES.filter(function(v){return v.lang&&v.lang.toLowerCase()===code.toLowerCase();})[0]
+        || VOICES.filter(function(v){return v.lang&&v.lang.toLowerCase().slice(0,2)===two;})[0] || null; }
+  function speak(text) { try { if (!window.speechSynthesis || !text) return; speechSynthesis.cancel();
+    var code = ({en:"en-US",ar:"ar-SA",tr:"tr-TR"})[curLang()]; var u = new SpeechSynthesisUtterance(String(text).replace(/[👆📸🔊🔴🟢→·]/g,"").trim());
+    u.lang = code; var v = pickVoice(code); if (v) u.voice = v; u.rate = .92; speechSynthesis.speak(u); } catch (e) {} }
+  function playKey(key, fallback) {
+    if (!key) { speak(fallback); return; }
     try {
-      if (!window.speechSynthesis || !text) return;
-      speechSynthesis.cancel();
-      var code = langCode();
-      var u = new SpeechSynthesisUtterance(String(text).replace(/[👆📸🔊🔴🟢→·]/g, "").trim());
-      u.lang = code;
-      var v = pickVoice(code); if (v) u.voice = v;   // force the matching-language voice when present
-      u.rate = 0.92;
-      speechSynthesis.speak(u);
-    } catch (e) {}
+      var a = new Audio(AUDIO + "/" + curLang() + "/" + key + ".mp3");
+      a.addEventListener("error", function () { speak(fallback); });
+      var p = a.play(); if (p && p.catch) p.catch(function () {});
+    } catch (e) { speak(fallback); }
   }
-  function addSpeaker(card, label) {
+  function playLabel(el) { if (el) playKey(el.getAttribute("data-i18n"), el.textContent); }
+
+  function addSpeaker(card, onSpeak) {
     var b = document.createElement("button");
     b.className = "er-spk"; b.type = "button"; b.textContent = "🔊";
-    b.addEventListener("click", function (ev) { ev.stopPropagation(); speak(label); });
+    b.addEventListener("click", function (ev) { ev.stopPropagation(); onSpeak(); });
     card.appendChild(b);
   }
-  // prompt speaker buttons
+  // prompt speakers play the prompt's clip
   document.querySelectorAll("[data-speak]").forEach(function (b) {
-    b.addEventListener("click", function (ev) { ev.stopPropagation(); speak(b.parentElement.textContent); });
+    b.addEventListener("click", function (ev) { ev.stopPropagation(); playLabel(b.parentElement.querySelector("[data-i18n]")); });
   });
-
-  // show a hint only when the chosen language's voice is missing on this device
-  function checkVoiceHint() {
-    var hint = document.getElementById("erVoiceHint"); if (!hint) return;
-    if (hint.dataset.dismissed === "1") { hint.style.display = "none"; return; }
-    loadVoices();
-    var missing = !!window.speechSynthesis && VOICES.length > 0 && !pickVoice(langCode());
-    hint.style.display = missing ? "flex" : "none";
-  }
-  if (window.speechSynthesis) { try { speechSynthesis.onvoiceschanged = function () { loadVoices(); checkVoiceHint(); }; } catch (e) {} }
-  setTimeout(checkVoiceHint, 700);
-  try { new MutationObserver(checkVoiceHint).observe(document.documentElement, { attributes:true, attributeFilter:["lang"] }); } catch (e) {}
-  (function () { var x = document.querySelector(".er-hint-x"); if (x) x.addEventListener("click", function () { var h = document.getElementById("erVoiceHint"); h.dataset.dismissed = "1"; h.style.display = "none"; }); })();
 
   var state = { mid:null, cat:null, sub:null, stopped:null, photo:null, voice:null };
   var step = 0;
@@ -205,7 +179,7 @@
     steps.forEach(function (s) { s.classList.toggle("on", +s.dataset.step === n); });
     dots.forEach(function (d, i) { d.classList.toggle("on", i <= Math.min(n,4)); });
     window.scrollTo(0, 0);
-    if (talk !== false) { var pr = steps[n] && steps[n].querySelector(".er-prompt span") || (steps[n] && steps[n].querySelector(".er-prompt")); if (pr) speak(pr.textContent); }
+    if (talk !== false) { var sp = steps[n] && steps[n].querySelector(".er-prompt [data-i18n]"); if (sp) playLabel(sp); }
   }
   document.getElementById("erBack").addEventListener("click", function () {
     if (step <= 0) { location.href = FLOOR_URL; return; }
@@ -213,12 +187,12 @@
     show(Math.min(step,5) - 1);
   });
 
-  // machine cards
+  // machine cards (machine names have no clip -> browser voice fallback)
   document.querySelectorAll("#erMachines .er-card").forEach(function (c) {
     var ty = c.dataset.mtype || "";
     for (var i=0;i<MACHINE_EMOJI.length;i++){ if (MACHINE_EMOJI[i][0].test(ty)) { c.querySelector(".er-m-emoji").textContent = MACHINE_EMOJI[i][1]; break; } }
     var lbl = c.querySelector(".er-code").textContent + " " + c.querySelector(".er-sub").textContent;
-    addSpeaker(c, lbl);
+    addSpeaker(c, function () { speak(lbl); });
     c.addEventListener("click", function () { state.mid = c.dataset.mid; show(1); });
   });
 
@@ -228,14 +202,12 @@
     var d = document.createElement("div");
     d.className = "er-card";
     d.innerHTML = '<div class="er-emoji">' + cat.e + '</div><div class="er-label" data-i18n="me.cat_' + cat.k + '">' + cat.t + '</div>';
-    addSpeaker(d, "");
+    addSpeaker(d, function () { playLabel(d.querySelector(".er-label")); });
     d.addEventListener("click", function () {
       state.cat = cat; state.sub = null;
       if (cat.subs.length) { buildSubs(cat); show(2); } else { show(3); }
     });
     cg.appendChild(d);
-    d._lbl = d.querySelector(".er-label");
-    d.querySelector(".er-spk").addEventListener("click", function (ev) { ev.stopPropagation(); speak(d._lbl.textContent); });
   });
 
   // subcategories
@@ -246,10 +218,7 @@
       var d = document.createElement("div");
       d.className = "er-card";
       d.innerHTML = '<div class="er-emoji">' + sub.e + '</div><div class="er-label" data-i18n="me.sub_' + sub.k + '">' + sub.t + '</div>';
-      var lblEl = d.querySelector(".er-label");
-      var b = document.createElement("button"); b.className = "er-spk"; b.type = "button"; b.textContent = "🔊";
-      b.addEventListener("click", function (ev) { ev.stopPropagation(); speak(lblEl.textContent); });
-      d.appendChild(b);
+      addSpeaker(d, function () { playLabel(d.querySelector(".er-label")); });
       d.addEventListener("click", function () { state.sub = sub; show(3); });
       sg.appendChild(d);
     });
@@ -273,7 +242,7 @@
     }
   });
 
-  // voice (optional)
+  // voice note (optional)
   var voiceBtn = document.getElementById("erVoiceBtn"), voiceLabel = document.getElementById("erVoiceLabel");
   var rec = null, chunks = [], recording = false;
   voiceBtn.addEventListener("click", function () {
