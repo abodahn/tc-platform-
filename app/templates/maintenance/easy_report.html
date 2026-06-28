@@ -136,14 +136,30 @@
     [/embroid/, "🎀"], [/press|iron|finish|steam/, "👔"], [/button|kansai|bartack/, "🔘"]
   ];
 
-  // ---- read-aloud (audio signs) ----
-  function langCode() { var l = (document.documentElement.lang || "en").slice(0,2); return ({ ar:"ar-SA", tr:"tr-TR" })[l] || "en-US"; }
+  // ---- read-aloud (audio signs): speak in the language the user chose ----
+  var VOICES = [];
+  function loadVoices() { try { VOICES = window.speechSynthesis ? (speechSynthesis.getVoices() || []) : []; } catch (e) {} }
+  loadVoices();
+  if (window.speechSynthesis) { try { speechSynthesis.onvoiceschanged = loadVoices; } catch (e) {} }
+  // current UI language -> a speech locale (updated live when the user switches EN/ع/TR)
+  function langCode() { var l = (document.documentElement.lang || "en").slice(0,2).toLowerCase(); return ({ ar:"ar-SA", tr:"tr-TR" })[l] || "en-US"; }
+  // pick an actual installed voice for that language (so Arabic isn't read by an English voice)
+  function pickVoice(code) {
+    var two = code.slice(0,2).toLowerCase();
+    if (!VOICES.length) loadVoices();
+    return VOICES.filter(function (v) { return v.lang && v.lang.toLowerCase() === code.toLowerCase(); })[0]
+        || VOICES.filter(function (v) { return v.lang && v.lang.toLowerCase().slice(0,2) === two; })[0] || null;
+  }
   function speak(text) {
     try {
       if (!window.speechSynthesis || !text) return;
       speechSynthesis.cancel();
+      var code = langCode();
       var u = new SpeechSynthesisUtterance(String(text).replace(/[👆📸🔊🔴🟢→·]/g, "").trim());
-      u.lang = langCode(); u.rate = 0.92; speechSynthesis.speak(u);
+      u.lang = code;
+      var v = pickVoice(code); if (v) u.voice = v;   // force the matching-language voice when present
+      u.rate = 0.92;
+      speechSynthesis.speak(u);
     } catch (e) {}
   }
   function addSpeaker(card, label) {
