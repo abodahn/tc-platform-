@@ -12,9 +12,16 @@
 {# Big primary actions — large touch targets for the factory floor #}
 <div class="floor-actions">
   {% if mcan('maint_ticket_create') %}
-  <a class="floor-btn primary" href="{{ url_for('maintenance.ticket_new') }}">
+  {# Easy (picture-only) report — for floor workers who can't/don't read #}
+  <a class="floor-btn primary" href="{{ url_for('maintenance.easy_report') }}">
     <svg class="ico"><use href="#i-alert"></use></svg>
-    <span data-i18n="m.report_problem">Report a Problem</span>
+    <span data-i18n="m.easy_report">Report a Problem</span>
+    <small style="display:block;font-size:11px;opacity:.85" data-i18n="m.easy_report_sub">Pictures &middot; easy</small>
+  </a>
+  {# Detailed form — for supervisors / full details #}
+  <a class="floor-btn" href="{{ url_for('maintenance.ticket_new') }}">
+    <svg class="ico"><use href="#i-report"></use></svg>
+    <span data-i18n="m.detailed_report">Detailed Report (form)</span>
   </a>
   {% endif %}
   <a class="floor-btn" href="{{ url_for('maintenance.scan') }}">

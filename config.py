@@ -102,4 +102,5 @@ class Config:
     # Uploads (maintenance photo proof, etc.) — served auth-gated, never public
     UPLOAD_DIR = DATA_DIR / "uploads"
     MAX_CONTENT_LENGTH = int(os.getenv("TC_MAX_UPLOAD_MB", "12")) * 1024 * 1024
-    ALLOWED_UPLOAD_EXT = {"jpg", "jpeg", "png", "webp", "gif", "mp4", "pdf"}
+    ALLOWED_UPLOAD_EXT = {"jpg", "jpeg", "png", "webp", "gif", "mp4", "pdf",
+                          "webm", "m4a", "ogg", "mp3", "wav"}  # audio = voice notes

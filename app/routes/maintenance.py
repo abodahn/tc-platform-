@@ -235,6 +235,16 @@ def floor():
                            active="maint_floor")
 
 
+@bp.route("/easy")
+@login_required
+def easy_report():
+    """Picture-only 'Easy Report' for low-literacy floor workers (no reading/typing).
+    Posts to the normal ticket_new endpoint, so it creates a standard ticket."""
+    _require("maint_ticket_create")
+    machines = _all("SELECT id,code,name,type,area FROM mnt_machines WHERE is_active=1 ORDER BY code")
+    return render_template("maintenance/easy_report.html", machines=machines, active="maint_floor")
+
+
 @bp.route("/scan")
 @login_required
 def scan():
