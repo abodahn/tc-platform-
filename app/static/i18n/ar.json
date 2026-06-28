@@ -322,6 +322,7 @@
   "m.easy_add_proof": "📸 أضف صورة (وصوت)", "m.easy_take_photo": "التقط صورة",
   "m.easy_record_voice": "سجّل صوتاً (اختياري)", "m.easy_send": "إرسال",
   "m.easy_need_photo": "الصورة مطلوبة للإرسال.", "m.easy_done": "تم الإرسال! شكراً.", "m.easy_again": "إبلاغ آخر",
+  "m.easy_voice_missing": "صوت هذه اللغة غير مثبّت على هذا الهاتف. الصور تعمل — اطلب من قسم تقنية المعلومات إضافة الصوت من إعدادات تحويل النص إلى كلام.",
   "m.easy_pick_category": "👆 ما نوع المشكلة؟", "m.easy_pick_detail": "👆 أي جزء / تفصيل؟",
   "me.cat_sew": "خياطة", "me.cat_mech": "ميكانيكي", "me.cat_elec": "كهرباء", "me.cat_motor": "موتور / حرارة",
   "me.cat_air": "هواء", "me.cat_cut": "قص", "me.cat_safety": "سلامة", "me.cat_other": "أخرى",

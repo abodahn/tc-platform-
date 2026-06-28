@@ -322,6 +322,7 @@
   "m.easy_add_proof": "📸 Add a photo (and voice)", "m.easy_take_photo": "Take a photo",
   "m.easy_record_voice": "Record voice (optional)", "m.easy_send": "SEND",
   "m.easy_need_photo": "A photo is needed to send.", "m.easy_done": "Sent! Thank you.", "m.easy_again": "Report another",
+  "m.easy_voice_missing": "This language's voice is not installed on this phone. The pictures still work — ask IT to add the voice in the phone's Text-to-Speech settings.",
   "m.easy_pick_category": "👆 What kind of problem?", "m.easy_pick_detail": "👆 Which part / detail?",
   "me.cat_sew": "Sewing", "me.cat_mech": "Mechanical", "me.cat_elec": "Electrical", "me.cat_motor": "Motor / Heat",
   "me.cat_air": "Air", "me.cat_cut": "Cutting", "me.cat_safety": "Safety", "me.cat_other": "Other",

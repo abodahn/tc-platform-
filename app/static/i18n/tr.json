@@ -322,6 +322,7 @@
   "m.easy_add_proof": "📸 Fotoğraf (ve ses) ekle", "m.easy_take_photo": "Fotoğraf çek",
   "m.easy_record_voice": "Ses kaydet (isteğe bağlı)", "m.easy_send": "GÖNDER",
   "m.easy_need_photo": "Göndermek için fotoğraf gerekli.", "m.easy_done": "Gönderildi! Teşekkürler.", "m.easy_again": "Başka bildir",
+  "m.easy_voice_missing": "Bu dilin sesi bu telefonda yüklü değil. Resimler çalışır — BT'den telefonun Metin Okuma ayarlarına sesi eklemesini isteyin.",
   "m.easy_pick_category": "👆 Ne tür bir sorun?", "m.easy_pick_detail": "👆 Hangi parça / detay?",
   "me.cat_sew": "Dikiş", "me.cat_mech": "Mekanik", "me.cat_elec": "Elektrik", "me.cat_motor": "Motor / Isı",
   "me.cat_air": "Hava", "me.cat_cut": "Kesim", "me.cat_safety": "Güvenlik", "me.cat_other": "Diğer",

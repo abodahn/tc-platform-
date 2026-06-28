@@ -43,6 +43,10 @@
   .er-done { text-align:center; padding:30px 16px; }
   .er-done .er-emoji { font-size:80px; }
   #erPhoto { display:none; }
+  .er-voicehint { display:flex; align-items:center; gap:10px; margin-bottom:14px; padding:10px 12px;
+                  background:rgba(255,200,87,.16); border:1px solid rgba(255,200,87,.55); border-radius:14px;
+                  font-size:12.5px; font-weight:600; line-height:1.35; }
+  .er-hint-x { margin-inline-start:auto; background:none; border:0; cursor:pointer; font-size:16px; opacity:.6; flex:0 0 auto; }
 </style>
 
 <div class="er-wrap">
@@ -53,6 +57,12 @@
       <span class="er-dot on"></span><span class="er-dot"></span><span class="er-dot"></span>
       <span class="er-dot"></span><span class="er-dot"></span>
     </div>
+  </div>
+
+  <div id="erVoiceHint" class="er-voicehint" style="display:none">
+    <span style="font-size:20px">🔇</span>
+    <span data-i18n="m.easy_voice_missing">This language's voice is not installed on this phone. The pictures still work — ask IT to add the voice in the phone's Text-to-Speech settings.</span>
+    <button type="button" class="er-hint-x" title="Hide">✕</button>
   </div>
 
   <div class="er-step on" data-step="0">
@@ -172,6 +182,19 @@
   document.querySelectorAll("[data-speak]").forEach(function (b) {
     b.addEventListener("click", function (ev) { ev.stopPropagation(); speak(b.parentElement.textContent); });
   });
+
+  // show a hint only when the chosen language's voice is missing on this device
+  function checkVoiceHint() {
+    var hint = document.getElementById("erVoiceHint"); if (!hint) return;
+    if (hint.dataset.dismissed === "1") { hint.style.display = "none"; return; }
+    loadVoices();
+    var missing = !!window.speechSynthesis && VOICES.length > 0 && !pickVoice(langCode());
+    hint.style.display = missing ? "flex" : "none";
+  }
+  if (window.speechSynthesis) { try { speechSynthesis.onvoiceschanged = function () { loadVoices(); checkVoiceHint(); }; } catch (e) {} }
+  setTimeout(checkVoiceHint, 700);
+  try { new MutationObserver(checkVoiceHint).observe(document.documentElement, { attributes:true, attributeFilter:["lang"] }); } catch (e) {}
+  (function () { var x = document.querySelector(".er-hint-x"); if (x) x.addEventListener("click", function () { var h = document.getElementById("erVoiceHint"); h.dataset.dismissed = "1"; h.style.display = "none"; }); })();
 
   var state = { mid:null, cat:null, sub:null, stopped:null, photo:null, voice:null };
   var step = 0;
