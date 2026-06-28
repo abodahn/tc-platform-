@@ -578,6 +578,13 @@ def init_db():
         # Re-point integrated systems to public URLs when configured via env vars
         # (runs every startup so a redeploy with new URLs takes effect).
         apply_integration_overrides(conn)
+        # Env-managed admin password: when TC_ADMIN_PASSWORD is explicitly set,
+        # keep the super-admin's password in sync with it so you can rotate it via
+        # the Render env var + a redeploy (no DB access needed).
+        import os as _os
+        if _os.getenv("TC_ADMIN_PASSWORD"):
+            conn.execute("UPDATE users SET password_hash=? WHERE username=?",
+                         (generate_password_hash(Config.ADMIN_PASSWORD), Config.ADMIN_USER))
         conn.commit()
         # Maintenance & Spare Parts (CMMS) module — create + seed if empty
         from app.maintenance.schema import create_and_seed as _mnt_create_and_seed
