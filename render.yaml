@@ -23,7 +23,10 @@ services:
     region: frankfurt          # pick the region closest to your users
     branch: render-deploy
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120"
+    # --preload imports the app once in the master and forks workers from it, so
+    # ALL workers share one SECRET_KEY (otherwise each worker gets its own key and
+    # ~half of requests fail CSRF with "Invalid or missing CSRF token").
+    startCommand: "gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 --preload"
     healthCheckPath: /api/health
     # --- To persist uploads, switch plan to 'starter' and uncomment: ---
     # disk:

@@ -30,30 +30,55 @@ def _bool(value: str, default: bool = False) -> bool:
 
 
 def _resolve_secret_key() -> str:
-    """Use TC_SECRET_KEY if set to a real value; otherwise (LOCAL DEV ONLY)
-    generate a strong key once and persist it to .secret_key. On Render the
-    filesystem is ephemeral, so TC_SECRET_KEY MUST come from the environment
-    (render.yaml generates it); we never write .secret_key in production."""
+    """Resolve a STABLE secret key so login sessions and CSRF tokens survive
+    across gunicorn workers and restarts. A changing key silently invalidates
+    every open session, which shows up to users as "Invalid or missing CSRF
+    token" on the next form they submit. Resolution order:
+
+      1. TC_SECRET_KEY from the environment — best: survives even redeploys.
+         Set this on Render (Settings -> Environment) to a long random value.
+      2. A generated key persisted to <data dir>/.secret_key, shared by every
+         worker and stable across restarts within the same container. (On a
+         free-tier ephemeral disk this is wiped on each *redeploy*, logging
+         users out once — set TC_SECRET_KEY to avoid even that.)
+      3. An ephemeral per-process key — only if the filesystem is read-only.
+    """
     env = (os.getenv("TC_SECRET_KEY") or "").strip()
     if env and env not in _INSECURE_DEFAULTS:
         return env
-    if (os.getenv("TC_ENV", "development").lower() == "production"):
-        # production with no real key set: use a per-process random key (and warn).
-        # Set TC_SECRET_KEY in the environment to keep sessions stable.
-        print("WARNING: TC_SECRET_KEY not set in production — using an ephemeral key.")
-        return secrets.token_hex(32)
-    keyfile = BASE_DIR / ".secret_key"
+
+    keyfile = Path(os.getenv("TC_DATA_DIR") or str(BASE_DIR)) / ".secret_key"
     try:
         if keyfile.exists():
             saved = keyfile.read_text(encoding="utf-8").strip()
             if saved:
                 return saved
-        generated = secrets.token_hex(32)
-        keyfile.write_text(generated, encoding="utf-8")
-        return generated
     except Exception:
-        # Last resort (read-only FS): random per-process key
-        return secrets.token_hex(32)
+        pass
+
+    generated = secrets.token_hex(32)
+    try:
+        keyfile.parent.mkdir(parents=True, exist_ok=True)
+        # O_EXCL: only the first worker creates+writes the key; any other worker
+        # racing at startup gets FileExistsError and reads the winner's key, so
+        # all workers converge on the same value (no per-worker mismatch).
+        try:
+            fd = os.open(str(keyfile), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            try:
+                os.write(fd, generated.encode("utf-8"))
+            finally:
+                os.close(fd)
+            return generated
+        except FileExistsError:
+            saved = keyfile.read_text(encoding="utf-8").strip()
+            return saved or generated
+    except Exception:
+        # Read-only filesystem: fall back to a per-process key (sessions will
+        # reset on restart). Set TC_SECRET_KEY to make them stable.
+        if os.getenv("TC_ENV", "development").lower() == "production":
+            print("WARNING: TC_SECRET_KEY unset and key file unwritable — "
+                  "sessions will reset on restart. Set TC_SECRET_KEY on Render.")
+        return generated
 
 
 class Config:

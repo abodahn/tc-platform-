@@ -8,7 +8,7 @@ constant time.
 """
 import secrets
 
-from flask import session, request, g, abort
+from flask import session, request, g, abort, redirect, url_for, flash
 
 _FIELD = "_csrf"
 _HEADER = "X-CSRF-Token"
@@ -37,8 +37,22 @@ def init_csrf(app):
             return
         sent = request.form.get(_FIELD) or request.headers.get(_HEADER) or ""
         expected = session.get("_csrf_token", "")
-        if not expected or not secrets.compare_digest(str(sent), str(expected)):
-            abort(400, description="Invalid or missing CSRF token.")
+        if expected and secrets.compare_digest(str(sent), str(expected)):
+            return
+        # Token missing or mismatched. In practice this is almost always an
+        # expired or rotated session (e.g. after a redeploy) rather than an
+        # attack. For a normal browser navigation (a form POST, which sends
+        # `Accept: text/html`) bounce the user to login with a clear message
+        # instead of a dead-end 400 page. Programmatic callers (fetch/XHR/API,
+        # whose Accept is */* or application/json) still get a hard 400 so they
+        # can handle it in code.
+        if "text/html" in (request.headers.get("Accept") or ""):
+            try:
+                flash("Your session expired. Please sign in again, then retry.", "warning")
+            except Exception:
+                pass
+            return redirect(url_for("auth.login"))
+        abort(400, description="Invalid or missing CSRF token.")
 
     @app.context_processor
     def _inject():
