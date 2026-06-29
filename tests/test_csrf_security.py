@@ -1,6 +1,6 @@
 """CSRF protection behaviour: browser navigations bounce to login, XHR get 400,
 valid tokens pass through."""
-from conftest import get_csrf
+from _support import get_csrf
 
 
 def test_missing_token_browser_nav_redirects_to_login(client):

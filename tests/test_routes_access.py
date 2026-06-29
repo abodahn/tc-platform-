@@ -11,7 +11,7 @@ Guarantees:
 import pytest
 
 from app.security import ROLES, has_permission
-from conftest import login_as, login_admin
+from _support import login_as, login_admin
 
 # Public GET routes (no auth needed).
 PUBLIC = ["/api/health", "/sw.js", "/login"]

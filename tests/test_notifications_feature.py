@@ -1,7 +1,7 @@
 """Tests for the notification feed, mark-read, and the 4-system aggregation."""
 import app.services.notify as notify
 from app.db import get_db
-from conftest import login_admin, get_csrf
+from _support import login_admin, get_csrf
 
 
 class _Resp:
