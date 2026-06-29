@@ -432,6 +432,10 @@ def mark_notifications_read():
     if request.is_json:
         nid = (request.get_json(silent=True) or {}).get("id")
     nid = nid or request.form.get("id")
+    try:
+        nid = int(nid) if nid not in (None, "") else None
+    except (TypeError, ValueError):
+        nid = None
     conn = get_db()
     try:
         if nid:
