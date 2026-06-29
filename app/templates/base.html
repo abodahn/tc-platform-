@@ -117,15 +117,19 @@
           <a class="tag" id="markRead" style="cursor:pointer" data-i18n="top.mark_read">Mark all read</a>
         </header>
         <div style="max-height:380px;overflow-y:auto">
+          {% set _known = ['itsm', 'assets', 'monitoring', 'commandtrack', 'production'] %}
           {% for n in notifications %}
-          <div class="notif sev-{{ n.severity }}">
+          <a class="notif sev-{{ n.severity }}{{ ' is-read' if n.is_read else '' }}"
+             href="{{ url_for('main.module', key=n.module) if n.module in _known else url_for('main.index') }}"
+             data-nid="{{ n.id }}">
             <div class="nicon"><svg class="ico" style="width:17px;height:17px"><use href="#i-{{ 'alert' if n.severity=='critical' else ('bell' if n.severity=='warning' else 'check') }}"></use></svg></div>
             <div>
               <div class="ntitle">{{ n.title }}</div>
               <div class="nmsg">{{ n.message }}</div>
               <div class="ntime">{{ n.module }} · {{ n.created_at }}</div>
             </div>
-          </div>
+            {% if not n.is_read %}<span class="ndot" aria-hidden="true"></span>{% endif %}
+          </a>
           {% else %}
           <div class="empty"><span data-i18n="common.no_results">No notifications</span></div>
           {% endfor %}

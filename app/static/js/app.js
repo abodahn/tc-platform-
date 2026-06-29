@@ -191,7 +191,25 @@
     if (markRead) markRead.addEventListener("click", () => {
       fetch("/notifications/read", { method: "POST", headers: { "X-CSRF-Token": CSRF } }).then(() => {
         document.querySelectorAll("#notifBtn .badge-count, #notifBtn .badge-dot").forEach(e => e.remove());
+        document.querySelectorAll("#notifPanel .notif").forEach(n => { n.classList.add("is-read"); const d = n.querySelector(".ndot"); if (d) d.remove(); });
         toast(t("top.mark_read"), "success");
+      });
+    });
+
+    // Click a single notification -> mark just it read, then open its module.
+    document.querySelectorAll("#notifPanel .notif[data-nid]").forEach(a => {
+      a.addEventListener("click", (e) => {
+        const nid = a.getAttribute("data-nid");
+        const href = a.getAttribute("href");
+        e.preventDefault();
+        let navigated = false;
+        const go = () => { if (!navigated) { navigated = true; window.location.href = href; } };
+        fetch("/notifications/read", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF },
+          body: JSON.stringify({ id: nid })
+        }).then(go, go);
+        setTimeout(go, 1200); // fallback so navigation never gets stuck on a slow/failed request
       });
     });
   }

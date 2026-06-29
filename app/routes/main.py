@@ -426,9 +426,18 @@ def prefs():
 @bp.route("/notifications/read", methods=["POST"])
 @login_required
 def mark_notifications_read():
+    # With an `id` (JSON or form) mark just that one read (clicking a single
+    # notification); without one, mark all unread read ("Mark all read").
+    nid = None
+    if request.is_json:
+        nid = (request.get_json(silent=True) or {}).get("id")
+    nid = nid or request.form.get("id")
     conn = get_db()
     try:
-        conn.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+        if nid:
+            conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (nid,))
+        else:
+            conn.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
         conn.commit()
     finally:
         conn.close()
