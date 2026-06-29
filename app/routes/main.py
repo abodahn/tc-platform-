@@ -21,7 +21,7 @@ from app.security import has_permission, role_label, ROLES, validate_password
 from app.navigation import NAV
 from app.services import health as health_svc
 from app.services import seed_content as sc
-from app.services.notify import sync_health_notifications
+from app.services.notify import sync_health_notifications, sync_system_notifications
 
 bp = Blueprint("main", __name__)
 
@@ -452,7 +452,13 @@ def mark_notifications_read():
 @login_required
 def notifications_feed():
     """Lightweight JSON feed the top bar polls so brand-new notifications can
-    chime, pop up and update the bell live without a page reload."""
+    chime, pop up and update the bell live without a page reload. Also pulls the
+    four systems' own notifications into the feed (throttled), so any alert from
+    ITSM / Assets / Monitoring / CommandTrack shows up here too."""
+    try:
+        sync_system_notifications(_systems())
+    except Exception:
+        pass
     notifs, unread = _unread_notifications()
     items = [{
         "id": n["id"], "severity": n["severity"], "module": n["module"],

@@ -273,7 +273,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     title      TEXT,
     message    TEXT,
     is_read    INTEGER DEFAULT 0,
-    created_at TEXT
+    created_at TEXT,
+    ext_key    TEXT                   -- dedup key for alerts pulled from the 4 systems (module:source_id)
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -541,6 +542,13 @@ def init_db():
     conn = get_db()
     try:
         conn.executescript(SCHEMA)
+        # Migration: ensure the notifications dedup column exists on databases
+        # created before it was added (harmless if it already exists).
+        try:
+            conn.execute("ALTER TABLE notifications ADD COLUMN ext_key TEXT")
+            conn.commit()
+        except Exception:
+            conn.rollback()
         # Seed super admin only if no users exist
         existing = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
         if existing == 0:
