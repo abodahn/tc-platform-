@@ -229,6 +229,28 @@ a.notif { text-decoration: none; color: inherit; cursor: pointer; position: rela
 a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
 .notif.is-read { opacity: .55; }
 .notif .ndot { width: 8px; height: 8px; border-radius: 50%; background: var(--tc-red); flex: 0 0 8px; align-self: center; margin-inline-start: auto; }
+.notif-actions { margin-inline-start: auto; display: flex; gap: 10px; align-items: center; }
+#notifSound { font-size: 15px; text-decoration: none; }
+
+/* bell shakes when a new notification arrives */
+@keyframes tc-ring { 0%,100% { transform: rotate(0); } 20% { transform: rotate(15deg); } 40% { transform: rotate(-13deg); } 60% { transform: rotate(9deg); } 80% { transform: rotate(-5deg); } }
+#notifBtn.ring { animation: tc-ring .9s ease; transform-origin: 50% 6px; }
+
+/* rich slide-in notification popups (top-right) */
+.npops { position: fixed; top: 16px; inset-inline-end: 16px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 360px; width: calc(100vw - 32px); pointer-events: none; }
+.npop { pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; background: var(--panel); border: 1px solid var(--line); border-inline-start: 4px solid var(--info); border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 32px rgba(0,0,0,.20); cursor: pointer; transform: translateX(120%); opacity: 0; transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .35s; }
+.npop.show { transform: translateX(0); opacity: 1; }
+.npop.sev-warning { border-inline-start-color: var(--warn); }
+.npop.sev-critical { border-inline-start-color: var(--crit); }
+.npop .nicon { width: 32px; height: 32px; border-radius: 9px; flex: 0 0 32px; display: grid; place-items: center; background: var(--info-bg); color: var(--info); }
+.npop.sev-warning .nicon { background: var(--warn-bg); color: var(--warn); }
+.npop.sev-critical .nicon { background: var(--crit-bg); color: var(--crit); }
+.npop-body { flex: 1; min-width: 0; }
+.npop-title { font-weight: 700; font-size: 13px; }
+.npop-msg { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.npop-x { background: none; border: 0; color: var(--muted); font-size: 19px; line-height: 1; cursor: pointer; padding: 0 2px; flex: 0 0 auto; }
+[dir="rtl"] .npop { transform: translateX(-120%); }
+[dir="rtl"] .npop.show { transform: translateX(0); }
 .notif .nicon { width: 34px; height: 34px; border-radius: 10px; flex: 0 0 34px; display: grid; place-items: center; }
 .notif .ntitle { font-weight: 600; font-size: 13px; }
 .notif .nmsg { color: var(--muted); font-size: 12px; margin-top: 2px; }

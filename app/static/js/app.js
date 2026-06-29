@@ -297,6 +297,137 @@
     setInterval(poll, 20000);
   }
 
+  /* ---------------- Live notifications (sound + popup + bell) ---------------- */
+  function initLiveNotifications() {
+    const bell = document.getElementById("notifBtn");
+    const panel = document.getElementById("notifPanel");
+    if (!bell || !panel) return;                       // only on authenticated pages
+    const KNOWN = ["itsm", "assets", "monitoring", "commandtrack", "production"];
+    const listBox = panel.querySelector('div[style*="overflow"]');
+    const hrefFor = (m) => KNOWN.indexOf(m) >= 0 ? "/module/" + m : "/";
+    const iconOf = (sev) => sev === "critical" ? "alert" : (sev === "warning" ? "bell" : "check");
+
+    // highest notification id already shown on the page
+    let lastSeen = 0;
+    document.querySelectorAll('#notifPanel .notif[data-nid]').forEach(a => {
+      const id = +a.getAttribute("data-nid"); if (id > lastSeen) lastSeen = id;
+    });
+
+    // ---- sound: a synthesized chime (no audio file needed, works offline) ----
+    const SKEY = "tc_notif_sound";
+    let soundOn = localStorage.getItem(SKEY) !== "0";
+    let actx = null;
+    function arm() { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === "suspended") actx.resume(); } catch (e) {} }
+    document.addEventListener("click", function once() { arm(); document.removeEventListener("click", once, true); }, true);
+    function chime(sev) {
+      if (!soundOn) return; arm(); if (!actx) return;
+      try {
+        const now = actx.currentTime;
+        const tones = sev === "critical" ? [880, 1245, 880, 1245] : (sev === "warning" ? [784, 1047] : [659, 988]);
+        tones.forEach((f, i) => {
+          const o = actx.createOscillator(), g = actx.createGain();
+          o.type = "sine"; o.frequency.value = f; o.connect(g); g.connect(actx.destination);
+          const ts = now + i * 0.15;
+          g.gain.setValueAtTime(0.0001, ts);
+          g.gain.exponentialRampToValueAtTime(0.22, ts + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001, ts + 0.16);
+          o.start(ts); o.stop(ts + 0.18);
+        });
+      } catch (e) {}
+    }
+    const soundBtn = document.getElementById("notifSound");
+    function paintSound() { if (soundBtn) soundBtn.textContent = soundOn ? "🔔" : "🔕"; }
+    paintSound();
+    if (soundBtn) soundBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      soundOn = !soundOn; localStorage.setItem(SKEY, soundOn ? "1" : "0"); paintSound();
+      if (soundOn) { arm(); chime("info"); toast(t("top.sound_on"), "success"); } else { toast(t("top.sound_off"), ""); }
+    });
+
+    // ---- desktop notification (asks permission the first time the bell opens) ----
+    bell.addEventListener("click", () => {
+      try { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); } catch (e) {}
+      poll();   // opening the bell pulls the latest immediately
+    });
+    function desktop(n) {
+      try {
+        if (!("Notification" in window) || Notification.permission !== "granted") return;
+        const dn = new Notification(n.title || "TC Platform", { body: n.message || "", tag: "tc-" + n.id, requireInteraction: n.severity === "critical" });
+        dn.onclick = () => { window.focus(); markAndGo(n.id, hrefFor(n.module)); dn.close(); };
+      } catch (e) {}
+    }
+
+    function markAndGo(id, href) {
+      fetch("/notifications/read", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF }, body: JSON.stringify({ id }) })
+        .then(() => { window.location.href = href; }, () => { window.location.href = href; });
+    }
+
+    // ---- rich slide-in popup ----
+    function popup(n) {
+      let wrap = document.querySelector(".npops");
+      if (!wrap) { wrap = document.createElement("div"); wrap.className = "npops"; document.body.appendChild(wrap); }
+      const el = document.createElement("div");
+      el.className = "npop sev-" + n.severity;
+      el.innerHTML = '<div class="nicon"><svg class="ico" style="width:18px;height:18px"><use href="#i-' + iconOf(n.severity) + '"></use></svg></div>' +
+        '<div class="npop-body"><div class="npop-title"></div><div class="npop-msg"></div></div>' +
+        '<button class="npop-x" type="button" aria-label="close">&times;</button>';
+      el.querySelector(".npop-title").textContent = n.title || "Notification";
+      el.querySelector(".npop-msg").textContent = n.message || "";
+      el.addEventListener("click", (e) => { if (e.target.closest(".npop-x")) { el.classList.remove("show"); setTimeout(() => el.remove(), 300); return; } markAndGo(n.id, hrefFor(n.module)); });
+      wrap.appendChild(el);
+      requestAnimationFrame(() => el.classList.add("show"));
+      setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 350); }, n.severity === "critical" ? 9000 : 6000);
+    }
+
+    function prependBell(n) {
+      if (!listBox) return;
+      const empty = listBox.querySelector(".empty"); if (empty) empty.remove();
+      const a = document.createElement("a");
+      a.className = "notif sev-" + n.severity;
+      a.setAttribute("href", hrefFor(n.module));
+      a.setAttribute("data-nid", n.id);
+      a.innerHTML = '<div class="nicon"><svg class="ico" style="width:17px;height:17px"><use href="#i-' + iconOf(n.severity) + '"></use></svg></div>' +
+        '<div><div class="ntitle"></div><div class="nmsg"></div><div class="ntime"></div></div>' +
+        '<span class="ndot" aria-hidden="true"></span>';
+      a.querySelector(".ntitle").textContent = n.title || "";
+      a.querySelector(".nmsg").textContent = n.message || "";
+      a.querySelector(".ntime").textContent = (n.module || "") + " · " + (n.created_at || "");
+      a.addEventListener("click", (e) => { e.preventDefault(); markAndGo(n.id, a.getAttribute("href")); });
+      listBox.insertBefore(a, listBox.firstChild);
+    }
+
+    function setBadge(unread) {
+      let badge = bell.querySelector(".badge-count");
+      if (unread > 0) {
+        if (!badge) { badge = document.createElement("span"); badge.className = "badge-count"; bell.appendChild(badge); }
+        badge.textContent = unread < 100 ? String(unread) : "99+";
+      } else if (badge) { badge.remove(); }
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch("/notifications/feed", { credentials: "same-origin", headers: { "X-CSRF-Token": CSRF } });
+        if (!res.ok) return;
+        const data = await res.json();
+        setBadge(data.unread);
+        if (data.max_id > lastSeen) {
+          const fresh = (data.items || []).filter(n => n.id > lastSeen).sort((a, b) => a.id - b.id);
+          fresh.forEach(prependBell);                  // ascending insert -> newest ends on top
+          if (fresh.length) {
+            const top = fresh[fresh.length - 1];
+            chime(top.severity);
+            bell.classList.add("ring"); setTimeout(() => bell.classList.remove("ring"), 900);
+            fresh.forEach(popup);
+            fresh.forEach(desktop);
+          }
+          lastSeen = data.max_id;
+        }
+      } catch (e) {}
+    }
+    poll();
+    setInterval(poll, 20000);
+  }
+
   /* ---------------- Toasts ---------------- */
   function toast(msg, type = "") {
     let wrap = document.querySelector(".toasts");
@@ -333,6 +464,7 @@
     initSearch();
     initKeyboard();
     initStatusPolling();
+    initLiveNotifications();
     animateCounters();
 
     // flash messages -> toasts

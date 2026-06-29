@@ -448,6 +448,21 @@ def mark_notifications_read():
     return jsonify({"ok": True})
 
 
+@bp.route("/notifications/feed")
+@login_required
+def notifications_feed():
+    """Lightweight JSON feed the top bar polls so brand-new notifications can
+    chime, pop up and update the bell live without a page reload."""
+    notifs, unread = _unread_notifications()
+    items = [{
+        "id": n["id"], "severity": n["severity"], "module": n["module"],
+        "title": n["title"], "message": n["message"],
+        "created_at": n["created_at"], "is_read": n["is_read"],
+    } for n in notifs]
+    max_id = max((it["id"] for it in items), default=0)
+    return jsonify({"unread": unread, "max_id": max_id, "items": items})
+
+
 # --------------------------------------------------------------------------
 # Global search (phase 1: platform metadata + app names)
 # --------------------------------------------------------------------------
