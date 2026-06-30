@@ -484,11 +484,33 @@
         try { await deferred.userChoice; } catch (e) {}
         deferred = null; hide();
       } else if (isIOS) {
-        alert(t("pwa.ios_hint"));
+        showIosInstallSheet();
       } else {
         alert(t("pwa.generic_hint"));
       }
     }));
+  }
+
+  function showIosInstallSheet() {
+    if (document.querySelector(".ios-sheet-backdrop")) return;
+    const shareSvg = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M8.5 7.5 12 4l3.5 3.5"/><path d="M6 12v6a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-6"/></svg>';
+    const bd = document.createElement("div");
+    bd.className = "ios-sheet-backdrop";
+    bd.innerHTML =
+      '<div class="ios-sheet" role="dialog" aria-modal="true">' +
+        '<button class="ios-sheet-x" aria-label="close" type="button">&times;</button>' +
+        '<div class="ios-sheet-emoji">📲</div>' +
+        '<h3>' + t("pwa.ios_title") + '</h3>' +
+        '<ol class="ios-steps">' +
+          '<li><span class="ios-step-ic">' + shareSvg + '</span><span>' + t("pwa.ios_step1") + '</span></li>' +
+          '<li><span class="ios-step-ic">+</span><span>' + t("pwa.ios_step2") + '</span></li>' +
+          '<li><span class="ios-step-ic">&#10003;</span><span>' + t("pwa.ios_step3") + '</span></li>' +
+        '</ol>' +
+        '<div class="ios-note">' + t("pwa.ios_safari") + '</div>' +
+      '</div>';
+    const close = () => bd.remove();
+    bd.addEventListener("click", (e) => { if (e.target === bd || e.target.closest(".ios-sheet-x")) close(); });
+    document.body.appendChild(bd);
   }
 
   /* ---------------- Toasts ---------------- */
