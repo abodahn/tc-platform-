@@ -245,6 +245,10 @@ a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
 .ov-kpi.warn { background: rgba(245,158,11,.12); } .ov-kpi.warn .v { color: #b45309; }
 .ov-kpi.crit { background: rgba(237,28,36,.10); } .ov-kpi.crit .v { color: var(--tc-red); }
 .ov-empty { color: var(--muted); font-size: 13px; padding: 6px 2px; }
+
+/* PWA install button — hidden until the browser says the app is installable */
+.pwa-install { display: none !important; }
+.pwa-install.show { display: inline-flex !important; align-items: center; justify-content: center; gap: 8px; }
 #notifSound { font-size: 15px; text-decoration: none; }
 
 /* bell shakes when a new notification arrives */

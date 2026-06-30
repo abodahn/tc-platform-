@@ -1,6 +1,6 @@
 /* TC Platform service worker — installable PWA + offline-resilient shell.
    Network-first for pages, cache-first fill for static assets. */
-const CACHE = "tcp-v1";
+const CACHE = "tcp-v2";
 const CORE = [
   "/static/css/tokens.css", "/static/css/app.css", "/static/js/app.js",
   "/static/i18n/en.json", "/static/i18n/ar.json", "/static/i18n/tr.json",

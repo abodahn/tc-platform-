@@ -155,6 +155,7 @@
         {% if can('access_admin') %}
         <a href="{{ url_for('admin.index') }}"><svg class="ico" style="width:16px;height:16px"><use href="#i-settings"></use></svg><span data-i18n="top.settings">Settings</span></a>
         {% endif %}
+        <a href="#" class="pwa-install" id="pwaInstallMenu" onclick="return false"><span style="width:16px;text-align:center">📲</span><span data-i18n="pwa.install">Install app</span></a>
         <hr>
         <a href="{{ url_for('auth.logout') }}"><svg class="ico" style="width:16px;height:16px"><use href="#i-logout"></use></svg><span data-i18n="top.logout">Sign out</span></a>
       </div>

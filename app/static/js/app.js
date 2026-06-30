@@ -458,6 +458,38 @@
     setInterval(load, 60000);
   }
 
+  /* ---------------- Install as app (PWA) ---------------- */
+  function initPwaInstall() {
+    const btns = document.querySelectorAll(".pwa-install");
+    if (!btns.length) return;
+    const standalone = window.matchMedia("(display-mode: standalone)").matches ||
+                       window.navigator.standalone === true;  // already installed
+    const ua = navigator.userAgent || "";
+    const isIOS = /iphone|ipad|ipod/i.test(ua) ||
+                  (/macintosh/i.test(ua) && "ontouchend" in document);  // iPadOS
+    let deferred = null;
+    const show = () => { if (!standalone) btns.forEach(b => b.classList.add("show")); };
+    const hide = () => btns.forEach(b => b.classList.remove("show"));
+
+    // Handlers are always attached; show() is gated so an already-installed app
+    // never shows the button (the browser also won't fire the event then).
+    window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferred = e; show(); });
+    window.addEventListener("appinstalled", () => { hide(); try { toast(t("pwa.installed"), "success"); } catch (e) {} });
+    if (isIOS) show();  // iOS Safari fires no event — show with instructions
+
+    btns.forEach(btn => btn.addEventListener("click", async () => {
+      if (deferred) {
+        deferred.prompt();
+        try { await deferred.userChoice; } catch (e) {}
+        deferred = null; hide();
+      } else if (isIOS) {
+        alert(t("pwa.ios_hint"));
+      } else {
+        alert(t("pwa.generic_hint"));
+      }
+    }));
+  }
+
   /* ---------------- Toasts ---------------- */
   function toast(msg, type = "") {
     let wrap = document.querySelector(".toasts");
@@ -496,6 +528,7 @@
     initStatusPolling();
     initLiveNotifications();
     initBusinessOverview();
+    initPwaInstall();
     animateCounters();
 
     // flash messages -> toasts
