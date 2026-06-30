@@ -464,6 +464,11 @@ def notifications_feed():
         dispatch_pending_alerts()   # email/webhook any new critical alerts (once)
     except Exception:
         pass
+    try:
+        from app.services.auto_ticket import auto_create_tickets
+        auto_create_tickets(_systems())   # open ITSM tickets for new critical alerts (if enabled)
+    except Exception:
+        pass
     notifs, unread = _unread_notifications()
     items = [{
         "id": n["id"], "severity": n["severity"], "module": n["module"],

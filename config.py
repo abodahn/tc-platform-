@@ -138,6 +138,17 @@ class Config:
     # Public URL of the platform (used in alert emails so links are clickable).
     PUBLIC_BASE_URL = (os.getenv("TC_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
 
+    # --- Auto-ticketing: turn alerts into Service Desk tickets ------------
+    # OFF by default. When on, critical alerts from the source systems below are
+    # auto-opened as ITSM tickets (deduped, one ticket per alert).
+    AUTO_TICKET_ENABLED = _bool(os.getenv("TC_AUTO_TICKET_ENABLED"), False)
+    AUTO_TICKET_TARGET = (os.getenv("TC_AUTO_TICKET_TARGET", "itsm") or "itsm").strip()
+    # only alerts FROM these source systems are ticketed (avoids ticketing ITSM's
+    # own alerts back into ITSM). Comma-separated system keys.
+    AUTO_TICKET_SOURCE_MODULES = (os.getenv("TC_AUTO_TICKET_SOURCE_MODULES", "monitoring") or "").strip()
+    AUTO_TICKET_MIN_SEVERITY = (os.getenv("TC_AUTO_TICKET_MIN_SEVERITY", "critical") or "critical").strip().lower()
+    AUTO_TICKET_REQUESTER = (os.getenv("TC_AUTO_TICKET_REQUESTER", "platform-automation") or "").strip()
+
     # Writable data dir — local: project folder; Render: TC_DATA_DIR (a disk on
     # paid plans, or an ephemeral path like /tmp on free tier).
     DATA_DIR = Path(os.getenv("TC_DATA_DIR", str(BASE_DIR)))
