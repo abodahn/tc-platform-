@@ -230,6 +230,21 @@ a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
 .notif.is-read { opacity: .55; }
 .notif .ndot { width: 8px; height: 8px; border-radius: 50%; background: var(--tc-red); flex: 0 0 8px; align-self: center; margin-inline-start: auto; }
 .notif-actions { margin-inline-start: auto; display: flex; gap: 10px; align-items: center; }
+
+/* consolidated business overview (dashboard) */
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.ov-sys { border: 1px solid var(--line-2, #e5e7eb); border-radius: 14px; padding: 14px 16px; background: var(--panel, #fff); }
+.ov-sys .ov-h { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; margin-bottom: 12px; }
+.ov-sys .ov-dot { width: 9px; height: 9px; border-radius: 50%; background: #16a34a; flex: 0 0 9px; }
+.ov-sys.off .ov-dot { background: #9aa3b2; }
+.ov-sys.off { opacity: .7; }
+.ov-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ov-kpi { background: var(--panel-2, #f6f7f9); border-radius: 10px; padding: 9px 11px; }
+.ov-kpi .v { font-size: 19px; font-weight: 800; line-height: 1.1; }
+.ov-kpi .l { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.ov-kpi.warn { background: rgba(245,158,11,.12); } .ov-kpi.warn .v { color: #b45309; }
+.ov-kpi.crit { background: rgba(237,28,36,.10); } .ov-kpi.crit .v { color: var(--tc-red); }
+.ov-empty { color: var(--muted); font-size: 13px; padding: 6px 2px; }
 #notifSound { font-size: 15px; text-decoration: none; }
 
 /* bell shakes when a new notification arrives */

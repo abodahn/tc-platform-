@@ -428,6 +428,36 @@
     setInterval(poll, 20000);
   }
 
+  /* ---------------- Consolidated business overview ---------------- */
+  function initBusinessOverview() {
+    const box = document.getElementById("bizOverview");
+    if (!box) return;
+    const meta = document.getElementById("bizOverviewMeta");
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    async function load() {
+      try {
+        const res = await fetch("/api/overview", { credentials: "same-origin" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const systems = (data.systems || []);
+        const online = systems.filter(s => s.online).length;
+        if (meta) meta.textContent = online + "/" + systems.length + " " + t("dash.system_health");
+        box.innerHTML = systems.map(s => {
+          const kpis = (s.kpis || []).map(k => {
+            const sev = k.severity === "crit" ? "crit" : (k.severity === "warn" ? "warn" : "");
+            return `<div class="ov-kpi ${sev}"><div class="v">${esc(k.value)}</div><div class="l">${esc(k.label)}</div></div>`;
+          }).join("");
+          return `<div class="ov-sys ${s.online ? "" : "off"}"><div class="ov-h"><span class="ov-dot"></span>${esc(s.name)}</div>`
+            + (kpis ? `<div class="ov-kpis">${kpis}</div>` : `<div class="ov-empty">${s.online ? "No data" : "Offline"}</div>`)
+            + `</div>`;
+        }).join("");
+      } catch (e) { /* leave placeholder */ }
+    }
+    load();
+    setInterval(load, 60000);
+  }
+
   /* ---------------- Toasts ---------------- */
   function toast(msg, type = "") {
     let wrap = document.querySelector(".toasts");
@@ -465,6 +495,7 @@
     initKeyboard();
     initStatusPolling();
     initLiveNotifications();
+    initBusinessOverview();
     animateCounters();
 
     // flash messages -> toasts

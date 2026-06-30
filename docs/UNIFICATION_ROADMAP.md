@@ -20,13 +20,14 @@ operational hardening. Phased so each step ships value independently.
 - [x] `restore_test.py` — restores the latest backup to a temp dir and verifies
   each DB opens and has rows (an untested backup isn't a backup).
 
-## Phase 3 — Consolidated business dashboard  (next)
+## Phase 3 — Consolidated business dashboard  ✅ (done)
 **Goal:** one screen with real KPIs from all four systems, not just health.
-- [ ] Each system exposes `GET /api/integration/summary` → `{kpis:[{label,value,severity}]}`
+- [x] Each system exposes `GET /api/integration/summary` → `{kpis:[{label,value,severity}]}`
   (assets & book value; open/breached tickets; servers down + active alerts;
   pending approvals + overdue tasks).
-- [ ] Platform pulls + caches them and renders a unified "Business Overview" card grid.
-- [ ] Reuses the existing throttled pull + `base_url` plumbing.
+- [x] Platform pulls + caches them (`app/services/integration.py`, `GET /api/overview`)
+  and renders a unified "Business Overview" card grid on the dashboard, severity-coloured.
+- [x] Reuses the existing `base_url` plumbing; tests in `tests/test_overview.py`.
 
 ## Phase 4 — Single Sign-On (login once → all 4 systems)  (next, larger)
 **Goal:** stop the 5-logins problem. Platform becomes the identity provider.

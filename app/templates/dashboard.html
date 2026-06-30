@@ -25,6 +25,16 @@
   </div>
 </div>
 
+{# ---------------- Consolidated Business Overview (all systems) ---------------- #}
+<div class="panel mt-6">
+  <div class="panel-head">
+    <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-apps"></use></svg>
+      <span data-i18n="dash.overview">Business Overview — All Systems</span></h3>
+    <span class="badge b-info" id="bizOverviewMeta">…</span>
+  </div>
+  <div class="panel-pad"><div id="bizOverview" class="ov-grid"></div></div>
+</div>
+
 {# ---------------- AI Daily Briefing (offline) ---------------- #}
 {% if briefing %}
 <div class="panel accent mt-6">

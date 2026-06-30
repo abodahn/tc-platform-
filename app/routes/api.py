@@ -118,3 +118,18 @@ def status_one(key):
     if not row:
         return jsonify({"error": "not_found"}), 404
     return jsonify(health_svc.check_system(row, use_cache=False))
+
+
+@bp.route("/overview")
+@login_required
+def overview():
+    """Consolidated business KPIs pulled from all four systems (cached)."""
+    from app.services.integration import fetch_overview
+    conn = get_db()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT key, name_en, base_url, is_integrated FROM systems "
+            "WHERE enabled=1 ORDER BY sort_order").fetchall()]
+    finally:
+        conn.close()
+    return jsonify({"systems": fetch_overview(rows)})
