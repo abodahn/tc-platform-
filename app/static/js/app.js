@@ -462,20 +462,21 @@
   function initPwaInstall() {
     const btns = document.querySelectorAll(".pwa-install");
     if (!btns.length) return;
+    const hide = () => btns.forEach(b => b.classList.add("pwa-hidden"));
     const standalone = window.matchMedia("(display-mode: standalone)").matches ||
                        window.navigator.standalone === true;  // already installed
+    if (standalone) { hide(); return; }   // installed -> nothing to offer
+
     const ua = navigator.userAgent || "";
     const isIOS = /iphone|ipad|ipod/i.test(ua) ||
                   (/macintosh/i.test(ua) && "ontouchend" in document);  // iPadOS
     let deferred = null;
-    const show = () => { if (!standalone) btns.forEach(b => b.classList.add("show")); };
-    const hide = () => btns.forEach(b => b.classList.remove("show"));
 
-    // Handlers are always attached; show() is gated so an already-installed app
-    // never shows the button (the browser also won't fire the event then).
-    window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferred = e; show(); });
+    // The button is ALWAYS visible (unless installed). If the browser supports
+    // one-tap install it captures the event for a direct prompt; otherwise the
+    // click explains how to install on that browser.
+    window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferred = e; });
     window.addEventListener("appinstalled", () => { hide(); try { toast(t("pwa.installed"), "success"); } catch (e) {} });
-    if (isIOS) show();  // iOS Safari fires no event — show with instructions
 
     btns.forEach(btn => btn.addEventListener("click", async () => {
       if (deferred) {
