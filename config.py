@@ -117,6 +117,27 @@ class Config:
         "commandtrack": (os.getenv("TC_URL_COMMANDTRACK", "") or "").strip().rstrip("/"),
     }
 
+    # --- Observability & external alerting -------------------------------
+    # Email (SMTP) for critical alerts + 500 error reports. Leave TC_SMTP_HOST
+    # blank to disable email — the app still works, alerts just log locally.
+    SMTP_HOST = (os.getenv("TC_SMTP_HOST", "") or "").strip()
+    SMTP_PORT = int(os.getenv("TC_SMTP_PORT", "587"))
+    SMTP_USER = (os.getenv("TC_SMTP_USER", "") or "").strip()
+    SMTP_PASS = os.getenv("TC_SMTP_PASS", "") or ""
+    SMTP_FROM = (os.getenv("TC_SMTP_FROM", "") or os.getenv("TC_SMTP_USER", "")
+                 or "tc-platform@tcgarments.com").strip()
+    SMTP_TLS = _bool(os.getenv("TC_SMTP_TLS"), True)
+    # Comma-separated recipients for alerts & error reports.
+    ALERT_EMAILS = [e.strip() for e in (os.getenv("TC_ALERT_EMAILS", "") or "").split(",") if e.strip()]
+    # Generic webhook (WhatsApp / Slack / Teams / n8n) — gets a JSON POST per alert.
+    ALERT_WEBHOOK_URL = (os.getenv("TC_ALERT_WEBHOOK_URL", "") or "").strip()
+    # Only alert at/above this severity (info < warning < critical).
+    ALERT_MIN_SEVERITY = (os.getenv("TC_ALERT_MIN_SEVERITY", "critical") or "critical").strip().lower()
+    # Sentry error tracking (optional). Set TC_SENTRY_DSN to enable.
+    SENTRY_DSN = (os.getenv("TC_SENTRY_DSN", "") or "").strip()
+    # Public URL of the platform (used in alert emails so links are clickable).
+    PUBLIC_BASE_URL = (os.getenv("TC_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+
     # Writable data dir — local: project folder; Render: TC_DATA_DIR (a disk on
     # paid plans, or an ephemeral path like /tmp on free tier).
     DATA_DIR = Path(os.getenv("TC_DATA_DIR", str(BASE_DIR)))

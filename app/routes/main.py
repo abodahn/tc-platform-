@@ -459,6 +459,11 @@ def notifications_feed():
         sync_system_notifications(_systems())
     except Exception:
         pass
+    try:
+        from app.services.alerts import dispatch_pending_alerts
+        dispatch_pending_alerts()   # email/webhook any new critical alerts (once)
+    except Exception:
+        pass
     notifs, unread = _unread_notifications()
     items = [{
         "id": n["id"], "severity": n["severity"], "module": n["module"],

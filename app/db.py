@@ -274,7 +274,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     message    TEXT,
     is_read    INTEGER DEFAULT 0,
     created_at TEXT,
-    ext_key    TEXT                   -- dedup key for alerts pulled from the 4 systems (module:source_id)
+    ext_key    TEXT,                  -- dedup key for alerts pulled from the 4 systems (module:source_id)
+    alerted    INTEGER DEFAULT 0      -- 1 once an external alert (email/webhook) has been sent
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -546,6 +547,11 @@ def init_db():
         # created before it was added (harmless if it already exists).
         try:
             conn.execute("ALTER TABLE notifications ADD COLUMN ext_key TEXT")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        try:
+            conn.execute("ALTER TABLE notifications ADD COLUMN alerted INTEGER DEFAULT 0")
             conn.commit()
         except Exception:
             conn.rollback()

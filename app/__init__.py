@@ -18,6 +18,16 @@ def create_app():
     app.secret_key = Config.SECRET_KEY
     app.permanent_session_lifetime = Config.SESSION_MINUTES * 60
 
+    # Error tracking via Sentry (optional — only if TC_SENTRY_DSN is set).
+    if Config.SENTRY_DSN:
+        try:
+            import sentry_sdk
+            from sentry_sdk.integrations.flask import FlaskIntegration
+            sentry_sdk.init(dsn=Config.SENTRY_DSN, integrations=[FlaskIntegration()],
+                            traces_sample_rate=0.0, environment=Config.ENV)
+        except Exception as exc:  # noqa: BLE001
+            app.logger.warning("Sentry init skipped: %s", exc)
+
     # Session cookie hardening + upload limit
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
@@ -111,5 +121,22 @@ def create_app():
     def not_found(e):
         return render_template("error.html", code=404,
                                message="The page you are looking for was not found."), 404
+
+    @app.errorhandler(500)
+    @app.errorhandler(Exception)
+    def server_error(e):
+        # Let Flask's own handlers deal with HTTP errors (404/403/...); only
+        # treat genuine unhandled exceptions as 500s to log + alert.
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return e
+        try:
+            from flask import request
+            from app.services.alerts import report_error
+            report_error(e, getattr(request, "path", ""))
+        except Exception:  # noqa: BLE001
+            app.logger.exception("error while reporting 500")
+        return render_template("error.html", code=500,
+                               message="Something went wrong. The team has been notified."), 500
 
     return app
