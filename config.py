@@ -139,9 +139,10 @@ class Config:
     PUBLIC_BASE_URL = (os.getenv("TC_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
 
     # --- Auto-ticketing: turn alerts into Service Desk tickets ------------
-    # OFF by default. When on, critical alerts from the source systems below are
-    # auto-opened as ITSM tickets (deduped, one ticket per alert).
-    AUTO_TICKET_ENABLED = _bool(os.getenv("TC_AUTO_TICKET_ENABLED"), False)
+    # ON by default (enabled for T&C). Critical alerts from the source systems
+    # below are auto-opened as ITSM tickets (deduped, one ticket per alert).
+    # To disable: set TC_AUTO_TICKET_ENABLED=false on Render and redeploy.
+    AUTO_TICKET_ENABLED = _bool(os.getenv("TC_AUTO_TICKET_ENABLED"), True)
     AUTO_TICKET_TARGET = (os.getenv("TC_AUTO_TICKET_TARGET", "itsm") or "itsm").strip()
     # only alerts FROM these source systems are ticketed (avoids ticketing ITSM's
     # own alerts back into ITSM). Comma-separated system keys.
