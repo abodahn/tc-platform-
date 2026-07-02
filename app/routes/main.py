@@ -357,6 +357,26 @@ def roadmap():
 
 
 # --------------------------------------------------------------------------
+# Shared registry (Phase 5) — one directory of people + assets across systems,
+# each row deep-links (via SSO) straight to its record in the owning system.
+# --------------------------------------------------------------------------
+@bp.route("/registry")
+@permission_required("open_module")
+def registry():
+    from app.services.registry import fetch_registry
+    data = fetch_registry(_systems())
+    return render_template("registry.html", registry=data, active="registry")
+
+
+@bp.route("/api/registry/search")
+@login_required
+def api_registry_search():
+    from app.services.registry import search_registry
+    q = request.args.get("q", "")
+    return jsonify(search_registry(_systems(), q))
+
+
+# --------------------------------------------------------------------------
 # Profile + self-service password change
 # --------------------------------------------------------------------------
 @bp.route("/profile")

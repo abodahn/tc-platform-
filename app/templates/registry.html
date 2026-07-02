@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Registry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="registry.eyebrow">Shared Registry</div>
+    <h1 data-i18n="registry.title">People &amp; Assets Directory</h1>
+    <div class="sub" data-i18n="registry.sub">One searchable directory across all systems. Click any record to open it in its system — you're signed in automatically.</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-pad">
+    <div class="flex gap center wrap">
+      <div style="position:relative;flex:1;min-width:240px">
+        <input id="regSearch" class="input" type="search" autocomplete="off"
+               placeholder="Search people or assets…" data-i18n-ph="registry.search_ph"
+               style="width:100%;padding-inline-start:12px">
+      </div>
+      <div id="regSources" class="flex gap center wrap" style="font-size:12px"></div>
+    </div>
+  </div>
+</div>
+
+<div class="grid cols-2 mt-4" style="align-items:start">
+  <!-- People -->
+  <div class="panel">
+    <div class="panel-head flex between center">
+      <h3 data-i18n="registry.people">People</h3>
+      <span class="badge b-info"><span id="regPeopleCount">{{ registry.people|length }}</span></span>
+    </div>
+    <div class="panel-pad" style="overflow-x:auto">
+      <table class="tbl" style="width:100%">
+        <thead><tr>
+          <th data-i18n="registry.name">Name</th>
+          <th data-i18n="registry.dept">Dept / Title</th>
+          <th data-i18n="registry.system">System</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="regPeople"></tbody>
+      </table>
+      <div id="regPeopleEmpty" class="muted mt-3" style="display:none" data-i18n="registry.none">No matching records.</div>
+    </div>
+  </div>
+
+  <!-- Assets -->
+  <div class="panel">
+    <div class="panel-head flex between center">
+      <h3 data-i18n="registry.assets">Assets</h3>
+      <span class="badge b-info"><span id="regAssetsCount">{{ registry.assets|length }}</span></span>
+    </div>
+    <div class="panel-pad" style="overflow-x:auto">
+      <table class="tbl" style="width:100%">
+        <thead><tr>
+          <th data-i18n="registry.asset">Asset</th>
+          <th data-i18n="registry.status">Status / Holder</th>
+          <th data-i18n="registry.system">System</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="regAssets"></tbody>
+      </table>
+      <div id="regAssetsEmpty" class="muted mt-3" style="display:none" data-i18n="registry.none">No matching records.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var openLabel = "Open";
+  function esc(s){ var d=document.createElement('div'); d.textContent = (s==null?'':String(s)); return d.innerHTML; }
+
+  function personRow(p){
+    var sub = [p.title, p.department].filter(Boolean).join(' · ');
+    var meta = [p.code, p.email].filter(Boolean).join(' · ');
+    return '<tr>'
+      + '<td><div style="font-weight:600">'+esc(p.name||'—')+'</div>'
+      + (meta ? '<div class="muted" style="font-size:12px">'+esc(meta)+'</div>' : '')
+      + '</td>'
+      + '<td>'+esc(sub||'—')+'</td>'
+      + '<td><span class="tag">'+esc(p.system_name||p.system_key)+'</span></td>'
+      + '<td style="text-align:end"><a class="btn btn-ghost btn-sm" href="'+esc(p.link)+'" target="_blank" rel="noopener">'+openLabel+'</a></td>'
+      + '</tr>';
+  }
+  function assetRow(a){
+    var head = [a.asset_id, a.name].filter(Boolean).join(' — ');
+    var sub = [a.category, a.type, a.serial_number].filter(Boolean).join(' · ');
+    var st = [a.status, a.assignee || a.location].filter(Boolean).join(' · ');
+    return '<tr>'
+      + '<td><div style="font-weight:600">'+esc(a.name||a.asset_id||'—')+'</div>'
+      + (sub ? '<div class="muted" style="font-size:12px">'+esc(sub)+'</div>' : '')
+      + '</td>'
+      + '<td>'+esc(st||'—')+'</td>'
+      + '<td><span class="tag">'+esc(a.system_name||a.system_key)+'</span></td>'
+      + '<td style="text-align:end"><a class="btn btn-ghost btn-sm" href="'+esc(a.link)+'" target="_blank" rel="noopener">'+openLabel+'</a></td>'
+      + '</tr>';
+  }
+  function sourceChip(s){
+    var cls = s.online ? 'b-ok' : 'b-offline';
+    return '<span class="badge '+cls+'"><span class="dot"></span>'+esc(s.name)+' ('+(s.people+s.assets)+')</span>';
+  }
+
+  function render(data){
+    var pe = document.getElementById('regPeople');
+    var ae = document.getElementById('regAssets');
+    pe.innerHTML = (data.people||[]).map(personRow).join('');
+    ae.innerHTML = (data.assets||[]).map(assetRow).join('');
+    document.getElementById('regPeopleCount').textContent = (data.people||[]).length;
+    document.getElementById('regAssetsCount').textContent = (data.assets||[]).length;
+    document.getElementById('regPeopleEmpty').style.display = (data.people||[]).length ? 'none' : '';
+    document.getElementById('regAssetsEmpty').style.display = (data.assets||[]).length ? 'none' : '';
+    document.getElementById('regSources').innerHTML = (data.sources||[]).map(sourceChip).join(' ');
+  }
+
+  // initial render from server-provided data
+  render({ people: {{ registry.people|tojson }}, assets: {{ registry.assets|tojson }}, sources: {{ registry.sources|tojson }} });
+
+  var box = document.getElementById('regSearch'), t = null;
+  box.addEventListener('input', function () {
+    clearTimeout(t);
+    t = setTimeout(function () {
+      fetch('{{ url_for("main.api_registry_search") }}?q=' + encodeURIComponent(box.value))
+        .then(function (r) { return r.json(); })
+        .then(render)
+        .catch(function () {});
+    }, 220);
+  });
+})();
+</script>
+
+{% endblock %}

@@ -15,3 +15,7 @@ venv/
 .ruff_cache/
 screenshots/
 *.log
+
+# never commit the SSO shared secret or the local preview runner
+.tc_sso_secret
+preview_run.py

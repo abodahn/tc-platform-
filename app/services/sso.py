@@ -50,7 +50,7 @@ from typing import Any, Iterable, Optional
 
 __all__ = [
     "SSOError", "make_token", "verify_token", "decode_unverified",
-    "NonceCache", "is_secret_usable",
+    "NonceCache", "is_secret_usable", "safe_next_path",
 ]
 
 # Secrets that must never be trusted (dev placeholders / empties).
@@ -75,6 +75,21 @@ def _b64u_encode(raw: bytes) -> str:
 def _b64u_decode(txt: str) -> bytes:
     pad = "=" * (-len(txt) % 4)
     return base64.urlsafe_b64decode(txt + pad)
+
+
+def safe_next_path(nxt: Optional[str], default: str = "/") -> str:
+    """Return ``nxt`` if it is a safe same-site path, else ``default``.
+
+    Used for the SSO deep-link ``next`` parameter so it can't be turned into an
+    open redirect. Accepts only paths that start with a single ``/`` and carry
+    no scheme, no protocol-relative ``//``, and no backslash.
+    """
+    if not nxt:
+        return default
+    n = str(nxt).strip()
+    if n.startswith("/") and not n.startswith("//") and "://" not in n and "\\" not in n:
+        return n
+    return default
 
 
 def is_secret_usable(secret: Optional[str]) -> bool:

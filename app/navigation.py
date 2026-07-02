@@ -15,6 +15,7 @@ NAV = [
         ("assets", "nav.assets", "boxes", "main.module", "open_module"),
         ("monitoring", "nav.monitoring", "activity", "main.module", "open_module"),
         ("commandtrack", "nav.work", "kanban", "main.module", "open_module"),
+        ("registry", "nav.registry", "users", "main.registry", "open_module"),
     ]},
     {"section": "nav.maintenance", "items": [
         ("maint_floor", "nav.maint_floor", "target", "maintenance.floor", "maint_view"),

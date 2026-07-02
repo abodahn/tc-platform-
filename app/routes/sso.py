@@ -92,4 +92,11 @@ def launch(key):
         pass
 
     sp_path = Config.SSO_SP_PATH if Config.SSO_SP_PATH.startswith("/") else "/" + Config.SSO_SP_PATH
-    return redirect(f"{base}{sp_path}?token={urllib.parse.quote(token)}")
+    url = f"{base}{sp_path}?token={urllib.parse.quote(token)}"
+    # Deep link: carry a target path so the system lands on a specific record
+    # (e.g. ?next=/assets/123). Only local paths are forwarded; the SP validates
+    # again before redirecting, so this can't be turned into an open redirect.
+    nxt = (request.args.get("next") or "").strip()
+    if nxt.startswith("/") and not nxt.startswith("//") and "://" not in nxt and "\\" not in nxt:
+        url += f"&next={urllib.parse.quote(nxt)}"
+    return redirect(url)
