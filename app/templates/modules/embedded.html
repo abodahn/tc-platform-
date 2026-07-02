@@ -19,7 +19,7 @@
   </button>
   {% endif %}
   {% if system.base_url %}
-  <a class="btn btn-ghost btn-sm" href="{{ system.base_url }}" target="_blank" rel="noopener">
+  <a class="btn btn-ghost btn-sm" href="{{ embed_url or system.base_url }}" target="_blank" rel="noopener">
     <svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.fullscreen">Full screen</span>
   </a>
   {% endif %}
@@ -35,7 +35,7 @@
         <p class="muted" data-i18n="module.offline_msg">The application is not reachable right now. Start the system or check its address in the Admin Center, then retry.</p>
         <div class="flex gap center" style="justify-content:center;margin-top:18px">
           <button class="btn btn-primary" onclick="location.reload()"><svg class="ico"><use href="#i-refresh"></use></svg><span data-i18n="module.retry">Retry</span></button>
-          {% if system.base_url %}<a class="btn btn-ghost" href="{{ system.base_url }}" target="_blank" rel="noopener"><svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.fullscreen">Full screen</span></a>{% endif %}
+          {% if system.base_url %}<a class="btn btn-ghost" href="{{ embed_url or system.base_url }}" target="_blank" rel="noopener"><svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.fullscreen">Full screen</span></a>{% endif %}
           {% if can('manage_integrations') %}<a class="btn btn-ghost" href="{{ url_for('admin.index') }}#integrations"><svg class="ico"><use href="#i-settings"></use></svg><span data-i18n="launch.admin">Admin</span></a>{% endif %}
         </div>
         <div class="tag" style="margin-top:16px">{{ system.base_url or '—' }}</div>
@@ -45,7 +45,7 @@
     <div class="embed-loading" id="embedLoading">
       <div class="flex gap center"><div class="skeleton" style="width:120px;height:16px"></div></div>
     </div>
-    <iframe id="appFrame" class="embed-frame" src="{{ system.base_url }}"
+    <iframe id="appFrame" class="embed-frame" src="{{ embed_url or system.base_url }}"
             title="{{ system.name_en }}"
             referrerpolicy="no-referrer"
             allow="fullscreen; clipboard-read; clipboard-write"

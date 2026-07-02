@@ -231,11 +231,16 @@ def module(key):
     # ?view=details shows the technical/launch info page instead.
     if row["is_integrated"]:
         status = health_svc.check_system(row)
+        # Single Sign-On: when enabled, the iframe/open links go through the
+        # platform's launch route (which mints a token and hands off), so the
+        # user is signed straight into the system. Falls back to the raw URL.
+        from app.routes.sso import sso_target_url
+        embed_url = sso_target_url(key, row["base_url"])
         if request.args.get("view") == "details":
             return render_template("modules/integrated.html", system=row,
-                                   status=status, active=key)
+                                   status=status, active=key, embed_url=embed_url)
         return render_template("modules/embedded.html", system=row, status=status,
-                               active=key)
+                               active=key, embed_url=embed_url)
 
     # Future-ready modules -> explanation + structured placeholder tables
     table = MODULE_TABLES.get(key)

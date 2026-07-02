@@ -150,6 +150,25 @@ class Config:
     AUTO_TICKET_MIN_SEVERITY = (os.getenv("TC_AUTO_TICKET_MIN_SEVERITY", "critical") or "critical").strip().lower()
     AUTO_TICKET_REQUESTER = (os.getenv("TC_AUTO_TICKET_REQUESTER", "platform-automation") or "").strip()
 
+    # --- Single Sign-On (SSO): platform is the Identity Provider -----------
+    # One platform login → the platform mints a short-lived signed token when
+    # a user opens an integrated system, and that system trusts it and logs the
+    # user in locally. The SAME secret must be set on the platform AND on all
+    # four systems (TC_SSO_SECRET). Fails closed: if the secret is missing or
+    # weak, SSO is disabled and modules open with their normal manual login.
+    SSO_SECRET = (os.getenv("TC_SSO_SECRET", "") or "").strip()
+    SSO_TOKEN_TTL = int(os.getenv("TC_SSO_TTL", "120"))  # seconds; short by design
+    SSO_SP_PATH = (os.getenv("TC_SSO_SP_PATH", "/sso/login") or "/sso/login").strip()
+    # Enabled only when explicitly on AND the shared secret is strong enough.
+    SSO_ENABLED = _bool(os.getenv("TC_SSO_ENABLED"), True) and (
+        len(SSO_SECRET) >= 16
+        and SSO_SECRET.lower() not in {
+            "", "change-me", "changeme", "secret",
+            "tc-sso-dev-secret-change-me",
+            "change-this-to-a-long-random-string-in-production",
+        }
+    )
+
     # Writable data dir — local: project folder; Render: TC_DATA_DIR (a disk on
     # paid plans, or an ephemeral path like /tmp on free tier).
     DATA_DIR = Path(os.getenv("TC_DATA_DIR", str(BASE_DIR)))

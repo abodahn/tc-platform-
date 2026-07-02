@@ -9,7 +9,7 @@
     <div class="sub" data-loc-en="{{ system.desc_en }}" data-loc-ar="{{ system.desc_ar }}" data-loc-tr="{{ system.desc_tr }}">{{ system.desc_en }}</div>
   </div>
   {% if system.base_url %}
-  <a class="btn btn-primary" href="{{ system.base_url }}" {{ 'target=_blank rel=noopener' if system.launch_mode != 'same_tab' }}>
+  <a class="btn btn-primary" href="{{ embed_url or system.base_url }}" {{ 'target=_blank rel=noopener' if system.launch_mode != 'same_tab' }}>
     <svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.open_app">Open application</span>
   </a>
   {% endif %}
@@ -40,8 +40,8 @@
     <div class="panel-pad">
       <p class="muted" style="font-size:13px">Choose how to open this integrated system. Cross-system single sign-on arrives in roadmap Phase 2.</p>
       {% if system.base_url %}
-      <a class="btn btn-primary btn-block mt-3" href="{{ system.base_url }}"><svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.same_tab">Open in same tab</span></a>
-      <a class="btn btn-ghost btn-block mt-3" href="{{ system.base_url }}" target="_blank" rel="noopener"><svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.new_tab">Open in new tab</span></a>
+      <a class="btn btn-primary btn-block mt-3" href="{{ embed_url or system.base_url }}"><svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.same_tab">Open in same tab</span></a>
+      <a class="btn btn-ghost btn-block mt-3" href="{{ embed_url or system.base_url }}" target="_blank" rel="noopener"><svg class="ico"><use href="#i-external"></use></svg><span data-i18n="module.new_tab">Open in new tab</span></a>
       {% else %}
       <div class="empty"><span class="muted">No URL configured. Set it in the Admin Center.</span></div>
       {% endif %}
