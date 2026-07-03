@@ -158,17 +158,19 @@ def _meta_grid(c, w, cm, y, pairs):
     return y - box_h - 0.4 * cm
 
 
-def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None):
-    """Generic bordered table. cols = [(width_cm, header, align)]. Returns new y.
-    Paginates automatically (repeating the header). If wrap_col is given, that
-    column wraps to two lines and every body row uses the taller uniform height."""
+def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None, max_lines=4):
+    """Bordered table with variable-height rows. cols = [(width_cm, header, align)].
+    wrap_col makes that column a rich cell: pass the cell as (item, description) —
+    the item renders bold and the description wraps beneath it (up to max_lines),
+    and the row grows to fit. Paginates automatically, repeating the header."""
     x0 = 1.5 * cm
     total_w = w - 3 * cm
     widths = [cw * cm for cw, _, _ in cols]
     scale = total_w / sum(widths)
     widths = [wd * scale for wd in widths]
-    hrh = 0.62 * cm                                   # header row height
-    rh = 0.9 * cm if wrap_col is not None else 0.62 * cm
+    hrh = 0.6 * cm
+    line_h = 0.36 * cm
+    base_rh = 0.6 * cm
 
     def header(yy):
         c.setFillColorRGB(0.11, 0.12, 0.16)
@@ -178,60 +180,80 @@ def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None):
         xx = x0
         for (cw, label, align), wd in zip(cols, widths):
             if align == "r":
-                c.drawRightString(xx + wd - 0.15 * cm, yy - hrh + 0.2 * cm, label)
+                c.drawRightString(xx + wd - 0.18 * cm, yy - hrh + 0.19 * cm, label)
             else:
-                c.drawString(xx + 0.15 * cm, yy - hrh + 0.2 * cm, label)
+                c.drawString(xx + 0.18 * cm, yy - hrh + 0.19 * cm, label)
             xx += wd
         c.setFillColorRGB(0, 0, 0)
         return yy - hrh
 
+    def cell_lines(cell, wd):
+        """Rich wrap cell -> list of (bold?, text)."""
+        head, body = (cell if isinstance(cell, (list, tuple)) else (None, cell))
+        out = []
+        if head:
+            out.append((True, _clip(c, head, "Helvetica-Bold", 8.6, wd - 0.36 * cm)))
+        for ln in _wrap_lines(c, body, "Helvetica", 8.2, wd - 0.36 * cm, max_lines):
+            if ln:
+                out.append((False, ln))
+        return out or [(False, "")]
+
     if title:
-        c.setFont("Helvetica-Bold", 10)
+        c.setFont("Helvetica-Bold", 10.5)
         c.drawString(x0, y, title)
-        y -= 0.5 * cm
+        y -= 0.52 * cm
     y = header(y)
     body_top = y
-    n = 0
     for i, row in enumerate(rows):
-        if y - rh < 3 * cm:                            # new page
-            # close the border for the chunk drawn so far, then continue
-            _row_borders(c, cm, x0, y, body_top, total_w, widths)
+        lines = cell_lines(row[wrap_col], widths[wrap_col]) if wrap_col is not None else None
+        rh = max(base_rh, len(lines) * line_h + 0.22 * cm) if lines else base_rh
+        if y - rh < 3 * cm:                              # page break
+            _table_borders(c, x0, y, body_top, total_w, widths)
             _footer(c, w, cm, page_notes["page"], page_notes.get("notes"))
             c.showPage()
             page_notes["page"] += 1
             y = h - 2 * cm
             y = header(y)
             body_top = y
-        if i % 2 == 1:                                 # zebra
-            c.setFillColorRGB(0.972, 0.972, 0.98)
+        if i % 2 == 1:                                   # zebra
+            c.setFillColorRGB(0.973, 0.973, 0.981)
             c.rect(x0, y - rh, total_w, rh, fill=1, stroke=0)
             c.setFillColorRGB(0, 0, 0)
-        cyc = y - rh / 2 - 0.09 * cm                    # vertical centre baseline
+        cyc = y - rh / 2 - 0.09 * cm                      # single-line vertical centre
         xx = x0
         for idx, ((cw, _, align), wd, cell) in enumerate(zip(cols, widths, row)):
-            c.setFont("Helvetica", 8.2)
             if idx == wrap_col:
-                lines = _wrap_lines(c, cell, "Helvetica", 8.2, wd - 0.3 * cm, 2)
-                ly = y - 0.32 * cm if len(lines) == 2 else cyc
-                for ln in lines:
-                    c.drawString(xx + 0.15 * cm, ly, ln)
-                    ly -= 0.32 * cm
+                ly = y - 0.36 * cm
+                for is_bold, txt in lines:
+                    if is_bold:
+                        c.setFont("Helvetica-Bold", 8.6)
+                        c.setFillColorRGB(0.1, 0.1, 0.13)
+                    else:
+                        c.setFont("Helvetica", 8.2)
+                        c.setFillColorRGB(0.34, 0.34, 0.38)
+                    c.drawString(xx + 0.18 * cm, ly, txt)
+                    ly -= line_h
+                c.setFillColorRGB(0, 0, 0)
             else:
-                txt = _clip(c, cell, "Helvetica", 8.2, wd - 0.3 * cm)
+                c.setFont("Helvetica", 8.5)
+                txt = _clip(c, cell, "Helvetica", 8.5, wd - 0.32 * cm)
                 if align == "r":
-                    c.drawRightString(xx + wd - 0.15 * cm, cyc, txt)
+                    c.drawRightString(xx + wd - 0.18 * cm, cyc, txt)
                 else:
-                    c.drawString(xx + 0.15 * cm, cyc, txt)
+                    c.drawString(xx + 0.18 * cm, cyc, txt)
             xx += wd
         y -= rh
-        n += 1
-    _row_borders(c, cm, x0, y, body_top, total_w, widths)
-    return y - 0.3 * cm
+        if i < len(rows) - 1:                            # inner row separator
+            c.setStrokeColorRGB(0.9, 0.9, 0.92)
+            c.setLineWidth(0.4)
+            c.line(x0, y, x0 + total_w, y)
+    _table_borders(c, x0, y, body_top, total_w, widths)
+    return y - 0.35 * cm
 
 
-def _row_borders(c, cm, x0, y_bottom, y_top, total_w, widths):
-    """Outer border + column separators for the body rows between y_top and y_bottom."""
-    c.setStrokeColorRGB(0.8, 0.8, 0.82)
+def _table_borders(c, x0, y_bottom, y_top, total_w, widths):
+    """Outer border + full-height column separators for the current body block."""
+    c.setStrokeColorRGB(0.78, 0.78, 0.81)
     c.setLineWidth(0.5)
     c.rect(x0, y_bottom, total_w, y_top - y_bottom, stroke=1, fill=0)
     xx = x0
@@ -273,15 +295,15 @@ def pr_pdf(bundle):
     ])
 
     cur = pr.get("currency") or ""
-    rows = [[str(i), it.get("item") or "", it.get("description") or "",
+    rows = [[str(i), (it.get("item") or "", it.get("description") or ""),
              it.get("unit") or "", _fmt(it.get("qty")), _fmt(it.get("current_stock")),
              _fmt(it.get("unit_price")), _fmt(it.get("est_cost"))]
             for i, it in enumerate(items, 1)]
     y = _table(c, w, cm, y, [
-        (0.7, "#", "l"), (2.6, "ITEM", "l"), (5.6, "DESCRIPTION", "l"),
-        (1.3, "UNIT", "l"), (1.3, "QTY", "r"), (1.4, "STOCK", "r"),
-        (2.1, "UNIT PRICE", "r"), (2.2, "EST. COST", "r")], rows, h, pn,
-        title="Line items", wrap_col=2)
+        (0.6, "#", "l"), (7.5, "ITEM / DESCRIPTION", "l"),
+        (1.3, "UNIT", "l"), (1.2, "QTY", "r"), (1.4, "STOCK", "r"),
+        (2.2, "UNIT PRICE", "r"), (2.4, "EST. COST", "r")], rows, h, pn,
+        title="Line items", wrap_col=1)
 
     # totals box (right-aligned)
     bx_w, bx_h = 6.2 * cm, 0.85 * cm
@@ -396,11 +418,11 @@ def po_pdf(bundle):
     ])
 
     cur = pr.get("currency") or ""
-    rows = [[str(i), (it.get("item") or "") + " — " + (it.get("description") or ""),
+    rows = [[str(i), (it.get("item") or "", it.get("description") or ""),
              _fmt(it.get("qty")), _fmt(it.get("unit_price")), _fmt(it.get("est_cost"))]
             for i, it in enumerate(items, 1)]
     y = _table(c, w, cm, y, [
-        (0.7, "#", "l"), (10.5, "ITEM / DESCRIPTION", "l"),
+        (0.6, "#", "l"), (10.6, "ITEM / DESCRIPTION", "l"),
         (1.6, "QTY", "r"), (2.4, "UNIT PRICE", "r"), (2.6, "TOTAL", "r")],
         rows, h, pn, title="Order lines", wrap_col=1)
 
