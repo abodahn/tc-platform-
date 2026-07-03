@@ -58,6 +58,8 @@ def create_app():
     try:
         init_db()
         app._db_ready = True
+        from app.security import refresh_db_roles
+        refresh_db_roles()               # load admin-managed roles overlay
     except Exception as exc:  # noqa: BLE001
         app.logger.warning("init_db deferred (database not ready yet): %s", exc)
 

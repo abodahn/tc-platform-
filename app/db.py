@@ -294,6 +294,19 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at TEXT
 );
 
+-- Admin-managed roles: overlay/extend the code-defined roles without a deploy.
+-- perms_json is a JSON array of permission keys (or ["*"] for all). is_builtin=1
+-- marks an override of a code role (delete reverts to the code default).
+CREATE TABLE IF NOT EXISTS custom_roles (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    role_key   TEXT UNIQUE NOT NULL,
+    label      TEXT,
+    perms_json TEXT,
+    is_builtin INTEGER DEFAULT 0,
+    created_at TEXT,
+    updated_at TEXT
+);
+
 -- ===== Production Visibility (a real working module) =====
 CREATE TABLE IF NOT EXISTS production_lines (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

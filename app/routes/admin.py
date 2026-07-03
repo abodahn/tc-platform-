@@ -4,6 +4,8 @@ TC Platform — Admin Center.
 Manage users, edit integrated-system URLs/ports/launch modes, and review
 audit logs. All write actions are audit-logged.
 """
+import json
+
 from flask import (Blueprint, render_template, request, redirect, url_for,
                    flash, abort)
 from werkzeug.security import generate_password_hash
@@ -11,7 +13,9 @@ from werkzeug.security import generate_password_hash
 from app.db import get_db, log_audit, utcnow
 from app.auth import permission_required, current_user
 from app.security import (all_role_choices, ROLES, validate_password,
-                          has_permission, role_label)
+                          has_permission, role_label, PERMISSIONS,
+                          effective_roles, refresh_db_roles, permission_catalogue,
+                          BUILTIN_ROLE_KEYS)
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -30,10 +34,85 @@ def index():
             "integrated": conn.execute("SELECT COUNT(*) c FROM systems WHERE is_integrated=1").fetchone()["c"],
             "audit": conn.execute("SELECT COUNT(*) c FROM audit_logs").fetchone()["c"],
         }
+        user_by_role = {r["role"]: r["c"] for r in conn.execute(
+            "SELECT role, COUNT(*) c FROM users GROUP BY role").fetchall()}
     finally:
         conn.close()
+    # Full role list (code + admin-managed) for the Roles tab
+    eff = effective_roles()
+    roles_list = []
+    for key in sorted(eff.keys()):
+        perms = eff[key]["perms"]
+        roles_list.append({
+            "key": key, "label": eff[key]["label"], "perms": perms,
+            "n_perms": ("all" if "*" in perms else len(perms)),
+            "is_builtin": key in BUILTIN_ROLE_KEYS,
+            "users": user_by_role.get(key, 0),
+        })
     return render_template("admin.html", users=users, systems=systems, audit=audit,
-                           roles=all_role_choices(), counts=counts, active="admin")
+                           roles=all_role_choices(), counts=counts, active="admin",
+                           roles_list=roles_list, perm_groups=permission_catalogue())
+
+
+@bp.route("/roles/save", methods=["POST"])
+@permission_required("manage_users")
+def save_role():
+    """Create or update an admin-managed role from the Roles editor."""
+    f = request.form
+    key = (f.get("role_key") or "").strip().lower().replace(" ", "_")[:40]
+    label = (f.get("label") or "").strip()[:80]
+    perms = [p for p in f.getlist("perms[]") if p in PERMISSIONS]
+    if not key or not label:
+        flash("role_invalid", "error")
+        return redirect(url_for("admin.index") + "#roles")
+    if key == "super_admin":
+        flash("role_reserved", "error")
+        return redirect(url_for("admin.index") + "#roles")
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id FROM custom_roles WHERE role_key=?", (key,)).fetchone()
+        is_builtin = 1 if key in BUILTIN_ROLE_KEYS else 0
+        pj = json.dumps(perms)
+        if row:
+            conn.execute("UPDATE custom_roles SET label=?, perms_json=?, updated_at=? WHERE role_key=?",
+                         (label, pj, utcnow(), key))
+        else:
+            conn.execute(
+                "INSERT INTO custom_roles (role_key,label,perms_json,is_builtin,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?)", (key, label, pj, is_builtin, utcnow(), utcnow()))
+        conn.commit()
+    finally:
+        conn.close()
+    refresh_db_roles()
+    log_audit(current_user()["username"], "role_save",
+              f"{key}: {len(perms)} perms", request.remote_addr or "")
+    flash("role_saved", "success")
+    return redirect(url_for("admin.index") + "#roles")
+
+
+@bp.route("/roles/<role_key>/delete", methods=["POST"])
+@permission_required("manage_users")
+def delete_role(role_key):
+    """Delete an admin-managed role. If it overrides a code role, this reverts to
+    the code default. Blocked while users are still assigned to it."""
+    conn = get_db()
+    try:
+        in_use = conn.execute("SELECT COUNT(*) c FROM users WHERE role=?", (role_key,)).fetchone()["c"]
+        is_code_only = role_key in BUILTIN_ROLE_KEYS and not conn.execute(
+            "SELECT 1 FROM custom_roles WHERE role_key=?", (role_key,)).fetchone()
+        if is_code_only:
+            flash("role_builtin_locked", "error")
+        elif in_use and role_key not in BUILTIN_ROLE_KEYS:
+            flash("role_in_use", "error")   # custom role still assigned -> reassign first
+        else:
+            conn.execute("DELETE FROM custom_roles WHERE role_key=?", (role_key,))
+            conn.commit()
+            refresh_db_roles()
+            log_audit(current_user()["username"], "role_delete", role_key, request.remote_addr or "")
+            flash("role_deleted", "success")
+    finally:
+        conn.close()
+    return redirect(url_for("admin.index") + "#roles")
 
 
 @bp.route("/users/add", methods=["POST"])

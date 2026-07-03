@@ -18,6 +18,7 @@
 
 <div class="seg" style="width:max-content;margin-bottom:18px" id="adminTabs">
   <button class="on" data-tab="users" data-i18n="admin.users">Users</button>
+  <button data-tab="roles" data-i18n="admin.roles_tab">Roles</button>
   <button data-tab="integrations" data-i18n="admin.integrations">Integrations</button>
   <button data-tab="audit" data-i18n="admin.audit">Audit Logs</button>
 </div>
@@ -106,6 +107,86 @@
   {% endif %}
 </section>
 
+{# ---------------- Roles ---------------- #}
+<section data-panel="roles" id="roles" style="display:none">
+  {% if can('manage_users') %}
+  <div class="flex between center wrap gap" style="margin-bottom:14px">
+    <div class="muted" data-i18n="admin.roles_sub">Compose roles from permissions. Changes take effect within seconds — no deploy needed.</div>
+    <button class="btn btn-primary btn-sm" id="roleNewBtn"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="admin.new_role">New role</span></button>
+  </div>
+  {% endif %}
+  <div class="panel">
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="admin.role">Role</th><th data-i18n="admin.role_key">Key</th>
+          <th data-i18n="admin.perms">Permissions</th><th data-i18n="admin.type">Type</th>
+          <th data-i18n="admin.users">Users</th><th data-i18n="admin.action">Action</th>
+        </tr></thead>
+        <tbody>
+        {% for r in roles_list %}
+        <tr>
+          <td><b>{{ r.label }}</b></td>
+          <td><span class="tag">{{ r.key }}</span></td>
+          <td>{% if r.n_perms == 'all' %}<span class="badge b-info" data-i18n="admin.all_perms">All</span>{% else %}{{ r.n_perms }}{% endif %}</td>
+          <td>{% if r.is_builtin %}<span class="tag" data-i18n="admin.builtin">Built-in</span>{% else %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.custom">Custom</span></span>{% endif %}</td>
+          <td>{{ r.users }}</td>
+          <td>
+            {% if can('manage_users') and r.key != 'super_admin' %}
+            <div class="flex gap" style="gap:6px">
+              <button type="button" class="btn btn-ghost btn-sm" data-edit-role
+                      data-key="{{ r.key }}" data-label="{{ r.label }}"
+                      data-builtin="{{ 1 if r.is_builtin else 0 }}"
+                      data-perms='{{ r.perms|tojson }}' data-i18n="admin.edit">Edit</button>
+              {% if not r.is_builtin %}
+              <form method="post" action="{{ url_for('admin.delete_role', role_key=r.key) }}" style="display:inline"
+                    onsubmit="return confirm('Delete role {{ r.key }}?')">
+                <button class="btn btn-ghost btn-sm" type="submit" data-i18n="admin.delete">Delete</button>
+              </form>
+              {% endif %}
+            </div>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% if can('manage_users') %}
+  <dialog id="roleDlg" class="tc-dialog" style="width:min(560px,94vw)">
+    <form method="post" action="{{ url_for('admin.save_role') }}" id="roleForm">
+      <div class="flex between center" style="margin-bottom:6px">
+        <h3 style="margin:0"><span data-i18n="admin.edit_role">Edit role</span> — <span id="rlKeyLabel" style="color:var(--tc-red)"></span></h3>
+        <button type="button" class="icon-btn" id="rlX" aria-label="Close" style="font-size:18px;line-height:1">✕</button>
+      </div>
+      <div class="grid cols-2">
+        <div class="field"><label data-i18n="admin.role_key">Key</label>
+          <input name="role_key" id="rlKey" autocomplete="off" placeholder="e.g. warehouse_lead"></div>
+        <div class="field"><label data-i18n="admin.role_label">Display name</label>
+          <input name="label" id="rlLabel" autocomplete="off" required></div>
+      </div>
+      <div class="muted" style="font-size:12px;margin:6px 0 4px" data-i18n="admin.perms">Permissions</div>
+      <div style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:12px">
+        {% for group, perms in perm_groups.items() %}
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;margin:{{ '0' if loop.first else '14px' }} 0 6px">{{ group }}</div>
+        {% for pkey, plabel in perms %}
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer">
+          <input type="checkbox" name="perms[]" value="{{ pkey }}" style="width:auto;height:auto"> <span>{{ plabel }}</span>
+        </label>
+        {% endfor %}
+        {% endfor %}
+      </div>
+      <div class="flex gap" style="justify-content:flex-end;margin-top:12px">
+        <button type="button" class="btn btn-ghost" id="rlCancel" data-i18n="admin.cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" data-i18n="admin.save_role">Save role</button>
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
+</section>
+
 {# ---------------- Integrations ---------------- #}
 <section data-panel="integrations" id="integrations" style="display:none">
   <div class="grid cols-2">
@@ -178,7 +259,41 @@
     }
     tabs.addEventListener('click', e => { if(e.target.dataset.tab) show(e.target.dataset.tab); });
     const hash = location.hash.replace('#','');
-    if(['users','integrations','audit'].includes(hash)) show(hash);
+    if(['users','roles','integrations','audit'].includes(hash)) show(hash);
+  })();
+
+  // Roles editor dialog
+  (function(){
+    const dlg = document.getElementById('roleDlg');
+    if(!dlg) return;
+    const form = document.getElementById('roleForm');
+    const keyEl = document.getElementById('rlKey');
+    const labelEl = document.getElementById('rlLabel');
+    function boxes(){ return form.querySelectorAll('input[name="perms[]"]'); }
+    function open(data){
+      boxes().forEach(b => b.checked = false);
+      if(data){
+        document.getElementById('rlKeyLabel').textContent = data.key;
+        keyEl.value = data.key; keyEl.readOnly = true;
+        labelEl.value = data.label || '';
+        const all = (data.perms||[]).indexOf('*') >= 0;
+        boxes().forEach(b => { if(all || (data.perms||[]).indexOf(b.value) >= 0) b.checked = true; });
+      } else {
+        document.getElementById('rlKeyLabel').textContent = 'new';
+        keyEl.value = ''; keyEl.readOnly = false; labelEl.value = '';
+      }
+      if(dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','');
+    }
+    document.querySelectorAll('[data-edit-role]').forEach(btn => btn.addEventListener('click', () => {
+      let perms = []; try { perms = JSON.parse(btn.getAttribute('data-perms') || '[]'); } catch(e){}
+      open({ key: btn.dataset.key, label: btn.dataset.label, perms: perms });
+    }));
+    const nb = document.getElementById('roleNewBtn');
+    if(nb) nb.addEventListener('click', () => open(null));
+    function close(){ if(dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
+    document.getElementById('rlCancel').addEventListener('click', close);
+    document.getElementById('rlX').addEventListener('click', close);
+    dlg.addEventListener('click', e => { if(e.target === dlg) close(); });
   })();
 
   // Edit-user dialog

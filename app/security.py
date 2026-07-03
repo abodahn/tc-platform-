@@ -92,12 +92,65 @@ def validate_password(pw: str):
     return True, ""
 
 
+# --- Admin-managed roles overlay (DB) -------------------------------------
+# Roles created/edited in Admin -> Roles live in the custom_roles table and are
+# merged over the code-defined ROLES below. Cached in-process with a short TTL so
+# every gunicorn worker picks up changes within a few seconds without a deploy.
+import json as _json          # noqa: E402
+import time as _time          # noqa: E402
+
+_EFFECTIVE = None             # merged {role_key: {"label", "perms"}} or None
+_ROLES_AT = 0.0
+_ROLES_TTL = 20.0             # seconds
+
+
+def load_db_roles(force: bool = False):
+    """(Re)build the effective role map = code ROLES overlaid with DB custom_roles.
+    Safe if the table is missing or the DB is briefly unreachable."""
+    global _EFFECTIVE, _ROLES_AT
+    now = _time.time()
+    if not force and _EFFECTIVE is not None and (now - _ROLES_AT) < _ROLES_TTL:
+        return
+    merged = {k: {"label": v["label"], "perms": list(v["perms"])} for k, v in ROLES.items()}
+    try:
+        from app.db import get_db
+        conn = get_db()
+        try:
+            rows = conn.execute("SELECT role_key,label,perms_json FROM custom_roles").fetchall()
+        finally:
+            conn.close()
+        for r in rows:
+            key = r["role_key"]
+            if key == "super_admin":           # never let the root role be weakened
+                continue
+            try:
+                perms = _json.loads(r["perms_json"] or "[]")
+                if not isinstance(perms, list):
+                    perms = []
+            except Exception:
+                perms = []
+            merged[key] = {"label": r["label"] or key, "perms": perms}
+    except Exception:
+        pass                                    # table not ready yet -> code roles only
+    _EFFECTIVE = merged
+    _ROLES_AT = now
+
+
+def refresh_db_roles():
+    load_db_roles(force=True)
+
+
+def effective_roles():
+    load_db_roles()
+    return _EFFECTIVE if _EFFECTIVE is not None else ROLES
+
+
 def role_label(role_key: str) -> str:
-    return ROLES.get(role_key, {}).get("label", role_key)
+    return effective_roles().get(role_key, {}).get("label", role_key)
 
 
 def has_permission(role_key: str, permission: str) -> bool:
-    role = ROLES.get(role_key)
+    role = effective_roles().get(role_key)
     if not role:
         return False
     perms = role["perms"]
@@ -105,7 +158,7 @@ def has_permission(role_key: str, permission: str) -> bool:
 
 
 def all_role_choices():
-    return [(k, v["label"]) for k, v in ROLES.items()]
+    return [(k, v["label"]) for k, v in effective_roles().items()]
 
 
 # --- Merge in additional module RBAC (Maintenance, Procurement) ------------
@@ -137,3 +190,49 @@ from app.approvals.constants import (  # noqa: E402
 
 _merge_module_rbac(MAINT_PERMISSIONS, MAINT_ROLE_PERMS, MAINT_ROLE_LABELS)
 _merge_module_rbac(PROC_PERMISSIONS, PROC_ROLE_PERMS, PROC_ROLE_LABELS)
+
+
+# --- Permission catalogue + built-in set (for the Admin -> Roles editor) ----
+BUILTIN_ROLE_KEYS = set(ROLES.keys())   # code-defined roles (captured post-merge)
+
+PERMISSION_LABELS = {
+    "view_dashboard": "View dashboard",
+    "open_module": "Open modules",
+    "manage_users": "Manage users & roles",
+    "manage_settings": "Manage settings",
+    "view_reports": "View reports",
+    "export_reports": "Export reports",
+    "view_system_health": "View system health",
+    "manage_integrations": "Manage integrations",
+    "access_admin": "Access Admin Center",
+    "manage_production": "Manage production",
+    "maint_view": "Maintenance: view",
+    "maint_ticket_create": "Maintenance: raise tickets",
+    "maint_technician": "Maintenance: technician actions",
+    "maint_manage": "Maintenance: manage / close",
+    "maint_approve": "Maintenance: approvals",
+    "maint_store": "Maintenance: inventory / store",
+    "maint_admin": "Maintenance: admin / settings",
+    "proc_view": "Procurement: view",
+    "proc_create": "Procurement: raise requests",
+    "proc_approve": "Procurement: approve stages",
+    "proc_purchasing": "Procurement: purchasing / PO / vendors",
+    "proc_admin": "Procurement: admin (any stage, budgets)",
+}
+
+
+def permission_label(p):
+    return PERMISSION_LABELS.get(p, p.replace("_", " ").capitalize())
+
+
+def permission_catalogue():
+    """Permissions grouped for the roles editor: {group: [(key, label), ...]}."""
+    groups = {"Platform": [], "Maintenance": [], "Procurement": []}
+    for p in PERMISSIONS:
+        if p.startswith("maint_"):
+            groups["Maintenance"].append((p, permission_label(p)))
+        elif p.startswith("proc_"):
+            groups["Procurement"].append((p, permission_label(p)))
+        else:
+            groups["Platform"].append((p, permission_label(p)))
+    return groups
