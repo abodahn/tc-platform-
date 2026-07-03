@@ -593,6 +593,13 @@ def init_db():
     conn = get_db()
     try:
         conn.executescript(SCHEMA)
+        # Commit the schema NOW. On PostgreSQL the CREATE TABLEs above are still
+        # inside an open transaction; the first failing ALTER below (a column
+        # that already exists) triggers conn.rollback(), which would silently
+        # roll back any newly created tables with it — new tables would then
+        # never materialize on Render (SQLite is immune: executescript commits
+        # up front). Committing here makes the migrations independent.
+        conn.commit()
         # Migration: ensure the notifications dedup column exists on databases
         # created before it was added (harmless if it already exists).
         try:
