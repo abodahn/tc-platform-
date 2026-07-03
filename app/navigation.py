@@ -40,9 +40,14 @@ NAV = [
         ("automation", "nav.automation", "robot", "main.module", "open_module"),
         ("production", "nav.production", "factory", "production.index", "open_module"),
     ]},
+    {"section": "nav.procurement_cycle", "items": [
+        ("procurement", "nav.proc_home", "cart", "approvals.index", "proc_view"),
+        ("proc_new", "nav.proc_new", "report", "approvals.new", "proc_create"),
+        ("proc_list", "nav.proc_list", "kanban", "approvals.listing", "proc_view"),
+        ("proc_vendors", "nav.proc_vendors", "boxes", "approvals.vendors", "proc_view"),
+    ]},
     {"section": "nav.services", "items": [
         ("hr", "nav.hr", "users", "main.module", "open_module"),
-        ("procurement", "nav.procurement", "cart", "main.module", "open_module"),
         ("saplite", "nav.saplite", "server", "main.module", "open_module"),
         ("kb", "nav.kb", "book", "main.module", "open_module"),
     ]},

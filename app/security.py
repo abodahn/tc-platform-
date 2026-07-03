@@ -108,23 +108,32 @@ def all_role_choices():
     return [(k, v["label"]) for k, v in ROLES.items()]
 
 
-# --- Merge in the Maintenance & Spare Parts module RBAC --------------------
+# --- Merge in additional module RBAC (Maintenance, Procurement) ------------
+def _merge_module_rbac(module_perms, module_role_perms, module_role_labels):
+    """Fold a module's permissions + role grants into the platform catalogue.
+    Existing roles gain the new perms; brand-new roles are created with the
+    baseline (view_dashboard + open_module) plus their grants."""
+    for _p in module_perms:
+        if _p not in PERMISSIONS:
+            PERMISSIONS.append(_p)
+    for _role_key, _perms in module_role_perms.items():
+        if _role_key in ROLES:
+            _existing = ROLES[_role_key]["perms"]
+            if "*" not in _existing:
+                for _p in _perms:
+                    if _p not in _existing:
+                        _existing.append(_p)
+        else:
+            ROLES[_role_key] = {
+                "label": module_role_labels.get(_role_key, _role_key.replace("_", " ").title()),
+                "perms": ["view_dashboard", "open_module"] + list(_perms),
+            }
+
+
 from app.maintenance.constants import (  # noqa: E402
     MAINT_PERMISSIONS, MAINT_ROLE_PERMS, MAINT_ROLE_LABELS)
+from app.approvals.constants import (  # noqa: E402
+    PROC_PERMISSIONS, PROC_ROLE_PERMS, PROC_ROLE_LABELS)
 
-for _p in MAINT_PERMISSIONS:
-    if _p not in PERMISSIONS:
-        PERMISSIONS.append(_p)
-
-for _role_key, _perms in MAINT_ROLE_PERMS.items():
-    if _role_key in ROLES:
-        _existing = ROLES[_role_key]["perms"]
-        if "*" not in _existing:
-            for _p in _perms:
-                if _p not in _existing:
-                    _existing.append(_p)
-    else:
-        ROLES[_role_key] = {
-            "label": MAINT_ROLE_LABELS.get(_role_key, _role_key.replace("_", " ").title()),
-            "perms": ["view_dashboard", "open_module"] + list(_perms),
-        }
+_merge_module_rbac(MAINT_PERMISSIONS, MAINT_ROLE_PERMS, MAINT_ROLE_LABELS)
+_merge_module_rbac(PROC_PERMISSIONS, PROC_ROLE_PERMS, PROC_ROLE_LABELS)

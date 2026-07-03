@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}New Request{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.new_title">New Purchase Request</h1>
+    <div class="sub" data-i18n="proc.new_sub">Fill the request — the approval ladder is chosen automatically from the total.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.index') }}" data-i18n="proc.cancel">Cancel</a>
+</div>
+
+<form method="post" action="{{ url_for('approvals.create') }}" id="prForm">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.details">Request details</h3></div>
+    <div class="panel-pad">
+      <div class="grid cols-2">
+        <div class="field"><label data-i18n="proc.title_l">Title *</label>
+          <input name="title" required autocomplete="off" placeholder="e.g. Repair forklift battery"></div>
+        <div class="field"><label data-i18n="proc.request_for_l">Request for</label>
+          <input name="request_for" autocomplete="off" placeholder="Asset / machine / area"></div>
+        <div class="field"><label data-i18n="proc.dept_l">Department</label>
+          <input name="department" autocomplete="off" placeholder="e.g. General Maintenance"></div>
+        <div class="field"><label data-i18n="proc.date_l">Request date</label>
+          <input type="date" name="request_date" value="{{ '' }}"></div>
+        <div class="field"><label data-i18n="proc.vendor_l">Vendor</label>
+          <input name="vendor" list="vendorList" autocomplete="off" placeholder="Supplier">
+          <datalist id="vendorList">{% for v in vendors %}<option value="{{ v.name }}">{% endfor %}</datalist></div>
+        <div class="field"><label data-i18n="proc.currency_l">Currency</label>
+          <select name="currency">{% for c in currencies %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="proc.payment_l">Payment condition</label>
+          <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="proc.delivery_l">Delivery condition</label>
+          <input name="delivery_condition" autocomplete="off" placeholder="e.g. T&C Warehouse"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel mt-4">
+    <div class="panel-head"><h3 data-i18n="proc.items">Line items</h3>
+      <button type="button" class="btn btn-ghost btn-sm" id="addRow" data-i18n="proc.add_item">+ Add item</button></div>
+    <div class="panel-pad">
+      <div class="li-head">
+        <span data-i18n="proc.item">Item</span><span data-i18n="proc.desc">Description</span>
+        <span data-i18n="proc.unit">Unit</span><span data-i18n="proc.qty">Qty</span>
+        <span data-i18n="proc.stock">Stock</span><span data-i18n="proc.unit_price">Unit price</span>
+        <span class="li-cost" data-i18n="proc.cost">Cost</span><span></span>
+      </div>
+      <div id="rows"></div>
+      <div class="total-bar mt-3">
+        <span data-i18n="proc.est_total">Estimated total</span>
+        <span class="tval"><span id="totalVal">0</span> <span id="curLabel">EGP</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel mt-4">
+    <div class="panel-head"><h3 data-i18n="proc.route_preview">Approval route</h3></div>
+    <div class="panel-pad">
+      <div class="ladder-chips" id="ladderPreview"></div>
+      <div class="muted mt-2" style="font-size:12px" data-i18n="proc.route_hint">The route updates automatically as the total changes.</div>
+    </div>
+  </div>
+
+  <div class="field mt-4"><label data-i18n="proc.notes_l">Notes</label>
+    <textarea name="notes" rows="2" placeholder="Anything the approvers should know…"></textarea></div>
+
+  <div class="flex gap wrap mt-4">
+    <button class="btn btn-primary" type="submit" name="action" value="submit" data-i18n="proc.submit">Submit for approval</button>
+    <button class="btn btn-ghost" type="submit" name="action" value="draft" data-i18n="proc.save_draft">Save as draft</button>
+  </div>
+</form>
+
+<script>
+(function () {
+  var UNITS = {{ units|tojson }};
+  var MATRIX = {{ matrix|tojson }};       // stage -> threshold
+  var LADDER = {{ ladder|tojson }};        // ordered stage keys
+  var LABELS = {{ stage_labels|tojson }};  // stage -> label
+  var rows = document.getElementById('rows');
+  var totalVal = document.getElementById('totalVal');
+  var ladderPrev = document.getElementById('ladderPreview');
+
+  // default date = today
+  var d = document.querySelector('input[name=request_date]');
+  try { d.value = new Date().toISOString().slice(0,10); } catch(e){}
+
+  function unitOpts(){ return UNITS.map(function(u){return '<option>'+u+'</option>';}).join(''); }
+
+  function rowHtml(){
+    return '<div class="li-row">'
+      + '<input name="item[]" placeholder="Item" autocomplete="off">'
+      + '<input name="description[]" placeholder="Description" autocomplete="off">'
+      + '<select name="unit[]">'+unitOpts()+'</select>'
+      + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
+      + '<input name="current_stock[]" type="number" min="0" step="any" value="0">'
+      + '<input name="unit_price[]" type="number" min="0" step="any" value="0" class="js-calc">'
+      + '<input name="item_notes[]" type="hidden">'
+      + '<span class="li-cost js-cost">0</span>'
+      + '<button type="button" class="li-del" title="Remove">✕</button>'
+      + '</div>';
+  }
+  function addRow(){ rows.insertAdjacentHTML('beforeend', rowHtml()); recalc(); }
+
+  function recalc(){
+    var total = 0;
+    rows.querySelectorAll('.li-row').forEach(function(r){
+      var q = parseFloat(r.querySelector('[name="qty[]"]').value)||0;
+      var p = parseFloat(r.querySelector('[name="unit_price[]"]').value)||0;
+      var c = q*p;
+      r.querySelector('.js-cost').textContent = c.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+      total += c;
+    });
+    totalVal.textContent = total.toLocaleString(undefined,{maximumFractionDigits:0});
+    renderLadder(total);
+  }
+
+  function renderLadder(total){
+    var chips = ['<span class="lc req">'+ (LABELS.requester||'Requester') +'</span>'];
+    LADDER.forEach(function(stage){
+      if (total >= (MATRIX[stage]||0)) {
+        chips.push('<span class="arrow">›</span><span class="lc">'+(LABELS[stage]||stage)+'</span>');
+      }
+    });
+    ladderPrev.innerHTML = chips.join(' ');
+  }
+
+  rows.addEventListener('input', function(e){ if(e.target.classList.contains('js-calc')) recalc(); });
+  rows.addEventListener('click', function(e){
+    if (e.target.classList.contains('li-del')) {
+      if (rows.querySelectorAll('.li-row').length > 1) e.target.closest('.li-row').remove();
+      else { e.target.closest('.li-row').querySelectorAll('input').forEach(function(i){ if(i.type==='number') i.value = (i.name==='qty[]'?'1':'0'); else i.value=''; }); }
+      recalc();
+    }
+  });
+  document.getElementById('addRow').addEventListener('click', addRow);
+  var curSel = document.querySelector('select[name=currency]');
+  curSel.addEventListener('change', function(){ document.getElementById('curLabel').textContent = curSel.value; });
+
+  addRow(); // start with one row
+})();
+</script>
+
+{% endblock %}

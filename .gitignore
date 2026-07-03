@@ -20,3 +20,6 @@ screenshots/
 .tc_sso_secret
 preview_run.py
 preview.db
+
+# local tooling / editor state
+.claude/

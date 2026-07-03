@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Procurement{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.title">Procurement &amp; Approvals</h1>
+    <div class="sub" data-i18n="proc.sub">Raise a purchase request, route it through the approval ladder, sign digitally, and issue the PO — no paper.</div>
+  </div>
+  {% if can_create %}
+  <a class="btn btn-primary" href="{{ url_for('approvals.new') }}">
+    <svg class="ico"><use href="#i-report"></use></svg>
+    <span data-i18n="proc.new">New Request</span>
+  </a>
+  {% endif %}
+</div>
+
+<div class="grid cols-4">
+  <div class="kpi info">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-kanban"></use></svg></div></div>
+    <div class="kval">{{ kpi.pending }}</div>
+    <div class="klabel" data-i18n="proc.k_pending">Pending approval</div>
+  </div>
+  <div class="kpi{{ ' warn' if kpi.my_queue else '' }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-check"></use></svg></div>
+      {% if kpi.my_queue %}<span class="ktrend b-warning">{{ kpi.my_queue }}</span>{% endif %}</div>
+    <div class="kval">{{ kpi.my_queue }}</div>
+    <div class="klabel" data-i18n="proc.k_myqueue">Waiting on me</div>
+  </div>
+  <div class="kpi good">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-check"></use></svg></div></div>
+    <div class="kval">{{ kpi.approved }}</div>
+    <div class="klabel" data-i18n="proc.k_approved">Approved</div>
+  </div>
+  <div class="kpi">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-wallet"></use></svg></div></div>
+    <div class="kval">{{ '{:,.0f}'.format(kpi.value_pending or 0) }}</div>
+    <div class="klabel" data-i18n="proc.k_value">Pending value (EGP)</div>
+  </div>
+</div>
+
+<div class="grid cols-2 mt-4" style="align-items:start">
+  <!-- My approval queue -->
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="proc.my_queue">Waiting for my approval</h3>
+      <span class="badge b-warning">{{ queue|length }}</span>
+    </div>
+    <div class="panel-pad" style="overflow-x:auto">
+      {% if queue %}
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.pr">Request</th>
+          <th data-i18n="proc.stage">My stage</th>
+          <th data-i18n="proc.total">Total</th>
+          <th></th>
+        </tr></thead>
+        <tbody>
+        {% for pr in queue %}
+          <tr>
+            <td><div style="font-weight:600">{{ pr.pr_no }}</div>
+                <div class="muted" style="font-size:12px">{{ pr.title }}</div></td>
+            <td><span class="badge b-pending">{{ pr._stage_label }}</span></td>
+            <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}</td>
+            <td style="text-align:end"><a class="btn btn-primary btn-sm" href="{{ url_for('approvals.detail', pr_id=pr.id) }}" data-i18n="proc.review">Review</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="muted" data-i18n="proc.queue_empty">Nothing is waiting on you right now. 🎉</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Recent requests -->
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="proc.recent">Recent requests</h3>
+      <a class="tag" href="{{ url_for('approvals.listing') }}" data-i18n="proc.view_all">View all</a>
+    </div>
+    <div class="panel-pad" style="overflow-x:auto">
+      {% if recent %}
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.pr">Request</th>
+          <th data-i18n="proc.status">Status</th>
+          <th data-i18n="proc.total">Total</th>
+        </tr></thead>
+        <tbody>
+        {% for pr in recent %}
+          <tr onclick="location.href='{{ url_for('approvals.detail', pr_id=pr.id) }}'" style="cursor:pointer">
+            <td><div style="font-weight:600">{{ pr.pr_no }}</div>
+                <div class="muted" style="font-size:12px">{{ pr.title }}</div></td>
+            <td><span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span></td>
+            <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="muted" data-i18n="proc.none">No requests yet.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -64,7 +64,9 @@
   --sidebar-bg: linear-gradient(180deg, #0a0c12 0%, #07080b 100%);
   --sidebar-ink: #c7ccd6;
   --sidebar-ink-soft: #7e8694;
-  --sidebar-active: rgba(237, 28, 36, .16);
+  --sidebar-active: rgba(237, 28, 36, .15);
+  --sidebar-hover: rgba(255, 255, 255, .055);
+  --sidebar-glow: rgba(237, 28, 36, .16);
   --on-red: #ffffff;
   --glass: rgba(255, 255, 255, .65);
 }
@@ -92,7 +94,9 @@
   --sidebar-bg: linear-gradient(180deg, #0a0c12 0%, #05060a 100%);
   --sidebar-ink: #c7ccd6;
   --sidebar-ink-soft: #6b7280;
-  --sidebar-active: rgba(237, 28, 36, .22);
+  --sidebar-active: rgba(237, 28, 36, .2);
+  --sidebar-hover: rgba(255, 255, 255, .06);
+  --sidebar-glow: rgba(237, 28, 36, .2);
   --glass: rgba(15, 19, 32, .6);
   --shadow-card: 0 14px 40px rgba(0, 0, 0, .35);
   --shadow-strong: 0 28px 70px rgba(0, 0, 0, .5);

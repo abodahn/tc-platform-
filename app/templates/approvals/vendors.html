@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Vendors{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.vendors_title">Vendors</h1>
+    <div class="sub" data-i18n="proc.vendors_sub">Suppliers used across purchase requests and orders.</div>
+  </div>
+</div>
+
+<div class="grid cols-2" style="align-items:start">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.vendor_list">Supplier directory</h3>
+      <span class="badge b-info">{{ vendors|length }}</span></div>
+    <div class="panel-pad" style="overflow-x:auto">
+      {% if vendors %}
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.vendor_name">Vendor</th>
+          <th data-i18n="proc.contact">Contact</th>
+          <th data-i18n="proc.terms">Terms</th>
+          <th data-i18n="proc.rating">Rating</th>
+        </tr></thead>
+        <tbody>
+        {% for v in vendors %}
+          <tr>
+            <td><div style="font-weight:600">{{ v.name }}</div>
+                <div class="muted" style="font-size:12px">{{ v.category or '' }}{% if v.email %} · {{ v.email }}{% endif %}</div></td>
+            <td>{{ v.contact_person or '—' }}<div class="muted" style="font-size:12px">{{ v.phone or '' }}</div></td>
+            <td>{{ v.payment_terms or '—' }}</td>
+            <td>{% if v.rating %}<span class="tag">★ {{ '%.1f'|format(v.rating) }}</span>{% else %}—{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="muted" data-i18n="proc.no_vendors">No vendors yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if can_manage %}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.add_vendor">Add a vendor</h3></div>
+    <div class="panel-pad">
+      <form method="post" action="{{ url_for('approvals.create_vendor') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field"><label data-i18n="proc.vendor_name">Name *</label><input name="name" required autocomplete="off"></div>
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="proc.contact">Contact person</label><input name="contact_person" autocomplete="off"></div>
+          <div class="field"><label data-i18n="proc.phone">Phone</label><input name="phone" autocomplete="off"></div>
+          <div class="field"><label data-i18n="proc.email">Email</label><input name="email" autocomplete="off"></div>
+          <div class="field"><label data-i18n="proc.category">Category</label><input name="category" autocomplete="off"></div>
+        </div>
+        <div class="field"><label data-i18n="proc.address">Address</label><input name="address" autocomplete="off"></div>
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="proc.terms">Payment terms</label><input name="payment_terms" autocomplete="off"></div>
+          <div class="field"><label data-i18n="proc.rating">Rating (0–5)</label><input name="rating" type="number" min="0" max="5" step="0.1"></div>
+        </div>
+        <button class="btn btn-primary" type="submit" data-i18n="proc.save_vendor">Save vendor</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

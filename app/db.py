@@ -677,6 +677,9 @@ def init_db():
         # Maintenance & Spare Parts (CMMS) module — create + seed if empty
         from app.maintenance.schema import create_and_seed as _mnt_create_and_seed
         _mnt_create_and_seed(conn)
+        # Procurement & Approvals cycle module — create + seed if empty
+        from app.approvals.schema import create_and_seed as _proc_create_and_seed
+        _proc_create_and_seed(conn)
     finally:
         conn.close()
 

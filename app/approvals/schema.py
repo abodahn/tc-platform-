@@ -1,0 +1,171 @@
+"""
+TC Platform — Procurement & Approvals database schema + seed.
+
+All tables live alongside the platform metadata (same connection style as the
+Maintenance module). Creation is idempotent (CREATE TABLE IF NOT EXISTS) and
+seeding runs only when empty, so existing data is never overwritten.
+"""
+from datetime import datetime, timezone
+
+
+def _now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+SCHEMA = """
+-- ===== Vendors (supplier master) =====
+CREATE TABLE IF NOT EXISTS proc_vendors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    contact_person TEXT, phone TEXT, email TEXT, address TEXT,
+    payment_terms TEXT, category TEXT,
+    rating REAL DEFAULT 0,
+    notes TEXT, is_active INTEGER DEFAULT 1, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_proc_vendor_name ON proc_vendors(name);
+
+-- ===== Purchase Requests (the digital PR form header) =====
+CREATE TABLE IF NOT EXISTS pr_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_no TEXT UNIQUE,
+    title TEXT,
+    request_for TEXT,                 -- what/where the request is for (e.g. asset)
+    requester TEXT,                   -- username of the originator
+    requester_name TEXT,
+    requester_user_id INTEGER,
+    department TEXT,
+    request_date TEXT,
+    currency TEXT DEFAULT 'EGP',
+    vendor TEXT, vendor_id INTEGER,
+    payment_condition TEXT, delivery_condition TEXT,
+    req_del_date TEXT,
+    po_no TEXT,
+    asset_code TEXT, asset_id INTEGER,
+    total REAL DEFAULT 0,
+    status TEXT DEFAULT 'draft',
+    current_seq INTEGER DEFAULT 0,    -- seq of the active step (0 = none/draft)
+    notes TEXT,
+    rejection_reason TEXT,
+    created_at TEXT, submitted_at TEXT, approved_at TEXT, closed_at TEXT,
+    is_active INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS ix_pr_no ON pr_requests(pr_no);
+CREATE INDEX IF NOT EXISTS ix_pr_status ON pr_requests(status);
+CREATE INDEX IF NOT EXISTS ix_pr_requester ON pr_requests(requester);
+
+-- ===== PR line items =====
+CREATE TABLE IF NOT EXISTS pr_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    seq INTEGER DEFAULT 1,
+    item TEXT, description TEXT,
+    unit TEXT DEFAULT 'Pcs',
+    qty REAL DEFAULT 1,
+    current_stock REAL DEFAULT 0,
+    last_order_qty REAL, last_order_date TEXT,
+    vendor TEXT,
+    unit_price REAL DEFAULT 0,
+    est_cost REAL DEFAULT 0,
+    last_order_price REAL,
+    notes TEXT,
+    FOREIGN KEY (pr_id) REFERENCES pr_requests(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_pr_items_pr ON pr_items(pr_id);
+
+-- ===== Approval ladder steps (one row per rung) =====
+CREATE TABLE IF NOT EXISTS pr_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    seq INTEGER,                      -- 1..N order in the ladder
+    stage TEXT,                       -- warehouse|factory_manager|purchasing|finance|cfo|ceo
+    status TEXT DEFAULT 'pending',    -- pending|approved|rejected|skipped
+    approver_user TEXT, approver_name TEXT, approver_role TEXT,
+    sig_png TEXT,                     -- data:image/png snapshot of the signature
+    comment TEXT,
+    acted_at TEXT, created_at TEXT,
+    FOREIGN KEY (pr_id) REFERENCES pr_requests(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_pr_steps_pr ON pr_steps(pr_id);
+CREATE INDEX IF NOT EXISTS ix_pr_steps_stage ON pr_steps(stage);
+
+-- ===== Immutable audit / event trail =====
+CREATE TABLE IF NOT EXISTS pr_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    actor TEXT, action TEXT, detail TEXT, ip TEXT,
+    created_at TEXT,
+    FOREIGN KEY (pr_id) REFERENCES pr_requests(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_pr_events_pr ON pr_events(pr_id);
+
+-- ===== Attachments (vendor quotations etc.) =====
+CREATE TABLE IF NOT EXISTS pr_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    filename TEXT, content_type TEXT, size INTEGER DEFAULT 0,
+    content_b64 TEXT,
+    uploaded_by TEXT, created_at TEXT,
+    FOREIGN KEY (pr_id) REFERENCES pr_requests(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_pr_attach_pr ON pr_attachments(pr_id);
+"""
+
+
+def create_and_seed(conn):
+    """Create procurement tables and seed sample vendors + one demo PR."""
+    conn.executescript(SCHEMA)
+    conn.commit()
+    if conn.execute("SELECT COUNT(*) c FROM proc_vendors").fetchone()["c"] > 0:
+        return  # already seeded; never overwrite
+
+    now = _now()
+
+    # --- Vendors (incl. the real one from PR 13849) ---
+    vendors = [
+        ("High Trak for Trading", "High Trak", "01220595184", "Hightrak6@gmail.com",
+         "El Obour, 1st District, Property 43, Apt 8", "On Delivery", "maintenance", 4.5),
+        ("Jungheinrich Egypt", "Sales", "0227000000", "info@jungheinrich.com.eg",
+         "Cairo", "Advanced Payment", "equipment", 4.7),
+        ("Delta Industrial Supplies", "Procurement", "01000000000", "sales@delta-ind.com",
+         "10th of Ramadan", "Net 30", "general", 4.0),
+    ]
+    for name, cp, phone, email, addr, terms, cat, rating in vendors:
+        conn.execute(
+            """INSERT INTO proc_vendors
+               (name, contact_person, phone, email, address, payment_terms, category, rating, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (name, cp, phone, email, addr, terms, cat, rating, now))
+
+    # --- One demo PR mirroring 13849 (forklift battery), pending at warehouse ---
+    from app.approvals.constants import build_ladder, stage_label
+    total = 48000.0
+    cur = conn.execute(
+        """INSERT INTO pr_requests
+           (pr_no, title, request_for, requester, requester_name, department,
+            request_date, currency, vendor, payment_condition, delivery_condition,
+            total, status, current_seq, notes, created_at, submitted_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ("PR-DEMO-13849", "Repair forklift battery", "JUNGHEINRICH forklift (Kunas Depo)",
+         "store", "Storekeeper", "General Maintenance", now[:10], "EGP",
+         "High Trak for Trading", "Advanced Payment", "T&C Warehouse",
+         total, "pending", 1, "General maintenance order — battery repair/refurbish.",
+         now, now))
+    pr_id = cur.lastrowid
+    conn.execute(
+        """INSERT INTO pr_items
+           (pr_id, seq, item, description, unit, qty, current_stock, vendor,
+            unit_price, est_cost, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (pr_id, 1, "Repair Battery", "JUNGHEINRICH 2750KG 48V 750A — change 4 cells, "
+         "repair 4 cells, insulation, remove deposits, change acid, reactivate.",
+         "Pcs", 1, 0, "High Trak for Trading", 48000.0, 48000.0, "6-month warranty"))
+    ladder = build_ladder(total)
+    for i, stage in enumerate(ladder, start=1):
+        conn.execute(
+            """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at)
+               VALUES (?,?,?,?,?,?)""",
+            (pr_id, i, stage, "pending", stage_label(stage), now))
+    conn.execute(
+        "INSERT INTO pr_events (pr_id, actor, action, detail, created_at) VALUES (?,?,?,?,?)",
+        (pr_id, "store", "submitted", f"Submitted for {len(ladder)} approvals", now))
+    conn.commit()

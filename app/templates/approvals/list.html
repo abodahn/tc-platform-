@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Requests{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.all_title">Purchase Requests</h1>
+    <div class="sub" data-i18n="proc.all_sub">Every request and where it stands in its approval cycle.</div>
+  </div>
+  <a class="btn btn-primary" href="{{ url_for('approvals.new') }}">
+    <svg class="ico"><use href="#i-report"></use></svg>
+    <span data-i18n="proc.new">New Request</span>
+  </a>
+</div>
+
+<div class="panel">
+  <div class="panel-pad">
+    <div class="flex gap center wrap">
+      <a class="btn btn-sm {{ 'btn-primary' if status=='all' else 'btn-ghost' }}" href="{{ url_for('approvals.listing', status='all', mine=1 if mine else None) }}" data-i18n="proc.f_all">All</a>
+      {% for s in statuses %}
+      <a class="btn btn-sm {{ 'btn-primary' if status==s else 'btn-ghost' }}" href="{{ url_for('approvals.listing', status=s, mine=1 if mine else None) }}">{{ s|replace('_',' ')|title }}</a>
+      {% endfor %}
+      <span style="flex:1"></span>
+      <a class="btn btn-sm {{ 'btn-primary' if mine else 'btn-ghost' }}" href="{{ url_for('approvals.listing', status=status, mine=None if mine else 1) }}" data-i18n="proc.mine">Mine only</a>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-pad" style="overflow-x:auto">
+    {% if prs %}
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="proc.pr">Request</th>
+        <th data-i18n="proc.requester">Requester</th>
+        <th data-i18n="proc.dept">Department</th>
+        <th data-i18n="proc.status">Status</th>
+        <th data-i18n="proc.total">Total</th>
+        <th data-i18n="proc.date">Date</th>
+      </tr></thead>
+      <tbody>
+      {% for pr in prs %}
+        <tr onclick="location.href='{{ url_for('approvals.detail', pr_id=pr.id) }}'" style="cursor:pointer">
+          <td><div style="font-weight:600">{{ pr.pr_no }}</div>
+              <div class="muted" style="font-size:12px">{{ pr.title }}</div></td>
+          <td>{{ pr.requester_name or pr.requester }}</td>
+          <td>{{ pr.department or '—' }}</td>
+          <td><span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span></td>
+          <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}</td>
+          <td class="muted" style="font-size:12px">{{ pr.request_date or (pr.created_at or '')[:10] }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="muted" data-i18n="proc.none">No requests match this filter.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

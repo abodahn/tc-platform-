@@ -1,0 +1,315 @@
+"""
+TC Platform — Procurement & Approvals blueprint (thin controllers).
+
+Digital Purchase Request lifecycle: raise -> route through the threshold-driven
+approval ladder -> each approver stamps their digital signature -> auto-generate
+the Purchase Order. Every page requires auth + the right procurement permission;
+approval actions are additionally gated by the per-stage authority check.
+"""
+import base64
+import io
+
+from flask import (Blueprint, render_template, request, redirect, url_for,
+                   abort, flash, jsonify, send_file)
+
+from app.auth import login_required, permission_required, current_user, user_can
+from app.approvals import services as svc
+from app.approvals import pdf as pdfgen
+from app.approvals import constants as C
+
+bp = Blueprint("approvals", __name__, url_prefix="/procurement")
+
+_MAX_ATTACH = 3 * 1024 * 1024  # 3 MB per quotation file
+_ATTACH_EXT = (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".xlsx", ".csv")
+
+
+def _u():
+    return current_user()
+
+
+def _ip():
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "")
+
+
+# --------------------------------------------------------------------------
+# Landing — KPIs + my approval queue + recent requests
+# --------------------------------------------------------------------------
+@bp.route("/")
+@login_required
+@permission_required("proc_view")
+def index():
+    user = _u()
+    return render_template(
+        "approvals/index.html", active="procurement",
+        kpi=svc.counts(user), queue=svc.my_queue(user),
+        recent=svc.list_prs(limit=12),
+        can_create=user_can("proc_create"))
+
+
+@bp.route("/list")
+@login_required
+@permission_required("proc_view")
+def listing():
+    status = request.args.get("status", "all")
+    mine = request.args.get("mine") == "1"
+    user = _u()
+    prs = svc.list_prs(status=status, requester=(user["username"] if mine else None))
+    return render_template("approvals/list.html", active="procurement",
+                           prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES)
+
+
+# --------------------------------------------------------------------------
+# New request
+# --------------------------------------------------------------------------
+@bp.route("/new", methods=["GET"])
+@login_required
+@permission_required("proc_create")
+def new():
+    return render_template("approvals/new.html", active="procurement",
+                           vendors=svc.list_vendors(), units=C.UNITS,
+                           currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
+                           matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
+                           stage_labels=C.STAGE_LABELS)
+
+
+@bp.route("/new", methods=["POST"])
+@login_required
+@permission_required("proc_create")
+def create():
+    f = request.form
+    header = {
+        "title": f.get("title", "").strip(),
+        "request_for": f.get("request_for", "").strip(),
+        "department": f.get("department", "").strip(),
+        "request_date": f.get("request_date", "").strip(),
+        "currency": f.get("currency", "EGP"),
+        "vendor": f.get("vendor", "").strip(),
+        "payment_condition": f.get("payment_condition", "").strip(),
+        "delivery_condition": f.get("delivery_condition", "").strip(),
+        "req_del_date": f.get("req_del_date", "").strip(),
+        "asset_code": f.get("asset_code", "").strip(),
+        "notes": f.get("notes", "").strip(),
+    }
+    items = []
+    names = f.getlist("item[]")
+    descs = f.getlist("description[]")
+    units = f.getlist("unit[]")
+    qtys = f.getlist("qty[]")
+    stocks = f.getlist("current_stock[]")
+    prices = f.getlist("unit_price[]")
+    notes = f.getlist("item_notes[]")
+    for i in range(len(names)):
+        if not (names[i] or "").strip():
+            continue
+        items.append({
+            "item": names[i].strip(),
+            "description": descs[i].strip() if i < len(descs) else "",
+            "unit": units[i] if i < len(units) else "Pcs",
+            "qty": qtys[i] if i < len(qtys) else 0,
+            "current_stock": stocks[i] if i < len(stocks) else 0,
+            "unit_price": prices[i] if i < len(prices) else 0,
+            "notes": notes[i] if i < len(notes) else "",
+        })
+    if not header["title"] or not items:
+        flash("A title and at least one line item are required.", "error")
+        return redirect(url_for("approvals.new"))
+
+    submit = f.get("action") != "draft"
+    pr_id, pr_no = svc.create_pr(header, items, _u(), ip=_ip(), submit=submit)
+    flash(f"Purchase request {pr_no} created.", "success")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+# --------------------------------------------------------------------------
+# Detail + actions
+# --------------------------------------------------------------------------
+@bp.route("/pr/<int:pr_id>")
+@login_required
+@permission_required("proc_view")
+def detail(pr_id):
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    user = _u()
+    pr = bundle["pr"]
+    # which step (if any) can the current user act on right now?
+    actionable = None
+    if pr["status"] == "pending":
+        for s in bundle["steps"]:
+            if s["seq"] == pr["current_seq"] and s["status"] == "pending":
+                if svc.can_act(user, s["stage"]):
+                    actionable = s
+                break
+    has_sig = bool((user or {}).get("sig_png"))
+    return render_template("approvals/detail.html", active="procurement",
+                           b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
+                           stage_label=C.stage_label,
+                           can_purchasing=user_can("proc_purchasing"),
+                           is_owner=(pr["requester"] == (user or {}).get("username")))
+
+
+@bp.route("/pr/<int:pr_id>/approve", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def approve(pr_id):
+    ok, msg = svc.act_on_step(pr_id, _u(), "approve",
+                              comment=request.form.get("comment", "").strip() or None,
+                              ip=_ip())
+    if not ok:
+        flash({"forbidden": "You are not authorised for this approval stage.",
+               "not_pending": "This request is not awaiting approval.",
+               "no_active_step": "No active approval step."}.get(msg, f"Could not approve ({msg})."),
+              "error")
+    else:
+        flash({"advanced": "Approved — routed to the next approver.",
+               "approved": "Final approval complete. Purchase Order drafted."}.get(msg, "Approved."),
+              "success")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/reject", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def reject(pr_id):
+    reason = request.form.get("comment", "").strip()
+    ok, msg = svc.act_on_step(pr_id, _u(), "reject", comment=reason, ip=_ip())
+    flash("Request rejected and returned to the requester." if ok
+          else f"Could not reject ({msg}).", "warning" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/submit", methods=["POST"])
+@login_required
+@permission_required("proc_create")
+def submit(pr_id):
+    ok, msg = svc.submit_pr(pr_id, _u(), ip=_ip())
+    flash("Submitted for approval." if ok else f"Could not submit ({msg}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/issue-po", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def issue_po(pr_id):
+    ok, res = svc.issue_po(pr_id, _u(), ip=_ip())
+    flash(f"Purchase Order {res} issued." if ok else f"Could not issue PO ({res}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/cancel", methods=["POST"])
+@login_required
+@permission_required("proc_create")
+def cancel(pr_id):
+    ok, msg = svc.cancel_pr(pr_id, _u(), ip=_ip())
+    flash("Request cancelled." if ok else f"Could not cancel ({msg}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+# --------------------------------------------------------------------------
+# PDFs
+# --------------------------------------------------------------------------
+@bp.route("/pr/<int:pr_id>/pdf")
+@login_required
+@permission_required("proc_view")
+def pr_pdf(pr_id):
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    try:
+        data = pdfgen.pr_pdf(bundle)
+    except Exception:
+        return jsonify(error="PDF support unavailable."), 500
+    return send_file(io.BytesIO(data), mimetype="application/pdf",
+                     as_attachment=False,
+                     download_name=f"{bundle['pr'].get('pr_no', 'PR')}.pdf")
+
+
+@bp.route("/pr/<int:pr_id>/po.pdf")
+@login_required
+@permission_required("proc_view")
+def po_pdf(pr_id):
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    if bundle["pr"]["status"] not in ("approved", "po_issued", "closed"):
+        abort(400, "The Purchase Order is available only after full approval.")
+    try:
+        data = pdfgen.po_pdf(bundle)
+    except Exception:
+        return jsonify(error="PDF support unavailable."), 500
+    return send_file(io.BytesIO(data), mimetype="application/pdf",
+                     as_attachment=False,
+                     download_name=f"{bundle['pr'].get('po_no', 'PO')}.pdf")
+
+
+# --------------------------------------------------------------------------
+# Attachments (vendor quotations)
+# --------------------------------------------------------------------------
+@bp.route("/pr/<int:pr_id>/attach", methods=["POST"])
+@login_required
+@permission_required("proc_create")
+def attach(pr_id):
+    if not svc.get_pr(pr_id):
+        abort(404)
+    file = request.files.get("file")
+    if not file or not file.filename:
+        flash("No file selected.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    name = file.filename
+    if not name.lower().endswith(_ATTACH_EXT):
+        flash("Unsupported file type.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    raw = file.read()
+    if len(raw) > _MAX_ATTACH:
+        flash("File too large (max 3 MB).", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    b64 = base64.b64encode(raw).decode("ascii")
+    svc.add_attachment(pr_id, name, file.mimetype or "application/octet-stream",
+                       b64, len(raw), _u(), ip=_ip())
+    flash("Quotation attached.", "success")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/attachment/<int:att_id>")
+@login_required
+@permission_required("proc_view")
+def download_attachment(att_id):
+    row = svc.get_attachment(att_id)
+    if not row:
+        abort(404)
+    try:
+        raw = base64.b64decode(row["content_b64"])
+    except Exception:
+        abort(404)
+    return send_file(io.BytesIO(raw), mimetype=row["content_type"] or "application/octet-stream",
+                     as_attachment=True, download_name=row["filename"] or "attachment")
+
+
+# --------------------------------------------------------------------------
+# Vendors
+# --------------------------------------------------------------------------
+@bp.route("/vendors", methods=["GET"])
+@login_required
+@permission_required("proc_view")
+def vendors():
+    return render_template("approvals/vendors.html", active="procurement",
+                           vendors=svc.list_vendors(active_only=False),
+                           can_manage=user_can("proc_purchasing"))
+
+
+@bp.route("/vendors", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def create_vendor():
+    data = {k: request.form.get(k, "").strip() for k in
+            ("name", "contact_person", "phone", "email", "address",
+             "payment_terms", "category", "rating", "notes")}
+    if not data["name"]:
+        flash("Vendor name is required.", "error")
+    else:
+        svc.create_vendor(data, _u(), ip=_ip())
+        flash("Vendor saved.", "success")
+    return redirect(url_for("approvals.vendors"))
