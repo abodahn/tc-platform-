@@ -48,6 +48,13 @@ services:
         sync: false                # set at deploy time
       - key: TC_ADMIN_PASSWORD
         sync: false                # set a STRONG password (not Admin@12345)
+      # Single Sign-On shared secret. Set this to the SAME value stored in
+      # D:\TC platform\.tc_sso_secret on the on-prem machine (the 4 systems read
+      # it via GO_ONLINE). Once set, logging into this platform signs users
+      # straight into the 4 systems — no second password. sync:false = set the
+      # value in the Render dashboard; never committed (this repo is public).
+      - key: TC_SSO_SECRET
+        sync: false
       # DATABASE_URL is set MANUALLY to the database's *External Database URL*
       # (Render ▸ tc-platform-db ▸ Info ▸ External Database URL). The external
       # host resolves over the public internet regardless of region, which avoids
