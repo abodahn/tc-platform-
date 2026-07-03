@@ -678,6 +678,28 @@ table.tbl tr:last-child td { border-bottom: 0; }
   .topbar .seg button { padding: 5px 8px; }
 }
 
+/* Top loading progress bar (page loads, navigation, slow requests).
+   Animates transform:scaleX (GPU-composited) rather than width — no layout thrash. */
+#tcbar {
+  position: fixed; top: 0; left: 0; height: 3px; width: 100%; z-index: 200; opacity: 0;
+  transform: scaleX(0); transform-origin: left center;
+  background: linear-gradient(90deg, var(--tc-red-2), var(--tc-red));
+  box-shadow: 0 0 10px rgba(237,28,36,.6), 0 0 4px rgba(237,28,36,.5);
+  pointer-events: none; will-change: transform, opacity;
+}
+[dir="rtl"] #tcbar { transform-origin: right center; }
+#tcbar.run { opacity: 1; animation: tcbarrun 20s cubic-bezier(.15,.75,.1,1) forwards; }
+#tcbar.done { opacity: 0; transform: scaleX(1); animation: none;
+  transition: transform .2s ease, opacity .45s ease .2s; }
+@keyframes tcbarrun {
+  0% { transform: scaleX(0) } 12% { transform: scaleX(.32) } 45% { transform: scaleX(.62) }
+  75% { transform: scaleX(.84) } 92% { transform: scaleX(.93); opacity: 1 }
+  100% { transform: scaleX(.99); opacity: 0 }
+}
+@media (prefers-reduced-motion: reduce) {
+  #tcbar.run { animation: none; transform: scaleX(.8); opacity: 1; }
+}
+
 /* Native edit dialog (Admin → Users) */
 .tc-dialog {
   border: 1px solid var(--line); border-radius: var(--r-lg); padding: 22px;

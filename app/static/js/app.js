@@ -600,3 +600,53 @@
   if (document.readyState !== "loading") run();
   else document.addEventListener("DOMContentLoaded", run);
 })();
+
+// ---------------- Top loading progress bar ----------------
+// Shows on initial page load, same-origin navigation, and form submits. Uses a
+// CSS transform animation (see #tcbar in app.css); a safety timeout guarantees it
+// never sticks. Exposes window.TCBar.start()/done() for AJAX flows to hook.
+(function () {
+  var safety = null;
+  function bar() { return document.getElementById("tcbar"); }
+  function start() {
+    var b = bar(); if (!b) return;
+    b.classList.remove("done");
+    void b.offsetWidth;                 // reflow so the animation restarts
+    b.classList.add("run");
+    clearTimeout(safety); safety = setTimeout(done, 15000);
+  }
+  function done() {
+    var b = bar(); if (!b) return;
+    clearTimeout(safety);
+    b.classList.remove("run");
+    b.classList.add("done");
+    setTimeout(function () { b.classList.remove("done"); }, 650);
+  }
+  window.TCBar = { start: start, done: done };
+
+  // finish the initial-load bar (started inline in the template)
+  if (document.readyState === "complete") done();
+  else window.addEventListener("load", done);
+
+  // start on a genuine same-origin navigation
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest('a[href]');
+    if (!a || e.defaultPrevented || e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (a.target === "_blank" || a.hasAttribute("download")) return;
+    var href = a.getAttribute("href") || "";
+    if (!href || href.charAt(0) === "#") return;
+    if (/^(javascript|mailto|tel):/i.test(href)) return;
+    try {
+      var u = new URL(a.href, location.href);
+      if (u.origin !== location.origin) return;               // external link
+      if (u.pathname === location.pathname && u.hash) return; // in-page anchor
+    } catch (_) { return; }
+    start();
+  }, true);
+
+  // start on a real (navigating) form submit
+  document.addEventListener("submit", function (e) {
+    if (!e.defaultPrevented) start();
+  }, true);
+})();
