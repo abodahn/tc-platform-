@@ -323,6 +323,55 @@ CREATE TABLE IF NOT EXISTS production_quality (
     created_at  TEXT,
     FOREIGN KEY (line_id) REFERENCES production_lines(id) ON DELETE CASCADE
 );
+
+-- ===== BI / Analytics (dynamic dashboards from uploaded or live data) =====
+CREATE TABLE IF NOT EXISTS bi_datasets (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    filename     TEXT,
+    source       TEXT DEFAULT 'upload',     -- upload | system:<key>
+    n_rows       INTEGER DEFAULT 0,
+    n_cols       INTEGER DEFAULT 0,
+    columns_json TEXT,                       -- column profile (types, stats)
+    data_json    TEXT,                       -- {columns:[...], rows:[[...]]}
+    quality_json TEXT,                       -- data-quality report
+    owner        TEXT,
+    created_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS bi_dashboards (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    dataset_id   INTEGER,
+    spec_json    TEXT,                       -- {kpis:[...], charts:[...]}
+    owner        TEXT,
+    is_pinned    INTEGER DEFAULT 0,
+    lang         TEXT DEFAULT 'en',
+    created_at   TEXT,
+    updated_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS bi_alerts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT,
+    dataset_id   INTEGER,
+    column_name  TEXT,
+    agg          TEXT DEFAULT 'sum',         -- sum|avg|count|min|max|last
+    op           TEXT DEFAULT '>',           -- > | < | >= | <= | ==
+    threshold    REAL DEFAULT 0,
+    last_value   REAL,
+    last_state   TEXT DEFAULT 'ok',          -- ok | breach
+    alerted      INTEGER DEFAULT 0,
+    owner        TEXT,
+    created_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS bi_digests (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    dashboard_id INTEGER,
+    recipients   TEXT,                       -- comma-separated emails
+    cadence      TEXT DEFAULT 'weekly',      -- daily | weekly | monthly
+    last_sent    TEXT,
+    owner        TEXT,
+    created_at   TEXT
+);
 """
 
 
@@ -376,10 +425,10 @@ def _seed_systems(conn):
          "خط أنابيب الأتمتة والجهد الموفر.",
          "Otomasyon hattı ve süreç listesi.",
          "automation", None, None, "robot", "Automation", "medium", 0, 70),
-        ("bi", "BI Dashboards", "لوحات BI", "BI Panoları",
-         "Power BI portal: executive, finance, assets and production dashboards.",
-         "بوابة Power BI للوحات التنفيذية والمالية.",
-         "Power BI portalı ve panolar.",
+        ("bi", "BI & Analytics", "الذكاء والتحليلات", "İş Zekâsı ve Analitik",
+         "Drop any file and get an instant dashboard: KPIs, charts, insights, forecasts — offline.",
+         "أسقط أي ملف واحصل على لوحة فورية: مؤشرات ورسوم ورؤى وتنبؤات — بدون إنترنت.",
+         "Herhangi bir dosyayı bırakın, anında pano alın: KPI, grafik, içgörü, tahmin — çevrimdışı.",
          "bi", None, None, "chart", "Analytics", "medium", 0, 80),
         ("production", "Production Visibility", "رؤية الإنتاج", "Üretim Görünürlüğü",
          "Production lines, downtime, efficiency and quality tracking.",

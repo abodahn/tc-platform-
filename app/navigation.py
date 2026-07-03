@@ -34,10 +34,10 @@ NAV = [
         ("maint_settings", "nav.maint_settings", "settings", "maintenance.settings", "maint_admin"),
     ]},
     {"section": "nav.transformation", "items": [
+        ("bi", "nav.bi", "chart", "bi.index", "open_module"),
         ("ai_hub", "nav.ai_hub", "sparkles", "main.module", "open_module"),
         ("finance", "nav.finance", "wallet", "main.module", "open_module"),
         ("automation", "nav.automation", "robot", "main.module", "open_module"),
-        ("bi", "nav.bi", "chart", "main.module", "open_module"),
         ("production", "nav.production", "factory", "production.index", "open_module"),
     ]},
     {"section": "nav.services", "items": [

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}{{ dataset.name }} · BI{% endblock %}
+{% block content %}
+
+<style>
+.bi-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.bi-kpi{background:var(--surface-1,#f6f6fa);border-radius:12px;padding:14px 16px}
+.bi-kpi .lbl{font-size:12.5px;color:var(--muted,#777)}
+.bi-kpi .val{font-size:23px;font-weight:600;margin-top:2px}
+.bi-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:start}
+.bi-chart .wrap{position:relative;height:250px}
+.bi-ins{display:flex;flex-direction:column;gap:8px}
+.bi-ins .row{display:flex;gap:9px;align-items:flex-start;font-size:13.5px}
+.bi-ins .row svg{flex:0 0 auto;width:15px;height:15px;color:var(--tc-red,#c8102e);margin-top:2px}
+.bi-chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bi-chip{background:var(--surface-1,#eef);border:1px solid var(--line-2,#dde);border-radius:20px;
+  padding:4px 10px;font-size:12.5px;display:inline-flex;gap:6px;align-items:center}
+.bi-chip button{border:none;background:none;cursor:pointer;color:var(--muted,#888)}
+.bi-form{display:none;gap:8px;flex-wrap:wrap;align-items:end;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-2,#eee)}
+.bi-form.open{display:flex}
+.bi-form label{font-size:12px;color:var(--muted,#777);display:block;margin-bottom:3px}
+.bi-form .input,.bi-form select{min-width:120px}
+.bi-search{display:flex;gap:8px}
+.bi-search .input{flex:1}
+.bi-quality-issue{font-size:12.5px;color:var(--muted,#777)}
+.bi-none{color:var(--muted,#888);font-size:13px}
+</style>
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow"><a href="{{ url_for('bi.index') }}" data-i18n="bi.eyebrow">BI &amp; Analytics</a></div>
+    <h1 id="biName">{{ (saved.name if saved else dataset.name) }}</h1>
+    <div class="sub">{{ dataset.n_rows }} <span data-i18n="bi.rows">rows</span> · {{ dataset.n_cols }} <span data-i18n="bi.cols">cols</span>
+      · <span class="badge {{ 'b-live' if quality.score>=90 else ('b-warning' if quality.score>=70 else 'b-critical') }}"
+              title="Data quality">{{ quality.score }}% <span data-i18n="bi.quality">quality</span></span></div>
+  </div>
+  <div class="flex gap center wrap">
+    <button class="btn btn-ghost btn-sm" id="biBtnSearch"><svg class="ico"><use href="#i-chart"></use></svg><span data-i18n="bi.ask">Ask</span></button>
+    <button class="btn btn-ghost btn-sm" id="biBtnAlert" data-i18n="bi.alert">Alert</button>
+    <button class="btn btn-ghost btn-sm" id="biBtnDigest" data-i18n="bi.digest">Digest</button>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('bi.export_xlsx', ds_id=dataset.id) }}">Excel</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('bi.export_pdf', ds_id=dataset.id) }}">PDF</a>
+    <button class="btn btn-primary btn-sm" id="biBtnSave"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="bi.save">Save</span></button>
+  </div>
+</div>
+
+<div class="panel mt-4" id="biSearchPanel" style="display:none">
+  <div class="panel-pad">
+    <form class="bi-search" id="biSearchForm">
+      <input class="input" id="biSearchInput" autocomplete="off"
+             placeholder="e.g. top 10 product by revenue" data-i18n-ph="bi.search_ph">
+      <button class="btn btn-primary btn-sm" type="submit" data-i18n="bi.go">Show</button>
+    </form>
+    <div id="biSearchMsg" class="bi-none mt-3" style="display:none"></div>
+  </div>
+</div>
+
+<div id="biFilterBar" class="panel mt-4" style="display:none">
+  <div class="panel-pad flex between center">
+    <div class="bi-chips" id="biChips"></div>
+    <button class="btn btn-ghost btn-sm" id="biClearFilters" data-i18n="bi.clear">Clear filters</button>
+  </div>
+</div>
+
+<div class="bi-kpis mt-4" id="biKpis"></div>
+
+<div class="panel accent mt-4">
+  <div class="panel-head flex between center">
+    <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg>
+      <span data-i18n="bi.insights">Insights</span></h3>
+    <span class="badge b-live"><span class="dot" style="background:var(--ok)"></span><span data-i18n="bi.offline">On-premise · offline</span></span>
+  </div>
+  <div class="panel-pad"><div class="bi-ins" id="biInsights"><div class="bi-none">…</div></div></div>
+</div>
+
+<div class="bi-charts mt-4" id="biCharts"></div>
+
+<!-- alert form -->
+<div class="panel mt-4">
+  <div class="bi-form" id="biAlertForm" style="padding:14px 18px">
+    <div><label data-i18n="bi.a_column">Column</label><select id="alCol" class="input"></select></div>
+    <div><label data-i18n="bi.a_agg">Aggregate</label>
+      <select id="alAgg" class="input"><option>sum</option><option>avg</option><option>count</option><option>min</option><option>max</option></select></div>
+    <div><label data-i18n="bi.a_op">When</label>
+      <select id="alOp" class="input"><option>&gt;</option><option>&lt;</option><option>&gt;=</option><option>&lt;=</option></select></div>
+    <div><label data-i18n="bi.a_threshold">Threshold</label><input id="alVal" class="input" type="number" step="any" style="width:110px"></div>
+    <button class="btn btn-primary btn-sm" id="alSave" data-i18n="bi.a_create">Create alert</button>
+    <span id="alMsg" class="bi-none"></span>
+  </div>
+  <div class="bi-form" id="biDigestForm" style="padding:14px 18px">
+    <div style="flex:1;min-width:220px"><label data-i18n="bi.d_recipients">Email recipients (comma-separated)</label>
+      <input id="dgTo" class="input" style="width:100%" placeholder="you@tcgarments.com"></div>
+    <div><label data-i18n="bi.d_cadence">Every</label>
+      <select id="dgCad" class="input"><option value="daily">day</option><option value="weekly" selected>week</option><option value="monthly">month</option></select></div>
+    <button class="btn btn-primary btn-sm" id="dgSave" data-i18n="bi.d_create">Schedule</button>
+    <button class="btn btn-ghost btn-sm" id="dgSend" data-i18n="bi.d_sendnow">Send now</button>
+    <span id="dgMsg" class="bi-none"></span>
+  </div>
+</div>
+
+<script id="bi-boot" type="application/json">{{ {"dataset": dataset, "dashboard": dashboard, "quality": quality, "saved": saved, "columns": columns} | tojson }}</script>
+
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/bi.js') }}"></script>
+{% endblock %}

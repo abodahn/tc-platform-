@@ -219,9 +219,11 @@ MODULE_TABLES = {
 @bp.route("/module/<key>")
 @permission_required("open_module")
 def module(key):
-    # Production Visibility is a real working module with its own blueprint.
+    # Production Visibility and BI are real working modules with their own blueprints.
     if key == "production":
         return redirect(url_for("production.index"))
+    if key == "bi":
+        return redirect(url_for("bi.index"))
 
     row = _system_by_key(key)
     if not row or not row["enabled"]:
