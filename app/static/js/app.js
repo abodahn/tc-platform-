@@ -157,6 +157,18 @@
       });
     });
 
+    // Keep the ACTIVE item visible after a full-page navigation. Without this the
+    // sidebar re-renders scrolled to the top, hiding the current item when it's
+    // in a lower section (e.g. Admin). Center it in the nav viewport instead.
+    const navEl = document.querySelector(".nav");
+    const activeItem = document.querySelector(".nav-item.active");
+    if (navEl && activeItem) {
+      const ar = activeItem.getBoundingClientRect();
+      const nr = navEl.getBoundingClientRect();
+      const target = navEl.scrollTop + (ar.top - nr.top) - (navEl.clientHeight - activeItem.clientHeight) / 2;
+      navEl.scrollTop = Math.max(0, target);
+    }
+
     // Close mobile drawer when a link is tapped
     document.querySelectorAll(".nav-item").forEach(a =>
       a.addEventListener("click", () => {
