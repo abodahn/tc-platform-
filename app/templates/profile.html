@@ -91,8 +91,10 @@
       <input class="input" id="sigName" style="flex:1;min-width:220px"
              value="{{ cu.sig_name or cu.full_name or cu.username }}"
              placeholder="Your name" data-i18n-ph="sig.name_ph" maxlength="120">
-      <button class="btn btn-primary" id="sigGen"><svg class="ico"><use href="#i-refresh"></use></svg><span data-i18n="sig.generate">Generate</span></button>
+      <button class="btn btn-primary" id="sigQuick"><svg class="ico"><use href="#i-sparkles"></use></svg><span data-i18n="sig.quick">Quick signature</span></button>
+      <button class="btn btn-ghost" id="sigGen"><svg class="ico"><use href="#i-refresh"></use></svg><span data-i18n="sig.more_styles">More styles</span></button>
     </div>
+    <p class="muted" style="font-size:12px;margin-top:8px" data-i18n="sig.quick_hint">One click creates an elegant signature from your name — it's ready to use on every paper. Or pick another style.</p>
 
     <div class="sig-grid mt-4" id="sigGrid" style="display:none">
       <button class="sig-card" type="button" data-style="great-vibes">
@@ -146,6 +148,25 @@
     grid.querySelectorAll("[data-prev]").forEach(function (p) { p.textContent = n; });
     grid.style.display = "";
     actions.style.display = "";
+  });
+
+  // One-click quick signature: server renders it from the name and saves it.
+  var quickBtn = document.getElementById("sigQuick");
+  if (quickBtn) quickBtn.addEventListener("click", function () {
+    quickBtn.disabled = true;
+    fetch("{{ url_for('main.quick_signature') }}", { method: "POST", headers: { "X-CSRF-Token": CSRF } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        quickBtn.disabled = false;
+        if (j && j.ok && j.png) {
+          document.getElementById("sigCurrentImg").src = j.png;
+          document.getElementById("sigDownload").href = j.png;
+          document.getElementById("sigCurrent").style.display = "";
+          document.getElementById("sigBadge").style.display = "";
+          if (typeof tcToast === "function") tcToast("✓", "success");
+        } else if (typeof tcToast === "function") { tcToast((j && j.error) || "Failed", ""); }
+      })
+      .catch(function () { quickBtn.disabled = false; });
   });
 
   grid.querySelectorAll(".sig-card").forEach(function (card) {

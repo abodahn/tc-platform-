@@ -449,6 +449,28 @@ def save_signature():
     return jsonify(ok=True)
 
 
+@bp.route("/profile/signature/quick", methods=["POST"])
+@login_required
+def quick_signature():
+    """One-click signature: render the current user's name server-side (Great
+    Vibes) and save it. The simplest way to get a usable signature on all papers."""
+    user = current_user()
+    from app.services.signature import generate_png, DEFAULT_STYLE
+    name = (user.get("full_name") or user.get("username") or "").strip()
+    png = generate_png(name)
+    if not png:
+        return jsonify(error="Could not generate a signature."), 500
+    conn = get_db()
+    try:
+        conn.execute("UPDATE users SET sig_style=?, sig_name=?, sig_png=?, sig_updated_at=? WHERE id=?",
+                     (DEFAULT_STYLE, name, png, utcnow(), user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(user["username"], "signature_quick", "", request.remote_addr or "")
+    return jsonify(ok=True, png=png, name=name)
+
+
 @bp.route("/profile/signature/clear", methods=["POST"])
 @login_required
 def clear_signature():

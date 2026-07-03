@@ -825,5 +825,10 @@
   "admin.cancel": "İptal",
   "admin.save_changes": "Değişiklikleri kaydet",
   "user_saved": "Kullanıcı güncellendi.",
-  "cannot_demote_self": "Kendi yönetici erişiminizi kaldıramazsınız."
+  "cannot_demote_self": "Kendi yönetici erişiminizi kaldıramazsınız.",
+  "proc.your_turn_later": "Bu onay zincirindesiniz.",
+  "proc.waiting_earlier": "Önceki onaylayanlar imzaladıktan sonra size ulaşır. Şu an bekleniyor:",
+  "sig.quick": "Hızlı imza",
+  "sig.more_styles": "Diğer stiller",
+  "sig.quick_hint": "Tek tıkla adınızdan zarif bir imza oluşturulur ve her belgede kullanıma hazırdır. Ya da başka bir stil seçin."
 }

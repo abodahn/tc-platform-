@@ -80,6 +80,14 @@
   </div>
 </div>
 
+{% if queued %}
+<div class="panel mt-4"><div class="panel-pad flex gap center">
+  <svg class="ico" style="color:var(--warn)"><use href="#i-clock"></use></svg>
+  <div><b data-i18n="proc.your_turn_later">You're in this approval chain.</b>
+    <span class="muted"><span data-i18n="proc.waiting_earlier">It will reach you once the earlier approvers have signed. Currently waiting on</span> {{ current_stage_label }}.</span></div>
+</div></div>
+{% endif %}
+
 <!-- Action box (only when the current user can act on the active step) -->
 {% if actionable %}
 <div class="panel accent mt-4">

@@ -12,10 +12,16 @@ import sqlite3
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import Config
 from app.security import DEFAULT_ROLE
+
+# Shared password for the seeded role/approver demo accounts. Accounts still on an
+# older default are migrated to this on boot (see _ensure_demo_users); accounts an
+# admin has given a custom password are left untouched.
+DEMO_PASSWORD = "Admin@1122"
+_OLD_DEMO_PASSWORDS = ("Tc@12345",)
 
 
 # --------------------------------------------------------------------------
@@ -482,9 +488,10 @@ def _seed_systems(conn):
 
 
 def _ensure_demo_users(conn):
-    """Idempotently ensure the role-demo accounts exist (password Tc@12345).
-    Runs on every init so existing installs also get the maintenance roles.
-    Never touches the admin account or any user that already exists."""
+    """Idempotently ensure the role/approver demo accounts exist (password
+    DEMO_PASSWORD = Admin@1122). Runs on every init. Creates any missing account,
+    and migrates any account still on an OLD default password to DEMO_PASSWORD —
+    but never overwrites a password an admin has since customised."""
     demo = [
         ("director", "IT Director", "it_director"),
         ("agent", "Service Desk Agent", "service_desk_agent"),
@@ -502,10 +509,45 @@ def _ensure_demo_users(conn):
         ("ceo", "Chief Executive Officer", "ceo"),
     ]
     for uname, name, role in demo:
-        conn.execute(
-            """INSERT OR IGNORE INTO users (username, password_hash, full_name, role, created_at)
-               VALUES (?,?,?,?,?)""",
-            (uname, generate_password_hash("Tc@12345"), name, role, utcnow()))
+        row = conn.execute("SELECT id, password_hash FROM users WHERE username=?",
+                           (uname,)).fetchone()
+        if not row:
+            conn.execute(
+                """INSERT INTO users (username, password_hash, full_name, role, created_at)
+                   VALUES (?,?,?,?,?)""",
+                (uname, generate_password_hash(DEMO_PASSWORD), name, role, utcnow()))
+        elif row["password_hash"] and any(
+                _pw_matches(row["password_hash"], old) for old in _OLD_DEMO_PASSWORDS):
+            conn.execute("UPDATE users SET password_hash=? WHERE id=?",
+                         (generate_password_hash(DEMO_PASSWORD), row["id"]))
+
+
+def _pw_matches(pw_hash, plain):
+    try:
+        return check_password_hash(pw_hash, plain)
+    except Exception:
+        return False
+
+
+def ensure_user_signatures(conn):
+    """Give every user a ready-to-use signature (rendered from their name) so it
+    can be stamped on any paper. Only fills accounts that don't already have one;
+    a user can still replace it in their profile. Safe no-op if Pillow/font is
+    unavailable (returns without touching anything)."""
+    try:
+        from app.services.signature import generate_png, DEFAULT_STYLE
+    except Exception:
+        return
+    rows = conn.execute(
+        "SELECT id, full_name, username FROM users "
+        "WHERE sig_png IS NULL OR sig_png = ''").fetchall()
+    for r in rows:
+        png = generate_png(r["full_name"] or r["username"])
+        if png:
+            conn.execute(
+                "UPDATE users SET sig_png=?, sig_name=?, sig_style=?, sig_updated_at=? WHERE id=?",
+                (png, r["full_name"] or r["username"], DEFAULT_STYLE, utcnow(), r["id"]))
+    conn.commit()
 
 
 def _seed_notifications(conn):
@@ -671,7 +713,7 @@ def init_db():
                 conn.execute(
                     """INSERT INTO users (username, password_hash, full_name, role, created_at)
                        VALUES (?,?,?,?,?)""",
-                    (uname, generate_password_hash("Tc@12345"), name, role, utcnow()),
+                    (uname, generate_password_hash(DEMO_PASSWORD), name, role, utcnow()),
                 )
         _ensure_demo_users(conn)
         if conn.execute("SELECT COUNT(*) AS c FROM systems").fetchone()["c"] == 0:
@@ -697,6 +739,12 @@ def init_db():
         # Procurement & Approvals cycle module — create + seed if empty
         from app.approvals.schema import create_and_seed as _proc_create_and_seed
         _proc_create_and_seed(conn)
+        # Auto-provision a signature for every user who doesn't have one yet, so it
+        # can be stamped on any paper without each person drawing one manually.
+        try:
+            ensure_user_signatures(conn)
+        except Exception:
+            conn.rollback()
     finally:
         conn.close()
 

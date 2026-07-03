@@ -267,3 +267,118 @@ def test_pdf_layout_renders(app_client):
         from app.approvals import services as svc, pdf
         data = pdf.pr_pdf(svc.get_pr(pid))
         assert data[:4] == b"%PDF" and len(data) > 3000
+
+
+# ---------------- Strict sequential approval (all the cases) ----------------
+# Ladder for 48,000: warehouse -> factory_manager -> purchasing -> finance -> cfo
+_USERS = {
+    "warehouse": {"username": "store", "role": "storekeeper"},
+    "factory_manager": {"username": "factory", "role": "factory_manager"},
+    "purchasing": {"username": "purchasing", "role": "purchasing_manager"},
+    "finance": {"username": "finance", "role": "finance_manager"},
+    "cfo": {"username": "cfo", "role": "cfo"},
+}
+
+
+def _make_pr(a, c, title="Seq"):
+    _new_pr(c, title=title)
+    return _pr_id(a, title)
+
+
+def test_out_of_turn_approver_is_blocked(app_client):
+    """CFO approves but warehouse hasn't -> blocked; PR stays at warehouse."""
+    a, c = app_client
+    pid = _make_pr(a, c, "OOO")
+    with a.app_context():
+        from app.approvals import services as svc
+        ok, msg = svc.act_on_step(pid, _USERS["cfo"], "approve")
+        assert ok is False and msg == "forbidden"
+        b = svc.get_pr(pid)
+        assert b["pr"]["status"] == "pending" and b["pr"]["current_seq"] == 1
+        assert all(s["status"] == "pending" for s in b["steps"])  # nothing signed
+
+
+def test_strict_sequence_advances_one_by_one(app_client):
+    a, c = app_client
+    pid = _make_pr(a, c, "Seq2")
+    order = ["warehouse", "factory_manager", "purchasing", "finance", "cfo"]
+    with a.app_context():
+        from app.approvals import services as svc
+        for i, stage in enumerate(order):
+            # nobody further down the ladder can act yet
+            for later in order[i + 1:]:
+                assert svc.act_on_step(pid, _USERS[later], "approve")[1] == "forbidden"
+            ok, msg = svc.act_on_step(pid, _USERS[stage], "approve")
+            assert ok is True
+            assert msg == ("approved" if stage == order[-1] else "advanced")
+        b = svc.get_pr(pid)
+        assert b["pr"]["status"] == "approved" and b["pr"]["po_no"]
+
+
+def test_reject_at_first_stage_bounces_to_requester(app_client):
+    a, c = app_client
+    pid = _make_pr(a, c, "Rej1")
+    with a.app_context():
+        from app.approvals import services as svc
+        ok, msg = svc.act_on_step(pid, _USERS["warehouse"], "reject", comment="no budget")
+        assert ok and msg == "rejected"
+        b = svc.get_pr(pid)
+        assert b["pr"]["status"] == "rejected"
+        assert "no budget" in (b["pr"]["rejection_reason"] or "")
+
+
+def test_reject_at_later_stage_after_some_approved(app_client):
+    """Warehouse+Factory+Purchasing approve, then Finance rejects -> whole PR
+    rejected; earlier signatures kept, later stage (CFO) never reached."""
+    a, c = app_client
+    pid = _make_pr(a, c, "RejLate")
+    with a.app_context():
+        from app.approvals import services as svc
+        for stage in ("warehouse", "factory_manager", "purchasing"):
+            assert svc.act_on_step(pid, _USERS[stage], "approve")[1] == "advanced"
+        ok, msg = svc.act_on_step(pid, _USERS["finance"], "reject", comment="too costly")
+        assert ok and msg == "rejected"
+        b = svc.get_pr(pid)
+        assert b["pr"]["status"] == "rejected"
+        st = {s["stage"]: s["status"] for s in b["steps"]}
+        assert st["warehouse"] == "approved" and st["purchasing"] == "approved"
+        assert st["finance"] == "rejected"
+        assert st["cfo"] == "pending"  # never reached
+
+
+def test_no_action_after_rejection(app_client):
+    a, c = app_client
+    pid = _make_pr(a, c, "Locked")
+    with a.app_context():
+        from app.approvals import services as svc
+        svc.act_on_step(pid, _USERS["warehouse"], "reject", comment="x")
+        # any further approval attempt is refused because the PR is not pending
+        assert svc.act_on_step(pid, _USERS["warehouse"], "approve")[1] == "not_pending"
+        assert svc.act_on_step(pid, _USERS["cfo"], "approve")[1] == "not_pending"
+
+
+def test_resubmit_rebuilds_ladder_fresh(app_client):
+    a, c = app_client
+    pid = _make_pr(a, c, "Fresh")
+    with a.app_context():
+        from app.approvals import services as svc
+        svc.act_on_step(pid, _USERS["warehouse"], "approve")            # advance once
+        svc.act_on_step(pid, _USERS["factory_manager"], "reject", comment="redo")
+        requester = {"username": "admin", "role": "super_admin"}
+        ok, _ = svc.submit_pr(pid, requester)
+        assert ok
+        b = svc.get_pr(pid)
+        assert b["pr"]["status"] == "pending" and b["pr"]["current_seq"] == 1
+        assert all(s["status"] == "pending" for s in b["steps"])       # all reset
+
+
+def test_seeded_passwords_are_admin1122(app_client):
+    a, c = app_client
+    from werkzeug.security import check_password_hash
+    with a.app_context():
+        from app.db import get_db
+        conn = get_db()
+        for uname in ("warehouse", "purchasing", "finance", "cfo", "ceo", "store", "factory"):
+            row = conn.execute("SELECT password_hash FROM users WHERE username=?", (uname,)).fetchone()
+            assert row and check_password_hash(row["password_hash"], "Admin@1122"), uname
+        conn.close()

@@ -150,16 +150,28 @@ def detail(pr_id):
     pr = bundle["pr"]
     # which step (if any) can the current user act on right now?
     actionable = None
+    current_stage = None
     if pr["status"] == "pending":
         for s in bundle["steps"]:
             if s["seq"] == pr["current_seq"] and s["status"] == "pending":
+                current_stage = s["stage"]
                 if svc.can_act(user, s["stage"]):
                     actionable = s
+                break
+    # Is this user a LATER approver in the chain, waiting their turn? (strict
+    # sequential order: they cannot act until every earlier stage has signed.)
+    queued = False
+    if pr["status"] == "pending" and not actionable:
+        for s in bundle["steps"]:
+            if s["status"] == "pending" and s["seq"] != pr["current_seq"] \
+               and svc.can_act(user, s["stage"]):
+                queued = True
                 break
     has_sig = bool((user or {}).get("sig_png"))
     return render_template("approvals/detail.html", active="procurement",
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
-                           stage_label=C.stage_label,
+                           stage_label=C.stage_label, queued=queued,
+                           current_stage_label=(C.stage_label(current_stage) if current_stage else None),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
                            budget=svc.budget_status(pr.get("department")),
                            can_purchasing=user_can("proc_purchasing"),

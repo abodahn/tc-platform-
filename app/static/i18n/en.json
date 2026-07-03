@@ -825,5 +825,10 @@
   "admin.cancel": "Cancel",
   "admin.save_changes": "Save changes",
   "user_saved": "User updated.",
-  "cannot_demote_self": "You cannot remove your own admin access."
+  "cannot_demote_self": "You cannot remove your own admin access.",
+  "proc.your_turn_later": "You're in this approval chain.",
+  "proc.waiting_earlier": "It will reach you once the earlier approvers have signed. Currently waiting on",
+  "sig.quick": "Quick signature",
+  "sig.more_styles": "More styles",
+  "sig.quick_hint": "One click creates an elegant signature from your name — it's ready to use on every paper. Or pick another style."
 }
