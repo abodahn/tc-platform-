@@ -111,20 +111,43 @@ def dashboard():
     online = sum(1 for s in statuses.values() if s["status"] == "online")
     total_int = sum(1 for s in systems if s["is_integrated"])
 
-    # Executive KPI tiles (live where available, curated placeholders otherwise)
+    # Executive KPI tiles — pulled LIVE from each system's integration summary
+    # (the same source the Business Overview panel uses), so the Command Center
+    # matches what each system shows. A system that is offline contributes 0 and
+    # its outage is shown by the health tiles. Transformation-progress tiles have
+    # no integrated source yet and stay as curated roadmap placeholders.
+    from app.services.integration import fetch_overview
+    overview = fetch_overview(systems)
+
+    def _kpi(key, contains, default=0):
+        for e in overview:
+            if e.get("key") == key and e.get("online"):
+                for k in e.get("kpis", []):
+                    if contains in str(k.get("label", "")).lower():
+                        v = k.get("value")
+                        if isinstance(v, (int, float)):
+                            return v
+        return default
+
+    itsm_total = _kpi("itsm", "total tickets")
+    itsm_breach = _kpi("itsm", "breached")
+    sla_health = round(100 * (itsm_total - itsm_breach) / itsm_total) if itsm_total else 100
+
     kpis = {
-        "open_tickets": 128,
-        "sla_health": 94,
-        "critical_tickets": 6,
-        "assets_total": 1742,
-        "assets_maintenance": 23,
-        "low_stock": 9,
+        # --- live operational (from the integrated systems) ---
+        "open_tickets": _kpi("itsm", "open ticket"),
+        "critical_tickets": itsm_breach,
+        "sla_health": sla_health,
+        "assets_total": _kpi("assets", "total asset"),
+        "assets_maintenance": _kpi("assets", "maintenance"),   # 0 until assets emits it
+        "low_stock": _kpi("assets", "low stock"),
         "servers_online": online,
         "servers_total": total_int,
-        "cpu_alerts": 2,
-        "active_projects": 17,
-        "overdue_tasks": 11,
-        "pending_approvals": 5,
+        "cpu_alerts": _kpi("monitoring", "alert"),
+        "active_projects": _kpi("commandtrack", "open task"),
+        "overdue_tasks": _kpi("commandtrack", "overdue"),
+        "pending_approvals": _kpi("commandtrack", "pending approval"),
+        # --- digital-transformation roadmap KPIs (no integrated source yet) ---
         "finance_progress": 62,
         "automation_progress": 48,
         "ai_progress": 35,
