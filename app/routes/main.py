@@ -120,8 +120,9 @@ def dashboard():
     overview = fetch_overview(systems)
 
     def _kpi(key, contains, default=0):
+        # reads live OR last-known-good ("stale") values — anything with kpis
         for e in overview:
-            if e.get("key") == key and e.get("online"):
+            if e.get("key") == key and e.get("kpis"):
                 for k in e.get("kpis", []):
                     if contains in str(k.get("label", "")).lower():
                         v = k.get("value")
