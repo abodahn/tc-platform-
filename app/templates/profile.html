@@ -2,6 +2,25 @@
 {% block title %}Profile{% endblock %}
 {% block content %}
 
+<style>
+@font-face{font-family:'Great Vibes';src:url("{{ url_for('static', filename='vendor/fonts/great-vibes.woff2') }}") format('woff2');font-display:swap}
+@font-face{font-family:'Dancing Script';font-weight:700;src:url("{{ url_for('static', filename='vendor/fonts/dancing-script.woff2') }}") format('woff2');font-display:swap}
+@font-face{font-family:'Sacramento';src:url("{{ url_for('static', filename='vendor/fonts/sacramento.woff2') }}") format('woff2');font-display:swap}
+@font-face{font-family:'Satisfy';src:url("{{ url_for('static', filename='vendor/fonts/satisfy.woff2') }}") format('woff2');font-display:swap}
+.sig-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.sig-card{border:2px solid var(--line-2,#e2e2e6);border-radius:12px;padding:16px;background:var(--surface-2,#fff);cursor:pointer;text-align:center;transition:.15s}
+.sig-card:hover{border-color:var(--tc-red,#c8102e)}
+.sig-card.sel{border-color:var(--tc-red,#c8102e);box-shadow:0 0 0 3px rgba(200,16,46,.12)}
+.sig-preview{background:#fff;color:#161616;border-radius:8px;padding:10px 8px;min-height:56px;font-size:34px;line-height:1.25;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sig-fnt-great-vibes{font-family:'Great Vibes',cursive}
+.sig-fnt-dancing-script{font-family:'Dancing Script',cursive;font-weight:700}
+.sig-fnt-sacramento{font-family:'Sacramento',cursive}
+.sig-fnt-satisfy{font-family:'Satisfy',cursive}
+.sig-label{font-size:12px;color:var(--muted,#777);margin-top:9px}
+.sig-current{text-align:center;padding:16px;border:1px dashed var(--line-2,#dcdce3);border-radius:12px;background:var(--surface-1,#fafafd)}
+.sig-img{max-width:100%;max-height:110px;background:#fff;border-radius:8px;padding:6px}
+</style>
+
 <div class="page-head">
   <div>
     <div class="eyebrow" data-i18n="top.profile">Profile</div>
@@ -49,4 +68,151 @@
   </div>
 </div>
 
+<div class="panel mt-4" id="sigPanel">
+  <div class="panel-head flex between center">
+    <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-edit"></use></svg>
+      <span data-i18n="sig.title">Digital signature</span></h3>
+    <span class="badge b-live" id="sigBadge" style="{{ '' if cu.sig_png else 'display:none' }}">
+      <span class="dot" style="background:var(--ok)"></span><span data-i18n="sig.saved">Saved</span></span>
+  </div>
+  <div class="panel-pad">
+    <p class="muted" style="margin:0 0 14px" data-i18n="sig.sub">Type your name and generate a signature. Pick one of the four styles and save it as your digital signature.</p>
+
+    <div class="sig-current" id="sigCurrent" style="{{ '' if cu.sig_png else 'display:none' }}">
+      <div class="muted" style="font-size:12.5px;margin-bottom:8px" data-i18n="sig.current">Your current signature</div>
+      <img class="sig-img" id="sigCurrentImg" src="{{ cu.sig_png or '' }}" alt="signature">
+      <div class="flex gap center mt-3" style="justify-content:center">
+        <a class="btn btn-ghost btn-sm" id="sigDownload" href="{{ cu.sig_png or '#' }}" download="signature.png" data-i18n="sig.download">Download</a>
+        <button class="btn btn-ghost btn-sm" id="sigClear" data-i18n="sig.remove">Remove</button>
+      </div>
+    </div>
+
+    <div class="flex gap center wrap mt-4">
+      <input class="input" id="sigName" style="flex:1;min-width:220px"
+             value="{{ cu.sig_name or cu.full_name or cu.username }}"
+             placeholder="Your name" data-i18n-ph="sig.name_ph" maxlength="120">
+      <button class="btn btn-primary" id="sigGen"><svg class="ico"><use href="#i-refresh"></use></svg><span data-i18n="sig.generate">Generate</span></button>
+    </div>
+
+    <div class="sig-grid mt-4" id="sigGrid" style="display:none">
+      <button class="sig-card" type="button" data-style="great-vibes">
+        <div class="sig-preview sig-fnt-great-vibes" data-prev></div>
+        <div class="sig-label" data-i18n="sig.style.elegant">Elegant</div>
+      </button>
+      <button class="sig-card" type="button" data-style="dancing-script">
+        <div class="sig-preview sig-fnt-dancing-script" data-prev></div>
+        <div class="sig-label" data-i18n="sig.style.handwriting">Handwriting</div>
+      </button>
+      <button class="sig-card" type="button" data-style="sacramento">
+        <div class="sig-preview sig-fnt-sacramento" data-prev></div>
+        <div class="sig-label" data-i18n="sig.style.flowing">Flowing</div>
+      </button>
+      <button class="sig-card" type="button" data-style="satisfy">
+        <div class="sig-preview sig-fnt-satisfy" data-prev></div>
+        <div class="sig-label" data-i18n="sig.style.casual">Casual</div>
+      </button>
+    </div>
+
+    <div class="flex gap center mt-4" id="sigActions" style="display:none">
+      <button class="btn btn-primary" id="sigSave" disabled><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="sig.save">Save signature</span></button>
+      <span class="muted" id="sigMsg" style="font-size:13px"></span>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var CSRF = document.querySelector('meta[name="csrf-token"]').content;
+  var FONTS = {
+    "great-vibes":    { family: "Great Vibes",    size: 66, weight: "400" },
+    "dancing-script": { family: "Dancing Script", size: 54, weight: "700" },
+    "sacramento":     { family: "Sacramento",     size: 68, weight: "400" },
+    "satisfy":        { family: "Satisfy",        size: 52, weight: "400" }
+  };
+  var selected = null;
+  var nameEl = document.getElementById("sigName");
+  var grid = document.getElementById("sigGrid");
+  var actions = document.getElementById("sigActions");
+  var saveBtn = document.getElementById("sigSave");
+  var msg = document.getElementById("sigMsg");
+
+  function currentName() { return (nameEl.value || "").trim().slice(0, 120); }
+
+  document.getElementById("sigGen").addEventListener("click", function () {
+    var n = currentName();
+    if (!n) { nameEl.focus(); return; }
+    grid.querySelectorAll("[data-prev]").forEach(function (p) { p.textContent = n; });
+    grid.style.display = "";
+    actions.style.display = "";
+  });
+
+  grid.querySelectorAll(".sig-card").forEach(function (card) {
+    card.addEventListener("click", function () {
+      grid.querySelectorAll(".sig-card").forEach(function (c) { c.classList.remove("sel"); });
+      card.classList.add("sel");
+      selected = card.getAttribute("data-style");
+      saveBtn.disabled = false;
+    });
+  });
+
+  function renderPng(style, name) {
+    var f = FONTS[style];
+    var spec = f.weight + ' ' + f.size + 'px "' + f.family + '"';
+    return Promise.resolve()
+      .then(function () { return document.fonts ? document.fonts.load(spec) : null; })
+      .then(function () {
+        var c = document.createElement("canvas");
+        c.width = 760; c.height = 200;
+        var ctx = c.getContext("2d");
+        ctx.clearRect(0, 0, c.width, c.height);   // transparent -> overlays any document
+        ctx.fillStyle = "#161616";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = spec;
+        ctx.fillText(name, c.width / 2, c.height / 2 + 6);
+        return c.toDataURL("image/png");
+      });
+  }
+
+  saveBtn.addEventListener("click", function () {
+    var n = currentName();
+    if (!selected || !n) return;
+    saveBtn.disabled = true;
+    msg.textContent = "…";
+    renderPng(selected, n).then(function (png) {
+      return fetch("{{ url_for('main.save_signature') }}", {
+        method: "POST",
+        headers: { "X-CSRF-Token": CSRF, "Content-Type": "application/json" },
+        body: JSON.stringify({ style: selected, name: n, png: png })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          saveBtn.disabled = false;
+          if (res.ok && res.j.ok) {
+            var img = document.getElementById("sigCurrentImg");
+            img.src = png;
+            document.getElementById("sigDownload").href = png;
+            document.getElementById("sigCurrent").style.display = "";
+            document.getElementById("sigBadge").style.display = "";
+            msg.textContent = "";
+            msg.style.color = "var(--ok)";
+            msg.textContent = "✓";
+          } else { msg.textContent = res.j.error || "Save failed."; }
+        });
+    }).catch(function () { saveBtn.disabled = false; msg.textContent = "Save failed — please retry."; });
+  });
+
+  var clearBtn = document.getElementById("sigClear");
+  if (clearBtn) clearBtn.addEventListener("click", function () {
+    fetch("{{ url_for('main.clear_signature') }}", { method: "POST", headers: { "X-CSRF-Token": CSRF } })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        if (j.ok) {
+          document.getElementById("sigCurrent").style.display = "none";
+          document.getElementById("sigBadge").style.display = "none";
+        }
+      }).catch(function () {});
+  });
+})();
+</script>
 {% endblock %}

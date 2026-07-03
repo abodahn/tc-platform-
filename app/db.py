@@ -610,6 +610,18 @@ def init_db():
             conn.commit()
         except Exception:
             conn.rollback()
+        # Migration: per-user digital signature (style, rendered PNG, name, time).
+        for _col, _ddl in (
+            ("sig_style", "ALTER TABLE users ADD COLUMN sig_style TEXT"),
+            ("sig_png", "ALTER TABLE users ADD COLUMN sig_png TEXT"),
+            ("sig_name", "ALTER TABLE users ADD COLUMN sig_name TEXT"),
+            ("sig_updated_at", "ALTER TABLE users ADD COLUMN sig_updated_at TEXT"),
+        ):
+            try:
+                conn.execute(_ddl)
+                conn.commit()
+            except Exception:
+                conn.rollback()
         # Seed super admin only if no users exist
         existing = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
         if existing == 0:

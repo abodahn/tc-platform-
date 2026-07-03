@@ -15,7 +15,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import Config
-from app.db import get_db, log_audit
+from app.db import get_db, log_audit, utcnow
 from app.auth import login_required, permission_required, current_user, user_can
 from app.security import has_permission, role_label, ROLES, validate_password
 from app.navigation import NAV
@@ -385,6 +385,55 @@ def api_registry_search():
 @login_required
 def profile():
     return render_template("profile.html", active="profile")
+
+
+# --------------------------------------------------------------------------
+# Digital signature — generate from a typed name (4 styles) and save one.
+# The rendered PNG is stored on the user so it can be reused for sign-offs.
+# --------------------------------------------------------------------------
+_SIG_STYLES = {"great-vibes", "dancing-script", "sacramento", "satisfy"}
+
+
+@bp.route("/profile/signature", methods=["POST"])
+@login_required
+def save_signature():
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+    style = (data.get("style") or "").strip().lower()[:40]
+    name = (data.get("name") or "").strip()[:120]
+    png = data.get("png") or ""
+    if style and style not in _SIG_STYLES:
+        return jsonify(error="unknown style"), 400
+    if png and not png.startswith("data:image/png;base64,"):
+        return jsonify(error="invalid image"), 400
+    if len(png) > 400_000:                      # ~300 KB rendered PNG ceiling
+        return jsonify(error="signature image too large"), 413
+    if not (style and name and png):
+        return jsonify(error="name, style and image are all required"), 400
+    conn = get_db()
+    try:
+        conn.execute("UPDATE users SET sig_style=?, sig_name=?, sig_png=?, sig_updated_at=? WHERE id=?",
+                     (style, name, png, utcnow(), user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(user["username"], "signature_save", f"style={style}", request.remote_addr or "")
+    return jsonify(ok=True)
+
+
+@bp.route("/profile/signature/clear", methods=["POST"])
+@login_required
+def clear_signature():
+    user = current_user()
+    conn = get_db()
+    try:
+        conn.execute("UPDATE users SET sig_style=NULL, sig_name=NULL, sig_png=NULL, sig_updated_at=NULL WHERE id=?",
+                     (user["id"],))
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(user["username"], "signature_clear", "", request.remote_addr or "")
+    return jsonify(ok=True)
 
 
 @bp.route("/profile/password", methods=["POST"])
