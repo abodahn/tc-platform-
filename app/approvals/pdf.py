@@ -28,9 +28,10 @@ def _img_reader(data_url):
 
 
 def _logo():
+    """Prefer the full brand lockup (mark + wordmark) for the letterhead."""
     try:
         from reportlab.lib.utils import ImageReader
-        for name in ("logo.png", "logo-full.png", "icon-192.png"):
+        for name in ("logo-full.png", "logo.png", "icon-192.png"):
             p = os.path.join(_IMG_DIR, name)
             if os.path.exists(p):
                 return ImageReader(p)
@@ -57,31 +58,66 @@ def _clip(c, s, font, size, max_w):
     return s + "…"
 
 
+def _wrap_lines(c, text, font, size, max_w, max_lines=2):
+    """Word-wrap text to at most max_lines that each fit max_w points; the last
+    line is ellipsised if content is dropped."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    words = str(text or "").split()
+    lines, cur, i = [], "", 0
+    while i < len(words) and len(lines) < max_lines:
+        nxt = (cur + " " + words[i]).strip()
+        if stringWidth(nxt, font, size) <= max_w:
+            cur, i = nxt, i + 1
+        elif cur:
+            lines.append(cur)
+            cur = ""
+        else:  # a single word longer than the column
+            cur, i = words[i], i + 1
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+    if i < len(words) and lines:  # more text remained -> ellipsise last line
+        last = lines[-1]
+        while last and stringWidth(last + "…", font, size) > max_w:
+            last = last[:-1]
+        lines[-1] = last + "…"
+    return lines or [""]
+
+
 # --------------------------------------------------------------------------
 # shared chrome
 # --------------------------------------------------------------------------
 def _draw_header(c, w, h, cm, title, doc_no, sub):
-    c.setFillColorRGB(0.93, 0.11, 0.14)
-    c.rect(0, h - 1.7 * cm, w, 1.7 * cm, fill=1, stroke=0)
+    """Clean white letterhead: full brand lockup on the left, document title on the
+    right, and a red rule beneath. Returns the y to start body content at."""
+    top = h - 0.55 * cm
+    logo_h = 2.35 * cm
     logo = _logo()
-    tx = 1.5 * cm
     if logo:
         try:
-            c.drawImage(logo, 1.4 * cm, h - 1.48 * cm, width=1.25 * cm, height=1.25 * cm,
-                        mask="auto", preserveAspectRatio=True)
-            tx = 3.0 * cm
+            iw, ih = logo.getSize()
+            lw = logo_h * (iw / ih) if ih else logo_h
+            c.drawImage(logo, 1.5 * cm, top - logo_h, width=lw, height=logo_h,
+                        mask="auto", preserveAspectRatio=True, anchor="sw")
         except Exception:
             pass
-    c.setFillColorRGB(1, 1, 1)
-    c.setFont("Helvetica-Bold", 15)
-    c.drawString(tx, h - 0.85 * cm, "T&C GARMENTS")
-    c.setFont("Helvetica", 8.5)
-    c.drawString(tx, h - 1.32 * cm, "Textile & Clothing")
-    c.setFont("Helvetica-Bold", 14)
-    c.drawRightString(w - 1.5 * cm, h - 0.85 * cm, title)
+    # right-aligned title block
+    c.setFillColorRGB(0.11, 0.11, 0.13)
+    c.setFont("Helvetica-Bold", 19)
+    c.drawRightString(w - 1.5 * cm, top - 0.8 * cm, title)
+    c.setFont("Helvetica-Bold", 11)
+    c.setFillColorRGB(0.80, 0.06, 0.14)
+    c.drawRightString(w - 1.5 * cm, top - 1.45 * cm, doc_no)
     c.setFont("Helvetica", 9)
-    c.drawRightString(w - 1.5 * cm, h - 1.32 * cm, f"{doc_no}   {sub}")
+    c.setFillColorRGB(0.45, 0.45, 0.45)
+    c.drawRightString(w - 1.5 * cm, top - 2.0 * cm, sub)
+    # red separator rule under the header
+    ry = top - logo_h - 0.05 * cm
+    c.setStrokeColorRGB(0.93, 0.11, 0.14)
+    c.setLineWidth(2.2)
+    c.line(1.5 * cm, ry, w - 1.5 * cm, ry)
     c.setFillColorRGB(0, 0, 0)
+    c.setStrokeColorRGB(0, 0, 0)
+    return ry - 0.55 * cm
 
 
 def _footer(c, w, cm, page, notes=None):
@@ -122,68 +158,86 @@ def _meta_grid(c, w, cm, y, pairs):
     return y - box_h - 0.4 * cm
 
 
-def _table(c, w, cm, y, cols, rows, h, page_notes, title=None):
+def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None):
     """Generic bordered table. cols = [(width_cm, header, align)]. Returns new y.
-    Paginates automatically, repeating the header."""
+    Paginates automatically (repeating the header). If wrap_col is given, that
+    column wraps to two lines and every body row uses the taller uniform height."""
     x0 = 1.5 * cm
     total_w = w - 3 * cm
     widths = [cw * cm for cw, _, _ in cols]
     scale = total_w / sum(widths)
     widths = [wd * scale for wd in widths]
-    rh = 0.62 * cm
+    hrh = 0.62 * cm                                   # header row height
+    rh = 0.9 * cm if wrap_col is not None else 0.62 * cm
 
     def header(yy):
         c.setFillColorRGB(0.11, 0.12, 0.16)
-        c.rect(x0, yy - rh, total_w, rh, fill=1, stroke=0)
+        c.rect(x0, yy - hrh, total_w, hrh, fill=1, stroke=0)
         c.setFillColorRGB(1, 1, 1)
         c.setFont("Helvetica-Bold", 8)
         xx = x0
         for (cw, label, align), wd in zip(cols, widths):
             if align == "r":
-                c.drawRightString(xx + wd - 0.15 * cm, yy - rh + 0.2 * cm, label)
+                c.drawRightString(xx + wd - 0.15 * cm, yy - hrh + 0.2 * cm, label)
             else:
-                c.drawString(xx + 0.15 * cm, yy - rh + 0.2 * cm, label)
+                c.drawString(xx + 0.15 * cm, yy - hrh + 0.2 * cm, label)
             xx += wd
         c.setFillColorRGB(0, 0, 0)
-        return yy - rh
+        return yy - hrh
 
     if title:
         c.setFont("Helvetica-Bold", 10)
         c.drawString(x0, y, title)
         y -= 0.5 * cm
     y = header(y)
-    c.setFont("Helvetica", 8.2)
+    body_top = y
+    n = 0
     for i, row in enumerate(rows):
-        if y - rh < 3 * cm:                       # new page
+        if y - rh < 3 * cm:                            # new page
+            # close the border for the chunk drawn so far, then continue
+            _row_borders(c, cm, x0, y, body_top, total_w, widths)
             _footer(c, w, cm, page_notes["page"], page_notes.get("notes"))
             c.showPage()
             page_notes["page"] += 1
             y = h - 2 * cm
             y = header(y)
-            c.setFont("Helvetica", 8.2)
-        if i % 2 == 1:                            # zebra
-            c.setFillColorRGB(0.97, 0.97, 0.98)
+            body_top = y
+        if i % 2 == 1:                                 # zebra
+            c.setFillColorRGB(0.972, 0.972, 0.98)
             c.rect(x0, y - rh, total_w, rh, fill=1, stroke=0)
             c.setFillColorRGB(0, 0, 0)
+        cyc = y - rh / 2 - 0.09 * cm                    # vertical centre baseline
         xx = x0
-        for (cw, _, align), wd, cell in zip(cols, widths, row):
-            txt = _clip(c, cell, "Helvetica", 8.2, wd - 0.3 * cm)
-            if align == "r":
-                c.drawRightString(xx + wd - 0.15 * cm, y - rh + 0.2 * cm, txt)
+        for idx, ((cw, _, align), wd, cell) in enumerate(zip(cols, widths, row)):
+            c.setFont("Helvetica", 8.2)
+            if idx == wrap_col:
+                lines = _wrap_lines(c, cell, "Helvetica", 8.2, wd - 0.3 * cm, 2)
+                ly = y - 0.32 * cm if len(lines) == 2 else cyc
+                for ln in lines:
+                    c.drawString(xx + 0.15 * cm, ly, ln)
+                    ly -= 0.32 * cm
             else:
-                c.drawString(xx + 0.15 * cm, y - rh + 0.2 * cm, txt)
+                txt = _clip(c, cell, "Helvetica", 8.2, wd - 0.3 * cm)
+                if align == "r":
+                    c.drawRightString(xx + wd - 0.15 * cm, cyc, txt)
+                else:
+                    c.drawString(xx + 0.15 * cm, cyc, txt)
             xx += wd
         y -= rh
-    # outer border + column separators
+        n += 1
+    _row_borders(c, cm, x0, y, body_top, total_w, widths)
+    return y - 0.3 * cm
+
+
+def _row_borders(c, cm, x0, y_bottom, y_top, total_w, widths):
+    """Outer border + column separators for the body rows between y_top and y_bottom."""
     c.setStrokeColorRGB(0.8, 0.8, 0.82)
     c.setLineWidth(0.5)
-    top = y + rh * len(rows) + rh
+    c.rect(x0, y_bottom, total_w, y_top - y_bottom, stroke=1, fill=0)
     xx = x0
     for wd in widths[:-1]:
         xx += wd
-        c.line(xx, y, xx, top - rh)
-    c.rect(x0, y, total_w, rh * len(rows), stroke=1, fill=0)
-    return y - 0.3 * cm
+        c.line(xx, y_bottom, xx, y_top)
 
 
 # --------------------------------------------------------------------------
@@ -207,9 +261,8 @@ def pr_pdf(bundle):
     w, h = A4
     pn = {"page": 1, "notes": _PR_NOTES}
 
-    _draw_header(c, w, h, cm, "PURCHASE REQUEST", pr.get("pr_no") or "PR",
-                 (pr.get("status") or "").upper())
-    y = h - 2.3 * cm
+    y = _draw_header(c, w, h, cm, "PURCHASE REQUEST", pr.get("pr_no") or "PR",
+                     "STATUS: " + (pr.get("status") or "").upper())
 
     y = _meta_grid(c, w, cm, y, [
         ("Title", pr.get("title")), ("Request for", pr.get("request_for")),
@@ -227,7 +280,8 @@ def pr_pdf(bundle):
     y = _table(c, w, cm, y, [
         (0.7, "#", "l"), (2.6, "ITEM", "l"), (5.6, "DESCRIPTION", "l"),
         (1.3, "UNIT", "l"), (1.3, "QTY", "r"), (1.4, "STOCK", "r"),
-        (2.1, "UNIT PRICE", "r"), (2.2, "EST. COST", "r")], rows, h, pn, title="Line items")
+        (2.1, "UNIT PRICE", "r"), (2.2, "EST. COST", "r")], rows, h, pn,
+        title="Line items", wrap_col=2)
 
     # totals box (right-aligned)
     bx_w, bx_h = 6.2 * cm, 0.85 * cm
@@ -330,9 +384,8 @@ def po_pdf(bundle):
     w, h = A4
     pn = {"page": 1, "notes": None}
 
-    _draw_header(c, w, h, cm, "PURCHASE ORDER", pr.get("po_no") or "PO",
-                 f"Ref {pr.get('pr_no') or ''}")
-    y = h - 2.3 * cm
+    y = _draw_header(c, w, h, cm, "PURCHASE ORDER", pr.get("po_no") or "PO",
+                     "Ref " + (pr.get("pr_no") or ""))
 
     y = _meta_grid(c, w, cm, y, [
         ("Vendor", pr.get("vendor")), ("Department", pr.get("department")),
@@ -349,7 +402,7 @@ def po_pdf(bundle):
     y = _table(c, w, cm, y, [
         (0.7, "#", "l"), (10.5, "ITEM / DESCRIPTION", "l"),
         (1.6, "QTY", "r"), (2.4, "UNIT PRICE", "r"), (2.6, "TOTAL", "r")],
-        rows, h, pn, title="Order lines")
+        rows, h, pn, title="Order lines", wrap_col=1)
 
     bx_w, bx_h = 6.2 * cm, 0.9 * cm
     bx = w - 1.5 * cm - bx_w
