@@ -813,5 +813,17 @@
   "proc.usage": "الاستخدام",
   "proc.used": "مستخدم",
   "proc.warranty": "الضمان",
-  "proc.resubmit_hint": "عالج الملاحظات وأعد الإرسال — تبدأ دورة الاعتماد من جديد."
+  "proc.resubmit_hint": "عالج الملاحظات وأعد الإرسال — تبدأ دورة الاعتماد من جديد.",
+  "admin.all_users": "كل المستخدمين",
+  "admin.signature": "التوقيع",
+  "admin.signed": "موقّع",
+  "admin.no_sig": "غير محدد",
+  "admin.edit": "تعديل",
+  "admin.edit_user": "تعديل المستخدم",
+  "admin.reset_pw": "إعادة تعيين كلمة المرور (اختياري)",
+  "admin.reset_pw_ph": "اتركه فارغًا للإبقاء على الحالي",
+  "admin.cancel": "إلغاء",
+  "admin.save_changes": "حفظ التغييرات",
+  "user_saved": "تم تحديث المستخدم.",
+  "cannot_demote_self": "لا يمكنك إزالة صلاحية الإدارة عن نفسك."
 }

@@ -813,5 +813,17 @@
   "proc.usage": "Usage",
   "proc.used": "used",
   "proc.warranty": "Warranty",
-  "proc.resubmit_hint": "Address the feedback and resubmit — it restarts the approval cycle from the top."
+  "proc.resubmit_hint": "Address the feedback and resubmit — it restarts the approval cycle from the top.",
+  "admin.all_users": "All users",
+  "admin.signature": "Signature",
+  "admin.signed": "Signed",
+  "admin.no_sig": "Not set",
+  "admin.edit": "Edit",
+  "admin.edit_user": "Edit user",
+  "admin.reset_pw": "Reset password (optional)",
+  "admin.reset_pw_ph": "Leave blank to keep current",
+  "admin.cancel": "Cancel",
+  "admin.save_changes": "Save changes",
+  "user_saved": "User updated.",
+  "cannot_demote_self": "You cannot remove your own admin access."
 }

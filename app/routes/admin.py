@@ -10,7 +10,8 @@ from werkzeug.security import generate_password_hash
 
 from app.db import get_db, log_audit, utcnow
 from app.auth import permission_required, current_user
-from app.security import all_role_choices, ROLES, validate_password
+from app.security import (all_role_choices, ROLES, validate_password,
+                          has_permission, role_label)
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -65,6 +66,50 @@ def add_user():
             log_audit(current_user()["username"], "user_create",
                       f"Created user {username} ({role})", request.remote_addr or "")
             flash("user_added", "success")
+    finally:
+        conn.close()
+    return redirect(url_for("admin.index") + "#users")
+
+
+@bp.route("/users/<int:uid>/edit", methods=["POST"])
+@permission_required("manage_users")
+def edit_user(uid):
+    """Update an existing user's name, email and role, and optionally reset their
+    password. Guards against an admin accidentally removing their own admin access."""
+    f = request.form
+    full_name = (f.get("full_name") or "").strip()
+    email = (f.get("email") or "").strip()
+    role = f.get("role") or "normal_user"
+    new_password = f.get("password") or ""
+    if role not in ROLES:
+        flash("user_invalid", "error")
+        return redirect(url_for("admin.index") + "#users")
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if not row:
+            abort(404)
+        # Don't let the current admin strip their own admin access and get locked out.
+        if row["username"] == current_user()["username"] and not has_permission(role, "access_admin"):
+            flash("cannot_demote_self", "error")
+            return redirect(url_for("admin.index") + "#users")
+        if new_password:
+            ok, msg = validate_password(new_password)
+            if not ok:
+                flash(msg, "error")
+                return redirect(url_for("admin.index") + "#users")
+            conn.execute(
+                "UPDATE users SET full_name=?, email=?, role=?, password_hash=? WHERE id=?",
+                (full_name, email, role, generate_password_hash(new_password), uid))
+        else:
+            conn.execute("UPDATE users SET full_name=?, email=?, role=? WHERE id=?",
+                         (full_name, email, role, uid))
+        conn.commit()
+        log_audit(current_user()["username"], "user_edit",
+                  f"Edited {row['username']}: name={full_name}, role={role}"
+                  + (", password reset" if new_password else ""),
+                  request.remote_addr or "")
+        flash("user_saved", "success")
     finally:
         conn.close()
     return redirect(url_for("admin.index") + "#users")

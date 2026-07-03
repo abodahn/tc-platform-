@@ -42,22 +42,39 @@
   {% endif %}
 
   <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="admin.all_users">All users</h3>
+      <span class="badge b-info">{{ users|length }}</span>
+    </div>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead><tr><th>ID</th><th data-i18n="admin.username">Username</th><th data-i18n="admin.name">Name</th><th data-i18n="admin.role">Role</th><th data-i18n="admin.status">Status</th><th data-i18n="admin.action">Action</th></tr></thead>
+        <thead><tr>
+          <th>ID</th><th data-i18n="admin.username">Username</th>
+          <th data-i18n="admin.name">Name</th><th data-i18n="admin.email">Email</th>
+          <th data-i18n="admin.role">Role</th><th data-i18n="admin.signature">Signature</th>
+          <th data-i18n="admin.status">Status</th><th data-i18n="admin.action">Action</th>
+        </tr></thead>
         <tbody>
           {% for u in users %}
           <tr>
             <td>{{ u.id }}</td>
             <td><b>{{ u.username }}</b></td>
             <td>{{ u.full_name or '—' }}</td>
+            <td class="muted" style="font-size:12.5px">{{ u.email or '—' }}</td>
             <td><span class="tag">{{ u.role }}</span></td>
+            <td>{% if u.sig_png %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.signed">Signed</span></span>{% else %}<span class="tag" data-i18n="admin.no_sig">Not set</span>{% endif %}</td>
             <td>{% if u.is_active %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.active">Active</span></span>{% else %}<span class="badge b-offline"><span class="dot"></span><span data-i18n="admin.disabled">Disabled</span></span>{% endif %}</td>
             <td>
               {% if can('manage_users') %}
-              <form method="post" action="{{ url_for('admin.toggle_user', uid=u.id) }}" style="display:inline">
-                <button class="btn btn-ghost btn-sm" type="submit" data-i18n="{{ 'admin.disable' if u.is_active else 'admin.enable' }}">{{ 'Disable' if u.is_active else 'Enable' }}</button>
-              </form>
+              <div class="flex gap" style="gap:6px">
+                <button type="button" class="btn btn-ghost btn-sm" data-edit-user
+                        data-id="{{ u.id }}" data-username="{{ u.username }}"
+                        data-name="{{ u.full_name or '' }}" data-email="{{ u.email or '' }}"
+                        data-role="{{ u.role }}" data-i18n="admin.edit">Edit</button>
+                <form method="post" action="{{ url_for('admin.toggle_user', uid=u.id) }}" style="display:inline">
+                  <button class="btn btn-ghost btn-sm" type="submit" data-i18n="{{ 'admin.disable' if u.is_active else 'admin.enable' }}">{{ 'Disable' if u.is_active else 'Enable' }}</button>
+                </form>
+              </div>
               {% else %}—{% endif %}
             </td>
           </tr>
@@ -66,6 +83,27 @@
       </table>
     </div>
   </div>
+
+  {% if can('manage_users') %}
+  <dialog id="userDlg" class="tc-dialog">
+    <form method="post" id="userEditForm">
+      <div class="flex between center" style="margin-bottom:6px">
+        <h3 style="margin:0"><span data-i18n="admin.edit_user">Edit user</span> — <span id="edUser" style="color:var(--tc-red)"></span></h3>
+        <button type="button" class="icon-btn" id="edX" aria-label="Close" style="font-size:18px;line-height:1">✕</button>
+      </div>
+      <div class="field"><label data-i18n="admin.name">Full name</label><input name="full_name" id="edName" autocomplete="off"></div>
+      <div class="field"><label data-i18n="admin.email">Email</label><input name="email" id="edEmail" type="email" autocomplete="off"></div>
+      <div class="field"><label data-i18n="admin.role">Role</label>
+        <select name="role" id="edRole">{% for k, lbl in roles %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="admin.reset_pw">Reset password (optional)</label>
+        <input name="password" id="edPass" type="password" autocomplete="new-password" data-i18n-ph="admin.reset_pw_ph" placeholder="Leave blank to keep current"></div>
+      <div class="flex gap" style="justify-content:flex-end;margin-top:6px">
+        <button type="button" class="btn btn-ghost" id="edCancel" data-i18n="admin.cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" data-i18n="admin.save_changes">Save changes</button>
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
 </section>
 
 {# ---------------- Integrations ---------------- #}
@@ -141,6 +179,27 @@
     tabs.addEventListener('click', e => { if(e.target.dataset.tab) show(e.target.dataset.tab); });
     const hash = location.hash.replace('#','');
     if(['users','integrations','audit'].includes(hash)) show(hash);
+  })();
+
+  // Edit-user dialog
+  (function(){
+    const dlg = document.getElementById('userDlg');
+    if(!dlg) return;
+    const form = document.getElementById('userEditForm');
+    function open(b){
+      form.setAttribute('action', '/admin/users/' + b.dataset.id + '/edit');
+      document.getElementById('edUser').textContent = b.dataset.username;
+      document.getElementById('edName').value = b.dataset.name || '';
+      document.getElementById('edEmail').value = b.dataset.email || '';
+      document.getElementById('edRole').value = b.dataset.role || 'normal_user';
+      document.getElementById('edPass').value = '';
+      if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','');
+    }
+    document.querySelectorAll('[data-edit-user]').forEach(b => b.addEventListener('click', () => open(b)));
+    function close(){ if (dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
+    document.getElementById('edCancel').addEventListener('click', close);
+    document.getElementById('edX').addEventListener('click', close);
+    dlg.addEventListener('click', e => { if (e.target === dlg) close(); }); // click backdrop
   })();
 </script>
 {% endblock %}

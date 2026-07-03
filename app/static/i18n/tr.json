@@ -813,5 +813,17 @@
   "proc.usage": "Kullanım",
   "proc.used": "kullanıldı",
   "proc.warranty": "Garanti",
-  "proc.resubmit_hint": "Geri bildirimi giderip yeniden gönderin — onay döngüsü baştan başlar."
+  "proc.resubmit_hint": "Geri bildirimi giderip yeniden gönderin — onay döngüsü baştan başlar.",
+  "admin.all_users": "Tüm kullanıcılar",
+  "admin.signature": "İmza",
+  "admin.signed": "İmzalı",
+  "admin.no_sig": "Ayarlı değil",
+  "admin.edit": "Düzenle",
+  "admin.edit_user": "Kullanıcıyı düzenle",
+  "admin.reset_pw": "Şifre sıfırla (isteğe bağlı)",
+  "admin.reset_pw_ph": "Mevcutu korumak için boş bırakın",
+  "admin.cancel": "İptal",
+  "admin.save_changes": "Değişiklikleri kaydet",
+  "user_saved": "Kullanıcı güncellendi.",
+  "cannot_demote_self": "Kendi yönetici erişiminizi kaldıramazsınız."
 }
