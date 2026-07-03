@@ -21,7 +21,14 @@ from app.maintenance import ai as ai_engine  # noqa: E402
 
 
 @pytest.fixture()
-def app_ctx():
+def app_ctx(tmp_path, monkeypatch):
+    # Isolate each maintenance test on a fresh temp DB. The end-to-end workflow
+    # depends on seeded spare-parts stock; sharing the real dev platform.db made
+    # this test flaky (stock depletes across runs -> 'waiting_stock' instead of
+    # 'waiting_approval'). A fresh DB is seeded with full stock every time.
+    from config import Config
+    monkeypatch.setattr(Config, "DB_PATH", tmp_path / "mnt.db")
+    monkeypatch.setattr(Config, "DATABASE_URL", "")
     app = create_app()
     app.config["TESTING"] = True
     with app.app_context():
