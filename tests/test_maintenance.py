@@ -299,7 +299,7 @@ def test_triage_endpoint(app_ctx):
         c.get("/login")
         with c.session_transaction() as s:
             tok = s.get("_csrf_token", "")
-        c.post("/login", data={"username": "supervisor", "password": "Tc@12345", "_csrf": tok})
+        c.post("/login", data={"username": "supervisor", "password": "Admin@1122", "_csrf": tok})
         r = c.get("/maintenance/ai/triage?desc=fire%20and%20smoke&stopped=1&safety=1")
         assert r.status_code == 200
         data = r.get_json()
@@ -370,7 +370,7 @@ def test_platform_search_finds_machine(app_ctx):
         c.get("/login")
         with c.session_transaction() as s:
             tok = s.get("_csrf_token", "")
-        c.post("/login", data={"username": "maint", "password": "Tc@12345", "_csrf": tok})
+        c.post("/login", data={"username": "maint", "password": "Admin@1122", "_csrf": tok})
         data = c.get("/search?q=M-001").get_json()
         assert any(r["type"] == "machine" for r in data["results"])
 
@@ -434,7 +434,7 @@ def test_ai_page_loads(app_ctx):
         c.get("/login")
         with c.session_transaction() as s:
             tok = s.get("_csrf_token", "")
-        c.post("/login", data={"username": "maint", "password": "Tc@12345", "_csrf": tok})
+        c.post("/login", data={"username": "maint", "password": "Admin@1122", "_csrf": tok})
         assert c.get("/maintenance/ai").status_code == 200
 
 
@@ -447,7 +447,7 @@ def test_floor_and_scan_pages(app_ctx):
         c.get("/login")
         with c.session_transaction() as s:
             tok = s.get("_csrf_token", "")
-        c.post("/login", data={"username": "tech", "password": "Tc@12345", "_csrf": tok})
+        c.post("/login", data={"username": "tech", "password": "Admin@1122", "_csrf": tok})
         assert c.get("/maintenance/floor").status_code == 200
         assert c.get("/maintenance/scan").status_code == 200
         # scan with a known machine code redirects to a pre-filled new ticket

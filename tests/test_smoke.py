@@ -176,7 +176,7 @@ def test_integrated_module_details_view(client):
 # ---------------- RBAC ----------------
 def test_normal_user_blocked_from_admin(client):
     # demo user 'agent' is a service_desk_agent without access_admin
-    login(client, user="agent", pwd="Tc@12345")
+    login(client, user="agent", pwd="Admin@1122")
     assert client.get("/admin/").status_code == 403
 
 
@@ -220,7 +220,7 @@ def test_production_add_and_delete_line(client):
 
 def test_production_edit_requires_permission(client):
     # 'agent' can view but not edit
-    login(client, user="agent", pwd="Tc@12345")
+    login(client, user="agent", pwd="Admin@1122")
     assert client.get("/production/").status_code == 200
     r = client.post("/production/lines/add", data={"name": "Nope", "_csrf": csrf(client)})
     assert r.status_code == 403
