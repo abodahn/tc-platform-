@@ -494,6 +494,12 @@ def _ensure_demo_users(conn):
         ("store", "Storekeeper", "storekeeper"),
         ("supervisor", "Production Supervisor", "production_supervisor"),
         ("factory", "Factory Manager", "factory_manager"),
+        # ---- Procurement approval ladder signers ----
+        ("warehouse", "Warehouse Manager", "warehouse_manager"),
+        ("purchasing", "Purchasing Manager", "purchasing_manager"),
+        ("finance", "Finance Manager", "finance_manager"),
+        ("cfo", "Chief Financial Officer", "cfo"),
+        ("ceo", "Chief Executive Officer", "ceo"),
     ]
     for uname, name, role in demo:
         conn.execute(
@@ -617,6 +623,17 @@ def init_db():
             conn.commit()
         except Exception:
             conn.rollback()
+        # Per-user targeting + deep link for module notifications (e.g. procurement
+        # approvals): target_user NULL = broadcast; else only that user sees it.
+        for _col, _ddl in (
+            ("target_user", "ALTER TABLE notifications ADD COLUMN target_user TEXT"),
+            ("link", "ALTER TABLE notifications ADD COLUMN link TEXT"),
+        ):
+            try:
+                conn.execute(_ddl)
+                conn.commit()
+            except Exception:
+                conn.rollback()
         # Migration: per-user digital signature (style, rendered PNG, name, time).
         for _col, _ddl in (
             ("sig_style", "ALTER TABLE users ADD COLUMN sig_style TEXT"),

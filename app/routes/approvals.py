@@ -39,11 +39,23 @@ def _ip():
 @permission_required("proc_view")
 def index():
     user = _u()
+    try:  # opportunistically flag overdue approvals (no cron needed)
+        svc.run_escalations()
+    except Exception:
+        pass
     return render_template(
         "approvals/index.html", active="procurement",
         kpi=svc.counts(user), queue=svc.my_queue(user),
         recent=svc.list_prs(limit=12),
         can_create=user_can("proc_create"))
+
+
+@bp.route("/analytics")
+@login_required
+@permission_required("proc_view")
+def analytics():
+    return render_template("approvals/analytics.html", active="procurement",
+                           a=svc.analytics_summary())
 
 
 @bp.route("/list")
@@ -65,11 +77,15 @@ def listing():
 @login_required
 @permission_required("proc_create")
 def new():
+    prefill = {}
+    ticket_id = request.args.get("from_ticket")
+    if ticket_id and ticket_id.isdigit():
+        prefill = svc.ticket_prefill(int(ticket_id)) or {}
     return render_template("approvals/new.html", active="procurement",
                            vendors=svc.list_vendors(), units=C.UNITS,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
-                           stage_labels=C.STAGE_LABELS)
+                           stage_labels=C.STAGE_LABELS, prefill=prefill)
 
 
 @bp.route("/new", methods=["POST"])
@@ -144,8 +160,151 @@ def detail(pr_id):
     return render_template("approvals/detail.html", active="procurement",
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
                            stage_label=C.stage_label,
+                           quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
+                           budget=svc.budget_status(pr.get("department")),
                            can_purchasing=user_can("proc_purchasing"),
                            is_owner=(pr["requester"] == (user or {}).get("username")))
+
+
+# --------------------------------------------------------------------------
+# Multi-quote comparison
+# --------------------------------------------------------------------------
+@bp.route("/pr/<int:pr_id>/quote", methods=["POST"])
+@login_required
+@permission_required("proc_create")
+def add_quote(pr_id):
+    if not svc.get_pr(pr_id):
+        abort(404)
+    f = request.form
+    fn = ct = b64 = None
+    file = request.files.get("file")
+    if file and file.filename:
+        if not file.filename.lower().endswith(_ATTACH_EXT):
+            flash("Unsupported quote file type.", "error")
+            return redirect(url_for("approvals.detail", pr_id=pr_id))
+        raw = file.read()
+        if len(raw) > _MAX_ATTACH:
+            flash("Quote file too large (max 3 MB).", "error")
+            return redirect(url_for("approvals.detail", pr_id=pr_id))
+        fn, ct, b64 = file.filename, (file.mimetype or "application/octet-stream"), \
+            base64.b64encode(raw).decode("ascii")
+    if not f.get("vendor") or not f.get("amount"):
+        flash("Vendor and amount are required for a quote.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    svc.add_quote(pr_id, {
+        "vendor": f.get("vendor", "").strip(), "amount": f.get("amount"),
+        "currency": f.get("currency", "EGP"), "lead_time_days": f.get("lead_time_days"),
+        "warranty": f.get("warranty", "").strip(), "notes": f.get("notes", "").strip(),
+    }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
+    flash("Quote added.", "success")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/quote/<int:quote_id>/choose", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def choose_quote(pr_id, quote_id):
+    ok, msg = svc.choose_quote(pr_id, quote_id, _u(), ip=_ip())
+    flash("Quote selected." if ok else f"Could not select quote ({msg}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/quote/<int:quote_id>/file")
+@login_required
+@permission_required("proc_view")
+def quote_file(quote_id):
+    q = svc.get_quote(quote_id)
+    if not q or not q["content_b64"]:
+        abort(404)
+    try:
+        raw = base64.b64decode(q["content_b64"])
+    except Exception:
+        abort(404)
+    return send_file(io.BytesIO(raw), mimetype=q["content_type"] or "application/octet-stream",
+                     as_attachment=True, download_name=q["filename"] or "quote")
+
+
+# --------------------------------------------------------------------------
+# Budgets
+# --------------------------------------------------------------------------
+@bp.route("/budgets", methods=["GET"])
+@login_required
+@permission_required("proc_view")
+def budgets():
+    rows = svc.list_budgets()
+    for b in rows:
+        st = svc.budget_status(b["department"], b["period"])
+        b["spent"] = st["spent"] if st else 0
+        b["remaining"] = st["remaining"] if st else None
+        b["pct"] = st["pct"] if st else 0
+    return render_template("approvals/budgets.html", active="procurement",
+                           budgets=rows, can_manage=user_can("proc_admin"))
+
+
+@bp.route("/budgets", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def save_budget():
+    f = request.form
+    if not f.get("department") or not f.get("amount"):
+        flash("Department and amount are required.", "error")
+    else:
+        svc.set_budget(f.get("department").strip(), f.get("amount"),
+                       period=f.get("period", "").strip() or None,
+                       currency=f.get("currency", "EGP"), user=_u())
+        flash("Budget saved.", "success")
+    return redirect(url_for("approvals.budgets"))
+
+
+# --------------------------------------------------------------------------
+# Delegations
+# --------------------------------------------------------------------------
+@bp.route("/delegations", methods=["GET"])
+@login_required
+@permission_required("proc_view")
+def delegations():
+    from app.db import get_db
+    conn = get_db()
+    try:
+        users = [dict(r) for r in conn.execute(
+            "SELECT username, full_name, role FROM users WHERE is_active=1 ORDER BY username").fetchall()]
+    finally:
+        conn.close()
+    return render_template("approvals/delegations.html", active="procurement",
+                           delegations=svc.list_delegations(), users=users,
+                           can_manage=user_can("proc_admin"))
+
+
+@bp.route("/delegations", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def add_delegation():
+    f = request.form
+    ok, msg = svc.add_delegation(f.get("from_user"), f.get("to_user"),
+                                 f.get("from_date"), f.get("to_date"),
+                                 f.get("note", "").strip(), user=_u())
+    flash("Delegation added." if ok else f"Could not add delegation ({msg}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.delegations"))
+
+
+@bp.route("/delegations/<int:deleg_id>/revoke", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def revoke_delegation(deleg_id):
+    svc.revoke_delegation(deleg_id)
+    flash("Delegation revoked.", "success")
+    return redirect(url_for("approvals.delegations"))
+
+
+@bp.route("/jobs/escalate", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def escalate_now():
+    n = svc.run_escalations()
+    flash(f"{n} overdue approval(s) escalated." if n else "No overdue approvals.", "success")
+    return redirect(url_for("approvals.index"))
 
 
 @bp.route("/pr/<int:pr_id>/approve", methods=["POST"])

@@ -44,7 +44,10 @@ NAV = [
         ("procurement", "nav.proc_home", "cart", "approvals.index", "proc_view"),
         ("proc_new", "nav.proc_new", "report", "approvals.new", "proc_create"),
         ("proc_list", "nav.proc_list", "kanban", "approvals.listing", "proc_view"),
+        ("proc_analytics", "nav.proc_analytics", "chart", "approvals.analytics", "proc_view"),
         ("proc_vendors", "nav.proc_vendors", "boxes", "approvals.vendors", "proc_view"),
+        ("proc_budgets", "nav.proc_budgets", "wallet", "approvals.budgets", "proc_view"),
+        ("proc_delegations", "nav.proc_delegations", "users", "approvals.delegations", "proc_view"),
     ]},
     {"section": "nav.services", "items": [
         ("hr", "nav.hr", "users", "main.module", "open_module"),

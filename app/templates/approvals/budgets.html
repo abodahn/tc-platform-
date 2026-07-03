@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Budgets{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.budgets_title">Department Budgets</h1>
+    <div class="sub" data-i18n="proc.budgets_sub">Annual budgets and how much each department has committed so far.</div>
+  </div>
+</div>
+
+<div class="grid cols-2" style="align-items:start">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.budget_list">Budgets</h3></div>
+    <div class="panel-pad" style="overflow-x:auto">
+      {% if budgets %}
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.dept">Department</th>
+          <th data-i18n="proc.period">Year</th>
+          <th data-i18n="proc.budget_amt">Budget</th>
+          <th data-i18n="proc.spent">Spent</th>
+          <th data-i18n="proc.usage">Usage</th>
+        </tr></thead>
+        <tbody>
+        {% for b in budgets %}
+          <tr>
+            <td style="font-weight:600">{{ b.department }}</td>
+            <td>{{ b.period }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(b.amount or 0) }} {{ b.currency }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(b.spent or 0) }}</td>
+            <td style="min-width:130px">
+              <div style="height:7px;border-radius:5px;background:var(--line-2);overflow:hidden">
+                <div style="height:100%;width:{{ [b.pct or 0, 100]|min }}%;background:{{ 'var(--crit)' if (b.pct or 0) > 100 else ('var(--warn)' if (b.pct or 0) >= 80 else 'var(--ok)') }}"></div>
+              </div>
+              <div class="muted" style="font-size:11px;margin-top:3px">{{ b.pct or 0 }}%</div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="muted" data-i18n="proc.no_budgets">No budgets set yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if can_manage %}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.set_budget">Set a budget</h3></div>
+    <div class="panel-pad">
+      <form method="post" action="{{ url_for('approvals.save_budget') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field"><label data-i18n="proc.dept">Department *</label><input name="department" required autocomplete="off"></div>
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="proc.period">Year</label><input name="period" placeholder="e.g. 2026" autocomplete="off"></div>
+          <div class="field"><label data-i18n="proc.budget_amt">Amount *</label><input name="amount" type="number" step="any" min="0" required></div>
+        </div>
+        <button class="btn btn-primary" type="submit" data-i18n="proc.save_budget">Save budget</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

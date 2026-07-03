@@ -30,6 +30,25 @@
 </div>
 {% endif %}
 
+{% if budget and budget.amount %}
+<div class="panel mt-2"><div class="panel-pad">
+  <div class="flex between center wrap gap" style="margin-bottom:8px">
+    <b>{{ pr.department }} <span data-i18n="proc.budget">budget</span> · {{ budget.period }}</b>
+    <span class="badge {{ 'b-rejected' if budget.over else ('b-pending' if budget.pct >= 80 else 'b-approved') }}">
+      {{ budget.pct }}% <span data-i18n="proc.used">used</span></span>
+  </div>
+  <div style="height:8px;border-radius:6px;background:var(--line-2);overflow:hidden">
+    <div style="height:100%;width:{{ [budget.pct, 100]|min }}%;background:{{ 'var(--crit)' if budget.over else ('var(--warn)' if budget.pct >= 80 else 'var(--ok)') }}"></div>
+  </div>
+  <div class="muted mt-2" style="font-size:12px">
+    <span data-i18n="proc.spent">Spent</span> {{ '{:,.0f}'.format(budget.spent) }} /
+    {{ '{:,.0f}'.format(budget.amount) }} {{ budget.currency }} ·
+    <span data-i18n="proc.remaining">Remaining</span> {{ '{:,.0f}'.format(budget.remaining) }}
+    {% if budget.over %} · <b style="color:var(--crit)" data-i18n="proc.over_budget">Over budget</b>{% endif %}
+  </div>
+</div></div>
+{% endif %}
+
 <!-- Approval ladder stepper -->
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="proc.ladder">Approval ladder</h3>
@@ -51,6 +70,10 @@
           </div>
           <span class="slabel">{{ stage_label(s.stage) }}</span>
           <span class="sname">{{ s.approver_name or ('…' if s.status=='pending' else '—') }}</span>
+          {% if s.age_hours is defined %}
+          <span class="sname" style="font-weight:700;color:{{ 'var(--crit)' if s.overdue else ('var(--warn)' if s.due_soon else 'var(--muted)') }}">
+            {{ s.age_hours|round|int }}h{{ ' · overdue' if s.overdue else (' · due soon' if s.due_soon else '') }}</span>
+          {% endif %}
         </div>
       {% endfor %}
     </div>
@@ -103,12 +126,15 @@
 </div></div>
 {% endif %}
 
-{% if pr.status == 'draft' and is_owner %}
+{% if pr.status in ('draft', 'rejected') and is_owner %}
 <div class="panel mt-4"><div class="panel-pad flex between center wrap gap">
-  <div class="muted" data-i18n="proc.draft_hint">This request is a draft — submit it to start the approval cycle.</div>
+  <div class="muted">
+    {% if pr.status == 'rejected' %}<span data-i18n="proc.resubmit_hint">Address the feedback and resubmit — it restarts the approval cycle from the top.</span>
+    {% else %}<span data-i18n="proc.draft_hint">This request is a draft — submit it to start the approval cycle.</span>{% endif %}
+  </div>
   <form method="post" action="{{ url_for('approvals.submit', pr_id=pr.id) }}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button class="btn btn-primary" type="submit" data-i18n="proc.submit">Submit for approval</button>
+    <button class="btn btn-primary" type="submit">{{ 'Resubmit' if pr.status == 'rejected' else 'Submit for approval' }}</button>
   </form>
 </div></div>
 {% endif %}
@@ -180,9 +206,69 @@
       </div>
     </div>
 
+    <!-- Vendor quote comparison -->
+    <div class="panel mt-4">
+      <div class="panel-head"><h3 data-i18n="proc.quotes">Vendor quotes</h3>
+        {% if quote_cmp and quote_cmp.saving %}
+        <span class="badge b-approved" data-i18n-title="proc.saving">▼ {{ '{:,.0f}'.format(quote_cmp.saving) }} {{ pr.currency }}</span>
+        {% endif %}
+      </div>
+      <div class="panel-pad">
+        {% if b.quotes %}
+        <table class="tbl" style="margin-bottom:12px">
+          <thead><tr>
+            <th data-i18n="proc.vendor_l">Vendor</th>
+            <th data-i18n="proc.amount">Amount</th>
+            <th data-i18n="proc.lead">Lead</th>
+            <th></th>
+          </tr></thead>
+          <tbody>
+          {% for q in b.quotes %}
+            <tr style="{{ 'background:var(--ok-bg)' if q.is_chosen else '' }}">
+              <td><div style="font-weight:600">{{ q.vendor }}
+                  {% if q.amount == quote_cmp.lowest %}<span class="tag" style="color:var(--ok)">lowest</span>{% endif %}
+                  {% if q.is_chosen %}<span class="badge b-approved">✓ chosen</span>{% endif %}</div>
+                  {% if q.warranty %}<div class="muted" style="font-size:11.5px">{{ q.warranty }}</div>{% endif %}
+                  {% if q.filename %}<a class="tag" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename }}</a>{% endif %}</td>
+              <td style="font-variant-numeric:tabular-nums;font-weight:600">{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}</td>
+              <td class="muted">{{ (q.lead_time_days ~ 'd') if q.lead_time_days else '—' }}</td>
+              <td style="text-align:end">
+                {% if can_purchasing and not q.is_chosen %}
+                <form method="post" action="{{ url_for('approvals.choose_quote', pr_id=pr.id, quote_id=q.id) }}" style="display:inline">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.choose">Choose</button>
+                </form>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="muted" style="margin-bottom:12px" data-i18n="proc.no_quotes2">Add competing quotes to compare vendors.</div>
+        {% endif %}
+        {% if is_owner or can_purchasing %}
+        <details>
+          <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_quote">+ Add quote</summary>
+          <form method="post" action="{{ url_for('approvals.add_quote', pr_id=pr.id) }}" enctype="multipart/form-data" class="mt-2">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <div class="grid cols-2">
+              <div class="field"><label data-i18n="proc.vendor_l">Vendor</label><input name="vendor" list="vlist" required autocomplete="off"></div>
+              <div class="field"><label data-i18n="proc.amount">Amount</label><input name="amount" type="number" step="any" min="0" required></div>
+              <div class="field"><label data-i18n="proc.lead">Lead time (days)</label><input name="lead_time_days" type="number" min="0"></div>
+              <div class="field"><label data-i18n="proc.warranty">Warranty</label><input name="warranty" autocomplete="off"></div>
+            </div>
+            <div class="field"><label data-i18n="proc.quote_file">Quote file (optional)</label><input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv"></div>
+            <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_quote">+ Add quote</button>
+          </form>
+          <datalist id="vlist">{% for a in b.attachments %}{% endfor %}</datalist>
+        </details>
+        {% endif %}
+      </div>
+    </div>
+
     <!-- Attachments -->
     <div class="panel mt-4">
-      <div class="panel-head"><h3 data-i18n="proc.quotes">Vendor quotations</h3></div>
+      <div class="panel-head"><h3 data-i18n="proc.documents">Documents</h3></div>
       <div class="panel-pad">
         {% if b.attachments %}
         <div class="flex gap wrap" style="margin-bottom:12px">

@@ -108,13 +108,60 @@ CREATE TABLE IF NOT EXISTS pr_attachments (
     FOREIGN KEY (pr_id) REFERENCES pr_requests(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS ix_pr_attach_pr ON pr_attachments(pr_id);
+
+-- ===== Competing vendor quotes (multi-quote comparison) =====
+CREATE TABLE IF NOT EXISTS pr_quotes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    vendor TEXT, vendor_id INTEGER,
+    amount REAL DEFAULT 0, currency TEXT DEFAULT 'EGP',
+    lead_time_days INTEGER, warranty TEXT,
+    filename TEXT, content_type TEXT, content_b64 TEXT,
+    is_chosen INTEGER DEFAULT 0, notes TEXT,
+    uploaded_by TEXT, created_at TEXT,
+    FOREIGN KEY (pr_id) REFERENCES pr_requests(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_pr_quotes_pr ON pr_quotes(pr_id);
+
+-- ===== Department budgets (per year) =====
+CREATE TABLE IF NOT EXISTS proc_budgets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    department TEXT, period TEXT,          -- 'YYYY'
+    currency TEXT DEFAULT 'EGP', amount REAL DEFAULT 0,
+    notes TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_proc_budget ON proc_budgets(department, period);
+
+-- ===== Approval-authority delegations =====
+CREATE TABLE IF NOT EXISTS proc_delegations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_user TEXT, to_user TEXT,
+    from_date TEXT, to_date TEXT, note TEXT,
+    is_active INTEGER DEFAULT 1, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_proc_deleg_to ON proc_delegations(to_user);
 """
+
+# Columns added to pr_steps after first release — applied as idempotent ALTERs
+# on every boot so already-deployed databases pick them up.
+_STEP_MIGRATIONS = [
+    ("activated_at", "ALTER TABLE pr_steps ADD COLUMN activated_at TEXT"),
+    ("escalated", "ALTER TABLE pr_steps ADD COLUMN escalated INTEGER DEFAULT 0"),
+    ("escalated_at", "ALTER TABLE pr_steps ADD COLUMN escalated_at TEXT"),
+]
 
 
 def create_and_seed(conn):
-    """Create procurement tables and seed sample vendors + one demo PR."""
+    """Create procurement tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
     conn.commit()
+    # Idempotent column migrations (safe on already-deployed databases).
+    for _col, _ddl in _STEP_MIGRATIONS:
+        try:
+            conn.execute(_ddl)
+            conn.commit()
+        except Exception:
+            conn.rollback()
     if conn.execute("SELECT COUNT(*) c FROM proc_vendors").fetchone()["c"] > 0:
         return  # already seeded; never overwrite
 
@@ -162,10 +209,18 @@ def create_and_seed(conn):
     ladder = build_ladder(total)
     for i, stage in enumerate(ladder, start=1):
         conn.execute(
-            """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at)
-               VALUES (?,?,?,?,?,?)""",
-            (pr_id, i, stage, "pending", stage_label(stage), now))
+            """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, activated_at, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (pr_id, i, stage, "pending", stage_label(stage), now if i == 1 else None, now))
     conn.execute(
         "INSERT INTO pr_events (pr_id, actor, action, detail, created_at) VALUES (?,?,?,?,?)",
         (pr_id, "store", "submitted", f"Submitted for {len(ladder)} approvals", now))
+
+    # --- Department budgets for the current year ---
+    year = str(datetime.now(timezone.utc).year)
+    for dept, amount in [("General Maintenance", 1_500_000), ("Production", 3_000_000),
+                         ("IT", 800_000), ("Administration", 600_000)]:
+        conn.execute(
+            "INSERT INTO proc_budgets (department, period, currency, amount, created_at) "
+            "VALUES (?,?,?,?,?)", (dept, year, "EGP", amount, now))
     conn.commit()

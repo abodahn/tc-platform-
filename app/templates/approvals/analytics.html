@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Spend Analytics{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.analytics_title">Spend Analytics</h1>
+    <div class="sub" data-i18n="proc.analytics_sub">Where the money goes, how fast approvals move, and where they get stuck.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.index') }}" data-i18n="proc.back">Back</a>
+</div>
+
+<div class="grid cols-4">
+  <div class="kpi good"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-wallet"></use></svg></div></div>
+    <div class="kval">{{ '{:,.0f}'.format(a.committed_spend or 0) }}</div>
+    <div class="klabel" data-i18n="proc.committed">Committed spend (EGP)</div></div>
+  <div class="kpi"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-kanban"></use></svg></div></div>
+    <div class="kval">{{ '{:,.0f}'.format(a.pending_value or 0) }}</div>
+    <div class="klabel" data-i18n="proc.k_value">Pending value (EGP)</div></div>
+  <div class="kpi info"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-clock"></use></svg></div></div>
+    <div class="kval">{{ a.avg_cycle_days }}</div>
+    <div class="klabel" data-i18n="proc.avg_cycle">Avg approval time (days)</div></div>
+  <div class="kpi warn"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-alert"></use></svg></div></div>
+    <div class="kval" style="font-size:20px;margin-top:20px">{{ a.bottleneck or '—' }}</div>
+    <div class="klabel" data-i18n="proc.bottleneck">Slowest stage</div></div>
+</div>
+
+<div class="grid cols-2 mt-4" style="align-items:start">
+  <div class="panel"><div class="panel-head"><h3 data-i18n="proc.by_dept">Spend by department</h3></div>
+    <div class="panel-pad"><canvas id="chDept" height="200"></canvas></div></div>
+  <div class="panel"><div class="panel-head"><h3 data-i18n="proc.by_vendor">Spend by vendor</h3></div>
+    <div class="panel-pad"><canvas id="chVendor" height="200"></canvas></div></div>
+  <div class="panel"><div class="panel-head"><h3 data-i18n="proc.monthly">Monthly committed spend</h3></div>
+    <div class="panel-pad"><canvas id="chMonth" height="200"></canvas></div></div>
+  <div class="panel"><div class="panel-head"><h3 data-i18n="proc.by_status">Requests by status</h3></div>
+    <div class="panel-pad"><canvas id="chStatus" height="200"></canvas></div></div>
+</div>
+
+<div class="panel mt-4"><div class="panel-head"><h3 data-i18n="proc.stage_perf">Stage performance</h3></div>
+  <div class="panel-pad" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th data-i18n="proc.stage2">Stage</th>
+        <th data-i18n="proc.avg_hours">Avg hours to act</th>
+        <th data-i18n="proc.rejections">Rejections</th></tr></thead>
+      <tbody id="stageRows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  var A = {{ a|tojson }};
+  var RED = '#ED1C24', MUT = '#94a3b8';
+  var css = getComputedStyle(document.body);
+  var ink = css.getPropertyValue('--ink') || '#101114';
+  Chart.defaults.color = MUT;
+  Chart.defaults.font.family = 'Segoe UI, Inter, sans-serif';
+
+  function bar(id, obj, color) {
+    var el = document.getElementById(id); if (!el) return;
+    var labels = Object.keys(obj||{}), data = labels.map(function(k){return obj[k];});
+    if (!labels.length) { el.parentNode.innerHTML = '<div class="muted">No data yet.</div>'; return; }
+    new Chart(el, {type:'bar', data:{labels:labels, datasets:[{data:data, backgroundColor:color, borderRadius:6}]},
+      options:{plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, grid:{color:'rgba(148,163,184,.15)'}}, x:{grid:{display:false}}}}});
+  }
+  bar('chDept', A.spend_by_dept, 'rgba(237,28,36,.75)');
+  bar('chVendor', A.spend_by_vendor, 'rgba(29,78,216,.7)');
+
+  // monthly line
+  (function(){
+    var el = document.getElementById('chMonth'); if (!el) return;
+    var m = A.monthly || [];
+    if (!m.length) { el.parentNode.innerHTML = '<div class="muted">No data yet.</div>'; return; }
+    new Chart(el, {type:'line', data:{labels:m.map(function(x){return x[0];}),
+      datasets:[{data:m.map(function(x){return x[1];}), borderColor:RED, backgroundColor:'rgba(237,28,36,.12)', fill:true, tension:.3, pointRadius:3}]},
+      options:{plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, grid:{color:'rgba(148,163,184,.15)'}}, x:{grid:{display:false}}}}});
+  })();
+
+  // status doughnut
+  (function(){
+    var el = document.getElementById('chStatus'); if (!el) return;
+    var sc = A.status_counts || {}, labels = Object.keys(sc);
+    if (!labels.length) { el.parentNode.innerHTML = '<div class="muted">No data yet.</div>'; return; }
+    var palette = {pending:'#b45309', approved:'#047857', po_issued:'#047857', closed:'#0f766e', rejected:'#be123c', draft:'#94a3b8', cancelled:'#94a3b8'};
+    new Chart(el, {type:'doughnut', data:{labels:labels.map(function(s){return s.replace('_',' ');}),
+      datasets:[{data:labels.map(function(k){return sc[k];}), backgroundColor:labels.map(function(k){return palette[k]||MUT;})}]},
+      options:{plugins:{legend:{position:'right'}}, cutout:'62%'}});
+  })();
+
+  // stage performance table
+  var sa = A.stage_avg_hours || {}, sr = A.stage_rejections || {};
+  var stages = Array.from(new Set(Object.keys(sa).concat(Object.keys(sr))));
+  document.getElementById('stageRows').innerHTML = stages.length
+    ? stages.map(function(s){ return '<tr><td style="font-weight:600">'+s.replace(/_/g,' ')+'</td>'
+        + '<td>'+ (sa[s]!=null ? sa[s]+'h' : '—') +'</td>'
+        + '<td>'+ (sr[s]||0) +'</td></tr>'; }).join('')
+    : '<tr><td colspan="3" class="muted">No completed approvals yet.</td></tr>';
+})();
+</script>
+
+{% endblock %}

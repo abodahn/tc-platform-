@@ -123,7 +123,7 @@
           {% set _known = ['itsm', 'assets', 'monitoring', 'commandtrack', 'production'] %}
           {% for n in notifications %}
           <a class="notif sev-{{ n.severity }}{{ ' is-read' if n.is_read else '' }}"
-             href="{{ url_for('main.module', key=n.module) if n.module in _known else url_for('main.dashboard') }}"
+             href="{{ n.link if n.link else (url_for('main.module', key=n.module) if n.module in _known else url_for('main.dashboard')) }}"
              data-nid="{{ n.id }}">
             <div class="nicon"><svg class="ico" style="width:17px;height:17px"><use href="#i-{{ 'alert' if n.severity=='critical' else ('bell' if n.severity=='warning' else 'check') }}"></use></svg></div>
             <div>

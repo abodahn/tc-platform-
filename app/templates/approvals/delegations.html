@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Delegations{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.deleg_title">Approval Delegations</h1>
+    <div class="sub" data-i18n="proc.deleg_sub">Let someone approve on another person's behalf while they're away.</div>
+  </div>
+</div>
+
+<div class="grid cols-2" style="align-items:start">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.deleg_list">Delegations</h3></div>
+    <div class="panel-pad" style="overflow-x:auto">
+      {% if delegations %}
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.deleg_from">From</th>
+          <th data-i18n="proc.deleg_to">To</th>
+          <th data-i18n="proc.deleg_period">Period</th>
+          <th data-i18n="proc.status">Status</th>
+          <th></th>
+        </tr></thead>
+        <tbody>
+        {% for d in delegations %}
+          <tr>
+            <td style="font-weight:600">{{ d.from_user }}</td>
+            <td>{{ d.to_user }}</td>
+            <td class="muted" style="font-size:12px">{{ d.from_date or '—' }} → {{ d.to_date or '—' }}</td>
+            <td><span class="badge {{ 'b-approved' if d.is_active else 'b-cancelled' }}">{{ 'Active' if d.is_active else 'Revoked' }}</span></td>
+            <td style="text-align:end">
+              {% if can_manage and d.is_active %}
+              <form method="post" action="{{ url_for('approvals.revoke_delegation', deleg_id=d.id) }}" style="display:inline">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.revoke">Revoke</button>
+              </form>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="muted" data-i18n="proc.no_deleg">No delegations yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if can_manage %}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.add_deleg">Delegate authority</h3></div>
+    <div class="panel-pad">
+      <form method="post" action="{{ url_for('approvals.add_delegation') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field"><label data-i18n="proc.deleg_from">From (whose authority)</label>
+          <select name="from_user" required>
+            <option value=""></option>
+            {% for u in users %}<option value="{{ u.username }}">{{ u.full_name or u.username }} — {{ u.role }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label data-i18n="proc.deleg_to">To (who acts)</label>
+          <select name="to_user" required>
+            <option value=""></option>
+            {% for u in users %}<option value="{{ u.username }}">{{ u.full_name or u.username }} — {{ u.role }}</option>{% endfor %}
+          </select></div>
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="proc.deleg_from_d">From date</label><input name="from_date" type="date"></div>
+          <div class="field"><label data-i18n="proc.deleg_to_d">To date</label><input name="to_date" type="date"></div>
+        </div>
+        <div class="field"><label data-i18n="proc.note">Note</label><input name="note" autocomplete="off"></div>
+        <button class="btn btn-primary" type="submit" data-i18n="proc.add_deleg">Add delegation</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

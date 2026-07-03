@@ -18,11 +18,11 @@
     <div class="panel-pad">
       <div class="grid cols-2">
         <div class="field"><label data-i18n="proc.title_l">Title *</label>
-          <input name="title" required autocomplete="off" placeholder="e.g. Repair forklift battery"></div>
+          <input name="title" required autocomplete="off" value="{{ prefill.title or '' }}" placeholder="e.g. Repair forklift battery"></div>
         <div class="field"><label data-i18n="proc.request_for_l">Request for</label>
-          <input name="request_for" autocomplete="off" placeholder="Asset / machine / area"></div>
+          <input name="request_for" autocomplete="off" value="{{ prefill.request_for or '' }}" placeholder="Asset / machine / area"></div>
         <div class="field"><label data-i18n="proc.dept_l">Department</label>
-          <input name="department" autocomplete="off" placeholder="e.g. General Maintenance"></div>
+          <input name="department" autocomplete="off" value="{{ prefill.department or '' }}" placeholder="e.g. General Maintenance"></div>
         <div class="field"><label data-i18n="proc.date_l">Request date</label>
           <input type="date" name="request_date" value="{{ '' }}"></div>
         <div class="field"><label data-i18n="proc.vendor_l">Vendor</label>
@@ -65,7 +65,7 @@
   </div>
 
   <div class="field mt-4"><label data-i18n="proc.notes_l">Notes</label>
-    <textarea name="notes" rows="2" placeholder="Anything the approvers should know…"></textarea></div>
+    <textarea name="notes" rows="2" placeholder="Anything the approvers should know…">{{ prefill.notes or '' }}</textarea></div>
 
   <div class="flex gap wrap mt-4">
     <button class="btn btn-primary" type="submit" name="action" value="submit" data-i18n="proc.submit">Submit for approval</button>
@@ -140,6 +140,16 @@
   curSel.addEventListener('change', function(){ document.getElementById('curLabel').textContent = curSel.value; });
 
   addRow(); // start with one row
+
+  // prefill the first line item from a maintenance ticket, if provided
+  var PREFILL = {{ prefill|tojson }};
+  if (PREFILL && (PREFILL.item || PREFILL.description)) {
+    var r0 = rows.querySelector('.li-row');
+    if (r0) {
+      if (PREFILL.item) r0.querySelector('[name="item[]"]').value = PREFILL.item;
+      if (PREFILL.description) r0.querySelector('[name="description[]"]').value = PREFILL.description;
+    }
+  }
 })();
 </script>
 

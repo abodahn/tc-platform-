@@ -47,13 +47,17 @@ def _system_by_key(key):
     return row
 
 
-def _unread_notifications():
+def _unread_notifications(username=None):
+    """Bell feed: broadcast notifications (target_user IS NULL) plus any addressed
+    to this user. Older rows created before the target_user column are broadcast."""
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT * FROM notifications ORDER BY id DESC LIMIT 30").fetchall()
+            "SELECT * FROM notifications WHERE target_user IS NULL OR target_user = ? "
+            "ORDER BY id DESC LIMIT 30", (username,)).fetchall()
         unread = conn.execute(
-            "SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0").fetchone()["c"]
+            "SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0 "
+            "AND (target_user IS NULL OR target_user = ?)", (username,)).fetchone()["c"]
     finally:
         conn.close()
     return rows, unread
@@ -80,7 +84,7 @@ def inject_globals():
     notifs, unread = ([], 0)
     visible_nav = []
     if user:
-        notifs, unread = _unread_notifications()
+        notifs, unread = _unread_notifications(user["username"])
         for section in NAV:
             items = [it for it in section["items"]
                      if has_permission(user["role"], it[4])]
@@ -155,7 +159,7 @@ def dashboard():
         "production_readiness": 40,
         "cost_saving": "₺ 2.6M",
     }
-    _, unread = _unread_notifications()
+    _, unread = _unread_notifications((current_user() or {}).get("username"))
     from app.insights import executive_summary
     briefing = executive_summary()
     return render_template("dashboard.html",
@@ -538,10 +542,12 @@ def mark_notifications_read():
         nid = None
     conn = get_db()
     try:
+        me = (current_user() or {}).get("username")
         if nid:
             conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (nid,))
         else:
-            conn.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+            conn.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0 "
+                         "AND (target_user IS NULL OR target_user = ?)", (me,))
         conn.commit()
     finally:
         conn.close()
@@ -569,11 +575,12 @@ def notifications_feed():
         auto_create_tickets(_systems())   # open ITSM tickets for new critical alerts (if enabled)
     except Exception:
         pass
-    notifs, unread = _unread_notifications()
+    notifs, unread = _unread_notifications((current_user() or {}).get("username"))
     items = [{
         "id": n["id"], "severity": n["severity"], "module": n["module"],
         "title": n["title"], "message": n["message"],
         "created_at": n["created_at"], "is_read": n["is_read"],
+        "link": (n["link"] if "link" in n.keys() else None),
     } for n in notifs]
     max_id = max((it["id"] for it in items), default=0)
     return jsonify({"unread": unread, "max_id": max_id, "items": items})

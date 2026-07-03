@@ -81,6 +81,12 @@ def build_ladder(total):
     return [s for s in LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
 
 
+# --- SLA: how long a single approval stage may sit before it's "overdue" ----
+# Drives the aging badge on the ladder and the escalation job. Tunable here.
+SLA_HOURS_PER_STAGE = 48       # a stage older than this is overdue
+SLA_WARN_HOURS = 24            # amber "due soon" threshold
+
+
 # --- Permissions (added to platform RBAC) ----------------------------------
 PROC_PERMISSIONS = [
     "proc_view",       # see the module, lists, own requests

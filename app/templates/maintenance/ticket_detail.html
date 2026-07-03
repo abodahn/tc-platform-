@@ -8,7 +8,13 @@
       {% if sla_risk and sla_risk >= 60 %}<span class="badge {{ 'b-critical' if sla_risk>=100 else 'b-warning' }}" style="font-size:13px;vertical-align:middle"><svg class="ico" style="width:12px;height:12px"><use href="#i-sparkles"></use></svg> <span data-i18n="m.ai_sla_risk">SLA risk</span> {{ sla_risk }}%</span>{% endif %}</h1>
     <div class="sub">{{ t.machine_code }} · {{ t.department or '—' }} · <span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span></div>
   </div>
-  <a class="btn btn-ghost" href="{{ url_for('maintenance.tickets') }}"><span data-i18n="nav.maint_tickets">Tickets</span></a>
+  <div class="flex gap center wrap">
+    {% if can('proc_create') %}
+    <a class="btn btn-ghost" href="{{ url_for('approvals.new', from_ticket=t.id) }}">
+      <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="m.raise_pr">Raise purchase request</span></a>
+    {% endif %}
+    <a class="btn btn-ghost" href="{{ url_for('maintenance.tickets') }}"><span data-i18n="nav.maint_tickets">Tickets</span></a>
+  </div>
 </div>
 
 <div class="grid cols-3">
