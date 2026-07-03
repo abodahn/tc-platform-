@@ -170,18 +170,61 @@
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-head"><h3 data-i18n="dash.critical">Critical Attention Required</h3><svg class="ico" style="width:18px;height:18px;color:var(--crit)"><use href="#i-alert"></use></svg></div>
-    <div class="panel-pad">
-      {% for n in notifications if n.severity in ['critical','warning'] %}
-      <div class="flex gap center" style="padding:8px 0">
-        <span class="badge b-{{ 'critical' if n.severity=='critical' else 'warning' }}"><span class="dot"></span>{{ n.severity }}</span>
-        <span style="font-size:13px">{{ n.title }}</span>
+  {% set crit_items = (notifications or []) | selectattr('severity','in',['critical','warning']) | list %}
+  <div class="panel crit-panel crit-collapsed" id="critPanel">
+    <button class="panel-head crit-toggle" id="critToggle" type="button" aria-expanded="false"
+            aria-controls="critBody"
+            style="display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:none;cursor:pointer;text-align:inherit;font:inherit;color:inherit">
+      <h3 class="flex gap center" style="margin:0">
+        <svg class="ico" style="width:18px;height:18px;color:var(--crit)"><use href="#i-alert"></use></svg>
+        <span data-i18n="dash.critical">Critical Attention Required</span>
+        <span class="badge {{ 'b-critical' if crit_items else 'b-info' }}" style="margin-inline-start:4px">{{ crit_items|length }}</span>
+      </h3>
+      <svg class="ico crit-chev" style="width:16px;height:16px;opacity:.6;transition:transform .2s"><use href="#i-chevron"></use></svg>
+    </button>
+    <div class="crit-body" id="critBody">
+      <div class="panel-pad" style="padding-top:0">
+        {% for n in crit_items %}
+        <div class="flex gap center" style="padding:8px 0">
+          <span class="badge b-{{ 'critical' if n.severity=='critical' else 'warning' }}"><span class="dot"></span>{{ n.severity }}</span>
+          <span style="font-size:13px">{{ n.title }}</span>
+        </div>
+        {% if not loop.last %}<div class="divider"></div>{% endif %}
+        {% else %}
+        <div class="muted" style="font-size:13px;padding:6px 0" data-i18n="dash.no_critical">Nothing critical right now.</div>
+        {% endfor %}
       </div>
-      {% if not loop.last %}<div class="divider"></div>{% endif %}
-      {% endfor %}
     </div>
   </div>
 </div>
+
+<style>
+.crit-body{overflow:hidden;transition:max-height .25s ease;max-height:1200px}
+.crit-panel.crit-collapsed .crit-body{max-height:0}
+.crit-panel.crit-collapsed .crit-chev{transform:rotate(-90deg)}
+[dir="rtl"] .crit-panel.crit-collapsed .crit-chev{transform:rotate(90deg)}
+.crit-toggle:hover .crit-chev{opacity:1}
+</style>
+<script>
+(function () {
+  var KEY = "tc_crit_collapsed";
+  var panel = document.getElementById("critPanel");
+  var btn = document.getElementById("critToggle");
+  if (!panel || !btn) return;
+  // default collapsed; remember the user's choice
+  var collapsed = localStorage.getItem(KEY);
+  if (collapsed === null) collapsed = "1";
+  function apply(c) {
+    panel.classList.toggle("crit-collapsed", c === "1");
+    btn.setAttribute("aria-expanded", c === "1" ? "false" : "true");
+  }
+  apply(collapsed);
+  btn.addEventListener("click", function () {
+    var now = panel.classList.contains("crit-collapsed") ? "0" : "1";
+    localStorage.setItem(KEY, now);
+    apply(now);
+  });
+})();
+</script>
 
 {% endblock %}
