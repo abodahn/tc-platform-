@@ -88,12 +88,8 @@ def new():
                            stage_labels=C.STAGE_LABELS, prefill=prefill)
 
 
-@bp.route("/new", methods=["POST"])
-@login_required
-@permission_required("proc_create")
-def create():
-    f = request.form
-    header = {
+def _parse_header(f):
+    return {
         "title": f.get("title", "").strip(),
         "request_for": f.get("request_for", "").strip(),
         "department": f.get("department", "").strip(),
@@ -105,14 +101,15 @@ def create():
         "req_del_date": f.get("req_del_date", "").strip(),
         "asset_code": f.get("asset_code", "").strip(),
         "notes": f.get("notes", "").strip(),
+        "tax_rate": f.get("tax_rate", "").strip() or 0,
     }
+
+
+def _parse_items(f):
     items = []
-    names = f.getlist("item[]")
-    descs = f.getlist("description[]")
-    units = f.getlist("unit[]")
-    qtys = f.getlist("qty[]")
-    stocks = f.getlist("current_stock[]")
-    prices = f.getlist("unit_price[]")
+    names = f.getlist("item[]"); descs = f.getlist("description[]")
+    units = f.getlist("unit[]"); qtys = f.getlist("qty[]")
+    stocks = f.getlist("current_stock[]"); prices = f.getlist("unit_price[]")
     notes = f.getlist("item_notes[]")
     for i in range(len(names)):
         if not (names[i] or "").strip():
@@ -126,13 +123,72 @@ def create():
             "unit_price": prices[i] if i < len(prices) else 0,
             "notes": notes[i] if i < len(notes) else "",
         })
+    return items
+
+
+@bp.route("/new", methods=["POST"])
+@login_required
+@permission_required("proc_create")
+def create():
+    header, items = _parse_header(request.form), _parse_items(request.form)
     if not header["title"] or not items:
         flash("A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.new"))
-
-    submit = f.get("action") != "draft"
+    submit = request.form.get("action") != "draft"
     pr_id, pr_no = svc.create_pr(header, items, _u(), ip=_ip(), submit=submit)
     flash(f"Purchase request {pr_no} created.", "success")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/edit", methods=["GET"])
+@login_required
+@permission_required("proc_create")
+def edit(pr_id):
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    pr = bundle["pr"]
+    if pr["status"] not in ("draft", "rejected"):
+        flash("Only draft or rejected requests can be edited.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    if pr["requester"] != (_u() or {}).get("username") and not user_can("proc_admin"):
+        abort(403)
+    prefill = {"title": pr.get("title"), "request_for": pr.get("request_for"),
+               "department": pr.get("department"), "notes": pr.get("notes"),
+               "vendor": pr.get("vendor"), "payment_condition": pr.get("payment_condition"),
+               "delivery_condition": pr.get("delivery_condition"), "currency": pr.get("currency"),
+               "req_del_date": pr.get("req_del_date"), "asset_code": pr.get("asset_code"),
+               "tax_rate": pr.get("tax_rate")}
+    return render_template("approvals/new.html", active="procurement",
+                           vendors=svc.list_vendors(), units=C.UNITS,
+                           currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
+                           matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
+                           stage_labels=C.STAGE_LABELS, prefill=prefill,
+                           editing=pr, edit_items=bundle["items"])
+
+
+@bp.route("/pr/<int:pr_id>/edit", methods=["POST"])
+@login_required
+@permission_required("proc_create")
+def edit_save(pr_id):
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    if bundle["pr"]["requester"] != (_u() or {}).get("username") and not user_can("proc_admin"):
+        abort(403)
+    header, items = _parse_header(request.form), _parse_items(request.form)
+    if not header["title"] or not items:
+        flash("A title and at least one line item are required.", "error")
+        return redirect(url_for("approvals.edit", pr_id=pr_id))
+    ok, msg = svc.update_pr(pr_id, header, items, _u(), ip=_ip())
+    if not ok:
+        flash(f"Could not save ({msg}).", "error")
+        return redirect(url_for("approvals.edit", pr_id=pr_id))
+    if request.form.get("action") != "draft":
+        svc.submit_pr(pr_id, _u(), ip=_ip())
+        flash("Saved and submitted for approval.", "success")
+    else:
+        flash("Draft saved.", "success")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -148,18 +204,16 @@ def detail(pr_id):
         abort(404)
     user = _u()
     pr = bundle["pr"]
-    # which step (if any) can the current user act on right now?
+    # The current rung may hold several parallel steps; find the one this user
+    # can act on (if any), and the labels of everyone currently on the rung.
     actionable = None
-    current_stage = None
+    current_stages = []
     if pr["status"] == "pending":
-        for s in bundle["steps"]:
-            if s["seq"] == pr["current_seq"] and s["status"] == "pending":
-                current_stage = s["stage"]
-                if svc.can_act(user, s["stage"]):
-                    actionable = s
-                break
-    # Is this user a LATER approver in the chain, waiting their turn? (strict
-    # sequential order: they cannot act until every earlier stage has signed.)
+        cur = [s for s in bundle["steps"]
+               if s["seq"] == pr["current_seq"] and s["status"] == "pending"]
+        current_stages = [s["stage"] for s in cur]
+        actionable = next((s for s in cur if svc.can_act(user, s["stage"])), None)
+    # Later approver waiting their turn (can't act until earlier rungs finish)?
     queued = False
     if pr["status"] == "pending" and not actionable:
         for s in bundle["steps"]:
@@ -168,10 +222,11 @@ def detail(pr_id):
                 queued = True
                 break
     has_sig = bool((user or {}).get("sig_png"))
+    cur_label = " + ".join(C.stage_label(s) for s in current_stages) if current_stages else None
     return render_template("approvals/detail.html", active="procurement",
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
                            stage_label=C.stage_label, queued=queued,
-                           current_stage_label=(C.stage_label(current_stage) if current_stage else None),
+                           current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
                            budget=svc.budget_status(pr.get("department")),
                            can_purchasing=user_can("proc_purchasing"),
@@ -333,6 +388,7 @@ def approve(pr_id):
               "error")
     else:
         flash({"advanced": "Approved — routed to the next approver.",
+               "partial": "Approved & signed. Waiting on the co-approver at this stage.",
                "approved": "Final approval complete. Purchase Order drafted."}.get(msg, "Approved."),
               "success")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
@@ -365,6 +421,42 @@ def submit(pr_id):
 def issue_po(pr_id):
     ok, res = svc.issue_po(pr_id, _u(), ip=_ip())
     flash(f"Purchase Order {res} issued." if ok else f"Could not issue PO ({res}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/email-po", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def email_po(pr_id):
+    ok, res = svc.email_po_to_vendor(pr_id, _u(), ip=_ip())
+    if not ok:
+        flash({"no_vendor_email": "No email on file for this vendor — add one in Vendors.",
+               "not_approved": "The PO isn't ready to send yet."}.get(res, f"Could not send ({res})."),
+              "error")
+    elif res == "sent":
+        flash("Purchase Order emailed to the vendor.", "success")
+    else:
+        flash("Email logged (set the SMTP env vars to actually send).", "warning")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/receive", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def receive(pr_id):
+    ok, msg = svc.receive_goods(pr_id, _u(), notes=request.form.get("notes", "").strip() or None, ip=_ip())
+    flash("Delivery confirmed." if ok else f"Could not confirm receipt ({msg}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/close", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def close(pr_id):
+    ok, msg = svc.close_pr(pr_id, _u(), ip=_ip())
+    flash("Request closed." if ok else f"Could not close ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 

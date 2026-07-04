@@ -150,13 +150,22 @@ _STEP_MIGRATIONS = [
     ("escalated_at", "ALTER TABLE pr_steps ADD COLUMN escalated_at TEXT"),
 ]
 
+# Columns added to pr_requests after first release (tax + goods receipt + PO email).
+_PR_MIGRATIONS = [
+    ("tax_rate", "ALTER TABLE pr_requests ADD COLUMN tax_rate REAL DEFAULT 0"),
+    ("received_at", "ALTER TABLE pr_requests ADD COLUMN received_at TEXT"),
+    ("received_by", "ALTER TABLE pr_requests ADD COLUMN received_by TEXT"),
+    ("receipt_notes", "ALTER TABLE pr_requests ADD COLUMN receipt_notes TEXT"),
+    ("po_sent_at", "ALTER TABLE pr_requests ADD COLUMN po_sent_at TEXT"),
+]
+
 
 def create_and_seed(conn):
     """Create procurement tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
-    for _col, _ddl in _STEP_MIGRATIONS:
+    for _col, _ddl in _STEP_MIGRATIONS + _PR_MIGRATIONS:
         try:
             conn.execute(_ddl)
             conn.commit()

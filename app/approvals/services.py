@@ -13,7 +13,7 @@ from app.db import get_db
 from app.security import has_permission
 from app.approvals import constants as C
 from app.approvals.constants import (
-    build_ladder, stage_label, STAGE_ROLES, PR_STATUSES)
+    build_ladder, ladder_rungs, stage_label, STAGE_ROLES, PR_STATUSES)
 
 
 def _now():
@@ -258,15 +258,16 @@ def my_queue(user):
     for pr in list_prs(status="pending"):
         conn = get_db()
         try:
-            step = conn.execute(
+            steps = conn.execute(
                 "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
-                (pr["id"], pr["current_seq"])).fetchone()
+                (pr["id"], pr["current_seq"])).fetchall()
         finally:
             conn.close()
-        if step and can_act(user, step["stage"]):
+        mine = next((s for s in steps if can_act(user, s["stage"])), None)
+        if mine:
             pr = dict(pr)
-            pr["_stage"] = step["stage"]
-            pr["_stage_label"] = stage_label(step["stage"])
+            pr["_stage"] = mine["stage"]
+            pr["_stage_label"] = stage_label(mine["stage"])
             out.append(pr)
     return out
 
@@ -329,6 +330,11 @@ def create_pr(header, items, user, ip=None, submit=True):
                  float(it.get("qty") or 0), float(it.get("current_stock") or 0),
                  it.get("vendor") or header.get("vendor"),
                  float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes")))
+        try:
+            conn.execute("UPDATE pr_requests SET tax_rate=? WHERE id=?",
+                         (float(header.get("tax_rate") or 0), pr_id))
+        except Exception:
+            pass
         audit(conn, pr_id, uname, "created", f"PR {pr_no} created (total {total})", ip)
         conn.commit()
     finally:
@@ -336,6 +342,53 @@ def create_pr(header, items, user, ip=None, submit=True):
     if submit:
         submit_pr(pr_id, user, ip)
     return pr_id, pr_no
+
+
+def update_pr(pr_id, header, items, user, ip=None):
+    """Replace a DRAFT (or rejected) PR's header + line items. Only the owner /
+    an admin should reach this. Returns (ok, msg)."""
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT status, requester FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] not in ("draft", "rejected"):
+            return False, "not_editable"
+        total = round(sum(_amount(it) for it in items), 2)
+        conn.execute(
+            """UPDATE pr_requests SET title=?, request_for=?, department=?, currency=?,
+               vendor=?, payment_condition=?, delivery_condition=?, req_del_date=?,
+               asset_code=?, notes=?, tax_rate=?, total=? WHERE id=?""",
+            (header.get("title"), header.get("request_for"), header.get("department"),
+             header.get("currency") or "EGP", header.get("vendor"),
+             header.get("payment_condition"), header.get("delivery_condition"),
+             header.get("req_del_date"), header.get("asset_code"), header.get("notes"),
+             float(header.get("tax_rate") or 0), total, pr_id))
+        conn.execute("DELETE FROM pr_items WHERE pr_id=?", (pr_id,))
+        for i, it in enumerate(items, start=1):
+            conn.execute(
+                """INSERT INTO pr_items (pr_id, seq, item, description, unit, qty,
+                   current_stock, vendor, unit_price, est_cost, notes)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (pr_id, i, it.get("item"), it.get("description"), it.get("unit") or "Pcs",
+                 float(it.get("qty") or 0), float(it.get("current_stock") or 0),
+                 it.get("vendor") or header.get("vendor"),
+                 float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes")))
+        audit(conn, pr_id, user.get("username") if user else "system", "edited",
+              f"Draft updated (total {total})", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def pr_amounts(pr):
+    """Return {subtotal, tax_rate, tax, grand} for a PR dict/row."""
+    subtotal = float(pr.get("total") or 0) if isinstance(pr, dict) else float(pr["total"] or 0)
+    rate = float((pr.get("tax_rate") if isinstance(pr, dict) else pr["tax_rate"]) or 0)
+    tax = round(subtotal * rate / 100.0, 2)
+    return {"subtotal": round(subtotal, 2), "tax_rate": rate, "tax": tax,
+            "grand": round(subtotal + tax, 2)}
 
 
 def submit_pr(pr_id, user, ip=None):
@@ -350,24 +403,29 @@ def submit_pr(pr_id, user, ip=None):
             return False, "not_submittable"
         # clear any prior steps (resubmit after rejection)
         conn.execute("DELETE FROM pr_steps WHERE pr_id=?", (pr_id,))
-        ladder = build_ladder(pr["total"])
+        rungs = ladder_rungs(pr["total"])   # each rung = list of parallel stages
         now = _now()
-        for i, stage in enumerate(ladder, start=1):
-            conn.execute(
-                """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, activated_at, created_at)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (pr_id, i, stage, "pending", stage_label(stage), now if i == 1 else None, now))
+        for i, rung in enumerate(rungs, start=1):
+            for stage in rung:
+                conn.execute(
+                    """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, activated_at, created_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (pr_id, i, stage, "pending", stage_label(stage), now if i == 1 else None, now))
         conn.execute(
             "UPDATE pr_requests SET status='pending', current_seq=1, submitted_at=?, "
             "rejection_reason=NULL WHERE id=?", (now, pr_id))
         uname = user.get("username") if user else "system"
+        flat = [s for rung in rungs for s in rung]
         audit(conn, pr_id, uname, "submitted",
-              f"Routed through {len(ladder)} approvals: "
-              f"{' -> '.join(stage_label(s) for s in ladder)}", ip)
-        # Notify the first-stage approvers directly that a request needs signing.
-        notify_users(conn, eligible_approvers(conn, ladder[0]), "warning",
-                     "New request to sign",
-                     f"{pr['pr_no']} ({pr['title'] or ''}) needs your {stage_label(ladder[0])} approval.",
+              f"Routed through {len(flat)} approvals: "
+              f"{' -> '.join(' + '.join(stage_label(s) for s in rung) for rung in rungs)}", ip)
+        # Notify every approver on the first rung that a request needs signing.
+        targets = set()
+        for stage in rungs[0]:
+            targets |= set(eligible_approvers(conn, stage))
+        first_label = " + ".join(stage_label(s) for s in rungs[0])
+        notify_users(conn, list(targets), "warning", "New request to sign",
+                     f"{pr['pr_no']} ({pr['title'] or ''}) needs your {first_label} approval.",
                      link=_pr_link(pr_id))
         conn.commit()
         return True, ""
@@ -388,12 +446,15 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             return False, "not_found"
         if pr["status"] != "pending":
             return False, "not_pending"
-        step = conn.execute(
+        # current rung may hold several parallel steps; pick the one this user
+        # is eligible for (a co-approver only acts on their own stage).
+        cur_steps = conn.execute(
             "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
-            (pr_id, pr["current_seq"])).fetchone()
-        if not step:
+            (pr_id, pr["current_seq"])).fetchall()
+        if not cur_steps:
             return False, "no_active_step"
-        if not can_act(user, step["stage"]):
+        step = next((s for s in cur_steps if can_act(user, s["stage"])), None)
+        if not step:
             return False, "forbidden"
 
         uname = user.get("username")
@@ -426,16 +487,30 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         audit(conn, pr_id, uname, "approved",
               f"{stage_label(step['stage'])} approved" + (f": {comment}" if comment else ""), ip)
 
-        nxt = conn.execute(
-            "SELECT * FROM pr_steps WHERE pr_id=? AND seq>? ORDER BY seq LIMIT 1",
-            (pr_id, step["seq"])).fetchone()
-        if nxt:
-            conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?",
-                         (nxt["seq"], pr_id))
-            conn.execute("UPDATE pr_steps SET activated_at=? WHERE id=?", (now, nxt["id"]))
-            notify_users(conn, eligible_approvers(conn, nxt["stage"]), "warning",
-                         "New request to sign",
-                         f"{pr['pr_no']} needs your {stage_label(nxt['stage'])} approval.",
+        # Parallel rung: if co-approvers at this seq are still pending, wait.
+        remaining = conn.execute(
+            "SELECT COUNT(*) c FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr_id, step["seq"])).fetchone()["c"]
+        if remaining > 0:
+            conn.commit()
+            return True, "partial"
+
+        # Whole rung approved -> advance to the next rung (activate all its steps).
+        nxt_seq = conn.execute(
+            "SELECT MIN(seq) m FROM pr_steps WHERE pr_id=? AND seq>? AND status='pending'",
+            (pr_id, step["seq"])).fetchone()["m"]
+        if nxt_seq is not None:
+            conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (nxt_seq, pr_id))
+            conn.execute("UPDATE pr_steps SET activated_at=? WHERE pr_id=? AND seq=?",
+                         (now, pr_id, nxt_seq))
+            nxt_stages = [r["stage"] for r in conn.execute(
+                "SELECT stage FROM pr_steps WHERE pr_id=? AND seq=?", (pr_id, nxt_seq)).fetchall()]
+            targets = set()
+            for s in nxt_stages:
+                targets |= set(eligible_approvers(conn, s))
+            notify_users(conn, list(targets), "warning", "New request to sign",
+                         f"{pr['pr_no']} needs your "
+                         f"{' + '.join(stage_label(s) for s in nxt_stages)} approval.",
                          link=_pr_link(pr_id))
             conn.commit()
             return True, "advanced"
@@ -476,6 +551,93 @@ def issue_po(pr_id, user, ip=None):
         return True, po_no
     finally:
         conn.close()
+
+
+def receive_goods(pr_id, user, notes=None, ip=None):
+    """Confirm delivery/goods-receipt for an issued PO. po_issued -> received."""
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] not in ("po_issued", "approved"):
+            return False, "not_receivable"
+        now = _now()
+        conn.execute(
+            "UPDATE pr_requests SET status='received', received_at=?, received_by=?, "
+            "receipt_notes=? WHERE id=?",
+            (now, user.get("username") if user else "system", notes, pr_id))
+        audit(conn, pr_id, user.get("username") if user else "system", "received",
+              "Goods/services received" + (f": {notes}" if notes else ""), ip)
+        notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
+                     f"{pr['pr_no']} was received.", link=_pr_link(pr_id))
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def close_pr(pr_id, user, ip=None):
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] not in ("received", "po_issued"):
+            return False, "not_closable"
+        conn.execute("UPDATE pr_requests SET status='closed', closed_at=? WHERE id=?",
+                     (_now(), pr_id))
+        audit(conn, pr_id, user.get("username") if user else "system", "closed", "Closed", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
+    """Email the Purchase Order (PDF attached) to the vendor's address on file."""
+    bundle = get_pr(pr_id)
+    if not bundle:
+        return False, "not_found"
+    pr = bundle["pr"]
+    if pr["status"] not in ("approved", "po_issued", "received", "closed"):
+        return False, "not_approved"
+    # find the vendor's email
+    conn = get_db()
+    try:
+        v = conn.execute("SELECT email FROM proc_vendors WHERE name=?", (pr.get("vendor"),)).fetchone()
+    finally:
+        conn.close()
+    vendor_email = v["email"] if v else None
+    if not vendor_email:
+        return False, "no_vendor_email"
+    if pdf_bytes is None:
+        try:
+            from app.approvals import pdf as _pdf
+            pdf_bytes = _pdf.po_pdf(bundle)
+        except Exception:
+            pdf_bytes = None
+    amt = pr_amounts(pr)
+    body = (f"Dear {pr.get('vendor')},\n\n"
+            f"Please find attached Purchase Order {pr.get('po_no')} "
+            f"(ref {pr.get('pr_no')}) from T&C Garments.\n\n"
+            f"Total: {amt['grand']:,.2f} {pr.get('currency') or ''}\n"
+            f"Payment: {pr.get('payment_condition') or '-'}\n"
+            f"Delivery: {pr.get('delivery_condition') or '-'}\n\n"
+            f"Regards,\nT&C Garments — Purchasing")
+    from app.services.alerts import send_email_to
+    atts = [(f"{pr.get('po_no', 'PO')}.pdf", pdf_bytes, "application/pdf")] if pdf_bytes else None
+    ok = send_email_to([vendor_email], f"Purchase Order {pr.get('po_no')} — T&C Garments",
+                       body, attachments=atts)
+    conn = get_db()
+    try:
+        conn.execute("UPDATE pr_requests SET po_sent_at=? WHERE id=?", (_now(), pr_id))
+        audit(conn, pr_id, user.get("username") if user else "system", "po_emailed",
+              f"PO emailed to {vendor_email}" + ("" if ok else " (SMTP not configured)"), ip)
+        conn.commit()
+    finally:
+        conn.close()
+    return (True, "sent") if ok else (True, "logged")   # logged = SMTP not set yet
 
 
 def cancel_pr(pr_id, user, ip=None):

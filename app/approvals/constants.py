@@ -18,6 +18,7 @@ PR_STATUSES = [
     "approved",    # every required stage approved
     "rejected",    # a stage rejected it (bounces back to the requester)
     "po_issued",   # a Purchase Order has been generated from it
+    "received",    # goods/services received (delivery confirmed)
     "closed",      # delivered / completed
     "cancelled",   # withdrawn by the requester or an admin
 ]
@@ -79,6 +80,33 @@ def build_ladder(total):
     except (TypeError, ValueError):
         t = 0.0
     return [s for s in LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
+
+
+# --- Parallel approval groups ----------------------------------------------
+# Stages that sit in the SAME set here run in parallel (same ladder rung): all of
+# them must approve before the request advances, and any single one can reject.
+# Empty by default = strictly sequential (the current, tested behaviour). Put a
+# set like {"finance", "factory_manager"} here to make those two sign at once.
+PARALLEL_GROUPS = []
+
+
+def ladder_rungs(total):
+    """Return the ladder as ordered 'rungs'; each rung is a list of stage keys
+    that run in parallel. With no PARALLEL_GROUPS every rung has one stage."""
+    stages = build_ladder(total)
+    rungs, seen = [], set()
+    for s in stages:
+        if s in seen:
+            continue
+        group = next((g for g in PARALLEL_GROUPS if s in g), None)
+        if group:
+            rung = [x for x in stages if x in group]
+            rungs.append(rung)
+            seen.update(rung)
+        else:
+            rungs.append([s])
+            seen.add(s)
+    return rungs
 
 
 # --- SLA: how long a single approval stage may sit before it's "overdue" ----

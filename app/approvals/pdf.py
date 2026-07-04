@@ -47,6 +47,60 @@ def _fmt(n):
         return str(n or "")
 
 
+# --- number to words (English) ---------------------------------------------
+_ONES = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+         "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+         "seventeen", "eighteen", "nineteen"]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+_SCALE = [(1_000_000_000, "billion"), (1_000_000, "million"), (1_000, "thousand")]
+_CUR_NAMES = {"EGP": ("Egyptian Pounds", "piastres"), "USD": ("US Dollars", "cents"),
+              "EUR": ("Euros", "cents"), "TRY": ("Turkish Lira", "kuruş")}
+
+
+def _under_1000(n):
+    out = ""
+    if n >= 100:
+        out += _ONES[n // 100] + " hundred"
+        n %= 100
+        if n:
+            out += " and "
+    if n >= 20:
+        out += _TENS[n // 10]
+        if n % 10:
+            out += "-" + _ONES[n % 10]
+    elif n:
+        out += _ONES[n]
+    return out
+
+
+def _num_to_words(n):
+    n = int(n)
+    if n == 0:
+        return "zero"
+    parts = []
+    for value, name in _SCALE:
+        if n >= value:
+            parts.append(_under_1000(n // value) + " " + name)
+            n %= value
+    if n:
+        parts.append(_under_1000(n))
+    return " ".join(parts).strip()
+
+
+def _amount_words(amount, currency):
+    try:
+        amount = float(amount or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    whole = int(amount)
+    frac = int(round((amount - whole) * 100))
+    cur_name, sub_name = _CUR_NAMES.get(currency, (currency or "", "cents"))
+    s = _num_to_words(whole).capitalize() + " " + cur_name
+    if frac:
+        s += " and " + _num_to_words(frac) + " " + sub_name
+    return s + " only"
+
+
 def _clip(c, s, font, size, max_w):
     """Truncate a string with an ellipsis so it fits max_w points."""
     from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -262,6 +316,55 @@ def _table_borders(c, x0, y_bottom, y_top, total_w, widths):
         c.line(xx, y_bottom, xx, y_top)
 
 
+def _totals_block(c, w, cm, y, pr, cur):
+    """Right-aligned Subtotal / VAT / Grand Total box + amount-in-words line."""
+    subtotal = 0.0
+    try:
+        subtotal = float(pr.get("total") or 0)
+    except (TypeError, ValueError):
+        pass
+    try:
+        rate = float(pr.get("tax_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    tax = round(subtotal * rate / 100.0, 2)
+    grand = round(subtotal + tax, 2)
+
+    lines = [("Subtotal", subtotal)]
+    if rate:
+        lines.append((f"VAT ({rate:g}%)", tax))
+    bx_w = 7.0 * cm
+    bx = w - 1.5 * cm - bx_w
+    row_h = 0.5 * cm
+    bx_h = row_h * len(lines) + 0.75 * cm
+    c.setStrokeColorRGB(0.85, 0.85, 0.87)
+    c.setLineWidth(0.6)
+    c.roundRect(bx, y - bx_h, bx_w, bx_h, 4, stroke=1, fill=0)
+    yy = y - 0.45 * cm
+    c.setFont("Helvetica", 9)
+    for label, val in lines:
+        c.setFillColorRGB(0.35, 0.35, 0.35)
+        c.drawString(bx + 0.3 * cm, yy, label)
+        c.setFillColorRGB(0.1, 0.1, 0.1)
+        c.drawRightString(bx + bx_w - 0.3 * cm, yy, f"{_fmt(val)} {cur}")
+        yy -= row_h
+    # grand total band
+    c.setFillColorRGB(0.93, 0.11, 0.14)
+    c.roundRect(bx, y - bx_h, bx_w, 0.7 * cm, 4, stroke=0, fill=1)
+    c.setFillColorRGB(1, 1, 1)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(bx + 0.3 * cm, y - bx_h + 0.24 * cm, "GRAND TOTAL")
+    c.drawRightString(bx + bx_w - 0.3 * cm, y - bx_h + 0.24 * cm, f"{_fmt(grand)} {cur}")
+    c.setFillColorRGB(0, 0, 0)
+    y -= bx_h + 0.5 * cm
+    # amount in words
+    c.setFont("Helvetica-Oblique", 8.5)
+    c.setFillColorRGB(0.3, 0.3, 0.3)
+    c.drawString(1.5 * cm, y, "Amount in words: " + _amount_words(grand, pr.get("currency")))
+    c.setFillColorRGB(0, 0, 0)
+    return y - 0.7 * cm
+
+
 # --------------------------------------------------------------------------
 # Purchase Request
 # --------------------------------------------------------------------------
@@ -305,21 +408,7 @@ def pr_pdf(bundle):
         (2.2, "UNIT PRICE", "r"), (2.4, "EST. COST", "r")], rows, h, pn,
         title="Line items", wrap_col=1)
 
-    # totals box (right-aligned)
-    bx_w, bx_h = 6.2 * cm, 0.85 * cm
-    bx = w - 1.5 * cm - bx_w
-    c.setFillColorRGB(0.97, 0.94, 0.94)
-    c.setStrokeColorRGB(0.93, 0.11, 0.14)
-    c.setLineWidth(0.8)
-    c.roundRect(bx, y - bx_h, bx_w, bx_h, 4, stroke=1, fill=1)
-    c.setFillColorRGB(0.1, 0.1, 0.1)
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(bx + 0.3 * cm, y - 0.55 * cm, "TOTAL")
-    c.setFont("Helvetica-Bold", 12)
-    c.setFillColorRGB(0.8, 0.06, 0.14)
-    c.drawRightString(bx + bx_w - 0.3 * cm, y - 0.58 * cm, f"{_fmt(pr.get('total'))} {cur}")
-    c.setFillColorRGB(0, 0, 0)
-    y -= bx_h + 0.7 * cm
+    y = _totals_block(c, w, cm, y, pr, cur)
 
     # signatures
     _signature_grid(c, w, h, cm, y, pr, steps, pn)
@@ -426,16 +515,7 @@ def po_pdf(bundle):
         (1.6, "QTY", "r"), (2.4, "UNIT PRICE", "r"), (2.6, "TOTAL", "r")],
         rows, h, pn, title="Order lines", wrap_col=1)
 
-    bx_w, bx_h = 6.2 * cm, 0.9 * cm
-    bx = w - 1.5 * cm - bx_w
-    c.setFillColorRGB(0.11, 0.12, 0.16)
-    c.roundRect(bx, y - bx_h, bx_w, bx_h, 4, stroke=0, fill=1)
-    c.setFillColorRGB(1, 1, 1)
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(bx + 0.3 * cm, y - 0.58 * cm, "GRAND TOTAL")
-    c.drawRightString(bx + bx_w - 0.3 * cm, y - 0.58 * cm, f"{_fmt(pr.get('total'))} {cur}")
-    c.setFillColorRGB(0, 0, 0)
-    y -= bx_h + 1.0 * cm
+    y = _totals_block(c, w, cm, y, pr, cur)
 
     c.setFont("Helvetica", 8.5)
     c.setFillColorRGB(0.4, 0.4, 0.4)

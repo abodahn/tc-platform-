@@ -673,6 +673,14 @@ def search():
                 if fuzzy(f"{t['ticket_no']} {t['machine_code']} {t['description']}"):
                     results.append({"type": "ticket", "name": f"{t['ticket_no']} · {t['machine_code']}",
                                     "sub": "Ticket", "url": url_for("maintenance.ticket_detail", tid=t["id"])})
+        if user_has_permission(user, "proc_view"):
+            for pr in conn.execute(
+                    "SELECT id,pr_no,title,status FROM pr_requests WHERE is_active=1 "
+                    "ORDER BY id DESC LIMIT 300"):
+                if fuzzy(f"{pr['pr_no']} {pr['title']}"):
+                    results.append({"type": "pr", "name": f"{pr['pr_no']} · {pr['title'] or ''}",
+                                    "sub": "Purchase request",
+                                    "url": url_for("approvals.detail", pr_id=pr["id"])})
         if has_permission(user["role"], "open_module"):
             for p in conn.execute("SELECT name,area FROM production_lines"):
                 if fuzzy(f"{p['name']} {p['area']}"):

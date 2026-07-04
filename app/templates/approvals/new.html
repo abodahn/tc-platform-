@@ -4,13 +4,14 @@
 
 <div class="page-head">
   <div>
-    <h1 data-i18n="proc.new_title">New Purchase Request</h1>
+    {% if editing %}<h1>{{ editing.pr_no }} · <span data-i18n="proc.edit_title">Edit request</span></h1>
+    {% else %}<h1 data-i18n="proc.new_title">New Purchase Request</h1>{% endif %}
     <div class="sub" data-i18n="proc.new_sub">Fill the request — the approval ladder is chosen automatically from the total.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.index') }}" data-i18n="proc.cancel">Cancel</a>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.detail', pr_id=editing.id) if editing else url_for('approvals.index') }}" data-i18n="proc.cancel">Cancel</a>
 </div>
 
-<form method="post" action="{{ url_for('approvals.create') }}" id="prForm">
+<form method="post" action="{{ url_for('approvals.edit_save', pr_id=editing.id) if editing else url_for('approvals.create') }}" id="prForm">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
 
   <div class="panel">
@@ -26,14 +27,16 @@
         <div class="field"><label data-i18n="proc.date_l">Request date</label>
           <input type="date" name="request_date" value="{{ '' }}"></div>
         <div class="field"><label data-i18n="proc.vendor_l">Vendor</label>
-          <input name="vendor" list="vendorList" autocomplete="off" placeholder="Supplier">
+          <input name="vendor" list="vendorList" autocomplete="off" value="{{ prefill.vendor or '' }}" placeholder="Supplier">
           <datalist id="vendorList">{% for v in vendors %}<option value="{{ v.name }}">{% endfor %}</datalist></div>
         <div class="field"><label data-i18n="proc.currency_l">Currency</label>
-          <select name="currency">{% for c in currencies %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></div>
+          <select name="currency">{% for c in currencies %}<option value="{{ c }}" {{ 'selected' if prefill.currency==c }}>{{ c }}</option>{% endfor %}</select></div>
         <div class="field"><label data-i18n="proc.payment_l">Payment condition</label>
-          <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select></div>
+          <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}" {{ 'selected' if prefill.payment_condition==p }}>{{ p }}</option>{% endfor %}</select></div>
         <div class="field"><label data-i18n="proc.delivery_l">Delivery condition</label>
-          <input name="delivery_condition" autocomplete="off" placeholder="e.g. T&C Warehouse"></div>
+          <input name="delivery_condition" autocomplete="off" value="{{ prefill.delivery_condition or '' }}" placeholder="e.g. T&C Warehouse"></div>
+        <div class="field"><label data-i18n="proc.tax_l">VAT / tax rate (%)</label>
+          <input name="tax_rate" type="number" min="0" step="any" value="{{ prefill.tax_rate or 0 }}" placeholder="e.g. 14"></div>
       </div>
     </div>
   </div>
@@ -139,15 +142,30 @@
   var curSel = document.querySelector('select[name=currency]');
   curSel.addEventListener('change', function(){ document.getElementById('curLabel').textContent = curSel.value; });
 
-  addRow(); // start with one row
+  function fillRow(r, it){
+    r.querySelector('[name="item[]"]').value = it.item || '';
+    r.querySelector('[name="description[]"]').value = it.description || '';
+    if (it.unit) r.querySelector('[name="unit[]"]').value = it.unit;
+    r.querySelector('[name="qty[]"]').value = (it.qty != null ? it.qty : 1);
+    r.querySelector('[name="current_stock[]"]').value = (it.current_stock != null ? it.current_stock : 0);
+    r.querySelector('[name="unit_price[]"]').value = (it.unit_price != null ? it.unit_price : 0);
+  }
 
-  // prefill the first line item from a maintenance ticket, if provided
-  var PREFILL = {{ prefill|tojson }};
-  if (PREFILL && (PREFILL.item || PREFILL.description)) {
-    var r0 = rows.querySelector('.li-row');
-    if (r0) {
-      if (PREFILL.item) r0.querySelector('[name="item[]"]').value = PREFILL.item;
-      if (PREFILL.description) r0.querySelector('[name="description[]"]').value = PREFILL.description;
+  // Editing an existing draft: render all its line items.
+  var EDIT_ITEMS = {{ (edit_items or [])|tojson }};
+  if (EDIT_ITEMS && EDIT_ITEMS.length) {
+    EDIT_ITEMS.forEach(function(it){ addRow(); fillRow(rows.lastElementChild, it); });
+    recalc();
+  } else {
+    addRow(); // start with one blank row
+    // prefill the first line item from a maintenance ticket, if provided
+    var PREFILL = {{ prefill|tojson }};
+    if (PREFILL && (PREFILL.item || PREFILL.description)) {
+      var r0 = rows.querySelector('.li-row');
+      if (r0) {
+        if (PREFILL.item) r0.querySelector('[name="item[]"]').value = PREFILL.item;
+        if (PREFILL.description) r0.querySelector('[name="description[]"]').value = PREFILL.description;
+      }
     }
   }
 })();

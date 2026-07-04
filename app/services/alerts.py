@@ -54,8 +54,9 @@ def send_email(subject: str, body: str) -> bool:
         return False
 
 
-def send_email_to(recipients, subject: str, body: str) -> bool:
-    """Send a plain-text email to specific recipients (e.g. approvers). No-op when
+def send_email_to(recipients, subject: str, body: str, attachments=None) -> bool:
+    """Send a plain-text email to specific recipients (e.g. approvers or a vendor),
+    optionally with attachments = [(filename, bytes, mimetype), ...]. No-op when
     SMTP isn't configured or there are no valid recipients."""
     recips = [r for r in (recipients or []) if r and "@" in r]
     if not (Config.SMTP_HOST and recips):
@@ -67,6 +68,14 @@ def send_email_to(recipients, subject: str, body: str) -> bool:
         msg["From"] = Config.SMTP_FROM
         msg["To"] = ", ".join(recips)
         msg.set_content(body)
+        for att in (attachments or []):
+            try:
+                fname, data, mime = att
+                maintype, _, subtype = (mime or "application/octet-stream").partition("/")
+                msg.add_attachment(data, maintype=maintype, subtype=subtype or "octet-stream",
+                                   filename=fname)
+            except Exception:
+                pass
         with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as s:
             if Config.SMTP_TLS:
                 s.starttls(context=ssl.create_default_context())

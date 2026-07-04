@@ -731,6 +731,10 @@
   var items = [], filtered = [], sel = 0, isOpen = false;
   function esc(s){ var d=document.createElement('div'); d.textContent=(s==null?'':String(s)); return d.innerHTML; }
 
+  var records = [], recSeq = 0, recTimer = null;
+  var RICON = { pr: "cart", ticket: "report", machine: "factory", spare: "boxes",
+                module: "apps", production: "factory" };
+
   function build() {
     items = [];
     document.querySelectorAll(".nav .nav-item[data-navkey]").forEach(function (a) {
@@ -745,9 +749,10 @@
   }
   function render() {
     var q = (input.value || "").toLowerCase().trim();
-    filtered = items.filter(function (it) {
+    var navHits = items.filter(function (it) {
       return !q || it.label.toLowerCase().indexOf(q) >= 0 || it.group.toLowerCase().indexOf(q) >= 0;
     });
+    filtered = navHits.concat(records);         // pages first, then records
     sel = 0;
     if (!filtered.length) { list.innerHTML = '<div class="cmdk-empty">No matches</div>'; return; }
     list.innerHTML = filtered.map(function (it, i) {
@@ -758,7 +763,21 @@
         + '</div>';
     }).join("");
   }
-  function open() { build(); input.value = ""; render(); modal.classList.add("open"); isOpen = true; setTimeout(function () { input.focus(); }, 30); }
+  function fetchRecords() {
+    var q = (input.value || "").trim();
+    if (q.length < 2) { records = []; render(); return; }
+    var mine = ++recSeq;
+    fetch("/search?q=" + encodeURIComponent(q), { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (mine !== recSeq) return;            // a newer query already fired
+        records = (d.results || []).filter(function (r) { return r.type !== "module"; })
+          .map(function (r) { return { label: r.name, href: r.url, group: r.sub || r.type,
+                                       icon: RICON[r.type] || "grid" }; });
+        render();
+      }).catch(function () {});
+  }
+  function open() { build(); input.value = ""; records = []; render(); modal.classList.add("open"); isOpen = true; setTimeout(function () { input.focus(); }, 30); }
   function close() { modal.classList.remove("open"); isOpen = false; }
   function go(i) { var it = filtered[i]; if (it) { close(); window.location.href = it.href; } }
   function move(d) {
@@ -775,7 +794,10 @@
     else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
     else if (e.key === "Enter") { e.preventDefault(); go(sel); }
   });
-  input.addEventListener("input", render);
+  input.addEventListener("input", function () {
+    render();                                   // instant nav filtering
+    clearTimeout(recTimer); recTimer = setTimeout(fetchRecords, 180);  // debounced records
+  });
   list.addEventListener("click", function (e) { var it = e.target.closest(".cmdk-item"); if (it) go(parseInt(it.getAttribute("data-i"), 10)); });
   modal.addEventListener("click", function (e) { if (e.target === modal) close(); });
 })();

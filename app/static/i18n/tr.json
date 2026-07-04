@@ -862,5 +862,16 @@
   "cmd.hint": "↑↓ gezin · ↵ aç · Esc kapat",
   "notif.title": "Bildirimler",
   "notif.email": "Bildirimlerimi e-postayla gönder",
-  "notif.email_hint": "Onay sırası size geldiğinde ve onay/retlerde e-posta alın. (Platform e-postasının yapılandırılması gerekir.)"
+  "notif.email_hint": "Onay sırası size geldiğinde ve onay/retlerde e-posta alın. (Platform e-postasının yapılandırılması gerekir.)",
+  "proc.edit_title": "Talebi düzenle",
+  "proc.tax_l": "KDV / vergi oranı (%)",
+  "proc.email_po": "PO'yu tedarikçiye e-postala",
+  "proc.po_sent": "Gönderildi ✓",
+  "proc.receipt_note": "Teslimat notu (isteğe bağlı)",
+  "proc.receive": "Teslimatı onayla",
+  "proc.received_ok": "Teslimat onaylandı.",
+  "proc.close": "Talebi kapat",
+  "proc.edit": "Düzenle",
+  "proc.subtotal": "Ara toplam",
+  "proc.grand_total": "Genel toplam"
 }

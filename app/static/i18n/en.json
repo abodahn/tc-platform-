@@ -862,5 +862,16 @@
   "cmd.hint": "↑↓ to navigate · ↵ to open · Esc to close",
   "notif.title": "Notifications",
   "notif.email": "Email me my notifications",
-  "notif.email_hint": "Get an email when it's your turn to approve, plus approvals/rejections. (Requires the platform email to be configured.)"
+  "notif.email_hint": "Get an email when it's your turn to approve, plus approvals/rejections. (Requires the platform email to be configured.)",
+  "proc.edit_title": "Edit request",
+  "proc.tax_l": "VAT / tax rate (%)",
+  "proc.email_po": "Email PO to vendor",
+  "proc.po_sent": "Sent ✓",
+  "proc.receipt_note": "Delivery note (optional)",
+  "proc.receive": "Confirm delivery",
+  "proc.received_ok": "Delivery confirmed.",
+  "proc.close": "Close request",
+  "proc.edit": "Edit",
+  "proc.subtotal": "Subtotal",
+  "proc.grand_total": "Grand total"
 }

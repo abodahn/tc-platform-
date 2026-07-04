@@ -134,16 +134,48 @@
 </div></div>
 {% endif %}
 
+{# PO issued -> email to vendor + confirm delivery #}
+{% if pr.status in ('approved','po_issued') and can_purchasing %}
+<div class="panel mt-4"><div class="panel-pad flex gap wrap center">
+  <form method="post" action="{{ url_for('approvals.email_po', pr_id=pr.id) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn btn-ghost btn-sm" type="submit"><svg class="ico"><use href="#i-bell"></use></svg><span data-i18n="proc.email_po">Email PO to vendor</span></button>
+  </form>
+  {% if pr.po_sent_at %}<span class="tag" data-i18n="proc.po_sent">Sent ✓</span>{% endif %}
+  {% if pr.status == 'po_issued' %}
+  <span style="flex:1"></span>
+  <form method="post" action="{{ url_for('approvals.receive', pr_id=pr.id) }}" class="flex gap center">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input name="notes" class="input" placeholder="Delivery note (optional)" data-i18n-ph="proc.receipt_note" style="min-width:180px">
+    <button class="btn btn-primary btn-sm" type="submit"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="proc.receive">Confirm delivery</span></button>
+  </form>
+  {% endif %}
+</div></div>
+{% endif %}
+
+{% if pr.status == 'received' and can_purchasing %}
+<div class="panel mt-4"><div class="panel-pad flex between center wrap gap">
+  <div><b data-i18n="proc.received_ok">Delivery confirmed.</b> <span class="muted">{{ (pr.received_at or '')[:16] }}{% if pr.receipt_notes %} · {{ pr.receipt_notes }}{% endif %}</span></div>
+  <form method="post" action="{{ url_for('approvals.close', pr_id=pr.id) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.close">Close request</button>
+  </form>
+</div></div>
+{% endif %}
+
 {% if pr.status in ('draft', 'rejected') and is_owner %}
 <div class="panel mt-4"><div class="panel-pad flex between center wrap gap">
   <div class="muted">
     {% if pr.status == 'rejected' %}<span data-i18n="proc.resubmit_hint">Address the feedback and resubmit — it restarts the approval cycle from the top.</span>
     {% else %}<span data-i18n="proc.draft_hint">This request is a draft — submit it to start the approval cycle.</span>{% endif %}
   </div>
-  <form method="post" action="{{ url_for('approvals.submit', pr_id=pr.id) }}">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button class="btn btn-primary" type="submit">{{ 'Resubmit' if pr.status == 'rejected' else 'Submit for approval' }}</button>
-  </form>
+  <div class="flex gap">
+    <a class="btn btn-ghost" href="{{ url_for('approvals.edit', pr_id=pr.id) }}" data-i18n="proc.edit">Edit</a>
+    <form method="post" action="{{ url_for('approvals.submit', pr_id=pr.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button class="btn btn-primary" type="submit">{{ 'Resubmit' if pr.status == 'rejected' else 'Submit for approval' }}</button>
+    </form>
+  </div>
 </div></div>
 {% endif %}
 
@@ -172,9 +204,19 @@
         {% endfor %}
         </tbody>
       </table>
-      <div class="total-bar mt-3">
-        <span data-i18n="proc.total">Total</span>
-        <span class="tval">{{ '{:,.2f}'.format(pr.total or 0) }} {{ pr.currency }}</span>
+      <div class="mt-3" style="max-width:340px;margin-inline-start:auto">
+        <div class="flex between" style="padding:4px 0;font-size:13px">
+          <span class="muted" data-i18n="proc.subtotal">Subtotal</span>
+          <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.subtotal) }} {{ pr.currency }}</span></div>
+        {% if amounts.tax_rate %}
+        <div class="flex between" style="padding:4px 0;font-size:13px">
+          <span class="muted">VAT ({{ '%g'|format(amounts.tax_rate) }}%)</span>
+          <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.tax) }} {{ pr.currency }}</span></div>
+        {% endif %}
+        <div class="total-bar mt-2">
+          <span data-i18n="proc.grand_total">Grand total</span>
+          <span class="tval">{{ '{:,.2f}'.format(amounts.grand) }} {{ pr.currency }}</span>
+        </div>
       </div>
       <div class="flex gap wrap mt-3" style="font-size:12.5px;color:var(--muted)">
         {% if pr.department %}<span class="tag">{{ pr.department }}</span>{% endif %}
