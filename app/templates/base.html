@@ -41,7 +41,15 @@
         <span data-i18n="brand.tagline">Operations Platform</span>
       </div>
     </a>
+    <div class="nav-filter">
+      <svg class="ico"><use href="#i-search"></use></svg>
+      <input id="navFilter" autocomplete="off" data-i18n-ph="nav.filter" placeholder="Filter menu…">
+    </div>
     <nav class="nav">
+      <div class="nav-section nav-pinned" id="navPinned" style="display:none">
+        <div class="nav-label static"><span data-i18n="nav.pinned">Pinned</span></div>
+        <div class="nav-items" id="navPinnedItems"></div>
+      </div>
       {% for section in nav %}
       {% set has_active = section['items']|selectattr('0','equalto',active)|list|length > 0 %}
       <div class="nav-section" data-section="{{ section.section }}">
@@ -56,9 +64,13 @@
           {% else %}
             {% set href = url_for(endpoint) %}
           {% endif %}
-          <a class="nav-item {{ 'active' if active == key }}" href="{{ href }}" data-i18n-title="{{ i18n }}">
+          <a class="nav-item {{ 'active' if active == key }}" href="{{ href }}"
+             data-i18n-title="{{ i18n }}" data-navkey="{{ key }}" data-navicon="{{ icon }}">
             <svg class="ico"><use href="#i-{{ icon }}"></use></svg>
             <span class="lbl" data-i18n="{{ i18n }}">{{ i18n }}</span>
+            <button type="button" class="nav-star" data-star title="Pin" aria-label="Pin">
+              <svg class="ico"><use href="#i-star"></use></svg>
+            </button>
           </a>
         {% endfor %}
         </div>
@@ -168,6 +180,21 @@
     </main>
   </div>
 </div>
+
+{# ---------------- Command palette (Ctrl/⌘-K) ---------------- #}
+<div id="cmdk" class="cmdk" aria-hidden="true">
+  <div class="cmdk-box" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdk-input">
+      <svg class="ico"><use href="#i-search"></use></svg>
+      <input id="cmdkInput" autocomplete="off" spellcheck="false"
+             data-i18n-ph="cmd.placeholder" placeholder="Jump to a module or page…">
+      <kbd class="cmdk-esc">Esc</kbd>
+    </div>
+    <div class="cmdk-list" id="cmdkList" role="listbox"></div>
+    <div class="cmdk-foot"><span data-i18n="cmd.hint">↑↓ to navigate · ↵ to open · Esc to close</span></div>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 <script>
   if ("serviceWorker" in navigator) {

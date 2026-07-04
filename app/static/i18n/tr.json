@@ -849,5 +849,18 @@
   "role_saved": "Rol kaydedildi.",
   "role_builtin_locked": "Yerleşik roller silinemez; bunun yerine düzenleyin.",
   "role_in_use": "Silmeden önce bu roldeki kullanıcıları yeniden atayın.",
-  "role_deleted": "Rol silindi."
+  "role_deleted": "Rol silindi.",
+  "admin.perm_search": "İzinleri filtrele…",
+  "admin.extra_perms": "Ek izinler (rolün üstünde)",
+  "admin.extra_perms_hint": "Bu kullanıcıya rolünün ötesinde izinler verin.",
+  "admin.audit_search": "Kullanıcı, işlem veya ayrıntı ara…",
+  "admin.all_actions": "Tüm işlemler",
+  "admin.entries": "kayıt",
+  "nav.filter": "Menüyü filtrele…",
+  "nav.pinned": "Sabitlenenler",
+  "cmd.placeholder": "Bir modüle veya sayfaya atla…",
+  "cmd.hint": "↑↓ gezin · ↵ aç · Esc kapat",
+  "notif.title": "Bildirimler",
+  "notif.email": "Bildirimlerimi e-postayla gönder",
+  "notif.email_hint": "Onay sırası size geldiğinde ve onay/retlerde e-posta alın. (Platform e-postasının yapılandırılması gerekir.)"
 }

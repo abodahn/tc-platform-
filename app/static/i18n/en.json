@@ -849,5 +849,18 @@
   "role_saved": "Role saved.",
   "role_builtin_locked": "Built-in roles can't be deleted; edit it to override instead.",
   "role_in_use": "Reassign the users on this role before deleting it.",
-  "role_deleted": "Role deleted."
+  "role_deleted": "Role deleted.",
+  "admin.perm_search": "Filter permissions…",
+  "admin.extra_perms": "Extra permissions (on top of the role)",
+  "admin.extra_perms_hint": "Grant this specific user permissions beyond what their role gives.",
+  "admin.audit_search": "Search user, action or detail…",
+  "admin.all_actions": "All actions",
+  "admin.entries": "entries",
+  "nav.filter": "Filter menu…",
+  "nav.pinned": "Pinned",
+  "cmd.placeholder": "Jump to a module or page…",
+  "cmd.hint": "↑↓ to navigate · ↵ to open · Esc to close",
+  "notif.title": "Notifications",
+  "notif.email": "Email me my notifications",
+  "notif.email_hint": "Get an email when it's your turn to approve, plus approvals/rejections. (Requires the platform email to be configured.)"
 }

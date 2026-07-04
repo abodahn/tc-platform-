@@ -161,6 +161,31 @@ def all_role_choices():
     return [(k, v["label"]) for k, v in effective_roles().items()]
 
 
+# --- Per-user permissions (role perms + individual grants) -----------------
+def user_permissions(user):
+    """Effective permission set for a user = their role's perms PLUS any extra
+    permissions granted directly on the user (users.extra_perms, a JSON array).
+    Returns a set which may contain '*'."""
+    if not user:
+        return set()
+    role = effective_roles().get(user.get("role"), {})
+    perms = set(role.get("perms", []))
+    extra = user.get("extra_perms")
+    if extra:
+        try:
+            e = _json.loads(extra) if isinstance(extra, str) else extra
+            if isinstance(e, list):
+                perms |= {p for p in e if isinstance(p, str)}
+        except Exception:
+            pass
+    return perms
+
+
+def user_has_permission(user, permission):
+    perms = user_permissions(user)
+    return "*" in perms or permission in perms
+
+
 # --- Merge in additional module RBAC (Maintenance, Procurement) ------------
 def _merge_module_rbac(module_perms, module_role_perms, module_role_labels):
     """Fold a module's permissions + role grants into the platform catalogue.
@@ -221,18 +246,49 @@ PERMISSION_LABELS = {
 }
 
 
+PERMISSION_DESC = {
+    "view_dashboard": "See the command-center dashboard.",
+    "open_module": "Open the integrated systems and modules.",
+    "manage_users": "Create/edit users, roles and permissions.",
+    "manage_settings": "Change platform settings.",
+    "view_reports": "View reports.",
+    "export_reports": "Export reports to CSV/PDF.",
+    "view_system_health": "See system health & monitoring.",
+    "manage_integrations": "Edit integrated-system URLs and settings.",
+    "access_admin": "Enter the Admin Center.",
+    "manage_production": "Manage production lines and data.",
+    "maint_view": "See maintenance dashboards and lists.",
+    "maint_ticket_create": "Raise maintenance tickets.",
+    "maint_technician": "Do diagnosis, request parts, repair updates.",
+    "maint_manage": "Review, assign, close tickets; manage PM.",
+    "maint_approve": "Act in the maintenance approvals center.",
+    "maint_store": "Inventory: issue/receive/adjust stock.",
+    "maint_admin": "Maintenance settings, master data, matrix.",
+    "proc_view": "See procurement requests and lists.",
+    "proc_create": "Raise purchase requests.",
+    "proc_approve": "Approve/reject a stage you're eligible for.",
+    "proc_purchasing": "Issue POs, manage vendors and quotes.",
+    "proc_admin": "Act on any stage; manage budgets/matrix.",
+}
+
+
 def permission_label(p):
     return PERMISSION_LABELS.get(p, p.replace("_", " ").capitalize())
 
 
+def permission_desc(p):
+    return PERMISSION_DESC.get(p, "")
+
+
 def permission_catalogue():
-    """Permissions grouped for the roles editor: {group: [(key, label), ...]}."""
+    """Permissions grouped for the editor: {group: [(key, label, desc), ...]}."""
     groups = {"Platform": [], "Maintenance": [], "Procurement": []}
     for p in PERMISSIONS:
+        entry = (p, permission_label(p), permission_desc(p))
         if p.startswith("maint_"):
-            groups["Maintenance"].append((p, permission_label(p)))
+            groups["Maintenance"].append(entry)
         elif p.startswith("proc_"):
-            groups["Procurement"].append((p, permission_label(p)))
+            groups["Procurement"].append(entry)
         else:
-            groups["Platform"].append((p, permission_label(p)))
+            groups["Platform"].append(entry)
     return groups

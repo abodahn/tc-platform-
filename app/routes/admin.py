@@ -27,7 +27,9 @@ def index():
     try:
         users = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
         systems = conn.execute("SELECT * FROM systems ORDER BY sort_order").fetchall()
-        audit = conn.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 50").fetchall()
+        audit = conn.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 300").fetchall()
+        audit_actions = [r["action"] for r in conn.execute(
+            "SELECT DISTINCT action FROM audit_logs ORDER BY action").fetchall() if r["action"]]
         counts = {
             "users": conn.execute("SELECT COUNT(*) c FROM users").fetchone()["c"],
             "systems": conn.execute("SELECT COUNT(*) c FROM systems").fetchone()["c"],
@@ -51,7 +53,8 @@ def index():
         })
     return render_template("admin.html", users=users, systems=systems, audit=audit,
                            roles=all_role_choices(), counts=counts, active="admin",
-                           roles_list=roles_list, perm_groups=permission_catalogue())
+                           roles_list=roles_list, perm_groups=permission_catalogue(),
+                           audit_actions=audit_actions)
 
 
 @bp.route("/roles/save", methods=["POST"])
@@ -160,7 +163,11 @@ def edit_user(uid):
     email = (f.get("email") or "").strip()
     role = f.get("role") or "normal_user"
     new_password = f.get("password") or ""
-    if role not in ROLES:
+    # extra per-user permissions (granted on top of the role)
+    extra = [p for p in f.getlist("perms[]") if p in PERMISSIONS]
+    extra_json = json.dumps(extra)
+    from app.security import effective_roles as _eff
+    if role not in _eff():
         flash("user_invalid", "error")
         return redirect(url_for("admin.index") + "#users")
     conn = get_db()
@@ -168,8 +175,11 @@ def edit_user(uid):
         row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
         if not row:
             abort(404)
-        # Don't let the current admin strip their own admin access and get locked out.
-        if row["username"] == current_user()["username"] and not has_permission(role, "access_admin"):
+        # Don't let the current admin strip their own admin access and get locked out
+        # (consider both the role and any extra per-user grants).
+        grants_admin = (has_permission(role, "access_admin")
+                        or "access_admin" in extra or "*" in extra)
+        if row["username"] == current_user()["username"] and not grants_admin:
             flash("cannot_demote_self", "error")
             return redirect(url_for("admin.index") + "#users")
         if new_password:
@@ -178,15 +188,15 @@ def edit_user(uid):
                 flash(msg, "error")
                 return redirect(url_for("admin.index") + "#users")
             conn.execute(
-                "UPDATE users SET full_name=?, email=?, role=?, password_hash=? WHERE id=?",
-                (full_name, email, role, generate_password_hash(new_password), uid))
+                "UPDATE users SET full_name=?, email=?, role=?, extra_perms=?, password_hash=? WHERE id=?",
+                (full_name, email, role, extra_json, generate_password_hash(new_password), uid))
         else:
-            conn.execute("UPDATE users SET full_name=?, email=?, role=? WHERE id=?",
-                         (full_name, email, role, uid))
+            conn.execute("UPDATE users SET full_name=?, email=?, role=?, extra_perms=? WHERE id=?",
+                         (full_name, email, role, extra_json, uid))
         conn.commit()
         log_audit(current_user()["username"], "user_edit",
-                  f"Edited {row['username']}: name={full_name}, role={role}"
-                  + (", password reset" if new_password else ""),
+                  f"Edited {row['username']}: name={full_name}, role={role}, "
+                  f"+{len(extra)} extra perms" + (", password reset" if new_password else ""),
                   request.remote_addr or "")
         flash("user_saved", "success")
     finally:

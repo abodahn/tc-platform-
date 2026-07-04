@@ -17,7 +17,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from config import Config
 from app.db import get_db, log_audit, utcnow
 from app.auth import login_required, permission_required, current_user, user_can
-from app.security import has_permission, role_label, ROLES, validate_password
+from app.security import (has_permission, role_label, ROLES, validate_password,
+                          user_has_permission)
 from app.navigation import NAV
 from app.services import health as health_svc
 from app.services import seed_content as sc
@@ -87,7 +88,7 @@ def inject_globals():
         notifs, unread = _unread_notifications(user["username"])
         for section in NAV:
             items = [it for it in section["items"]
-                     if has_permission(user["role"], it[4])]
+                     if user_has_permission(user, it[4])]
             if items:
                 visible_nav.append({"section": section["section"], "items": items})
     return {
@@ -469,6 +470,24 @@ def quick_signature():
         conn.close()
     log_audit(user["username"], "signature_quick", "", request.remote_addr or "")
     return jsonify(ok=True, png=png, name=name)
+
+
+@bp.route("/profile/notifications", methods=["POST"])
+@login_required
+def save_notif_prefs():
+    """Save the current user's notification preferences (currently: email on/off)."""
+    import json as _json
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+    prefs = {"email": bool(data.get("email", True))}
+    conn = get_db()
+    try:
+        conn.execute("UPDATE users SET notif_prefs=? WHERE id=?",
+                     (_json.dumps(prefs), user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify(ok=True, prefs=prefs)
 
 
 @bp.route("/profile/signature/clear", methods=["POST"])

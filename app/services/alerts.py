@@ -54,6 +54,31 @@ def send_email(subject: str, body: str) -> bool:
         return False
 
 
+def send_email_to(recipients, subject: str, body: str) -> bool:
+    """Send a plain-text email to specific recipients (e.g. approvers). No-op when
+    SMTP isn't configured or there are no valid recipients."""
+    recips = [r for r in (recipients or []) if r and "@" in r]
+    if not (Config.SMTP_HOST and recips):
+        log.info("EMAIL (skipped — not configured / no recipients): %s", subject)
+        return False
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = Config.SMTP_FROM
+        msg["To"] = ", ".join(recips)
+        msg.set_content(body)
+        with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as s:
+            if Config.SMTP_TLS:
+                s.starttls(context=ssl.create_default_context())
+            if Config.SMTP_USER:
+                s.login(Config.SMTP_USER, Config.SMTP_PASS)
+            s.send_message(msg)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("send_email_to failed: %s", exc)
+        return False
+
+
 def post_webhook(payload: dict) -> bool:
     """POST a JSON payload to the configured webhook (WhatsApp/Slack/Teams/n8n)."""
     if not Config.ALERT_WEBHOOK_URL:

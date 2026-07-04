@@ -6,7 +6,7 @@ from functools import wraps
 from flask import session, redirect, url_for, request, abort, g
 
 from app.db import get_db
-from app.security import has_permission, role_label
+from app.security import has_permission, role_label, user_has_permission
 
 
 def current_user():
@@ -42,7 +42,7 @@ def permission_required(permission):
             user = current_user()
             if not user:
                 return redirect(url_for("auth.login", next=request.path))
-            if not has_permission(user["role"], permission):
+            if not user_has_permission(user, permission):
                 abort(403)
             return view(*args, **kwargs)
         return wrapped
@@ -51,7 +51,7 @@ def permission_required(permission):
 
 def user_can(permission):
     user = current_user()
-    return bool(user) and has_permission(user["role"], permission)
+    return bool(user) and user_has_permission(user, permission)
 
 
 def user_role_label():

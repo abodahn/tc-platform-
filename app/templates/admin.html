@@ -1,5 +1,30 @@
 {% extends "base.html" %}
 {% block title %}Admin Center{% endblock %}
+
+{% macro perm_picker(perm_groups) %}
+<div data-perm-picker>
+  <input type="search" class="input js-perm-search" autocomplete="off"
+         placeholder="Filter permissions…" data-i18n-ph="admin.perm_search" style="margin-bottom:8px">
+  <div style="max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:10px 12px">
+    {% for group, perms in perm_groups.items() %}
+    <div class="js-perm-group" style="margin:{{ '0' if loop.first else '10px' }} 0 0">
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;padding:4px 0;cursor:pointer">
+        <input type="checkbox" class="js-group-all" style="width:auto;height:auto"> {{ group }}
+      </label>
+      {% for pkey, plabel, pdesc in perms %}
+      <label class="js-perm-item" data-text="{{ (plabel ~ ' ' ~ pdesc)|lower }}"
+             style="display:flex;gap:9px;padding:5px 0 5px 16px;cursor:pointer;align-items:flex-start">
+        <input type="checkbox" name="perms[]" value="{{ pkey }}" class="js-perm" style="width:auto;height:auto;margin-top:2px">
+        <span style="line-height:1.3"><span style="font-weight:600">{{ plabel }}</span>
+          {% if pdesc %}<br><span class="muted" style="font-size:11.5px">{{ pdesc }}</span>{% endif %}</span>
+      </label>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endmacro %}
+
 {% block content %}
 
 <div class="page-head">
@@ -71,7 +96,8 @@
                 <button type="button" class="btn btn-ghost btn-sm" data-edit-user
                         data-id="{{ u.id }}" data-username="{{ u.username }}"
                         data-name="{{ u.full_name or '' }}" data-email="{{ u.email or '' }}"
-                        data-role="{{ u.role }}" data-i18n="admin.edit">Edit</button>
+                        data-role="{{ u.role }}" data-extra='{{ u.extra_perms or "[]" }}'
+                        data-i18n="admin.edit">Edit</button>
                 <form method="post" action="{{ url_for('admin.toggle_user', uid=u.id) }}" style="display:inline">
                   <button class="btn btn-ghost btn-sm" type="submit" data-i18n="{{ 'admin.disable' if u.is_active else 'admin.enable' }}">{{ 'Disable' if u.is_active else 'Enable' }}</button>
                 </form>
@@ -98,7 +124,12 @@
         <select name="role" id="edRole">{% for k, lbl in roles %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></div>
       <div class="field"><label data-i18n="admin.reset_pw">Reset password (optional)</label>
         <input name="password" id="edPass" type="password" autocomplete="new-password" data-i18n-ph="admin.reset_pw_ph" placeholder="Leave blank to keep current"></div>
-      <div class="flex gap" style="justify-content:flex-end;margin-top:6px">
+      <details class="mt-2">
+        <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="admin.extra_perms">Extra permissions (on top of the role)</summary>
+        <p class="muted" style="font-size:12px;margin:6px 0" data-i18n="admin.extra_perms_hint">Grant this specific user permissions beyond what their role gives.</p>
+        {{ perm_picker(perm_groups) }}
+      </details>
+      <div class="flex gap" style="justify-content:flex-end;margin-top:12px">
         <button type="button" class="btn btn-ghost" id="edCancel" data-i18n="admin.cancel">Cancel</button>
         <button type="submit" class="btn btn-primary" data-i18n="admin.save_changes">Save changes</button>
       </div>
@@ -168,16 +199,7 @@
           <input name="label" id="rlLabel" autocomplete="off" required></div>
       </div>
       <div class="muted" style="font-size:12px;margin:6px 0 4px" data-i18n="admin.perms">Permissions</div>
-      <div style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:12px">
-        {% for group, perms in perm_groups.items() %}
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;margin:{{ '0' if loop.first else '14px' }} 0 6px">{{ group }}</div>
-        {% for pkey, plabel in perms %}
-        <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer">
-          <input type="checkbox" name="perms[]" value="{{ pkey }}" style="width:auto;height:auto"> <span>{{ plabel }}</span>
-        </label>
-        {% endfor %}
-        {% endfor %}
-      </div>
+      {{ perm_picker(perm_groups) }}
       <div class="flex gap" style="justify-content:flex-end;margin-top:12px">
         <button type="button" class="btn btn-ghost" id="rlCancel" data-i18n="admin.cancel">Cancel</button>
         <button type="submit" class="btn btn-primary" data-i18n="admin.save_role">Save role</button>
@@ -228,12 +250,27 @@
 {# ---------------- Audit ---------------- #}
 <section data-panel="audit" id="audit" style="display:none">
   <div class="panel">
+    <div class="panel-pad">
+      <div class="flex gap center wrap">
+        <div style="position:relative;flex:1;min-width:220px">
+          <input id="auditSearch" class="input" type="search" autocomplete="off"
+                 placeholder="Search user, action or detail…" data-i18n-ph="admin.audit_search" style="width:100%">
+        </div>
+        <select id="auditAction" class="input" style="width:auto">
+          <option value="" data-i18n="admin.all_actions">All actions</option>
+          {% for act in audit_actions %}<option value="{{ act }}">{{ act }}</option>{% endfor %}
+        </select>
+        <span class="muted" style="font-size:12.5px"><span id="auditCount">{{ audit|length }}</span> <span data-i18n="admin.entries">entries</span></span>
+      </div>
+    </div>
+  </div>
+  <div class="panel mt-4">
     <div class="tbl-wrap">
       <table class="tbl">
         <thead><tr><th>ID</th><th data-i18n="admin.username">User</th><th>Action</th><th data-i18n="common.description">Detail</th><th>IP</th><th data-i18n="health.last_check">Time</th></tr></thead>
-        <tbody>
+        <tbody id="auditBody">
           {% for a in audit %}
-          <tr>
+          <tr data-audit data-text="{{ ((a.username or '') ~ ' ' ~ (a.action or '') ~ ' ' ~ (a.detail or ''))|lower }}" data-action="{{ a.action }}">
             <td>{{ a.id }}</td><td><b>{{ a.username }}</b></td>
             <td><span class="tag">{{ a.action }}</span></td>
             <td>{{ a.detail }}</td><td class="muted">{{ a.ip }}</td><td class="muted">{{ a.created_at }}</td>
@@ -282,6 +319,7 @@
         document.getElementById('rlKeyLabel').textContent = 'new';
         keyEl.value = ''; keyEl.readOnly = false; labelEl.value = '';
       }
+      if (window.TCPerms) window.TCPerms.syncGroups(form);
       if(dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','');
     }
     document.querySelectorAll('[data-edit-role]').forEach(btn => btn.addEventListener('click', () => {
@@ -308,6 +346,10 @@
       document.getElementById('edEmail').value = b.dataset.email || '';
       document.getElementById('edRole').value = b.dataset.role || 'normal_user';
       document.getElementById('edPass').value = '';
+      // pre-check the user's extra permissions
+      let extra = []; try { extra = JSON.parse(b.getAttribute('data-extra') || '[]'); } catch(e){}
+      form.querySelectorAll('input.js-perm').forEach(p => { p.checked = extra.indexOf(p.value) >= 0; });
+      if (window.TCPerms) window.TCPerms.syncGroups(form);
       if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','');
     }
     document.querySelectorAll('[data-edit-user]').forEach(b => b.addEventListener('click', () => open(b)));
@@ -315,6 +357,60 @@
     document.getElementById('edCancel').addEventListener('click', close);
     document.getElementById('edX').addEventListener('click', close);
     dlg.addEventListener('click', e => { if (e.target === dlg) close(); }); // click backdrop
+  })();
+
+  // Permission picker: per-group select-all + live search. Works for every
+  // [data-perm-picker] (role editor + user extra-permissions).
+  window.TCPerms = (function(){
+    function groups(scope){ return (scope||document).querySelectorAll('[data-perm-picker] .js-perm-group'); }
+    function syncGroup(g){
+      var items = g.querySelectorAll('.js-perm');
+      var checked = [].filter.call(items, function(i){ return i.checked; }).length;
+      var all = g.querySelector('.js-group-all');
+      if(!all) return;
+      all.checked = checked === items.length && items.length > 0;
+      all.indeterminate = checked > 0 && checked < items.length;
+    }
+    function syncGroups(scope){ groups(scope).forEach(syncGroup); }
+    document.addEventListener('change', function(e){
+      if(e.target.classList.contains('js-group-all')){
+        var g = e.target.closest('.js-perm-group');
+        g.querySelectorAll('.js-perm').forEach(function(i){ i.checked = e.target.checked; });
+      } else if(e.target.classList.contains('js-perm')){
+        syncGroup(e.target.closest('.js-perm-group'));
+      }
+    });
+    document.addEventListener('input', function(e){
+      if(!e.target.classList.contains('js-perm-search')) return;
+      var picker = e.target.closest('[data-perm-picker]');
+      var q = (e.target.value||'').toLowerCase().trim();
+      picker.querySelectorAll('.js-perm-item').forEach(function(it){
+        it.style.display = (!q || it.getAttribute('data-text').indexOf(q) >= 0) ? '' : 'none';
+      });
+    });
+    return { syncGroups: syncGroups };
+  })();
+
+  // Audit log filter
+  (function(){
+    var search = document.getElementById('auditSearch');
+    var action = document.getElementById('auditAction');
+    var body = document.getElementById('auditBody');
+    var count = document.getElementById('auditCount');
+    if(!body) return;
+    function apply(){
+      var q = (search && search.value || '').toLowerCase().trim();
+      var a = (action && action.value) || '';
+      var n = 0;
+      body.querySelectorAll('[data-audit]').forEach(function(r){
+        var ok = (!q || r.getAttribute('data-text').indexOf(q) >= 0) && (!a || r.getAttribute('data-action') === a);
+        r.style.display = ok ? '' : 'none';
+        if(ok) n++;
+      });
+      if(count) count.textContent = n;
+    }
+    if(search) search.addEventListener('input', apply);
+    if(action) action.addEventListener('change', apply);
   })();
 </script>
 {% endblock %}

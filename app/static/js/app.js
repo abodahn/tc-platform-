@@ -650,3 +650,132 @@
     if (!e.defaultPrevented) start();
   }, true);
 })();
+
+// ---------------- Sidebar: filter + pinned favorites ----------------
+(function () {
+  var LS = "tc_nav_pins";
+  function load() { try { return JSON.parse(localStorage.getItem(LS) || "[]"); } catch (e) { return []; } }
+  function save(v) { try { localStorage.setItem(LS, JSON.stringify(v)); } catch (e) {} }
+  function esc(s){ var d=document.createElement('div'); d.textContent=(s==null?'':String(s)); return d.innerHTML; }
+
+  function itemHtml(p) {
+    return '<a class="nav-item pinned" href="' + esc(p.href) + '" data-navkey="' + esc(p.key) + '">'
+      + '<svg class="ico"><use href="#i-' + esc(p.icon) + '"></use></svg>'
+      + '<span class="lbl">' + esc(p.label) + '</span>'
+      + '<button type="button" class="nav-star" data-star title="Unpin" aria-label="Unpin"><svg class="ico"><use href="#i-star"></use></svg></button>'
+      + '</a>';
+  }
+  function render() {
+    var pins = load();
+    var cont = document.getElementById("navPinnedItems");
+    var wrap = document.getElementById("navPinned");
+    if (cont) cont.innerHTML = pins.map(itemHtml).join("");
+    if (wrap) wrap.style.display = pins.length ? "" : "none";
+    var keys = pins.map(function (p) { return p.key; });
+    document.querySelectorAll(".nav-item[data-navkey]").forEach(function (it) {
+      if (it.closest("#navPinned")) return;               // skip the clones
+      it.classList.toggle("pinned", keys.indexOf(it.getAttribute("data-navkey")) >= 0);
+    });
+  }
+
+  function toggle(item) {
+    var key = item.getAttribute("data-navkey");
+    if (!key) return;
+    var pins = load();
+    var i = pins.map(function (p) { return p.key; }).indexOf(key);
+    if (i >= 0) { pins.splice(i, 1); }
+    else {
+      var lbl = item.querySelector(".lbl");
+      pins.push({ key: key, href: item.getAttribute("href"),
+                  icon: item.getAttribute("data-navicon") || "grid",
+                  label: lbl ? lbl.textContent.trim() : key });
+    }
+    save(pins); render();
+  }
+
+  document.addEventListener("click", function (e) {
+    var star = e.target.closest && e.target.closest("[data-star]");
+    if (!star) return;
+    e.preventDefault(); e.stopPropagation();
+    toggle(star.closest(".nav-item"));
+  }, true);
+
+  var filter = document.getElementById("navFilter");
+  if (filter) filter.addEventListener("input", function () {
+    var q = (filter.value || "").toLowerCase().trim();
+    document.querySelectorAll(".nav-section").forEach(function (sec) {
+      if (sec.id === "navPinned") return;
+      var any = false;
+      sec.querySelectorAll(".nav-item").forEach(function (it) {
+        var lbl = it.querySelector(".lbl");
+        var show = !q || (lbl && lbl.textContent.toLowerCase().indexOf(q) >= 0);
+        it.classList.toggle("nav-hidden", !show);
+        if (show) any = true;
+      });
+      sec.style.display = any ? "" : "none";
+      if (q) sec.classList.remove("sec-collapsed");
+    });
+  });
+
+  // pinned labels come from resolved i18n text, so render after translation
+  if (document.readyState !== "loading") setTimeout(render, 0);
+  else document.addEventListener("DOMContentLoaded", function () { setTimeout(render, 0); });
+})();
+
+// ---------------- Command palette (Ctrl / Cmd-K) ----------------
+(function () {
+  var modal = document.getElementById("cmdk");
+  if (!modal) return;
+  var input = document.getElementById("cmdkInput");
+  var list = document.getElementById("cmdkList");
+  var items = [], filtered = [], sel = 0, isOpen = false;
+  function esc(s){ var d=document.createElement('div'); d.textContent=(s==null?'':String(s)); return d.innerHTML; }
+
+  function build() {
+    items = [];
+    document.querySelectorAll(".nav .nav-item[data-navkey]").forEach(function (a) {
+      if (a.closest("#navPinned")) return;
+      var lbl = a.querySelector(".lbl");
+      var sec = a.closest(".nav-section");
+      var gEl = sec && sec.querySelector(".nav-label span");
+      items.push({ label: lbl ? lbl.textContent.trim() : a.getAttribute("data-navkey"),
+                   href: a.getAttribute("href"), icon: a.getAttribute("data-navicon") || "grid",
+                   group: gEl ? gEl.textContent.trim() : "" });
+    });
+  }
+  function render() {
+    var q = (input.value || "").toLowerCase().trim();
+    filtered = items.filter(function (it) {
+      return !q || it.label.toLowerCase().indexOf(q) >= 0 || it.group.toLowerCase().indexOf(q) >= 0;
+    });
+    sel = 0;
+    if (!filtered.length) { list.innerHTML = '<div class="cmdk-empty">No matches</div>'; return; }
+    list.innerHTML = filtered.map(function (it, i) {
+      return '<div class="cmdk-item' + (i === 0 ? " sel" : "") + '" data-i="' + i + '">'
+        + '<svg class="ico"><use href="#i-' + esc(it.icon) + '"></use></svg>'
+        + '<span>' + esc(it.label) + '</span>'
+        + (it.group ? '<span class="k-group">' + esc(it.group) + '</span>' : '')
+        + '</div>';
+    }).join("");
+  }
+  function open() { build(); input.value = ""; render(); modal.classList.add("open"); isOpen = true; setTimeout(function () { input.focus(); }, 30); }
+  function close() { modal.classList.remove("open"); isOpen = false; }
+  function go(i) { var it = filtered[i]; if (it) { close(); window.location.href = it.href; } }
+  function move(d) {
+    var els = list.querySelectorAll(".cmdk-item"); if (!els.length) return;
+    if (els[sel]) els[sel].classList.remove("sel");
+    sel = (sel + d + els.length) % els.length;
+    els[sel].classList.add("sel"); els[sel].scrollIntoView({ block: "nearest" });
+  }
+  document.addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); isOpen ? close() : open(); return; }
+    if (!isOpen) return;
+    if (e.key === "Escape") { close(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+    else if (e.key === "Enter") { e.preventDefault(); go(sel); }
+  });
+  input.addEventListener("input", render);
+  list.addEventListener("click", function (e) { var it = e.target.closest(".cmdk-item"); if (it) go(parseInt(it.getAttribute("data-i"), 10)); });
+  modal.addEventListener("click", function (e) { if (e.target === modal) close(); });
+})();

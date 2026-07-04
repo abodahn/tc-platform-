@@ -181,6 +181,41 @@ a { color: inherit; text-decoration: none; }
   .sidebar, .nav-item, .nav-item::before, .nav-items, .sf-collapse .ico, .nav-label .chev { transition: none !important; }
 }
 
+/* ---- Nav filter + pinned favorites + star ---- */
+.nav-filter {
+  position: relative; margin: 10px 12px 2px; flex: 0 0 auto;
+}
+.nav-filter .ico { position: absolute; inset-inline-start: 10px; top: 50%; transform: translateY(-50%);
+  width: 15px; height: 15px; color: var(--sidebar-ink-soft); pointer-events: none; }
+.nav-filter input {
+  width: 100%; padding: 8px 10px 8px 32px; border-radius: 9px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+  color: #fff; font-family: inherit; font-size: 12.5px;
+}
+[dir="rtl"] .nav-filter input { padding: 8px 32px 8px 10px; }
+.nav-filter input::placeholder { color: var(--sidebar-ink-soft); }
+.nav-filter input:focus { outline: none; border-color: rgba(237,28,36,.5); background: rgba(255,255,255,.08); }
+.app.collapsed .nav-filter { display: none; }
+
+.nav-label.static { pointer-events: none; }
+.nav-pinned .nav-label { color: var(--tc-red-2); }
+
+.nav-item { padding-inline-end: 30px; }        /* room for the star */
+.nav-star {
+  position: absolute; inset-inline-end: 6px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; display: grid; place-items: center; border: 0; cursor: pointer;
+  background: transparent; color: var(--sidebar-ink-soft); border-radius: 6px;
+  opacity: 0; transition: opacity .15s, color .15s, background .15s;
+}
+.nav-star .ico { width: 15px; height: 15px; }
+.nav-item:hover .nav-star { opacity: .8; }
+.nav-star:hover { background: rgba(255,255,255,.1); color: #fff; }
+.nav-item.pinned .nav-star { opacity: 1; color: var(--tc-red-2); }
+.nav-item.pinned .nav-star .ico { fill: var(--tc-red-2); }
+.app.collapsed .nav-star, .app.collapsed .nav-item { padding-inline-end: 0; }
+.app.collapsed .nav-star { display: none; }
+.nav-item.nav-hidden { display: none; }
+
 /* ---------- Main column ---------- */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
@@ -711,6 +746,33 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .tc-dialog[open] { animation: dlgIn .16s cubic-bezier(.22,1,.36,1); }
 @keyframes dlgIn { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .tc-dialog[open] { animation: none; } }
+
+/* Command palette (Ctrl / Cmd-K) */
+.cmdk {
+  position: fixed; inset: 0; z-index: 300; display: none;
+  align-items: flex-start; justify-content: center; padding: 12vh 16px 16px;
+  background: rgba(2, 6, 23, .5); backdrop-filter: blur(3px);
+}
+.cmdk.open { display: flex; }
+.cmdk-box {
+  width: min(580px, 94vw); background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-strong); overflow: hidden;
+  animation: dlgIn .16s cubic-bezier(.22,1,.36,1);
+}
+.cmdk-input { display: flex; align-items: center; gap: 11px; padding: 14px 16px; border-bottom: 1px solid var(--line-2); }
+.cmdk-input .ico { width: 18px; height: 18px; color: var(--muted); flex: 0 0 18px; }
+.cmdk-input input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink);
+  font-size: 15px; font-family: inherit; }
+.cmdk-esc { font-size: 10.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; }
+.cmdk-list { max-height: 46vh; overflow: auto; padding: 6px; }
+.cmdk-item { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 10px; cursor: pointer; color: var(--ink); }
+.cmdk-item .ico { width: 18px; height: 18px; color: var(--muted); flex: 0 0 18px; }
+.cmdk-item .k-group { margin-inline-start: auto; font-size: 11px; color: var(--muted); }
+.cmdk-item.sel { background: var(--crit-bg); color: var(--tc-red); }
+.cmdk-item.sel .ico, .cmdk-item.sel .k-group { color: var(--tc-red); }
+.cmdk-empty { padding: 22px; text-align: center; color: var(--muted); font-size: 13px; }
+.cmdk-foot { padding: 8px 14px; border-top: 1px solid var(--line-2); font-size: 11px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .cmdk-box { animation: none; } }
 
 /* ============================================================
    Procurement & Approvals cycle

@@ -122,6 +122,23 @@
   </div>
 </div>
 
+{% set _nprefs = (cu.notif_prefs or '') %}
+<div class="panel mt-4">
+  <div class="panel-head flex between center">
+    <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-bell"></use></svg>
+      <span data-i18n="notif.title">Notifications</span></h3>
+  </div>
+  <div class="panel-pad">
+    <label class="flex gap center" style="cursor:pointer">
+      <input type="checkbox" id="emailPref" style="width:auto;height:auto"
+             {{ 'checked' if ('"email": false' not in _nprefs and "'email': false" not in _nprefs) else '' }}>
+      <span><b data-i18n="notif.email">Email me my notifications</b>
+        <div class="muted" style="font-size:12.5px" data-i18n="notif.email_hint">Get an email when it's your turn to approve, plus approvals/rejections. (Requires the platform email to be configured.)</div></span>
+    </label>
+    <span class="muted" id="notifMsg" style="font-size:12.5px;margin-inline-start:26px"></span>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script>
@@ -233,6 +250,18 @@
           document.getElementById("sigBadge").style.display = "none";
         }
       }).catch(function () {});
+  });
+
+  // notification email preference
+  var emailPref = document.getElementById("emailPref");
+  if (emailPref) emailPref.addEventListener("change", function () {
+    var m = document.getElementById("notifMsg");
+    fetch("{{ url_for('main.save_notif_prefs') }}", {
+      method: "POST", headers: { "X-CSRF-Token": CSRF, "Content-Type": "application/json" },
+      body: JSON.stringify({ email: emailPref.checked })
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (m) { m.textContent = j.ok ? "✓ Saved" : "Save failed"; m.style.color = j.ok ? "var(--ok)" : "var(--crit)"; setTimeout(function(){ m.textContent=""; }, 2000); }
+    }).catch(function () {});
   });
 })();
 </script>

@@ -127,6 +127,9 @@ class Config:
     SMTP_FROM = (os.getenv("TC_SMTP_FROM", "") or os.getenv("TC_SMTP_USER", "")
                  or "tc-platform@tcgarments.com").strip()
     SMTP_TLS = _bool(os.getenv("TC_SMTP_TLS"), True)
+    # Public base URL of this platform (e.g. https://tc-platform.onrender.com) so
+    # notification emails can link straight to the record. Blank -> relative links.
+    PUBLIC_URL = (os.getenv("TC_PUBLIC_URL", "") or "").strip()
     # Comma-separated recipients for alerts & error reports.
     ALERT_EMAILS = [e.strip() for e in (os.getenv("TC_ALERT_EMAILS", "") or "").split(",") if e.strip()]
     # Generic webhook (WhatsApp / Slack / Teams / n8n) — gets a JSON POST per alert.

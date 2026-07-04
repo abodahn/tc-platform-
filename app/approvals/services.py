@@ -56,11 +56,47 @@ def bell(conn, severity, title, message, link=None):
 
 
 def notify_users(conn, usernames, severity, title, message, link=None):
-    """Send a per-user bell notification to each username (deduped, skips blanks)."""
-    for u in {u for u in usernames if u}:
+    """Send a per-user bell notification to each username (deduped, skips blanks),
+    and, when SMTP is configured, an email to those who allow it."""
+    targets = {u for u in usernames if u}
+    for u in targets:
         conn.execute(
             "INSERT INTO notifications (severity, module, title, message, target_user, link, created_at) "
             "VALUES (?,?,?,?,?,?,?)", (severity, "procurement", title, message, u, link, _now()))
+    try:
+        _email_targets(conn, targets, title, message, link)
+    except Exception:
+        pass  # email is best-effort; never block the workflow
+
+
+def _email_enabled(prefs):
+    """Per-user email preference (default ON if unset)."""
+    if not prefs:
+        return True
+    try:
+        import json
+        p = json.loads(prefs) if isinstance(prefs, str) else prefs
+        return bool(p.get("email", True))
+    except Exception:
+        return True
+
+
+def _email_targets(conn, usernames, title, message, link):
+    from config import Config
+    if not getattr(Config, "SMTP_HOST", "") or not usernames:
+        return
+    ph = ",".join(["?"] * len(usernames))
+    rows = conn.execute(
+        f"SELECT email, notif_prefs FROM users WHERE username IN ({ph}) AND is_active=1",
+        tuple(usernames)).fetchall()
+    recips = [r["email"] for r in rows if r["email"] and _email_enabled(r["notif_prefs"])]
+    if not recips:
+        return
+    base = (getattr(Config, "PUBLIC_URL", "") or "").rstrip("/")
+    url = (base + link) if (base and link) else (link or "")
+    from app.services.alerts import send_email_to
+    body = f"{message}\n\n{('Open: ' + url) if url else 'Open the TC Platform to review.'}\n\n— TC Platform"
+    send_email_to(recips, f"[TC Platform] {title}", body)
 
 
 def eligible_approvers(conn, stage):
