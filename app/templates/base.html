@@ -68,6 +68,7 @@
              data-i18n-title="{{ i18n }}" data-navkey="{{ key }}" data-navicon="{{ icon }}">
             <svg class="ico"><use href="#i-{{ icon }}"></use></svg>
             <span class="lbl" data-i18n="{{ i18n }}">{{ i18n }}</span>
+            {% if section.section == 'nav.in_progress' %}<span class="wip-tag lbl" data-i18n="nav.wip_tag">soon</span>{% endif %}
             <button type="button" class="nav-star" data-star title="Pin" aria-label="Pin">
               <svg class="ico"><use href="#i-star"></use></svg>
             </button>

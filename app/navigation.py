@@ -64,3 +64,9 @@ NAV = [
         ("admin", "nav.admin_center", "settings", "admin.index", "access_admin"),
     ]},
 ]
+
+# Modules that are still placeholders (a "coming soon" landing page, not built out).
+# They are HIDDEN for normal users and shown to admins under an "In Progress"
+# group instead of their normal sections. Move a key out of here the moment its
+# module becomes real.
+WIP_KEYS = {"ai_hub", "finance", "automation", "hr", "saplite", "kb", "governance"}

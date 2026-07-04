@@ -873,5 +873,7 @@
   "proc.close": "Talebi kapat",
   "proc.edit": "Düzenle",
   "proc.subtotal": "Ara toplam",
-  "proc.grand_total": "Genel toplam"
+  "proc.grand_total": "Genel toplam",
+  "nav.in_progress": "Yapım Aşamasında",
+  "nav.wip_tag": "yakında"
 }

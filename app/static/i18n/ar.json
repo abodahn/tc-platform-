@@ -873,5 +873,7 @@
   "proc.close": "إغلاق الطلب",
   "proc.edit": "تعديل",
   "proc.subtotal": "الإجمالي الفرعي",
-  "proc.grand_total": "الإجمالي الكلي"
+  "proc.grand_total": "الإجمالي الكلي",
+  "nav.in_progress": "قيد التطوير",
+  "nav.wip_tag": "قريبًا"
 }

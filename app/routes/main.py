@@ -86,11 +86,19 @@ def inject_globals():
     visible_nav = []
     if user:
         notifs, unread = _unread_notifications(user["username"])
+        from app.navigation import WIP_KEYS
+        is_admin = user_has_permission(user, "access_admin")
         for section in NAV:
             items = [it for it in section["items"]
-                     if user_has_permission(user, it[4])]
+                     if user_has_permission(user, it[4]) and it[0] not in WIP_KEYS]
             if items:
                 visible_nav.append({"section": section["section"], "items": items})
+        # Admins additionally see the not-yet-built modules under "In Progress".
+        if is_admin:
+            wip = [it for section in NAV for it in section["items"]
+                   if user_has_permission(user, it[4]) and it[0] in WIP_KEYS]
+            if wip:
+                visible_nav.append({"section": "nav.in_progress", "items": wip})
     return {
         "cu": user,
         "cu_role_label": role_label(user["role"]) if user else "",

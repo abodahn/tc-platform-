@@ -873,5 +873,7 @@
   "proc.close": "Close request",
   "proc.edit": "Edit",
   "proc.subtotal": "Subtotal",
-  "proc.grand_total": "Grand total"
+  "proc.grand_total": "Grand total",
+  "nav.in_progress": "In Progress",
+  "nav.wip_tag": "soon"
 }
