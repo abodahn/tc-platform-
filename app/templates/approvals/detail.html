@@ -134,7 +134,149 @@
 </div></div>
 {% endif %}
 
-{# PO issued -> email to vendor + confirm delivery #}
+{# ===== Fulfilment & payment (procure-to-pay back half) ===== #}
+{% if pr.status in ('approved','po_issued','partially_received','received','closed') %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="proc.fulfilment">Fulfilment &amp; payment</h3>
+    <div class="flex gap center">
+      {% if match and match.has_invoice %}
+      <span class="badge {{ 'b-approved' if match.status=='matched' else 'b-rejected' }}">
+        {{ '✓ 3-way matched' if match.status=='matched' else '⚠ mismatch' }}</span>{% endif %}
+      <span class="badge b-{{ pr.payment_status or 'unpaid' }}">{{ (pr.payment_status or 'unpaid')|title }}</span>
+    </div>
+  </div>
+  <div class="panel-pad">
+    {# --- 3-way match summary --- #}
+    <div class="grid cols-3" style="gap:12px;margin-bottom:14px">
+      <div class="mtile"><div class="mlabel" data-i18n="proc.ordered">Ordered (PO)</div>
+        <div class="mval">{{ '{:,.2f}'.format(match.ordered_grand) }}</div>
+        <div class="muted" style="font-size:11px">{{ '%g'|format(match.ordered_qty) }} <span data-i18n="proc.units">units</span></div></div>
+      <div class="mtile"><div class="mlabel" data-i18n="proc.received">Received (GRN)</div>
+        <div class="mval">{{ '{:,.2f}'.format(match.received_value) }}</div>
+        <div class="muted" style="font-size:11px {{ 'color:var(--crit)' if not match.qty_ok }}">{{ '%g'|format(match.received_qty) }}/{{ '%g'|format(match.ordered_qty) }} <span data-i18n="proc.units">units</span></div></div>
+      <div class="mtile"><div class="mlabel" data-i18n="proc.invoiced">Invoiced</div>
+        <div class="mval" style="{{ 'color:var(--crit)' if not match.price_ok }}">{{ '{:,.2f}'.format(match.invoiced) }}</div>
+        <div class="muted" style="font-size:11px" data-i18n="proc.paid_lbl">paid {{ '{:,.0f}'.format(pr.paid_amount or 0) }}</div></div>
+    </div>
+    {% if match.flags %}
+    <div style="background:var(--crit-bg);color:var(--crit);padding:10px 14px;border-radius:12px;margin-bottom:14px;font-size:13px">
+      {% for fl in match.flags %}<div>⚠ {{ fl }}</div>{% endfor %}
+    </div>
+    {% endif %}
+
+    {# --- Line-level receiving --- #}
+    {% if pr.status in ('po_issued','partially_received') and can_purchasing %}
+    <form method="post" action="{{ url_for('approvals.receive', pr_id=pr.id) }}" style="overflow-x:auto">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <table class="tbl" style="margin-bottom:10px">
+        <thead><tr><th data-i18n="proc.item">Item</th><th data-i18n="proc.ordered_qty">Ordered</th>
+          <th data-i18n="proc.recd">Received</th><th data-i18n="proc.receive_now">Receive now</th></tr></thead>
+        <tbody>
+        {% for it in b['items'] %}
+          <tr>
+            <td>{{ it.item }}</td>
+            <td>{{ '%g'|format(it.qty or 0) }} {{ it.unit }}</td>
+            <td>{{ '%g'|format(it.received_qty or 0) }}</td>
+            <td>
+              <input type="hidden" name="recv_item_id[]" value="{{ it.id }}">
+              <input name="recv_qty[]" type="number" min="0" step="any" style="width:90px"
+                     max="{{ (it.qty or 0) - (it.received_qty or 0) }}"
+                     placeholder="0" {{ 'disabled' if (it.received_qty or 0) >= (it.qty or 0) }}>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="flex gap center wrap">
+        <input name="notes" class="input" placeholder="Delivery note (optional)" data-i18n-ph="proc.receipt_note" style="min-width:200px">
+        <button class="btn btn-primary btn-sm" type="submit"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="proc.record_receipt">Record receipt</span></button>
+      </div>
+    </form>
+    {% elif pr.status in ('received','closed') %}
+    <div class="muted" style="margin-bottom:12px"><b data-i18n="proc.received_ok">Delivery confirmed.</b> {{ (pr.received_at or '')[:16] }}{% if pr.receipt_notes %} · {{ pr.receipt_notes }}{% endif %}</div>
+    {% endif %}
+
+    {# --- Invoices --- #}
+    <div class="flex between center mt-3" style="margin-top:16px">
+      <b data-i18n="proc.invoices">Invoices</b>
+      {% if pr.due_date %}<span class="tag" data-i18n-title="proc.due">Due {{ pr.due_date }}</span>{% endif %}
+    </div>
+    {% if b.invoices %}
+    <table class="tbl mt-2">
+      <thead><tr><th data-i18n="proc.inv_no">Invoice</th><th data-i18n="proc.date">Date</th>
+        <th data-i18n="proc.amount">Amount</th><th data-i18n="proc.status">Status</th><th></th></tr></thead>
+      <tbody>
+      {% for iv in b.invoices %}
+        <tr>
+          <td style="font-weight:600">{{ iv.invoice_no }}</td>
+          <td class="muted">{{ iv.invoice_date }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format((iv.amount or 0)+(iv.tax or 0)) }} {{ iv.currency }}</td>
+          <td><span class="badge {{ 'b-approved' if iv.status=='matched' else ('b-rejected' if iv.status=='disputed' else 'b-pending') }}">{{ iv.status|title }}</span></td>
+          <td style="text-align:end">{% if iv.filename %}<a class="tag" href="{{ url_for('approvals.invoice_file', inv_id=iv.id) }}">📎</a>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if can_purchasing and pr.status != 'draft' %}
+    <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_invoice">+ Add invoice</summary>
+      <form method="post" action="{{ url_for('approvals.add_invoice', pr_id=pr.id) }}" enctype="multipart/form-data" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="proc.inv_no">Invoice no *</label><input name="invoice_no" required autocomplete="off"></div>
+          <div class="field"><label data-i18n="proc.date">Date</label><input name="invoice_date" type="date"></div>
+          <div class="field"><label data-i18n="proc.amount">Amount (excl. tax) *</label><input name="amount" type="number" step="any" min="0" required></div>
+          <div class="field"><label data-i18n="proc.tax">Tax</label><input name="tax" type="number" step="any" min="0" value="0"></div>
+        </div>
+        <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv" style="margin-bottom:8px">
+        <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_invoice">+ Add invoice</button>
+      </form>
+    </details>
+    {% endif %}
+
+    {# --- Payments --- #}
+    <div class="flex between center" style="margin-top:16px">
+      <b data-i18n="proc.payments">Payments</b>
+      <span class="muted" style="font-size:12.5px">{{ '{:,.2f}'.format(pr.paid_amount or 0) }} / {{ '{:,.2f}'.format(amounts.grand) }} {{ pr.currency }}</span>
+    </div>
+    {% if b.payments %}
+    <table class="tbl mt-2">
+      <thead><tr><th data-i18n="proc.date">Date</th><th data-i18n="proc.amount">Amount</th>
+        <th data-i18n="proc.method">Method</th><th data-i18n="proc.ref">Reference</th></tr></thead>
+      <tbody>
+      {% for p in b.payments %}
+        <tr><td class="muted">{{ p.paid_at }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.amount or 0) }} {{ p.currency }}</td>
+          <td>{{ p.method or '—' }}</td><td class="muted">{{ p.reference or '—' }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if can_purchasing and pr.status in ('po_issued','partially_received','received','closed') and (pr.payment_status or 'unpaid') != 'paid' %}
+    <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_payment">+ Record payment</summary>
+      <form method="post" action="{{ url_for('approvals.add_payment', pr_id=pr.id) }}" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="proc.amount">Amount *</label><input name="amount" type="number" step="any" min="0" required></div>
+          <div class="field"><label data-i18n="proc.date">Paid on</label><input name="paid_at" type="date"></div>
+          <div class="field"><label data-i18n="proc.method">Method</label><input name="method" placeholder="Bank transfer / cheque" autocomplete="off"></div>
+          <div class="field"><label data-i18n="proc.ref">Reference</label><input name="reference" autocomplete="off"></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_payment">+ Record payment</button>
+      </form>
+    </details>
+    {% endif %}
+
+    {% if pr.status in ('received','partially_received') and can_purchasing %}
+    <form method="post" action="{{ url_for('approvals.close', pr_id=pr.id) }}" class="mt-3">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.close">Close request</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 {% if pr.status in ('approved','po_issued') and can_purchasing %}
 <div class="panel mt-4"><div class="panel-pad flex gap wrap center">
   <form method="post" action="{{ url_for('approvals.email_po', pr_id=pr.id) }}">
@@ -142,24 +284,6 @@
     <button class="btn btn-ghost btn-sm" type="submit"><svg class="ico"><use href="#i-bell"></use></svg><span data-i18n="proc.email_po">Email PO to vendor</span></button>
   </form>
   {% if pr.po_sent_at %}<span class="tag" data-i18n="proc.po_sent">Sent ✓</span>{% endif %}
-  {% if pr.status == 'po_issued' %}
-  <span style="flex:1"></span>
-  <form method="post" action="{{ url_for('approvals.receive', pr_id=pr.id) }}" class="flex gap center">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <input name="notes" class="input" placeholder="Delivery note (optional)" data-i18n-ph="proc.receipt_note" style="min-width:180px">
-    <button class="btn btn-primary btn-sm" type="submit"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="proc.receive">Confirm delivery</span></button>
-  </form>
-  {% endif %}
-</div></div>
-{% endif %}
-
-{% if pr.status == 'received' and can_purchasing %}
-<div class="panel mt-4"><div class="panel-pad flex between center wrap gap">
-  <div><b data-i18n="proc.received_ok">Delivery confirmed.</b> <span class="muted">{{ (pr.received_at or '')[:16] }}{% if pr.receipt_notes %} · {{ pr.receipt_notes }}{% endif %}</span></div>
-  <form method="post" action="{{ url_for('approvals.close', pr_id=pr.id) }}">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.close">Close request</button>
-  </form>
 </div></div>
 {% endif %}
 

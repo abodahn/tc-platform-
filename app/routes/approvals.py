@@ -227,6 +227,7 @@ def detail(pr_id):
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
                            stage_label=C.stage_label, queued=queued,
                            current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
+                           match=svc.three_way_match(pr_id),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
                            budget=svc.budget_status(pr.get("department")),
                            can_purchasing=user_can("proc_purchasing"),
@@ -445,8 +446,85 @@ def email_po(pr_id):
 @login_required
 @permission_required("proc_purchasing")
 def receive(pr_id):
-    ok, msg = svc.receive_goods(pr_id, _u(), notes=request.form.get("notes", "").strip() or None, ip=_ip())
-    flash("Delivery confirmed." if ok else f"Could not confirm receipt ({msg}).",
+    f = request.form
+    ids = f.getlist("recv_item_id[]")
+    qtys = f.getlist("recv_qty[]")
+    receipts = {}
+    for i, iid in enumerate(ids):
+        try:
+            q = float(qtys[i]) if i < len(qtys) and qtys[i] else 0
+        except ValueError:
+            q = 0
+        if q > 0:
+            receipts[iid] = q
+    if not receipts:
+        flash("Enter a received quantity on at least one line.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    ok, msg = svc.receive_items(pr_id, receipts, _u(),
+                                notes=f.get("notes", "").strip() or None, ip=_ip())
+    flash({"received": "Delivery fully confirmed.", "partial": "Partial receipt recorded."}.get(msg, "Receipt recorded.")
+          if ok else f"Could not record receipt ({msg}).", "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/invoice", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def add_invoice(pr_id):
+    if not svc.get_pr(pr_id):
+        abort(404)
+    f = request.form
+    if not f.get("invoice_no") or not f.get("amount"):
+        flash("Invoice number and amount are required.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    fn = ct = b64 = None
+    file = request.files.get("file")
+    if file and file.filename:
+        if not file.filename.lower().endswith(_ATTACH_EXT):
+            flash("Unsupported invoice file type.", "error")
+            return redirect(url_for("approvals.detail", pr_id=pr_id))
+        raw = file.read()
+        if len(raw) > _MAX_ATTACH:
+            flash("Invoice file too large (max 3 MB).", "error")
+            return redirect(url_for("approvals.detail", pr_id=pr_id))
+        fn, ct, b64 = file.filename, (file.mimetype or "application/octet-stream"), \
+            base64.b64encode(raw).decode("ascii")
+    svc.add_invoice(pr_id, {
+        "invoice_no": f.get("invoice_no", "").strip(), "invoice_date": f.get("invoice_date", "").strip(),
+        "amount": f.get("amount"), "tax": f.get("tax"), "notes": f.get("notes", "").strip(),
+    }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
+    flash("Invoice recorded and matched.", "success")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/invoice/<int:inv_id>/file")
+@login_required
+@permission_required("proc_view")
+def invoice_file(inv_id):
+    iv = svc.get_invoice(inv_id)
+    if not iv or not iv["content_b64"]:
+        abort(404)
+    try:
+        raw = base64.b64decode(iv["content_b64"])
+    except Exception:
+        abort(404)
+    return send_file(io.BytesIO(raw), mimetype=iv["content_type"] or "application/octet-stream",
+                     as_attachment=True, download_name=iv["filename"] or "invoice")
+
+
+@bp.route("/pr/<int:pr_id>/payment", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def add_payment(pr_id):
+    if not svc.get_pr(pr_id):
+        abort(404)
+    f = request.form
+    ok, res = svc.add_payment(pr_id, {
+        "amount": f.get("amount"), "method": f.get("method", "").strip(),
+        "reference": f.get("reference", "").strip(), "paid_at": f.get("paid_at", "").strip(),
+        "invoice_id": f.get("invoice_id"), "notes": f.get("notes", "").strip(),
+    }, _u(), ip=_ip())
+    flash(f"Payment recorded ({res})." if ok else f"Could not record payment ({res}).",
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 

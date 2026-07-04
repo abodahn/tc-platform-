@@ -212,6 +212,13 @@ def get_pr(pr_id):
             "SELECT id, pr_id, vendor, amount, currency, lead_time_days, warranty, "
             "filename, is_chosen, notes, created_at FROM pr_quotes WHERE pr_id=? "
             "ORDER BY amount", (pr_id,)).fetchall()
+        invoices = conn.execute(
+            "SELECT id, pr_id, invoice_no, invoice_date, amount, tax, currency, status, "
+            "filename, notes, created_by, created_at FROM pr_invoices WHERE pr_id=? "
+            "ORDER BY id", (pr_id,)).fetchall()
+        payments = conn.execute(
+            "SELECT id, pr_id, invoice_id, amount, currency, method, reference, paid_at, "
+            "notes, created_at FROM pr_payments WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
     finally:
         conn.close()
     pr_d = dict(pr)
@@ -229,7 +236,8 @@ def get_pr(pr_id):
         step_ds.append(s)
     return {"pr": pr_d, "items": [dict(r) for r in items], "steps": step_ds,
             "events": [dict(r) for r in events], "attachments": [dict(r) for r in atts],
-            "quotes": [dict(r) for r in quotes]}
+            "quotes": [dict(r) for r in quotes],
+            "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments]}
 
 
 def list_prs(status=None, requester=None, limit=500):
@@ -577,13 +585,209 @@ def receive_goods(pr_id, user, notes=None, ip=None):
         conn.close()
 
 
+def receive_items(pr_id, receipts, user, notes=None, ip=None):
+    """Record a line-level goods receipt. `receipts` = {item_id: qty_received_now}.
+    Adds to each line's received_qty (capped at ordered), then sets the PR status to
+    'received' (all lines fulfilled) or 'partially_received'."""
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] not in ("po_issued", "approved", "partially_received"):
+            return False, "not_receivable"
+        items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+        now = _now()
+        any_recv = False
+        for it in items:
+            add = receipts.get(str(it["id"])) or receipts.get(it["id"]) or 0
+            try:
+                add = float(add)
+            except (TypeError, ValueError):
+                add = 0
+            if add <= 0:
+                continue
+            ordered = float(it["qty"] or 0)
+            already = float(it["received_qty"] or 0)
+            new_total = min(ordered, already + add) if ordered else already + add
+            conn.execute("UPDATE pr_items SET received_qty=? WHERE id=?", (new_total, it["id"]))
+            any_recv = True
+        if not any_recv:
+            return False, "nothing_received"
+        # recompute fulfilment
+        items = conn.execute("SELECT qty, received_qty FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+        fully = all(float(i["received_qty"] or 0) >= float(i["qty"] or 0) for i in items)
+        new_status = "received" if fully else "partially_received"
+        conn.execute(
+            "UPDATE pr_requests SET status=?, received_at=?, received_by=?, "
+            "receipt_notes=COALESCE(?, receipt_notes) WHERE id=?",
+            (new_status, now if fully else pr["received_at"],
+             user.get("username") if user else "system", notes, pr_id))
+        audit(conn, pr_id, user.get("username") if user else "system", "goods_received",
+              ("Fully received" if fully else "Partial receipt")
+              + (f": {notes}" if notes else ""), ip)
+        if fully:
+            notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
+                         f"{pr['pr_no']} fully received.", link=_pr_link(pr_id))
+        conn.commit()
+        return True, ("received" if fully else "partial")
+    finally:
+        conn.close()
+
+
+def _due_date(payment_condition, base_date):
+    """Compute an invoice due date from the payment terms (Net 15/30/60)."""
+    import re
+    from datetime import datetime, timedelta
+    m = re.search(r"net\s*(\d+)", (payment_condition or "").lower())
+    if not m:
+        return None
+    try:
+        d = datetime.strptime(str(base_date)[:10], "%Y-%m-%d")
+        return (d + timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64=None, ip=None):
+    """Record a vendor invoice, then (re)run the 3-way match for the PR."""
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        now = _now()
+        conn.execute(
+            """INSERT INTO pr_invoices (pr_id, invoice_no, invoice_date, amount, tax,
+               currency, status, filename, content_type, content_b64, notes, created_by, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (pr_id, data.get("invoice_no"), data.get("invoice_date") or now[:10],
+             float(data.get("amount") or 0), float(data.get("tax") or 0),
+             data.get("currency") or pr["currency"] or "EGP", "received",
+             filename, content_type, content_b64, data.get("notes"),
+             user.get("username") if user else "system", now))
+        # set a due date from the payment terms if not already set
+        due = _due_date(pr["payment_condition"], data.get("invoice_date") or now[:10])
+        if due and not pr["due_date"]:
+            conn.execute("UPDATE pr_requests SET due_date=? WHERE id=?", (due, pr_id))
+        audit(conn, pr_id, user.get("username") if user else "system", "invoice_added",
+              f"Invoice {data.get('invoice_no')} @ {data.get('amount')}", ip)
+        conn.commit()
+    finally:
+        conn.close()
+    three_way_match(pr_id)   # refresh cached match
+    return True, ""
+
+
+def three_way_match(pr_id):
+    """Compare ORDERED (PO) vs RECEIVED (GRN) vs INVOICED. Returns a dict with
+    per-check verdicts and flags, and caches it on the latest invoice."""
+    bundle = get_pr(pr_id)
+    if not bundle:
+        return None
+    pr, items = bundle["pr"], bundle["items"]
+    amt = pr_amounts(pr)
+    ordered_grand = amt["grand"]
+    ordered_qty = sum(float(i["qty"] or 0) for i in items)
+    received_qty = sum(float(i["received_qty"] or 0) for i in items)
+    received_value = round(sum(float(i["received_qty"] or 0) * float(i["unit_price"] or 0)
+                               for i in items), 2)
+    invoiced = round(sum(float(iv["amount"] or 0) + float(iv["tax"] or 0)
+                         for iv in bundle["invoices"]), 2)          # gross (with tax)
+    invoiced_net = round(sum(float(iv["amount"] or 0) for iv in bundle["invoices"]), 2)  # pre-tax
+
+    tol = max(1.0, ordered_grand * 0.01)      # 1% (or 1 unit) tolerance
+    flags = []
+    qty_ok = received_qty >= ordered_qty - 1e-6
+    if not qty_ok:
+        flags.append(f"Short delivery: received {received_qty:g} of {ordered_qty:g} ordered")
+    price_ok = invoiced <= ordered_grand + tol
+    if invoiced > ordered_grand + tol:
+        flags.append(f"Over-billing: invoiced {invoiced:,.2f} vs PO {ordered_grand:,.2f}")
+    # compare like-for-like: invoice net (pre-tax) vs received goods value (pre-tax)
+    receipt_inv_ok = (not bundle["invoices"]) or invoiced_net <= received_value + tol
+    if bundle["invoices"] and invoiced_net > received_value + tol:
+        flags.append(f"Invoiced more than received ({invoiced_net:,.2f} vs received value {received_value:,.2f})")
+
+    matched = bool(bundle["invoices"]) and qty_ok and price_ok and receipt_inv_ok
+    result = {
+        "ordered_grand": ordered_grand, "ordered_qty": ordered_qty,
+        "received_qty": received_qty, "received_value": received_value,
+        "invoiced": invoiced, "qty_ok": qty_ok, "price_ok": price_ok,
+        "receipt_inv_ok": receipt_inv_ok, "flags": flags,
+        "status": "matched" if matched else ("mismatch" if bundle["invoices"] else "pending"),
+        "has_invoice": bool(bundle["invoices"]),
+    }
+    # cache on the most recent invoice + mark matched/disputed
+    if bundle["invoices"]:
+        conn = get_db()
+        try:
+            last = bundle["invoices"][-1]["id"]
+            conn.execute("UPDATE pr_invoices SET match_json=?, status=? WHERE id=?",
+                         (_json_dumps(result), "matched" if matched else "disputed", last))
+            conn.commit()
+        finally:
+            conn.close()
+    return result
+
+
+def _json_dumps(d):
+    import json
+    try:
+        return json.dumps(d)
+    except Exception:
+        return "{}"
+
+
+def get_invoice(inv_id):
+    conn = get_db()
+    try:
+        return conn.execute("SELECT * FROM pr_invoices WHERE id=?", (inv_id,)).fetchone()
+    finally:
+        conn.close()
+
+
+def add_payment(pr_id, data, user, ip=None):
+    """Record a payment against the PR/invoice and roll up the payment status."""
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        amount = float(data.get("amount") or 0)
+        if amount <= 0:
+            return False, "bad_amount"
+        now = _now()
+        conn.execute(
+            """INSERT INTO pr_payments (pr_id, invoice_id, amount, currency, method,
+               reference, paid_at, notes, created_by, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (pr_id, data.get("invoice_id") or None, amount, pr["currency"] or "EGP",
+             data.get("method"), data.get("reference"), data.get("paid_at") or now[:10],
+             data.get("notes"), user.get("username") if user else "system", now))
+        paid = float(pr["paid_amount"] or 0) + amount
+        grand = pr_amounts(pr)["grand"]
+        pstatus = "paid" if paid >= grand - 0.01 else ("partial" if paid > 0 else "unpaid")
+        conn.execute("UPDATE pr_requests SET paid_amount=?, payment_status=? WHERE id=?",
+                     (round(paid, 2), pstatus, pr_id))
+        audit(conn, pr_id, user.get("username") if user else "system", "payment",
+              f"Paid {amount:,.2f} ({pstatus})", ip)
+        if pstatus == "paid":
+            notify_users(conn, [pr["requester"]], "info", "Payment complete",
+                         f"{pr['pr_no']} is fully paid.", link=_pr_link(pr_id))
+        conn.commit()
+        return True, pstatus
+    finally:
+        conn.close()
+
+
 def close_pr(pr_id, user, ip=None):
     conn = get_db()
     try:
         pr = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] not in ("received", "po_issued"):
+        if pr["status"] not in ("received", "po_issued", "partially_received"):
             return False, "not_closable"
         conn.execute("UPDATE pr_requests SET status='closed', closed_at=? WHERE id=?",
                      (_now(), pr_id))

@@ -98,6 +98,31 @@ CREATE TABLE IF NOT EXISTS pr_events (
 );
 CREATE INDEX IF NOT EXISTS ix_pr_events_pr ON pr_events(pr_id);
 
+-- ===== Vendor invoices (for 3-way matching) =====
+CREATE TABLE IF NOT EXISTS pr_invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    invoice_no TEXT, invoice_date TEXT,
+    amount REAL DEFAULT 0, tax REAL DEFAULT 0, currency TEXT DEFAULT 'EGP',
+    status TEXT DEFAULT 'received',      -- received | matched | disputed | paid
+    match_json TEXT,                     -- cached 3-way-match result
+    filename TEXT, content_type TEXT, content_b64 TEXT,
+    notes TEXT, created_by TEXT, created_at TEXT,
+    FOREIGN KEY (pr_id) REFERENCES pr_requests(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_pr_inv_pr ON pr_invoices(pr_id);
+
+-- ===== Payments against a PR / invoice =====
+CREATE TABLE IF NOT EXISTS pr_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER, invoice_id INTEGER,
+    amount REAL DEFAULT 0, currency TEXT DEFAULT 'EGP',
+    method TEXT, reference TEXT, paid_at TEXT,
+    notes TEXT, created_by TEXT, created_at TEXT,
+    FOREIGN KEY (pr_id) REFERENCES pr_requests(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_pr_pay_pr ON pr_payments(pr_id);
+
 -- ===== Attachments (vendor quotations etc.) =====
 CREATE TABLE IF NOT EXISTS pr_attachments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,13 +175,22 @@ _STEP_MIGRATIONS = [
     ("escalated_at", "ALTER TABLE pr_steps ADD COLUMN escalated_at TEXT"),
 ]
 
-# Columns added to pr_requests after first release (tax + goods receipt + PO email).
+# Columns added to pr_requests after first release (tax + goods receipt + PO email
+# + payment tracking).
 _PR_MIGRATIONS = [
     ("tax_rate", "ALTER TABLE pr_requests ADD COLUMN tax_rate REAL DEFAULT 0"),
     ("received_at", "ALTER TABLE pr_requests ADD COLUMN received_at TEXT"),
     ("received_by", "ALTER TABLE pr_requests ADD COLUMN received_by TEXT"),
     ("receipt_notes", "ALTER TABLE pr_requests ADD COLUMN receipt_notes TEXT"),
     ("po_sent_at", "ALTER TABLE pr_requests ADD COLUMN po_sent_at TEXT"),
+    ("paid_amount", "ALTER TABLE pr_requests ADD COLUMN paid_amount REAL DEFAULT 0"),
+    ("payment_status", "ALTER TABLE pr_requests ADD COLUMN payment_status TEXT DEFAULT 'unpaid'"),
+    ("due_date", "ALTER TABLE pr_requests ADD COLUMN due_date TEXT"),
+]
+
+# Columns added to pr_items after first release (line-level receiving).
+_ITEM_MIGRATIONS = [
+    ("received_qty", "ALTER TABLE pr_items ADD COLUMN received_qty REAL DEFAULT 0"),
 ]
 
 
@@ -165,7 +199,7 @@ def create_and_seed(conn):
     conn.executescript(SCHEMA)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
-    for _col, _ddl in _STEP_MIGRATIONS + _PR_MIGRATIONS:
+    for _col, _ddl in _STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS:
         try:
             conn.execute(_ddl)
             conn.commit()

@@ -793,7 +793,16 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .b-rejected         { background: var(--crit-bg); color: var(--crit); }
 .b-draft,
 .b-cancelled,
-.b-skipped          { background: var(--line-2);  color: var(--muted); }
+.b-skipped,
+.b-unpaid           { background: var(--line-2);  color: var(--muted); }
+.b-partially_received,
+.b-partial          { background: var(--warn-bg); color: var(--warn); }
+.b-paid             { background: var(--ok-bg);   color: var(--ok); }
+
+/* 3-way match tiles */
+.mtile { border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px 14px; background: var(--panel-2); }
+.mtile .mlabel { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 600; }
+.mtile .mval { font-size: 20px; font-weight: 800; letter-spacing: -.5px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 
 /* Approval ladder stepper */
 .stepper { display: flex; gap: 0; flex-wrap: wrap; }

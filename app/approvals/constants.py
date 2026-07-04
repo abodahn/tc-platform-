@@ -18,10 +18,13 @@ PR_STATUSES = [
     "approved",    # every required stage approved
     "rejected",    # a stage rejected it (bounces back to the requester)
     "po_issued",   # a Purchase Order has been generated from it
+    "partially_received",  # some line items received, not all
     "received",    # goods/services received (delivery confirmed)
     "closed",      # delivered / completed
     "cancelled",   # withdrawn by the requester or an admin
 ]
+
+PAYMENT_STATUSES = ["unpaid", "partial", "paid"]
 
 # A step (one rung of the ladder) is one of:
 STEP_STATUSES = ["pending", "approved", "rejected", "skipped"]
