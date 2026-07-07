@@ -1,0 +1,25 @@
+name: keep-render-awake
+# Pings the live health endpoint so the Render free-tier web service never idles
+# out (it spins down after ~15 min of no traffic). Runs on GitHub's servers — no
+# machine of yours needs to be on. NOTE: scheduled workflows only run from the
+# repository's DEFAULT branch, so this file must live on the default branch.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every ~10 minutes (GitHub may add a few minutes of delay)
+  workflow_dispatch: {}       # lets you run it manually from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/health
+        run: |
+          URL="https://tc-platform.onrender.com/api/health"
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 75 "$URL" || echo "000")
+            echo "attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then echo "awake ✔"; exit 0; fi
+            sleep 25
+          done
+          echo "health check did not return 200"; exit 1
