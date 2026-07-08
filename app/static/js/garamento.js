@@ -96,10 +96,10 @@
     }
 
     var CHIPS = [
-      "What fabric for a durable summer polo?",
-      "Estimate cost of a cotton T-shirt",
-      "Difference between twill and satin weave?",
-      "How do I raise a purchase request here?"
+      "How do I open a maintenance ticket?",
+      "How do I raise a purchase request?",
+      "What fabric suits a durable summer polo?",
+      "Estimate the cost of a cotton T-shirt"
     ];
     function addChips() {
       var box = document.createElement("div");

@@ -145,6 +145,19 @@ def chat(history, user=None):
         if who:
             sys += f"\n\nThe person you're talking to is {who} at T&C Garments."
 
+    # Ground platform "how do I…" answers in the built-in user manual: inject the
+    # topic index plus the sections most relevant to the latest user message.
+    try:
+        from app.services import garamento_kb as kb
+        last_user = ""
+        for m in reversed(turns):
+            if m["role"] == "user":
+                last_user = m["content"]
+                break
+        sys += "\n\n" + kb.context_for(last_user)
+    except Exception:  # noqa: BLE001 — knowledge is best-effort, never break chat
+        pass
+
     messages = [{"role": "system", "content": sys}] + turns
     try:
         reply = _complete(messages, temperature=0.7, max_tokens=650)
