@@ -85,7 +85,7 @@ def _pg_candidates():
 
 
 # Tables whose primary key is NOT `id` (so we never append RETURNING id).
-_NO_ID_TABLES = {"mnt_settings"}
+_NO_ID_TABLES = {"mnt_settings", "ai_system_settings"}
 
 
 def translate_ddl(sql, dialect):
@@ -172,6 +172,15 @@ class _PGConn:
             except Exception:
                 wrapped.lastrowid = None
         return wrapped
+
+    def executemany(self, sql, seq_of_params):
+        """sqlite3-compatible executemany. psycopg2 has its own executemany, but
+        our per-statement SQL translation (?-> %s, INSERT OR IGNORE, RETURNING)
+        lives in execute(), so we reuse it row by row. Fine for seed/bulk inserts."""
+        cur = None
+        for params in (seq_of_params or []):
+            cur = self.execute(sql, params)
+        return cur
 
     def executescript(self, sql):
         cur = self._c.cursor()

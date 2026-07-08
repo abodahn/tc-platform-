@@ -278,18 +278,20 @@ def create_and_seed(conn):
     """Create AI + domain tables and seed demo data where empty. Idempotent."""
     conn.executescript(SCHEMA)
     conn.commit()
-    if _empty(conn, "assets"):
-        _seed_assets(conn)
-    if _empty(conn, "payroll_rows"):
-        _seed_payroll(conn)
-    if _empty(conn, "hr_probation"):
-        _seed_hr(conn)
-    if _empty(conn, "paper_usage"):
-        _seed_paper(conn)
+    # Seed each table independently and commit after each, so a hiccup on one
+    # (or a partially-created earlier deploy) never rolls back the others.
+    for table, seeder in (("assets", _seed_assets), ("payroll_rows", _seed_payroll),
+                          ("hr_probation", _seed_hr), ("paper_usage", _seed_paper)):
+        try:
+            if _empty(conn, table):
+                seeder(conn)
+                conn.commit()
+        except Exception:  # noqa: BLE001
+            conn.rollback()
     # default settings
     for k, v in (("auto_run", "1"), ("horizon_days", "30")):
         try:
             conn.execute("INSERT OR IGNORE INTO ai_system_settings (skey,svalue) VALUES (?,?)", (k, v))
+            conn.commit()
         except Exception:  # noqa: BLE001
-            pass
-    conn.commit()
+            conn.rollback()
