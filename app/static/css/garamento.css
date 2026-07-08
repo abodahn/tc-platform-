@@ -93,12 +93,26 @@
 .gm-id span { font-size: 11.5px; opacity: .86; display: inline-flex; align-items: center; gap: 5px; }
 .gm-dot { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 0 3px rgba(74, 222, 128, .28); }
 .gm-dot.off { background: #fbbf24; box-shadow: 0 0 0 3px rgba(251, 191, 36, .28); }
-.gm-head .gm-x {
-  margin-inline-start: auto; width: 32px; height: 32px; border-radius: 9px; border: 0;
-  background: rgba(255, 255, 255, .14); color: #fff; cursor: pointer; font-size: 18px;
-  display: grid; place-items: center; transition: background .2s ease;
+.gm-hbtn {
+  width: 32px; height: 32px; border-radius: 9px; border: 0;
+  background: rgba(255, 255, 255, .14); color: #fff; cursor: pointer; font-size: 15px;
+  display: grid; place-items: center; transition: background .2s ease; flex: 0 0 32px;
 }
-.gm-head .gm-x:hover { background: rgba(255, 255, 255, .28); }
+.gm-hbtn:hover { background: rgba(255, 255, 255, .28); }
+.gm-head #gmSound { margin-inline-start: auto; }   /* pushes the button group right */
+.gm-head .gm-x { font-size: 18px; }
+.gm-head #gmSound.off { opacity: .55; }
+
+/* Draggable affordances */
+.gm-head { cursor: grab; touch-action: none; }
+.gm-head.grabbing { cursor: grabbing; }
+.gm-head .gm-hbtn, .gm-head .gm-ava { cursor: pointer; }
+.gm-launch { touch-action: none; }
+.gm-launch.dragging { cursor: grabbing; transition: none; }
+.gm-launch.dragging::after { display: none; }
+.gm-panel.dragging { transition: none; user-select: none; }
+/* when positioned by the user, we drive with left/top and clear the defaults */
+.gm-launch.moved, .gm-panel.moved { inset-block-end: auto; inset-inline-end: auto; }
 
 /* messages */
 .gm-body {
