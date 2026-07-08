@@ -33,6 +33,13 @@ CURRENCIES = ["EGP", "USD", "EUR", "TRY"]
 UNITS = ["Pcs", "Set", "Box", "Roll", "Meter", "Kg", "Liter", "Service", "Lot"]
 PAYMENT_CONDITIONS = ["Advanced Payment", "On Delivery", "Net 15", "Net 30",
                       "Net 60", "Cash", "Cheque", "Installments"]
+DELIVERY_CONDITIONS = ["T&C Warehouse", "On-site / Factory floor", "Vendor premises",
+                       "Courier / Shipping", "Ex-Works (EXW)", "FOB", "CIF"]
+# Default department list (admins can add more via the responsibility matrix
+# settings; any department already used by a budget or matrix is merged in too).
+DEPARTMENTS = ["General Maintenance", "Production", "Cutting", "Sewing", "Finishing",
+               "Embroidery", "Quality", "Warehouse", "IT", "Finance",
+               "Human Resources", "Administration", "Procurement"]
 
 # --- The approval ladder ----------------------------------------------------
 # Ordered stage keys (excluding the requester, who is the originator).
@@ -93,10 +100,9 @@ def build_ladder(total):
 PARALLEL_GROUPS = []
 
 
-def ladder_rungs(total):
-    """Return the ladder as ordered 'rungs'; each rung is a list of stage keys
-    that run in parallel. With no PARALLEL_GROUPS every rung has one stage."""
-    stages = build_ladder(total)
+def rungs_from_stages(stages):
+    """Group an ordered stage list into rungs; stages in the same PARALLEL_GROUPS
+    set share a rung (run in parallel). With no groups every rung has one stage."""
     rungs, seen = [], set()
     for s in stages:
         if s in seen:
@@ -110,6 +116,11 @@ def ladder_rungs(total):
             rungs.append([s])
             seen.add(s)
     return rungs
+
+
+def ladder_rungs(total):
+    """Return the default (global-matrix) ladder as ordered rungs."""
+    return rungs_from_stages(build_ladder(total))
 
 
 # --- SLA: how long a single approval stage may sit before it's "overdue" ----

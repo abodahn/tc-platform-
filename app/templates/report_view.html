@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}{{ spec.label }}{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow"><a href="{{ url_for('main.reports') }}" data-i18n="reports.back">Reports</a> · {{ spec.group }}</div>
+    <h1>{{ spec.label }}</h1>
+    <div class="sub">{{ spec.desc }}</div>
+  </div>
+</div>
+
+{% if spec.filters %}
+<div class="panel">
+  <form method="get">
+    <div class="panel-pad" style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">
+      {% for f in spec.filters %}
+      <div class="field" style="margin:0;min-width:170px">
+        <label>{{ f.label }}</label>
+        {% if f.type == 'select' %}
+          <select name="{{ f.name }}" class="input">
+            <option value="" {% if not args.get(f.name) %}selected{% endif %} data-i18n="reports.all">All</option>
+            {% for opt in f.options %}
+            <option value="{{ opt }}" {% if args.get(f.name)==opt %}selected{% endif %}>{{ opt|replace('_',' ')|title }}</option>
+            {% endfor %}
+          </select>
+        {% elif f.type == 'date' %}
+          <input type="date" name="{{ f.name }}" class="input" value="{{ args.get(f.name,'') }}">
+        {% else %}
+          <input type="text" name="{{ f.name }}" class="input" value="{{ args.get(f.name,'') }}" placeholder="{{ f.label }}" autocomplete="off">
+        {% endif %}
+      </div>
+      {% endfor %}
+      <button class="btn btn-primary" type="submit"><span data-i18n="reports.run">Run</span></button>
+      <a class="btn btn-ghost" href="{{ url_for('main.report_view', key=spec.key) }}" data-i18n="reports.clear">Clear</a>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<div class="panel mt-3">
+  <div class="panel-head">
+    <h3 data-i18n="reports.preview">Preview</h3>
+    <div class="flex gap center">
+      <span class="muted">{{ count }} <span data-i18n="reports.rows">rows</span></span>
+      {% if can_export %}
+        {% set qs = request.query_string.decode() %}
+        <a class="btn btn-ghost btn-sm" href="{{ url_for('main.report_export', key=spec.key, fmt='csv') }}{% if qs %}?{{ qs }}{% endif %}">CSV</a>
+        <a class="btn btn-ghost btn-sm" href="{{ url_for('main.report_export', key=spec.key, fmt='xlsx') }}{% if qs %}?{{ qs }}{% endif %}">Excel</a>
+        <a class="btn btn-ghost btn-sm" href="{{ url_for('main.report_export', key=spec.key, fmt='pdf') }}{% if qs %}?{{ qs }}{% endif %}">PDF</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="panel-pad" style="overflow-x:auto">
+    {% if rows %}
+    <table class="tbl">
+      <thead><tr>{% for k, h in spec.columns %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>{% for k, h in spec.columns %}<td>{{ r[k] if r[k] is not none else '' }}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if count >= 300 %}
+    <div class="muted mt-2" style="font-size:12.5px" data-i18n="reports.capped">Showing the first 300 rows — export for the full data set.</div>
+    {% endif %}
+    {% else %}
+    <div class="muted" data-i18n="reports.no_rows">No matching records.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

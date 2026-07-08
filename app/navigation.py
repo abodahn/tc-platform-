@@ -48,6 +48,7 @@ NAV = [
         ("proc_vendors", "nav.proc_vendors", "boxes", "approvals.vendors", "proc_view"),
         ("proc_budgets", "nav.proc_budgets", "wallet", "approvals.budgets", "proc_view"),
         ("proc_delegations", "nav.proc_delegations", "users", "approvals.delegations", "proc_view"),
+        ("proc_settings", "nav.proc_settings", "settings", "approvals.settings", "proc_admin"),
     ]},
     {"section": "nav.services", "items": [
         ("hr", "nav.hr", "users", "main.module", "open_module"),

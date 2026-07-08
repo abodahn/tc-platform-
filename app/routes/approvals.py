@@ -31,6 +31,26 @@ def _ip():
     return request.headers.get("X-Forwarded-For", request.remote_addr or "")
 
 
+def _save_attachments(pr_id, user):
+    """Persist any files posted under name='attachments' on the PR form.
+    Returns the count saved; silently skips empty / oversized / unsupported files."""
+    saved = 0
+    for file in request.files.getlist("attachments"):
+        if not file or not file.filename:
+            continue
+        if not file.filename.lower().endswith(_ATTACH_EXT):
+            continue
+        raw = file.read()
+        if not raw or len(raw) > _MAX_ATTACH:
+            continue
+        b64 = base64.b64encode(raw).decode("ascii")
+        svc.add_attachment(pr_id, file.filename,
+                           file.mimetype or "application/octet-stream",
+                           b64, len(raw), user, ip=_ip())
+        saved += 1
+    return saved
+
+
 # --------------------------------------------------------------------------
 # Landing — KPIs + my approval queue + recent requests
 # --------------------------------------------------------------------------
@@ -84,7 +104,9 @@ def new():
     return render_template("approvals/new.html", active="procurement",
                            vendors=svc.list_vendors(), units=C.UNITS,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
+                           deliveries=C.DELIVERY_CONDITIONS, departments=svc.list_departments(),
                            matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
+                           dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill)
 
 
@@ -136,7 +158,9 @@ def create():
         return redirect(url_for("approvals.new"))
     submit = request.form.get("action") != "draft"
     pr_id, pr_no = svc.create_pr(header, items, _u(), ip=_ip(), submit=submit)
-    flash(f"Purchase request {pr_no} created.", "success")
+    n = _save_attachments(pr_id, _u())
+    flash(f"Purchase request {pr_no} created." + (f" {n} file(s) attached." if n else ""),
+          "success")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -162,7 +186,9 @@ def edit(pr_id):
     return render_template("approvals/new.html", active="procurement",
                            vendors=svc.list_vendors(), units=C.UNITS,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
+                           deliveries=C.DELIVERY_CONDITIONS, departments=svc.list_departments(),
                            matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
+                           dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
                            editing=pr, edit_items=bundle["items"])
 
@@ -184,6 +210,7 @@ def edit_save(pr_id):
     if not ok:
         flash(f"Could not save ({msg}).", "error")
         return redirect(url_for("approvals.edit", pr_id=pr_id))
+    _save_attachments(pr_id, _u())
     if request.form.get("action") != "draft":
         svc.submit_pr(pr_id, _u(), ip=_ip())
         flash("Saved and submitted for approval.", "success")
@@ -654,3 +681,45 @@ def create_vendor():
         svc.create_vendor(data, _u(), ip=_ip())
         flash("Vendor saved.", "success")
     return redirect(url_for("approvals.vendors"))
+
+
+# --------------------------------------------------------------------------
+# Settings — responsibility (approval) matrix per department
+# --------------------------------------------------------------------------
+@bp.route("/settings", methods=["GET"])
+@login_required
+@permission_required("proc_admin")
+def settings():
+    depts = svc.list_departments()
+    dept = request.args.get("department") or (depts[0] if depts else "")
+    return render_template("approvals/settings.html", active="procurement",
+                           departments=depts, department=dept,
+                           matrix=svc.get_dept_matrix(dept), ladder=C.LADDER,
+                           stage_labels=C.STAGE_LABELS, default_matrix=C.APPROVAL_MATRIX)
+
+
+@bp.route("/settings", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def save_settings():
+    f = request.form
+    dept = (f.get("new_department") or "").strip() or (f.get("department") or "").strip()
+    if not dept:
+        flash("Choose or name a department.", "error")
+        return redirect(url_for("approvals.settings"))
+    rows = []
+    for stage in C.LADDER:                       # canonical order preserved
+        if f.get(f"inc_{stage}") == "1":
+            try:
+                thr = float(f.get(f"thr_{stage}") or 0)
+            except ValueError:
+                thr = 0
+            rows.append({"stage": stage, "threshold": thr})
+    # A brand-new department (Add form, no stages ticked) seeds with the default
+    # ladder so it persists and is immediately usable; admins tune it afterwards.
+    if not rows and f.get("new_department"):
+        rows = [{"stage": s, "threshold": C.APPROVAL_MATRIX.get(s, 0)} for s in C.LADDER]
+    ok, msg = svc.set_dept_matrix(dept, rows, _u())
+    flash(f"Responsibility matrix saved for {dept}." if ok else f"Could not save ({msg}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.settings", department=dept))

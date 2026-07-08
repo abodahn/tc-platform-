@@ -10,7 +10,7 @@ import sys
 import platform as pyplatform
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
-                   session, jsonify, abort, g, Response, flash)
+                   session, jsonify, abort, g, Response, flash, send_file)
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -22,6 +22,7 @@ from app.security import (has_permission, role_label, ROLES, validate_password,
 from app.navigation import NAV
 from app.services import health as health_svc
 from app.services import seed_content as sc
+from app.services import reports as reports_svc
 from app.services.notify import sync_health_notifications, sync_system_notifications
 
 bp = Blueprint("main", __name__)
@@ -289,68 +290,45 @@ def module(key):
 
 
 # --------------------------------------------------------------------------
-# Reports Center
+# Reports & Exports Center
 # --------------------------------------------------------------------------
 @bp.route("/reports")
 @permission_required("view_reports")
 def reports():
-    return render_template("reports.html", reports=sc.REPORTS,
-                           exports=CSV_EXPORTS, active="reports")
+    """Catalogue of live reports the current user may view, grouped by module."""
+    groups = reports_svc.catalog(user_can)
+    return render_template("reports.html", groups=groups, active="reports")
 
 
-# Real CSV exports. Each entry: key -> (label, headers, SQL).
-CSV_EXPORTS = {
-    "systems": ("Systems registry",
-                ["key", "name_en", "category", "base_url", "health_url", "port",
-                 "owner", "criticality", "is_integrated", "enabled"],
-                "SELECT key,name_en,category,base_url,health_url,port,owner,"
-                "criticality,is_integrated,enabled FROM systems ORDER BY sort_order"),
-    "audit": ("Audit log",
-              ["id", "username", "action", "detail", "ip", "created_at"],
-              "SELECT id,username,action,detail,ip,created_at FROM audit_logs ORDER BY id DESC"),
-    "production_lines": ("Production lines",
-                         ["name", "area", "status", "shift", "target_output",
-                          "actual_output", "operators", "updated_at"],
-                         "SELECT name,area,status,shift,target_output,actual_output,"
-                         "operators,updated_at FROM production_lines ORDER BY area,name"),
-    "production_downtime": ("Production downtime",
-                            ["line", "reason", "category", "minutes", "occurred_at"],
-                            "SELECT l.name AS line, d.reason, d.category, d.minutes, d.occurred_at "
-                            "FROM production_downtime d LEFT JOIN production_lines l ON l.id=d.line_id "
-                            "ORDER BY d.id DESC"),
-    "production_quality": ("Production quality",
-                           ["line", "issue", "severity", "quantity", "status", "created_at"],
-                           "SELECT l.name AS line, q.issue, q.severity, q.quantity, q.status, q.created_at "
-                           "FROM production_quality q LEFT JOIN production_lines l ON l.id=q.line_id "
-                           "ORDER BY q.id DESC"),
-    "notifications": ("Notifications",
-                      ["id", "severity", "module", "title", "message", "is_read", "created_at"],
-                      "SELECT id,severity,module,title,message,is_read,created_at "
-                      "FROM notifications ORDER BY id DESC"),
-}
-
-
-@bp.route("/reports/export/<key>.csv")
-@permission_required("export_reports")
-def export_csv(key):
-    spec = CSV_EXPORTS.get(key)
-    if not spec:
+@bp.route("/reports/<key>")
+@permission_required("view_reports")
+def report_view(key):
+    """A single report: filters + on-screen preview (first 300 rows) + exports."""
+    spec = reports_svc.get(key)
+    if not spec or not user_can(spec["perm"]):
         abort(404)
-    label, headers, sql = spec
-    conn = get_db()
+    result = reports_svc.run(key, request.args, limit=300)
+    return render_template("report_view.html", spec=spec, rows=result["rows"],
+                           count=result["count"], args=request.args, active="reports",
+                           can_export=user_can("export_reports"))
+
+
+@bp.route("/reports/<key>.<fmt>")
+@permission_required("export_reports")
+def report_export(key, fmt):
+    """Export a report honouring the current filters as CSV / Excel / PDF."""
+    spec = reports_svc.get(key)
+    if not spec or not user_can(spec["perm"]) or fmt not in ("csv", "xlsx", "pdf"):
+        abort(404)
+    result = reports_svc.run(key, request.args, limit=20000)
     try:
-        rows = conn.execute(sql).fetchall()
-    finally:
-        conn.close()
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(headers)
-    for r in rows:
-        writer.writerow([r[h] for h in headers])
+        payload, mime, ext = reports_svc.export(spec, result["rows"], fmt)
+    except Exception:  # noqa: BLE001 — e.g. reportlab/openpyxl missing
+        abort(500)
     log_audit(current_user()["username"], "report_export",
-              f"Exported {key}.csv ({len(rows)} rows)", request.remote_addr or "")
-    return Response(buf.getvalue(), mimetype="text/csv",
-                    headers={"Content-Disposition": f"attachment; filename=tc_{key}.csv"})
+              f"{key}.{fmt} ({result['count']} rows)", request.remote_addr or "")
+    return send_file(io.BytesIO(payload), as_attachment=True,
+                     download_name=f"tc_{key}.{ext}", mimetype=mime)
 
 
 # --------------------------------------------------------------------------

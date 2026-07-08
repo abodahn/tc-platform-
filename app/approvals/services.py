@@ -13,7 +13,8 @@ from app.db import get_db
 from app.security import has_permission
 from app.approvals import constants as C
 from app.approvals.constants import (
-    build_ladder, ladder_rungs, stage_label, STAGE_ROLES, PR_STATUSES)
+    build_ladder, ladder_rungs, rungs_from_stages, stage_label, STAGE_ROLES,
+    PR_STATUSES, LADDER, APPROVAL_MATRIX, DEPARTMENTS)
 
 
 def _now():
@@ -302,6 +303,105 @@ def counts(user=None):
 # --------------------------------------------------------------------------
 # create / submit
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Responsibility (approval) matrix — per department
+# --------------------------------------------------------------------------
+def dept_ladder(conn, department, total):
+    """Ordered stage list required for a PR of `total` in `department`. Uses the
+    department's custom responsibility matrix if one exists, else the global
+    default (constants.APPROVAL_MATRIX)."""
+    try:
+        t = float(total or 0)
+    except (TypeError, ValueError):
+        t = 0.0
+    rows = conn.execute(
+        "SELECT stage, threshold FROM proc_resp_matrix "
+        "WHERE department=? AND active=1 ORDER BY seq, id", (department or "",)).fetchall()
+    if rows:
+        return [r["stage"] for r in rows if t >= float(r["threshold"] or 0)]
+    return build_ladder(t)
+
+
+def list_departments():
+    """Departments for the dropdown: constant defaults + any already used by a
+    budget or a responsibility matrix, de-duplicated, order preserved."""
+    conn = get_db()
+    try:
+        used = [r["department"] for r in conn.execute(
+            "SELECT DISTINCT department FROM proc_budgets WHERE department IS NOT NULL "
+            "UNION SELECT DISTINCT department FROM proc_resp_matrix WHERE department IS NOT NULL"
+        ).fetchall()]
+    finally:
+        conn.close()
+    out = []
+    for d in list(DEPARTMENTS) + used:
+        d = (d or "").strip()
+        if d and d not in out:
+            out.append(d)
+    return out
+
+
+def all_dept_matrices():
+    """{department: {stage: threshold}} for departments with a custom matrix —
+    drives the live approval-route preview on the new-request form."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT department, stage, threshold FROM proc_resp_matrix WHERE active=1").fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        out.setdefault(r["department"], {})[r["stage"]] = float(r["threshold"] or 0)
+    return out
+
+
+def get_dept_matrix(department):
+    """For the settings UI: {stage: {included, threshold, seq}} across the whole
+    canonical LADDER (a department's custom rows override the defaults)."""
+    conn = get_db()
+    try:
+        rows = {r["stage"]: r for r in conn.execute(
+            "SELECT stage, threshold, seq FROM proc_resp_matrix WHERE department=? AND active=1",
+            (department or "",)).fetchall()}
+    finally:
+        conn.close()
+    out = {}
+    for i, stage in enumerate(LADDER):
+        if stage in rows:
+            seq = rows[stage]["seq"]
+            out[stage] = {"included": True, "threshold": float(rows[stage]["threshold"] or 0),
+                          "seq": seq if seq is not None else i}
+        else:
+            out[stage] = {"included": False, "threshold": float(APPROVAL_MATRIX.get(stage, 0)),
+                          "seq": i}
+    return out
+
+
+def set_dept_matrix(department, stage_rows, user=None):
+    """Replace a department's responsibility matrix. `stage_rows` = ordered list
+    of {stage, threshold} for the INCLUDED stages. Empty list clears it (the
+    department reverts to the global default)."""
+    department = (department or "").strip()
+    if not department:
+        return False, "no_department"
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM proc_resp_matrix WHERE department=?", (department,))
+        now = _now()
+        for i, r in enumerate(stage_rows):
+            stage = r.get("stage")
+            if stage not in LADDER:
+                continue
+            conn.execute(
+                "INSERT INTO proc_resp_matrix (department, stage, threshold, seq, active, updated_at) "
+                "VALUES (?,?,?,?,1,?)", (department, stage, float(r.get("threshold") or 0), i, now))
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
 def create_pr(header, items, user, ip=None, submit=True):
     """Create a PR (+items). When submit=True, build the ladder and route it.
     Returns (pr_id, pr_no)."""
@@ -411,7 +511,9 @@ def submit_pr(pr_id, user, ip=None):
             return False, "not_submittable"
         # clear any prior steps (resubmit after rejection)
         conn.execute("DELETE FROM pr_steps WHERE pr_id=?", (pr_id,))
-        rungs = ladder_rungs(pr["total"])   # each rung = list of parallel stages
+        # Department-aware ladder: use the department's responsibility matrix if
+        # it has one, else the global default. Each rung = parallel stages.
+        rungs = rungs_from_stages(dept_ladder(conn, pr["department"], pr["total"]))
         now = _now()
         for i, rung in enumerate(rungs, start=1):
             for stage in rung:

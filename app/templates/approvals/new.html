@@ -11,7 +11,7 @@
   <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.detail', pr_id=editing.id) if editing else url_for('approvals.index') }}" data-i18n="proc.cancel">Cancel</a>
 </div>
 
-<form method="post" action="{{ url_for('approvals.edit_save', pr_id=editing.id) if editing else url_for('approvals.create') }}" id="prForm">
+<form method="post" enctype="multipart/form-data" action="{{ url_for('approvals.edit_save', pr_id=editing.id) if editing else url_for('approvals.create') }}" id="prForm">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
 
   <div class="panel">
@@ -23,20 +23,28 @@
         <div class="field"><label data-i18n="proc.request_for_l">Request for</label>
           <input name="request_for" autocomplete="off" value="{{ prefill.request_for or '' }}" placeholder="Asset / machine / area"></div>
         <div class="field"><label data-i18n="proc.dept_l">Department</label>
-          <input name="department" autocomplete="off" value="{{ prefill.department or '' }}" placeholder="e.g. General Maintenance"></div>
+          <select name="department" id="deptSel">
+            <option value=""></option>
+            {% for d in departments %}<option value="{{ d }}" {{ 'selected' if prefill.department==d }}>{{ d }}</option>{% endfor %}
+            {% if prefill.department and prefill.department not in departments %}<option value="{{ prefill.department }}" selected>{{ prefill.department }}</option>{% endif %}
+          </select></div>
         <div class="field"><label data-i18n="proc.date_l">Request date</label>
           <input type="date" name="request_date" value="{{ '' }}"></div>
         <div class="field"><label data-i18n="proc.vendor_l">Vendor</label>
-          <input name="vendor" list="vendorList" autocomplete="off" value="{{ prefill.vendor or '' }}" placeholder="Supplier">
-          <datalist id="vendorList">{% for v in vendors %}<option value="{{ v.name }}">{% endfor %}</datalist></div>
+          <select name="vendor">
+            <option value=""></option>
+            {% for v in vendors %}<option value="{{ v.name }}" {{ 'selected' if prefill.vendor==v.name }}>{{ v.name }}</option>{% endfor %}
+            {% if prefill.vendor and prefill.vendor not in vendors|map(attribute='name')|list %}<option value="{{ prefill.vendor }}" selected>{{ prefill.vendor }}</option>{% endif %}
+          </select></div>
         <div class="field"><label data-i18n="proc.currency_l">Currency</label>
           <select name="currency">{% for c in currencies %}<option value="{{ c }}" {{ 'selected' if prefill.currency==c }}>{{ c }}</option>{% endfor %}</select></div>
         <div class="field"><label data-i18n="proc.payment_l">Payment condition</label>
           <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}" {{ 'selected' if prefill.payment_condition==p }}>{{ p }}</option>{% endfor %}</select></div>
         <div class="field"><label data-i18n="proc.delivery_l">Delivery condition</label>
-          <input name="delivery_condition" autocomplete="off" value="{{ prefill.delivery_condition or '' }}" placeholder="e.g. T&C Warehouse"></div>
-        <div class="field"><label data-i18n="proc.tax_l">VAT / tax rate (%)</label>
-          <input name="tax_rate" type="number" min="0" step="any" value="{{ prefill.tax_rate or 0 }}" placeholder="e.g. 14"></div>
+          <select name="delivery_condition"><option value=""></option>
+            {% for d in deliveries %}<option value="{{ d }}" {{ 'selected' if prefill.delivery_condition==d }}>{{ d }}</option>{% endfor %}
+            {% if prefill.delivery_condition and prefill.delivery_condition not in deliveries %}<option value="{{ prefill.delivery_condition }}" selected>{{ prefill.delivery_condition }}</option>{% endif %}
+          </select></div>
       </div>
     </div>
   </div>
@@ -70,6 +78,14 @@
   <div class="field mt-4"><label data-i18n="proc.notes_l">Notes</label>
     <textarea name="notes" rows="2" placeholder="Anything the approvers should know…">{{ prefill.notes or '' }}</textarea></div>
 
+  <div class="panel mt-4">
+    <div class="panel-head"><h3 data-i18n="proc.attach_h">Attachments</h3>
+      <span class="muted" style="font-size:12px" data-i18n="proc.attach_hint">Quotations, specs or drawings — PDF, image, Excel or CSV, up to 3&nbsp;MB each.</span></div>
+    <div class="panel-pad">
+      <input type="file" name="attachments" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv">
+    </div>
+  </div>
+
   <div class="flex gap wrap mt-4">
     <button class="btn btn-primary" type="submit" name="action" value="submit" data-i18n="proc.submit">Submit for approval</button>
     <button class="btn btn-ghost" type="submit" name="action" value="draft" data-i18n="proc.save_draft">Save as draft</button>
@@ -79,9 +95,10 @@
 <script>
 (function () {
   var UNITS = {{ units|tojson }};
-  var MATRIX = {{ matrix|tojson }};       // stage -> threshold
-  var LADDER = {{ ladder|tojson }};        // ordered stage keys
-  var LABELS = {{ stage_labels|tojson }};  // stage -> label
+  var MATRIX = {{ matrix|tojson }};              // global default: stage -> threshold
+  var LADDER = {{ ladder|tojson }};               // ordered stage keys
+  var LABELS = {{ stage_labels|tojson }};         // stage -> label
+  var DEPT_MATRICES = {{ dept_matrices|tojson }}; // department -> {stage: threshold} (custom matrices)
   var rows = document.getElementById('rows');
   var totalVal = document.getElementById('totalVal');
   var ladderPrev = document.getElementById('ladderPreview');
@@ -121,9 +138,14 @@
   }
 
   function renderLadder(total){
+    var deptSel = document.getElementById('deptSel');
+    var dept = deptSel ? deptSel.value : '';
+    var custom = DEPT_MATRICES[dept];        // undefined => use the global default
+    var m = custom || MATRIX;
     var chips = ['<span class="lc req">'+ (LABELS.requester||'Requester') +'</span>'];
     LADDER.forEach(function(stage){
-      if (total >= (MATRIX[stage]||0)) {
+      var eligible = custom ? (stage in m) : true;
+      if (eligible && total >= (m[stage]||0)) {
         chips.push('<span class="arrow">›</span><span class="lc">'+(LABELS[stage]||stage)+'</span>');
       }
     });
@@ -141,6 +163,8 @@
   document.getElementById('addRow').addEventListener('click', addRow);
   var curSel = document.querySelector('select[name=currency]');
   curSel.addEventListener('change', function(){ document.getElementById('curLabel').textContent = curSel.value; });
+  var deptSelEl = document.getElementById('deptSel');
+  if (deptSelEl) deptSelEl.addEventListener('change', recalc);   // re-route preview on dept change
 
   function fillRow(r, it){
     r.querySelector('[name="item[]"]').value = it.item || '';

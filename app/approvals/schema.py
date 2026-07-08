@@ -165,6 +165,21 @@ CREATE TABLE IF NOT EXISTS proc_delegations (
     is_active INTEGER DEFAULT 1, created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_proc_deleg_to ON proc_delegations(to_user);
+
+-- ===== Responsibility (approval) matrix, per department =====
+-- One row per (department, stage). A department with rows defines its own
+-- ladder (which stages, in what order, above what amount). A department with
+-- NO rows falls back to the global default (constants.APPROVAL_MATRIX).
+CREATE TABLE IF NOT EXISTS proc_resp_matrix (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    department TEXT NOT NULL,
+    stage TEXT NOT NULL,          -- warehouse|factory_manager|purchasing|finance|cfo|ceo
+    threshold REAL DEFAULT 0,     -- stage joins the ladder when total >= threshold
+    seq INTEGER DEFAULT 0,        -- order within the ladder
+    active INTEGER DEFAULT 1,
+    updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_resp_dept ON proc_resp_matrix(department);
 """
 
 # Columns added to pr_steps after first release — applied as idempotent ALTERs

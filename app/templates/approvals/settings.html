@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Procurement settings{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="proc.settings_eyebrow">Procurement</div>
+    <h1 data-i18n="proc.resp_matrix">Responsibility matrix</h1>
+    <div class="sub" data-i18n="proc.resp_sub">Define, per department, who approves a purchase request and above what amount. A department with no matrix uses the default rules.</div>
+  </div>
+</div>
+
+<!-- Department switcher -->
+<div class="panel">
+  <form method="get">
+    <div class="panel-pad flex gap center wrap">
+      <div class="field" style="margin:0;min-width:240px"><label data-i18n="proc.department">Department</label>
+        <select name="department" onchange="this.form.submit()">
+          {% for d in departments %}<option value="{{ d }}" {{ 'selected' if department==d }}>{{ d }}</option>{% endfor %}
+        </select>
+      </div>
+      <span class="muted" style="font-size:12.5px" data-i18n="proc.switch_hint">Pick a department to view or edit its approval route.</span>
+    </div>
+  </form>
+</div>
+
+<!-- Matrix editor -->
+<div class="panel mt-3">
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="department" value="{{ department }}">
+    <div class="panel-head">
+      <h3>{{ department or '—' }} · <span data-i18n="proc.approval_route">approval route</span></h3>
+      <span class="muted">
+        <span class="lc req">{{ stage_labels.requester }}</span>
+        {% for stage in ladder %}{% if matrix[stage].included %}<span class="arrow">›</span> {{ stage_labels[stage] }} {% endif %}{% endfor %}
+      </span>
+    </div>
+    <div class="panel-pad" style="overflow-x:auto">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.include">Include</th>
+          <th data-i18n="proc.approver">Approver</th>
+          <th data-i18n="proc.threshold">Applies when total ≥ (EGP)</th>
+          <th data-i18n="proc.default">Default</th>
+        </tr></thead>
+        <tbody>
+        {% for stage in ladder %}
+          {% set m = matrix[stage] %}
+          <tr>
+            <td><input type="checkbox" name="inc_{{ stage }}" value="1" {{ 'checked' if m.included }}></td>
+            <td><b>{{ stage_labels[stage] }}</b></td>
+            <td><input name="thr_{{ stage }}" type="number" min="0" step="any" value="{{ '%g'|format(m.threshold) }}" style="width:160px"></td>
+            <td class="muted">{{ '{:,.0f}'.format(default_matrix[stage]) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="muted mt-2" style="font-size:12px" data-i18n="proc.resp_note">The requester always signs by submitting. Tick the approvers this department needs and set the amount each one applies from (0 = always). Clearing every tick makes this department fall back to the default rules.</div>
+      <div class="flex gap mt-3">
+        <button class="btn btn-primary" type="submit" data-i18n="proc.save_matrix">Save responsibility matrix</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<!-- Add a new department -->
+<div class="panel mt-3">
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-head"><h3 data-i18n="proc.add_dept">Add a department</h3></div>
+    <div class="panel-pad flex gap center wrap">
+      <div class="field" style="margin:0;min-width:240px"><label data-i18n="proc.new_dept">New department name</label>
+        <input name="new_department" autocomplete="off" placeholder="e.g. Logistics"></div>
+      <span class="muted" style="font-size:12.5px" data-i18n="proc.add_dept_hint">Created with the default approval route — then tune it above.</span>
+      <button class="btn btn-ghost" type="submit" data-i18n="proc.create_dept">Create department</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}
