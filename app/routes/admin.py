@@ -266,3 +266,74 @@ def edit_system(sid):
     finally:
         conn.close()
     return redirect(url_for("admin.index") + "#integrations")
+
+
+# ---------------------------------------------------------------------------
+# Garamento knowledge base — edit the assistant's built-in how-to manual.
+# ---------------------------------------------------------------------------
+@bp.route("/garamento")
+@permission_required("access_admin")
+def garamento():
+    from app.services import garamento_kb as kb
+    topics = kb.list_all()
+    edit = None
+    ekey = (request.args.get("edit") or "").strip()
+    if ekey:
+        edit = kb.get_one(ekey)
+    return render_template("admin_garamento.html", topics=topics, edit=edit, active="admin")
+
+
+@bp.route("/garamento/save", methods=["POST"])
+@permission_required("access_admin")
+def garamento_save():
+    from app.services import garamento_kb as kb
+    f = request.form
+    try:
+        key = kb.save(
+            topic_key=f.get("topic_key", ""),
+            title=f.get("title", ""),
+            keywords=f.get("keywords", ""),
+            body=f.get("body", ""),
+            active=1 if f.get("active") else 0,
+            seq=int(f.get("seq") or 100),
+        )
+    except ValueError:
+        flash("Title and body are required.", "error")
+        return redirect(url_for("admin.garamento"))
+    except Exception:  # noqa: BLE001
+        flash("Could not save the topic.", "error")
+        return redirect(url_for("admin.garamento"))
+    log_audit(current_user()["username"], "garamento_topic_save", key, request.remote_addr or "")
+    flash("Guidance saved — Garamento is up to date.", "success")
+    return redirect(url_for("admin.garamento"))
+
+
+@bp.route("/garamento/<topic_key>/toggle", methods=["POST"])
+@permission_required("access_admin")
+def garamento_toggle(topic_key):
+    from app.services import garamento_kb as kb
+    row = kb.get_one(topic_key)
+    if row:
+        kb.set_active(topic_key, 0 if row.get("active") else 1)
+        log_audit(current_user()["username"], "garamento_topic_toggle", topic_key, request.remote_addr or "")
+    return redirect(url_for("admin.garamento"))
+
+
+@bp.route("/garamento/<topic_key>/delete", methods=["POST"])
+@permission_required("access_admin")
+def garamento_delete(topic_key):
+    from app.services import garamento_kb as kb
+    kb.delete(topic_key)
+    log_audit(current_user()["username"], "garamento_topic_delete", topic_key, request.remote_addr or "")
+    flash("Topic deleted.", "success")
+    return redirect(url_for("admin.garamento"))
+
+
+@bp.route("/garamento/reset", methods=["POST"])
+@permission_required("access_admin")
+def garamento_reset():
+    from app.services import garamento_kb as kb
+    kb.reset_defaults()
+    log_audit(current_user()["username"], "garamento_topic_reset", "", request.remote_addr or "")
+    flash("Restored the default guidance topics.", "success")
+    return redirect(url_for("admin.garamento"))

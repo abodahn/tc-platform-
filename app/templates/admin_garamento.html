@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Garamento guidance{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow">Assistant · Knowledge base</div>
+    <h1>🧵 Garamento guidance</h1>
+    <div class="sub">Edit the how-to topics Garamento uses to answer “how do I…” questions. Changes take effect on the next question — no deploy needed.</div>
+  </div>
+  <div class="flex gap">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.index') }}">← Admin</a>
+    <form method="post" action="{{ url_for('admin.garamento_reset') }}"
+          onsubmit="return confirm('Restore the built-in default topics? Your custom edits will be replaced.');">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button class="btn btn-ghost btn-sm" type="submit">Restore defaults</button>
+    </form>
+  </div>
+</div>
+
+<div class="grid cols-2" style="align-items:start;gap:20px">
+
+  {# ---- Editor ---- #}
+  <div class="panel">
+    <div class="panel-head"><h3>{{ 'Edit topic' if edit else 'Add a topic' }}</h3>
+      {% if edit %}<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.garamento') }}">+ New instead</a>{% endif %}
+    </div>
+    <div class="panel-pad">
+      <form method="post" action="{{ url_for('admin.garamento_save') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field"><label>Title</label>
+          <input name="title" required autocomplete="off" data-ac data-polish="title"
+                 value="{{ edit.title if edit else '' }}" placeholder="e.g. Open / report a maintenance ticket"></div>
+
+        <div class="grid cols-2">
+          <div class="field"><label>Key <span class="muted">(leave blank to auto-generate)</span></label>
+            <input name="topic_key" autocomplete="off" value="{{ edit.topic_key if edit else '' }}"
+                   placeholder="maint_ticket_new" {{ 'readonly' if edit }}></div>
+          <div class="field"><label>Order</label>
+            <input name="seq" type="number" min="0" step="10" value="{{ edit.seq if edit else 100 }}"></div>
+        </div>
+
+        <div class="field"><label>Keywords <span class="muted">(comma-separated — helps Garamento find this topic; add Arabic/Turkish words too)</span></label>
+          <input name="keywords" autocomplete="off" value="{{ edit.keywords if edit else '' }}"
+                 placeholder="open ticket, report, fault, تذكرة, arıza"></div>
+
+        <div class="field"><label>Guidance (steps)</label>
+          <textarea name="body" rows="10" required data-ac data-polish="notes"
+                    placeholder="1. Sidebar → …&#10;2. …&#10;3. …">{{ edit.body if edit else '' }}</textarea></div>
+
+        <label class="flex gap center" style="margin:4px 0 14px;font-size:13.5px">
+          <input type="checkbox" name="active" value="1" {{ 'checked' if (edit.active if edit else 1) }}>
+          Active (Garamento can use this topic)
+        </label>
+
+        <div class="flex gap">
+          <button class="btn btn-primary" type="submit">{{ 'Save changes' if edit else 'Add topic' }}</button>
+          {% if edit %}<a class="btn btn-ghost" href="{{ url_for('admin.garamento') }}">Cancel</a>{% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# ---- List ---- #}
+  <div class="panel">
+    <div class="panel-head"><h3>Topics <span class="muted">({{ topics|length }})</span></h3></div>
+    <div class="panel-pad" style="overflow-x:auto">
+      <table class="tbl">
+        <thead><tr>
+          <th>Title</th><th>Keywords</th><th style="text-align:center">Status</th><th></th>
+        </tr></thead>
+        <tbody>
+        {% for t in topics %}
+          <tr {{ 'style=opacity:.55' if not t.active }}>
+            <td><b>{{ t.title }}</b><div class="muted" style="font-size:11.5px">{{ t.topic_key }}</div></td>
+            <td class="muted" style="font-size:12px;max-width:260px">{{ (t.keywords or '')[:90] }}{{ '…' if (t.keywords or '')|length > 90 }}</td>
+            <td style="text-align:center">
+              <form method="post" action="{{ url_for('admin.garamento_toggle', topic_key=t.topic_key) }}" style="display:inline">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button class="tag {{ 'ok' if t.active else '' }}" type="submit" title="Toggle active"
+                        style="cursor:pointer;border:0">{{ 'On' if t.active else 'Off' }}</button>
+              </form>
+            </td>
+            <td style="white-space:nowrap;text-align:end">
+              <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.garamento', edit=t.topic_key) }}">Edit</a>
+              <form method="post" action="{{ url_for('admin.garamento_delete', topic_key=t.topic_key) }}" style="display:inline"
+                    onsubmit="return confirm('Delete “{{ t.title }}”?');">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button class="btn btn-ghost btn-sm" type="submit" style="color:var(--crit)">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="muted" style="text-align:center;padding:20px">No topics yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

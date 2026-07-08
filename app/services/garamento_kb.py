@@ -12,6 +12,9 @@ from __future__ import annotations
 import re
 
 # Each topic: id, title, keywords (incl. a few AR/TR aliases for recall), body.
+# These are the built-in DEFAULTS. Once the platform boots they are seeded into
+# the `garamento_topics` table, which admins can edit from the UI; the DB is then
+# the source of truth. If the DB is empty or unreachable, these are the fallback.
 # Bodies are concise, numbered steps grounded in the real sidebar/navigation.
 TOPICS = [
     {
@@ -200,8 +203,6 @@ TOPICS = [
     },
 ]
 
-_INDEX = "Platform topics I can guide you through: " + "; ".join(t["title"] for t in TOPICS) + "."
-
 _PREAMBLE = (
     "TC PLATFORM GUIDE (use this to answer 'how do I…' questions about the platform "
     "accurately; give concrete steps and name the exact sidebar path. If the answer "
@@ -213,20 +214,19 @@ def _tokens(text):
     return set(re.findall(r"[a-z؀-ۿ]{3,}", (text or "").lower()))
 
 
-def retrieve(query, k=3):
+def retrieve(query, k=3, topics=None):
     """Return up to k topics most relevant to the query (by keyword overlap)."""
+    topics = topics if topics is not None else active_topics()
     q = _tokens(query)
     ql = (query or "").lower()
     scored = []
-    for t in TOPICS:
+    for t in topics:
         score = 0
         for kw in t["keywords"]:
-            if kw in ql:                       # phrase / alias match
+            if kw and kw in ql:                # phrase / alias match
                 score += 3
-        title_tokens = _tokens(t["title"])
-        body_tokens = _tokens(t["body"])
-        score += 2 * len(q & title_tokens)
-        score += len(q & body_tokens)
+        score += 2 * len(q & _tokens(t["title"]))
+        score += len(q & _tokens(t["body"]))
         if score:
             scored.append((score, t))
     scored.sort(key=lambda s: s[0], reverse=True)
@@ -235,9 +235,167 @@ def retrieve(query, k=3):
 
 def context_for(query, k=3):
     """Build the knowledge block to inject into the system prompt."""
-    hits = retrieve(query, k=k)
+    topics = active_topics()
+    hits = retrieve(query, k=k, topics=topics)
     if not hits:
-        # No strong match: give the index plus the two most common flows.
-        hits = [t for t in TOPICS if t["id"] in ("proc_new", "maint_ticket_new")]
+        # No strong match: give the two most common flows (or first topics).
+        hits = [t for t in topics if t["id"] in ("proc_new", "maint_ticket_new")] or topics[:2]
+    index = "Platform topics I can guide you through: " + "; ".join(t["title"] for t in topics) + "."
     body = "\n\n".join(f"### {t['title']}\n{t['body']}" for t in hits)
-    return _PREAMBLE + _INDEX + "\n\n" + body
+    return _PREAMBLE + index + "\n\n" + body
+
+
+# --------------------------------------------------------------------------
+# Editable store — the DB-backed manual admins maintain from the UI.
+# Built-in TOPICS above are the seed + the ultimate fallback.
+# --------------------------------------------------------------------------
+_DDL = """
+CREATE TABLE IF NOT EXISTS garamento_topics (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_key  TEXT UNIQUE NOT NULL,
+    title      TEXT NOT NULL,
+    keywords   TEXT,
+    body       TEXT NOT NULL,
+    active     INTEGER DEFAULT 1,
+    seq        INTEGER DEFAULT 100,
+    updated_at TEXT
+);
+"""
+
+
+def ensure_and_seed(conn):
+    """Create the topics table (idempotent) and seed it from the built-in
+    defaults on first run. Safe to call on every boot / request."""
+    conn.executescript(_DDL)
+    conn.commit()
+    n = conn.execute("SELECT COUNT(*) AS c FROM garamento_topics").fetchone()["c"]
+    if n == 0:
+        from app.db import utcnow
+        for i, t in enumerate(TOPICS):
+            conn.execute(
+                """INSERT OR IGNORE INTO garamento_topics
+                   (topic_key, title, keywords, body, active, seq, updated_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (t["id"], t["title"], ", ".join(t["keywords"]), t["body"], 1, (i + 1) * 10, utcnow()))
+        conn.commit()
+
+
+def _rows_to_topics(rows):
+    out = []
+    for r in rows:
+        kws = [k.strip() for k in (r["keywords"] or "").split(",") if k.strip()]
+        out.append({"id": r["topic_key"], "title": r["title"], "keywords": kws, "body": r["body"]})
+    return out
+
+
+def active_topics():
+    """Active topics from the DB; falls back to built-in TOPICS if the DB is
+    empty or unavailable (so chat never breaks)."""
+    try:
+        from app.db import get_db
+        conn = get_db()
+        try:
+            ensure_and_seed(conn)
+            rows = conn.execute(
+                "SELECT topic_key, title, keywords, body FROM garamento_topics "
+                "WHERE active=1 ORDER BY seq, id").fetchall()
+        finally:
+            conn.close()
+        topics = _rows_to_topics(rows)
+        if topics:
+            return topics
+    except Exception:  # noqa: BLE001
+        pass
+    return TOPICS
+
+
+def list_all():
+    """All topics (active + inactive) for the admin editor."""
+    from app.db import get_db
+    conn = get_db()
+    try:
+        ensure_and_seed(conn)
+        rows = conn.execute(
+            "SELECT id, topic_key, title, keywords, body, active, seq, updated_at "
+            "FROM garamento_topics ORDER BY seq, id").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_one(topic_key):
+    from app.db import get_db
+    conn = get_db()
+    try:
+        r = conn.execute("SELECT * FROM garamento_topics WHERE topic_key=?", (topic_key,)).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def slugify(text):
+    s = re.sub(r"[^a-z0-9]+", "_", (text or "").lower()).strip("_")
+    return (s or "topic")[:40]
+
+
+def save(topic_key, title, keywords, body, active=1, seq=100):
+    """Insert or update a topic. Returns the effective topic_key."""
+    from app.db import get_db, utcnow
+    title = (title or "").strip()[:120]
+    body = (body or "").strip()
+    keywords = (keywords or "").strip()[:600]
+    if not title or not body:
+        raise ValueError("title and body are required")
+    conn = get_db()
+    try:
+        ensure_and_seed(conn)
+        key = (topic_key or "").strip() or slugify(title)
+        exists = conn.execute("SELECT id FROM garamento_topics WHERE topic_key=?", (key,)).fetchone()
+        if exists:
+            conn.execute(
+                """UPDATE garamento_topics SET title=?, keywords=?, body=?, active=?, seq=?, updated_at=?
+                   WHERE topic_key=?""",
+                (title, keywords, body, int(active), int(seq), utcnow(), key))
+        else:
+            conn.execute(
+                """INSERT INTO garamento_topics (topic_key, title, keywords, body, active, seq, updated_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (key, title, keywords, body, int(active), int(seq), utcnow()))
+        conn.commit()
+        return key
+    finally:
+        conn.close()
+
+
+def set_active(topic_key, active):
+    from app.db import get_db, utcnow
+    conn = get_db()
+    try:
+        conn.execute("UPDATE garamento_topics SET active=?, updated_at=? WHERE topic_key=?",
+                     (1 if active else 0, utcnow(), topic_key))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete(topic_key):
+    from app.db import get_db
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM garamento_topics WHERE topic_key=?", (topic_key,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reset_defaults():
+    """Wipe the table and re-seed from the built-in defaults."""
+    from app.db import get_db
+    conn = get_db()
+    try:
+        ensure_and_seed(conn)
+        conn.execute("DELETE FROM garamento_topics")
+        conn.commit()
+        ensure_and_seed(conn)
+    finally:
+        conn.close()

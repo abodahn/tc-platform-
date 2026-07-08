@@ -63,6 +63,7 @@ NAV = [
     ]},
     {"section": "nav.admin", "items": [
         ("admin", "nav.admin_center", "settings", "admin.index", "access_admin"),
+        ("garamento_kb", "nav.garamento_kb", "book", "admin.garamento", "access_admin"),
     ]},
 ]
 

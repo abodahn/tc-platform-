@@ -755,6 +755,12 @@ def init_db():
         # Procurement & Approvals cycle module — create + seed if empty
         from app.approvals.schema import create_and_seed as _proc_create_and_seed
         _proc_create_and_seed(conn)
+        # Garamento knowledge base (editable how-to manual) — create + seed if empty
+        try:
+            from app.services.garamento_kb import ensure_and_seed as _gm_kb_seed
+            _gm_kb_seed(conn)
+        except Exception:
+            conn.rollback()
         # Auto-provision a signature for every user who doesn't have one yet, so it
         # can be stamped on any paper without each person drawing one manually.
         try:

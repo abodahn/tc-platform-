@@ -933,5 +933,6 @@
   "mr.use": "Use this price",
   "mr.price_all": "Price all items",
   "mr.copy": "Copy to notes",
-  "mr.apply_all": "Apply all prices"
+  "mr.apply_all": "Apply all prices",
+  "nav.garamento_kb": "Garamento guidance"
 }
