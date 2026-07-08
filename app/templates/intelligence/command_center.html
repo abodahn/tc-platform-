@@ -1,0 +1,132 @@
+{% extends "intelligence/_base.html" %}
+{% block title %}AI Command Center{% endblock %}
+{% block ai_title %}AI Command Center{% endblock %}
+{% block ai_body %}
+
+{% if not last_run %}
+<div class="ai-card"><div class="bd" style="text-align:center;padding:48px">
+  <div style="font-size:40px">🧠</div>
+  <h3 style="margin:12px 0 6px">No intelligence run yet</h3>
+  <div class="muted" style="margin-bottom:16px">Run the prediction engine to analyse tickets, assets, machines, spares, procurement, payroll, HR and paper across the platform.</div>
+  {% if can('access_admin') %}
+  <form method="post" action="{{ url_for('intelligence.recompute') }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn btn-primary" type="submit">↻ Run the prediction engine</button></form>
+  {% else %}<div class="muted">Ask an administrator to run the engine.</div>{% endif %}
+</div></div>
+{% else %}
+
+{# ---------- Executive hero ---------- #}
+<div class="ai-hero">
+  <div class="ai-gauge" id="healthGauge" style="--v:{{ health or 0 }}">
+    <div class="g-in"><div class="g-val">{{ health|round(0)|int if health is not none else '–' }}</div><div class="g-lbl">Health</div></div>
+  </div>
+  <div>
+    <div class="ai-eyebrow">Company health score</div>
+    <h1>{{ 'Strong' if (health or 0) >= 80 else ('Stable' if (health or 0) >= 60 else ('Needs attention' if (health or 0) >= 40 else 'At risk')) }}</h1>
+    <div class="sub">{{ open_count }} open predicted risks · last run {{ last_run.finished_at }}</div>
+    <div class="ai-hero-kpis" style="margin-top:16px">
+      <div class="ai-glass"><div class="k-val crit">{{ sev.critical }}</div><div class="k-lbl">Critical risks</div></div>
+      <div class="ai-glass"><div class="k-val warn">{{ sev.warning }}</div><div class="k-lbl">Warnings</div></div>
+      <div class="ai-glass"><div class="k-val">{{ open_count }}</div><div class="k-lbl">Total open</div></div>
+      {% set topd = scores[0] if scores else None %}
+      <div class="ai-glass"><div class="k-val">{{ topd.label if topd else '–' }}</div><div class="k-lbl">Top risk area</div></div>
+    </div>
+  </div>
+</div>
+
+{# ---------- Risk heatmap ---------- #}
+<h3 style="margin:22px 0 10px">Risk heatmap by domain</h3>
+<div class="ai-heat">
+  {% for s in scores %}
+  <a class="ai-tile {{ s.color }}" href="{{ url_for('intelligence.breakdown') }}">
+    <span class="t-lvl">{{ s.level }}</span>
+    <div class="t-lbl">{{ s.label }}</div>
+    <div class="t-val">{{ s.score|round(0)|int }}</div>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="ai-grid" style="margin-top:22px">
+  {# Top predicted issues #}
+  <div class="ai-card">
+    <div class="hd"><h3>Top 10 predicted issues</h3><a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.alerts') }}">All alerts</a></div>
+    <div class="bd"><div class="ai-list">
+      {% for a in top_alerts %}
+      <div class="ai-row">
+        <div class="r-main">
+          <div class="r-title">{{ a.title }}</div>
+          <div class="r-sub">{{ a.domain }} · {{ a.responsible or 'Unassigned' }}</div>
+        </div>
+        <div class="r-bar"><span class="{{ 'crit' if a.risk_score>=61 else ('warn' if a.risk_score>=41 else 'info') }}" style="width:{{ a.risk_score }}%;background:currentColor" ></span></div>
+        <span class="ai-score {{ 'crit' if a.risk_score>=61 else ('warn' if a.risk_score>=41 else 'info') }}">{{ a.risk_score|round(0)|int }}</span>
+      </div>
+      {% else %}<div class="muted">No open risks — nicely done.</div>{% endfor %}
+    </div></div>
+  </div>
+
+  {# AI recommendations #}
+  <div class="ai-card">
+    <div class="hd"><h3>AI recommendations</h3></div>
+    <div class="bd">
+      {% for r in recommendations[:8] %}
+      <div class="ai-rec">
+        <div class="r-act">{{ r.detail }}</div>
+        <div class="r-ctx">{{ r.domain }} · {{ r.title }}</div>
+      </div>
+      {% else %}<div class="muted">No recommendations right now.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="ai-grid" style="margin-top:18px">
+  {# Departments to watch #}
+  <div class="ai-card">
+    <div class="hd"><h3>Top departments needing attention</h3></div>
+    <div class="bd"><div class="ai-list">
+      {% for d in dept_watch %}
+      <div class="ai-row">
+        <div class="r-main"><div class="r-title">{{ d.dept }}</div><div class="r-sub">{{ d.count }} open risk(s)</div></div>
+        <span class="ai-chip {{ 'crit' if d.score>=61 else ('warn' if d.score>=41 else ('info' if d.score>=21 else 'ok')) }}"><span class="d"></span>{{ d.level }} {{ d.score|round(0)|int }}</span>
+      </div>
+      {% else %}<div class="muted">Nothing flagged.</div>{% endfor %}
+    </div></div>
+  </div>
+
+  {# Domain risk chart #}
+  <div class="ai-card">
+    <div class="hd"><h3>Domain risk scores</h3></div>
+    <div class="bd"><canvas id="domainChart" height="220"></canvas></div>
+  </div>
+</div>
+
+{# ---------- Business impact ---------- #}
+<h3 style="margin:24px 0 10px">Estimated business impact <span class="muted" style="font-weight:400;font-size:12px">(this run)</span></h3>
+<div class="ai-impact">
+  {% for m in impact %}
+  <div class="imp"><div class="v">{{ m.value|round(0)|int if m.value is number else m.value }} <span style="font-size:12px;color:var(--muted)">{{ m.unit }}</span></div><div class="l">{{ m.label }}</div></div>
+  {% endfor %}
+</div>
+
+<script id="ai-boot" type="application/json">{{ {"scores": scores, "health": health}|tojson }}</script>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+(function(){
+  var boot=document.getElementById('ai-boot'); if(!boot) return;
+  var d=JSON.parse(boot.textContent||'{}');
+  // gauge colour by health
+  var g=document.getElementById('healthGauge');
+  if(g){ var h=d.health||0; g.style.setProperty('--c', h>=80?'#4ade80':(h>=60?'#a3e635':(h>=40?'#fbbf24':'#ff5a6a'))); }
+  var el=document.getElementById('domainChart');
+  if(el && window.Chart && d.scores && d.scores.length){
+    var colors=d.scores.map(function(s){return s.score>=61?'#e11d48':(s.score>=41?'#d97706':(s.score>=21?'#2563eb':'#059669'));});
+    new Chart(el,{type:'bar',data:{labels:d.scores.map(function(s){return s.label||s.domain;}),
+      datasets:[{data:d.scores.map(function(s){return s.score;}),backgroundColor:colors,borderRadius:6}]},
+      options:{indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{max:100,grid:{display:false}},y:{grid:{display:false}}}}});
+  }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "intelligence/_base.html" %}
+{% block title %}Module Risk Breakdown{% endblock %}
+{% block ai_title %}Module Risk Breakdown{% endblock %}
+{% block ai_body %}
+
+{% if sensitive_hidden %}
+<div class="ai-card" style="margin-bottom:14px"><div class="bd muted" style="font-size:12.5px">
+  🔒 Payroll and HR risk detail is restricted to administrators and is hidden here.</div></div>
+{% endif %}
+
+{% for d in domains %}
+<div class="ai-card" style="margin-bottom:16px">
+  <div class="hd">
+    <h3>{{ d.label }}</h3>
+    <span class="ai-chip {{ d.color }}"><span class="d"></span>{{ d.level }} · {{ d.score|round(0)|int }}</span>
+  </div>
+  <div class="bd">
+    {% if d.headline %}<div class="muted" style="margin-bottom:10px">Top signal: {{ d.headline }}</div>{% endif %}
+    <div class="ai-list">
+      {% for a in d.alerts %}
+      <div class="ai-row">
+        <div class="r-main">
+          <div class="r-title">{{ a.title }}</div>
+          <div class="r-sub">{{ a.explanation or a.recommendation }}</div>
+        </div>
+        <span class="ai-score {{ 'crit' if a.risk_score>=61 else ('warn' if a.risk_score>=41 else 'info') }}">{{ a.risk_score|round(0)|int }}</span>
+      </div>
+      {% else %}<div class="muted">No alerts in this domain — healthy.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="ai-card"><div class="bd muted" style="text-align:center;padding:34px">No run yet — press “Recompute now” to populate the breakdown.</div></div>
+{% endfor %}
+
+{% endblock %}

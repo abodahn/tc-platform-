@@ -1,0 +1,54 @@
+{% extends "intelligence/_base.html" %}
+{% block title %}AI Settings{% endblock %}
+{% block ai_title %}AI Settings{% endblock %}
+{% block ai_body %}
+
+<div class="ai-grid">
+  <div class="ai-card">
+    <div class="hd"><h3>Engine settings</h3></div>
+    <div class="bd">
+      <form method="post">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <label class="flex gap center" style="margin-bottom:14px;font-size:14px">
+          <input type="checkbox" name="auto_run" value="1" {{ 'checked' if auto_run }}>
+          Auto-run the engine on a schedule (when a scheduler is configured)
+        </label>
+        <div class="field"><label>Prediction horizon (days)</label>
+          <input name="horizon_days" type="number" min="7" max="180" value="{{ horizon_days }}" style="max-width:160px"></div>
+        <div class="flex gap mt-3">
+          <button class="btn btn-primary" type="submit">Save settings</button>
+        </div>
+      </form>
+      <div class="muted" style="font-size:12px;margin-top:14px">
+        The engine also runs on demand from any Intelligence page via “Recompute now”. Scheduled background runs are on the roadmap (see docs).
+      </div>
+    </div>
+  </div>
+
+  <div class="ai-card">
+    <div class="hd"><h3>Run the engine</h3></div>
+    <div class="bd">
+      <div class="muted" style="margin-bottom:12px">Analyse the whole platform now and refresh all scores, alerts and recommendations.</div>
+      <form method="post" action="{{ url_for('intelligence.recompute') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button class="btn btn-primary" type="submit">↻ Recompute now</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="ai-card" style="margin-top:18px">
+  <div class="hd"><h3>Recent runs</h3></div>
+  <div class="bd" style="overflow-x:auto">
+    <table class="tbl"><thead><tr><th>Run</th><th>Started</th><th>Finished</th><th>Health</th><th>Alerts</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr><td>{{ r.run_uid }}</td><td>{{ r.started_at }}</td><td>{{ r.finished_at }}</td>
+        <td>{{ r.health_score|round(0)|int if r.health_score is not none else '–' }}</td>
+        <td>{{ r.n_alerts }}</td><td>{{ r.status }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:18px">No runs yet.</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+</div>
+
+{% endblock %}

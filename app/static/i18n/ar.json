@@ -948,5 +948,12 @@
   "proc.ai_draft_hint": "يملأ غارامينتو النموذج من كلماتك — راجعه ثم سعّر بـ 🔎.",
   "proc.ai_draft_btn": "أنشئ",
   "m.ai_deep": "تحليل ذكي متعمق",
-  "bi.ask_ai": "اسأل الذكاء"
+  "bi.ask_ai": "اسأل الذكاء",
+  "nav.intelligence": "الذكاء التنبؤي",
+  "nav.ai_center": "مركز القيادة الذكي",
+  "nav.ai_alerts": "مركز التنبيهات",
+  "nav.ai_breakdown": "تحليل المخاطر",
+  "nav.ai_assistant": "المساعد الذكي",
+  "nav.ai_reports": "تقارير الذكاء",
+  "nav.ai_settings": "إعدادات الذكاء"
 }

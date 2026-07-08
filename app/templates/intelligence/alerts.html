@@ -1,0 +1,73 @@
+{% extends "intelligence/_base.html" %}
+{% block title %}AI Alert Center{% endblock %}
+{% block ai_title %}Alert Center{% endblock %}
+{% block ai_body %}
+
+<form method="get" class="panel" style="margin-bottom:16px">
+  <div class="panel-pad flex gap center wrap">
+    <div class="field" style="margin:0"><label>Status</label>
+      <select name="status" onchange="this.form.submit()">
+        <option value="open" {{ 'selected' if status=='open' }}>Open</option>
+        <option value="all" {{ 'selected' if status=='all' }}>All</option>
+        {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if status==s }}>{{ s|replace('_',' ')|title }}</option>{% endfor %}
+      </select></div>
+    <div class="field" style="margin:0"><label>Domain</label>
+      <select name="domain" onchange="this.form.submit()">
+        <option value="all" {{ 'selected' if domain=='all' }}>All domains</option>
+        {% for key,label in domains %}<option value="{{ key }}" {{ 'selected' if domain==key }}>{{ label }}</option>{% endfor %}
+      </select></div>
+    <div class="field" style="margin:0"><label>Severity</label>
+      <select name="severity" onchange="this.form.submit()">
+        <option value="all" {{ 'selected' if severity=='all' }}>All</option>
+        <option value="critical" {{ 'selected' if severity=='critical' }}>Critical</option>
+        <option value="warning" {{ 'selected' if severity=='warning' }}>Warning</option>
+        <option value="info" {{ 'selected' if severity=='info' }}>Info</option>
+      </select></div>
+    <span class="muted" style="font-size:12.5px">{{ alerts|length }} alert(s)</span>
+    <span class="spacer" style="flex:1"></span>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='csv') }}">CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='xlsx') }}">Excel</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='pdf') }}">PDF</a>
+  </div>
+</form>
+
+{% for a in alerts %}
+<div class="ai-alert sev-{{ a.severity }}">
+  <div class="a-top">
+    <span class="a-dot"></span>
+    <span class="a-title">{{ a.title }}</span>
+    <span class="ai-score {{ 'crit' if a.risk_score>=61 else ('warn' if a.risk_score>=41 else 'info') }}">{{ a.risk_score|round(0)|int }}</span>
+    <span class="ai-tag">{{ a.domain }}</span>
+    <span class="ai-tag">{{ a.status|replace('_',' ') }}</span>
+    <span class="ai-tag">{{ a.alert_uid }}</span>
+  </div>
+  {% if a.explanation %}<div class="a-why"><b>Why:</b> {{ a.explanation }}</div>{% endif %}
+  {% if a.recommendation %}<div class="a-rec"><b>Recommended:</b> {{ a.recommendation }}</div>{% endif %}
+  <div class="a-meta">
+    {% if a.impact %}<span>Impact: {{ a.impact }}</span>{% endif %}
+    <span>Owner: {{ a.responsible or 'Unassigned' }}</span>
+    {% if a.due_date %}<span>Due: {{ a.due_date }}</span>{% endif %}
+    <span>Created: {{ a.created_at }}</span>
+    {% if a.escalation_level %}<span>Escalations: {{ a.escalation_level }}</span>{% endif %}
+  </div>
+  <div class="a-actions">
+    {% for st,lbl in [('acknowledged','Acknowledge'),('in_progress','In progress'),('escalated','Escalate'),('resolved','Resolve'),('ignored','Ignore')] %}
+    <form method="post" action="{{ url_for('intelligence.alert_status', alert_id=a.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="status" value="{{ st }}">
+      <button class="btn btn-ghost btn-sm" type="submit">{{ lbl }}</button>
+    </form>
+    {% endfor %}
+    {% if a.link %}<a class="btn btn-ghost btn-sm" href="{{ a.link }}">View record</a>{% endif %}
+  </div>
+  <form method="post" action="{{ url_for('intelligence.alert_feedback', alert_id=a.id) }}" class="flex gap center wrap" style="margin-top:10px">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <select name="verdict" style="max-width:180px">{% for v in verdicts %}<option value="{{ v }}">{{ v|replace('_',' ')|title }}</option>{% endfor %}</select>
+    <input name="note" placeholder="Optional note" style="max-width:280px">
+    <button class="btn btn-ghost btn-sm" type="submit">Send feedback</button>
+  </form>
+</div>
+{% else %}
+<div class="ai-card"><div class="bd muted" style="text-align:center;padding:34px">No alerts match these filters.</div></div>
+{% endfor %}
+
+{% endblock %}

@@ -761,6 +761,12 @@ def init_db():
             _gm_kb_seed(conn)
         except Exception:
             conn.rollback()
+        # AI Prediction & Intelligence Center — tables + demo data
+        try:
+            from app.intelligence.schema import create_and_seed as _ai_create_and_seed
+            _ai_create_and_seed(conn)
+        except Exception:
+            conn.rollback()
         # Auto-provision a signature for every user who doesn't have one yet, so it
         # can be stamped on any paper without each person drawing one manually.
         try:

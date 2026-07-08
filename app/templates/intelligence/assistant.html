@@ -1,0 +1,53 @@
+{% extends "intelligence/_base.html" %}
+{% block title %}AI Assistant{% endblock %}
+{% block ai_title %}AI Assistant{% endblock %}
+{% block ai_body %}
+
+<div class="ai-card">
+  <div class="bd">
+    <div class="ai-ask">
+      <input id="aiQ" autocomplete="off" placeholder="Ask about today's risks, tickets, assets, stock, payroll, paper…">
+      <button class="btn btn-primary" id="aiGo" type="button">Ask</button>
+    </div>
+    <div class="ai-suggest-chips" id="aiChips"></div>
+    <div id="aiOut" style="margin-top:16px"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var CSRF=(document.querySelector('meta[name=csrf-token]')||{}).content||'';
+  var q=document.getElementById('aiQ'), out=document.getElementById('aiOut'), go=document.getElementById('aiGo');
+  var chips=["What are the highest risks today?","Which tickets may breach SLA?","Which assets need replacement?",
+             "Which spare parts should we buy?","Which payroll rows look abnormal?","Which department consumes the most paper?",
+             "What should management focus on this week?"];
+  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  var cbox=document.getElementById('aiChips');
+  chips.forEach(function(c){var b=document.createElement('button');b.type='button';b.textContent=c;b.onclick=function(){q.value=c;ask();};cbox.appendChild(b);});
+  function ask(){
+    var text=(q.value||'').trim(); if(!text){q.focus();return;}
+    go.disabled=true; out.innerHTML='<div class="muted">Thinking…</div>';
+    fetch('{{ url_for("intelligence.assistant_ask") }}',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF},body:JSON.stringify({q:text})})
+      .then(function(r){return r.json();}).then(function(d){
+        var h='<div class="ai-card"><div class="bd">';
+        h+='<div class="ai-answer">'+esc(d.answer||'No answer.')+'</div>';
+        if(d.source){h+='<div class="muted" style="font-size:11px;margin-top:8px">Source: '+(d.source==='ai'?'AI model':'rule-based engine')+'</div>';}
+        h+='</div></div>';
+        if(d.alerts && d.alerts.length){
+          h+='<h3 style="margin:16px 0 8px">Related risks</h3><div class="ai-list ai-card"><div class="bd">';
+          d.alerts.slice(0,6).forEach(function(a){
+            h+='<div class="ai-row"><div class="r-main"><div class="r-title">'+esc(a.title)+'</div><div class="r-sub">'+esc(a.domain)+' · '+esc(a.recommendation||'')+'</div></div>'+
+               '<span class="ai-score '+(a.risk_score>=61?'crit':(a.risk_score>=41?'warn':'info'))+'">'+Math.round(a.risk_score)+'</span></div>';
+          });
+          h+='</div></div>';
+        }
+        out.innerHTML=h;
+      }).catch(function(){out.innerHTML='<div class="muted">Could not answer right now.</div>';})
+      .finally(function(){go.disabled=false;});
+  }
+  go.addEventListener('click', ask);
+  q.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); ask(); }});
+})();
+</script>
+{% endblock %}

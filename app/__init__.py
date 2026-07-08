@@ -96,6 +96,7 @@ def create_app():
     from app.routes.bi import bp as bi_bp
     from app.routes.approvals import bp as approvals_bp
     from app.routes.garamento import bp as garamento_bp
+    from app.routes.intelligence import bp as intelligence_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -107,6 +108,7 @@ def create_app():
     app.register_blueprint(bi_bp)
     app.register_blueprint(approvals_bp)
     app.register_blueprint(garamento_bp)
+    app.register_blueprint(intelligence_bp)
 
     # --- Error handlers ---
     from flask import render_template

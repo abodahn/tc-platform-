@@ -948,5 +948,12 @@
   "proc.ai_draft_hint": "Garamento formu düz metinden doldurur — gözden geçirin, 🔎 ile fiyatlandırın.",
   "proc.ai_draft_btn": "Oluştur",
   "m.ai_deep": "Derin yapay zekâ analizi",
-  "bi.ask_ai": "Yapay zekâya sor"
+  "bi.ask_ai": "Yapay zekâya sor",
+  "nav.intelligence": "Yapay Zekâ",
+  "nav.ai_center": "AI Komuta Merkezi",
+  "nav.ai_alerts": "Uyarı Merkezi",
+  "nav.ai_breakdown": "Risk Dağılımı",
+  "nav.ai_assistant": "AI Asistan",
+  "nav.ai_reports": "AI Raporları",
+  "nav.ai_settings": "AI Ayarları"
 }

@@ -10,6 +10,14 @@ NAV = [
         ("command_center", "nav.command_center", "grid", "main.dashboard", "view_dashboard"),
         ("launcher", "nav.launcher", "apps", "main.launcher", "open_module"),
     ]},
+    {"section": "nav.intelligence", "items": [
+        ("ai_center", "nav.ai_center", "sparkles", "intelligence.command_center", "view_dashboard"),
+        ("ai_alerts", "nav.ai_alerts", "alert", "intelligence.alerts", "view_dashboard"),
+        ("ai_breakdown", "nav.ai_breakdown", "chart", "intelligence.breakdown", "view_dashboard"),
+        ("ai_assistant", "nav.ai_assistant", "robot", "intelligence.assistant", "view_dashboard"),
+        ("ai_reports", "nav.ai_reports", "report", "intelligence.reports", "view_dashboard"),
+        ("ai_settings", "nav.ai_settings", "settings", "intelligence.settings", "access_admin"),
+    ]},
     {"section": "nav.operations", "items": [
         ("itsm", "nav.service_desk", "headset", "main.module", "open_module"),
         ("assets", "nav.assets", "boxes", "main.module", "open_module"),

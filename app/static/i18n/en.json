@@ -948,5 +948,12 @@
   "proc.ai_draft_hint": "Garamento fills the form from plain words — review, then price with 🔎.",
   "proc.ai_draft_btn": "Draft it",
   "m.ai_deep": "Deep AI analysis",
-  "bi.ask_ai": "Ask AI"
+  "bi.ask_ai": "Ask AI",
+  "nav.intelligence": "AI Intelligence",
+  "nav.ai_center": "AI Command Center",
+  "nav.ai_alerts": "Alert Center",
+  "nav.ai_breakdown": "Risk Breakdown",
+  "nav.ai_assistant": "AI Assistant",
+  "nav.ai_reports": "AI Reports",
+  "nav.ai_settings": "AI Settings"
 }
