@@ -1,0 +1,64 @@
+{# ============================================================
+   Garamento — floating textile & fashion assistant.
+   Rendered on every authenticated page (see base.html).
+   ============================================================ #}
+
+{# Reusable mascot: a friendly cream spool of thread with a face.
+   Self-contained palette so it reads well on the red launcher/header. #}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="gm-mascot" viewBox="0 0 48 54">
+    <!-- needle poking in from the top-right -->
+    <g stroke="#EAF0FA" stroke-width="2.4" stroke-linecap="round">
+      <line x1="41" y1="4" x2="30" y2="17"/>
+    </g>
+    <circle cx="41.5" cy="3.5" r="2.4" fill="none" stroke="#EAF0FA" stroke-width="1.6"/>
+    <!-- spool end caps -->
+    <rect x="8"  y="9"  width="32" height="9" rx="4.2" fill="#F7E9D2"/>
+    <rect x="8"  y="37" width="32" height="9" rx="4.2" fill="#F7E9D2"/>
+    <!-- wound thread body -->
+    <rect x="12" y="15" width="24" height="24" rx="5" fill="#F5B301"/>
+    <g stroke="#E09600" stroke-width="1.4" opacity=".65">
+      <line x1="12.5" y1="21" x2="35.5" y2="21"/>
+      <line x1="12.5" y1="33" x2="35.5" y2="33"/>
+    </g>
+    <!-- face -->
+    <circle cx="20" cy="26" r="2.5" fill="#20232B"/>
+    <circle cx="28" cy="26" r="2.5" fill="#20232B"/>
+    <circle cx="21" cy="25.2" r=".8" fill="#fff"/>
+    <circle cx="29" cy="25.2" r=".8" fill="#fff"/>
+    <path d="M19 31 Q24 35 29 31" fill="none" stroke="#20232B" stroke-width="1.9" stroke-linecap="round"/>
+    <circle cx="16.5" cy="30" r="1.7" fill="#ED6A5A" opacity=".7"/>
+    <circle cx="31.5" cy="30" r="1.7" fill="#ED6A5A" opacity=".7"/>
+  </symbol>
+</svg>
+
+<button class="gm-launch" id="gmLaunch" type="button" aria-label="Open Garamento assistant"
+        data-i18n-title="gm.open" title="Ask Garamento">
+  <svg aria-hidden="true"><use href="#gm-mascot"></use></svg>
+</button>
+
+<section class="gm-panel" id="gmPanel" role="dialog" aria-modal="false" aria-label="Garamento assistant" aria-hidden="true">
+  <header class="gm-head">
+    <div class="gm-ava"><svg aria-hidden="true"><use href="#gm-mascot"></use></svg></div>
+    <div class="gm-id">
+      <b>Garamento</b>
+      <span><i class="gm-dot" id="gmDot"></i><span data-i18n="gm.tagline">Textile &amp; fashion expert</span></span>
+    </div>
+    <button class="gm-x" id="gmClose" type="button" aria-label="Close" title="Close">&times;</button>
+  </header>
+
+  <div class="gm-body" id="gmBody" aria-live="polite"></div>
+
+  <footer class="gm-foot">
+    <div class="gm-compose">
+      <textarea id="gmInput" rows="1" data-i18n-ph="gm.placeholder"
+                placeholder="Ask about fabrics, costing, sourcing…" autocomplete="off"></textarea>
+      <button class="gm-send" id="gmSend" type="button" aria-label="Send" title="Send">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 12L20 4l-4 16-4-6-8-2z" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>
+    <div class="gm-hint" data-i18n="gm.hint">Garamento can be witty — always double-check prices &amp; specs.</div>
+  </footer>
+</section>

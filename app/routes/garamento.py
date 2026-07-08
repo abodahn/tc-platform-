@@ -1,0 +1,48 @@
+"""
+TC Platform — Garamento assistant routes.
+
+  POST /garamento/chat             -> conversational reply (any logged-in user)
+  POST /garamento/market-research  -> live approximate price for a PR line item
+  GET  /garamento/hello            -> greeting + whether the assistant is enabled
+
+All state-changing calls are CSRF-protected (the browser sends X-CSRF-Token,
+handled globally in app/csrf.py).
+"""
+from flask import Blueprint, request, jsonify
+
+from app.auth import login_required, permission_required, current_user
+from app.services import garamento as g
+
+bp = Blueprint("garamento", __name__, url_prefix="/garamento")
+
+
+@bp.get("/hello")
+@login_required
+def hello():
+    return jsonify({"enabled": g.is_enabled(), "greeting": g.greeting()})
+
+
+@bp.post("/chat")
+@login_required
+def chat():
+    data = request.get_json(silent=True) or {}
+    history = data.get("messages") or []
+    if not isinstance(history, list):
+        history = []
+    result = g.chat(history, user=current_user())
+    return jsonify(result)
+
+
+@bp.post("/market-research")
+@permission_required("proc_view")
+def market_research():
+    data = request.get_json(silent=True) or {}
+    result = g.market_research(
+        item=data.get("item", ""),
+        description=data.get("description", ""),
+        unit=data.get("unit", ""),
+        qty=data.get("qty", 1),
+        currency=data.get("currency", "EGP"),
+    )
+    status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
+    return jsonify(result), status

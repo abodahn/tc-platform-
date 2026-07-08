@@ -14,6 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="TC Platform">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  {% if cu %}<link rel="stylesheet" href="{{ url_for('static', filename='css/garamento.css') }}">{% endif %}
   <script>
     window.TC_CFG = {
       staticBase: "{{ url_for('static', filename='')|trim('/') }}",
@@ -196,7 +197,10 @@
   </div>
 </div>
 
+{% if cu %}{% include "_garamento.html" %}{% endif %}
+
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% if cu %}<script src="{{ url_for('static', filename='js/garamento.js') }}"></script>{% endif %}
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));

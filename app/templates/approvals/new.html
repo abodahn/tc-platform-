@@ -92,6 +92,22 @@
   </div>
 </form>
 
+{# ---- Garamento market-research modal ---- #}
+<div class="modal-overlay" id="mrOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Market price research">
+    <div class="modal-head">
+      <h3><span style="margin-inline-end:6px">🔎</span><span data-i18n="mr.title">Market price research</span>
+        <span class="muted" id="mrItem" style="font-weight:500"></span></h3>
+      <div class="x" id="mrClose" role="button" tabindex="0" aria-label="Close">&times;</div>
+    </div>
+    <div class="modal-body" id="mrBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" type="button" id="mrRetry" data-i18n="mr.retry">Search again</button>
+      <button class="btn btn-primary" type="button" id="mrUse" data-i18n="mr.use">Use this price</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   var UNITS = {{ units|tojson }};
@@ -111,7 +127,8 @@
 
   function rowHtml(){
     return '<div class="li-row">'
-      + '<input name="item[]" placeholder="Item" autocomplete="off">'
+      + '<div class="li-item"><input name="item[]" placeholder="Item" autocomplete="off">'
+      + '<button type="button" class="li-research" title="Market price research" aria-label="Market price research">🔎</button></div>'
       + '<input name="description[]" placeholder="Description" autocomplete="off">'
       + '<select name="unit[]">'+unitOpts()+'</select>'
       + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
@@ -165,6 +182,64 @@
   curSel.addEventListener('change', function(){ document.getElementById('curLabel').textContent = curSel.value; });
   var deptSelEl = document.getElementById('deptSel');
   if (deptSelEl) deptSelEl.addEventListener('change', recalc);   // re-route preview on dept change
+
+  // ---- Market research (Garamento): live approximate price per line item ----
+  var CSRF = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+  var mrOverlay = document.getElementById('mrOverlay');
+  var mrBody = document.getElementById('mrBody');
+  var mrItemEl = document.getElementById('mrItem');
+  var mrUse = document.getElementById('mrUse');
+  var mrRetry = document.getElementById('mrRetry');
+  var mrRow = null, mrLast = null;
+
+  function mrClose(){ mrOverlay.classList.remove('open'); }
+  document.getElementById('mrClose').addEventListener('click', mrClose);
+  mrOverlay.addEventListener('click', function(e){ if (e.target === mrOverlay) mrClose(); });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && mrOverlay.classList.contains('open')) mrClose(); });
+
+  function research(row){
+    var p = {
+      item: row.querySelector('[name="item[]"]').value.trim(),
+      description: row.querySelector('[name="description[]"]').value.trim(),
+      unit: (row.querySelector('[name="unit[]"]') || {}).value || '',
+      qty: parseFloat(row.querySelector('[name="qty[]"]').value) || 1,
+      currency: curSel.value || 'EGP'
+    };
+    if (!p.item){
+      if (window.tcToast) tcToast('Type an item name first, then I’ll go price-hunting.', '');
+      row.querySelector('[name="item[]"]').focus(); return;
+    }
+    mrRow = row; mrLast = null; mrUse.disabled = true;
+    mrItemEl.textContent = '· ' + p.item;
+    mrBody.innerHTML = '<div class="mr-loading"><div class="gm-ava"><svg aria-hidden="true"><use href="#gm-mascot"></use></svg></div>'
+      + '<div>Garamento is scouring the web for prices…</div></div>';
+    mrOverlay.classList.add('open');
+    fetch('/garamento/market-research', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
+      body: JSON.stringify(p)
+    }).then(function(r){ return r.json(); }).then(function(d){
+      mrBody.innerHTML = (window.Garamento && window.Garamento.renderMarketResult)
+        ? window.Garamento.renderMarketResult(d) : JSON.stringify(d);
+      if (d && d.ok){ mrLast = d; mrUse.disabled = false; }
+    }).catch(function(){
+      mrBody.innerHTML = '<div class="mr-summary">Something snagged while researching. Try again?</div>';
+    });
+  }
+
+  mrRetry.addEventListener('click', function(){ if (mrRow) research(mrRow); });
+  mrUse.addEventListener('click', function(){
+    if (mrRow && mrLast && mrLast.price_est != null){
+      mrRow.querySelector('[name="unit_price[]"]').value = mrLast.price_est;
+      recalc();
+      if (window.tcToast) tcToast('Price applied from market research.', 'success');
+    }
+    mrClose();
+  });
+  rows.addEventListener('click', function(e){
+    var btn = e.target.closest('.li-research');
+    if (btn) research(btn.closest('.li-row'));
+  });
 
   function fillRow(r, it){
     r.querySelector('[name="item[]"]').value = it.item || '';

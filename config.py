@@ -172,6 +172,23 @@ class Config:
         }
     )
 
+    # --- Garamento AI assistant (OpenRouter) ------------------------------
+    # "Garamento" is the platform's textile & fashion expert chatbot and the
+    # engine behind procurement market-price research. It talks to OpenRouter.
+    # The API key is read from the environment ONLY and is never stored in
+    # source (this repo is public). Set OPENROUTER_API_KEY on Render to enable;
+    # if it is blank, Garamento politely reports that it's offline.
+    OPENROUTER_API_KEY = (os.getenv("OPENROUTER_API_KEY", "") or "").strip()
+    OPENROUTER_BASE = (os.getenv("OPENROUTER_BASE", "https://openrouter.ai/api/v1")
+                       or "").strip().rstrip("/")
+    # Default chat model (cheap + capable). Override with OPENROUTER_MODEL.
+    OPENROUTER_MODEL = (os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini") or "").strip()
+    # Web-search model for live market prices. Blank -> chat model + ":online"
+    # (OpenRouter's built-in web plugin). Override with OPENROUTER_MODEL_WEB.
+    OPENROUTER_MODEL_WEB = (os.getenv("OPENROUTER_MODEL_WEB", "") or "").strip()
+    OPENROUTER_TIMEOUT = float(os.getenv("OPENROUTER_TIMEOUT", "40"))
+    AI_ENABLED = bool(OPENROUTER_API_KEY)
+
     # Writable data dir — local: project folder; Render: TC_DATA_DIR (a disk on
     # paid plans, or an ephemeral path like /tmp on free tier).
     DATA_DIR = Path(os.getenv("TC_DATA_DIR", str(BASE_DIR)))

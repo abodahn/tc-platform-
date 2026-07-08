@@ -923,5 +923,12 @@
   "proc.method": "Yöntem",
   "proc.ref": "Referans",
   "proc.add_payment": "+ Ödeme kaydet",
-  "proc.add_invoice": "+ Fatura ekle"
+  "proc.add_invoice": "+ Fatura ekle",
+  "gm.open": "Garamento'ya sor",
+  "gm.tagline": "Tekstil ve moda uzmanı",
+  "gm.placeholder": "Kumaş, maliyet, tedarik hakkında sorun…",
+  "gm.hint": "Garamento esprili olabilir — fiyatları ve özellikleri daima doğrulayın.",
+  "mr.title": "Piyasa fiyat araştırması",
+  "mr.retry": "Tekrar ara",
+  "mr.use": "Bu fiyatı kullan"
 }

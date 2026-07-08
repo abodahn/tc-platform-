@@ -923,5 +923,12 @@
   "proc.method": "Method",
   "proc.ref": "Reference",
   "proc.add_payment": "+ Record payment",
-  "proc.add_invoice": "+ Add invoice"
+  "proc.add_invoice": "+ Add invoice",
+  "gm.open": "Ask Garamento",
+  "gm.tagline": "Textile & fashion expert",
+  "gm.placeholder": "Ask about fabrics, costing, sourcing…",
+  "gm.hint": "Garamento can be witty — always double-check prices & specs.",
+  "mr.title": "Market price research",
+  "mr.retry": "Search again",
+  "mr.use": "Use this price"
 }
