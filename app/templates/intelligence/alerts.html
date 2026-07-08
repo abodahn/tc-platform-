@@ -1,29 +1,28 @@
 {% extends "intelligence/_base.html" %}
 {% block title %}AI Alert Center{% endblock %}
-{% block ai_title %}Alert Center{% endblock %}
+{% block ai_title %}<span data-i18n="ai.tab_alerts">Alert Center</span>{% endblock %}
 {% block ai_body %}
 
 <form method="get" class="panel" style="margin-bottom:16px">
   <div class="panel-pad flex gap center wrap">
-    <div class="field" style="margin:0"><label>Status</label>
+    <div class="field" style="margin:0"><label data-i18n="ai.f_status">Status</label>
       <select name="status" onchange="this.form.submit()">
-        <option value="open" {{ 'selected' if status=='open' }}>Open</option>
-        <option value="all" {{ 'selected' if status=='all' }}>All</option>
+        <option value="open" {{ 'selected' if status=='open' }} data-i18n="ai.open">Open</option>
+        <option value="all" {{ 'selected' if status=='all' }} data-i18n="ai.all">All</option>
         {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if status==s }}>{{ s|replace('_',' ')|title }}</option>{% endfor %}
       </select></div>
-    <div class="field" style="margin:0"><label>Domain</label>
+    <div class="field" style="margin:0"><label data-i18n="ai.f_domain">Domain</label>
       <select name="domain" onchange="this.form.submit()">
-        <option value="all" {{ 'selected' if domain=='all' }}>All domains</option>
-        {% for key,label in domains %}<option value="{{ key }}" {{ 'selected' if domain==key }}>{{ label }}</option>{% endfor %}
+        <option value="all" {{ 'selected' if domain=='all' }} data-i18n="ai.all_domains">All domains</option>
+        {% for key,label in domains %}<option value="{{ key }}" {{ 'selected' if domain==key }} data-i18n="ai.dom.{{ key }}">{{ label }}</option>{% endfor %}
       </select></div>
-    <div class="field" style="margin:0"><label>Severity</label>
+    <div class="field" style="margin:0"><label data-i18n="ai.f_severity">Severity</label>
       <select name="severity" onchange="this.form.submit()">
-        <option value="all" {{ 'selected' if severity=='all' }}>All</option>
-        <option value="critical" {{ 'selected' if severity=='critical' }}>Critical</option>
+        <option value="all" {{ 'selected' if severity=='all' }} data-i18n="ai.all">All</option>
+        <option value="critical" {{ 'selected' if severity=='critical' }} data-i18n="ai.lvl.critical">Critical</option>
         <option value="warning" {{ 'selected' if severity=='warning' }}>Warning</option>
         <option value="info" {{ 'selected' if severity=='info' }}>Info</option>
       </select></div>
-    <span class="muted" style="font-size:12.5px">{{ alerts|length }} alert(s)</span>
     <span class="spacer" style="flex:1"></span>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='csv') }}">CSV</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='xlsx') }}">Excel</a>
@@ -37,37 +36,37 @@
     <span class="a-dot"></span>
     <span class="a-title">{{ a.title }}</span>
     <span class="ai-score {{ 'crit' if a.risk_score>=61 else ('warn' if a.risk_score>=41 else 'info') }}">{{ a.risk_score|round(0)|int }}</span>
-    <span class="ai-tag">{{ a.domain }}</span>
+    <span class="ai-tag" data-i18n="ai.dom.{{ a.domain }}">{{ a.domain }}</span>
     <span class="ai-tag">{{ a.status|replace('_',' ') }}</span>
     <span class="ai-tag">{{ a.alert_uid }}</span>
   </div>
-  {% if a.explanation %}<div class="a-why"><b>Why:</b> {{ a.explanation }}</div>{% endif %}
-  {% if a.recommendation %}<div class="a-rec"><b>Recommended:</b> {{ a.recommendation }}</div>{% endif %}
+  {% if a.explanation %}<div class="a-why"><b data-i18n="ai.why">Why:</b> {{ a.explanation }}</div>{% endif %}
+  {% if a.recommendation %}<div class="a-rec"><b data-i18n="ai.recommended">Recommended:</b> {{ a.recommendation }}</div>{% endif %}
   <div class="a-meta">
-    {% if a.impact %}<span>Impact: {{ a.impact }}</span>{% endif %}
-    <span>Owner: {{ a.responsible or 'Unassigned' }}</span>
-    {% if a.due_date %}<span>Due: {{ a.due_date }}</span>{% endif %}
-    <span>Created: {{ a.created_at }}</span>
-    {% if a.escalation_level %}<span>Escalations: {{ a.escalation_level }}</span>{% endif %}
+    {% if a.impact %}<span><b data-i18n="ai.impact_l">Impact:</b> {{ a.impact }}</span>{% endif %}
+    <span><b data-i18n="ai.owner">Owner:</b> {{ a.responsible or 'Unassigned' }}</span>
+    {% if a.due_date %}<span><b data-i18n="ai.due">Due:</b> {{ a.due_date }}</span>{% endif %}
+    <span><b data-i18n="ai.created">Created:</b> {{ a.created_at }}</span>
+    {% if a.escalation_level %}<span><b data-i18n="ai.escalations">Escalations:</b> {{ a.escalation_level }}</span>{% endif %}
   </div>
   <div class="a-actions">
-    {% for st,lbl in [('acknowledged','Acknowledge'),('in_progress','In progress'),('escalated','Escalate'),('resolved','Resolve'),('ignored','Ignore')] %}
+    {% for st,key in [('acknowledged','ai.ack'),('in_progress','ai.inprogress'),('escalated','ai.escalate'),('resolved','ai.resolve'),('ignored','ai.ignore')] %}
     <form method="post" action="{{ url_for('intelligence.alert_status', alert_id=a.id) }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="status" value="{{ st }}">
-      <button class="btn btn-ghost btn-sm" type="submit">{{ lbl }}</button>
+      <button class="btn btn-ghost btn-sm" type="submit" data-i18n="{{ key }}">{{ st }}</button>
     </form>
     {% endfor %}
-    {% if a.link %}<a class="btn btn-ghost btn-sm" href="{{ a.link }}">View record</a>{% endif %}
+    {% if a.link %}<a class="btn btn-ghost btn-sm" href="{{ a.link }}" data-i18n="ai.view_record">View record</a>{% endif %}
   </div>
   <form method="post" action="{{ url_for('intelligence.alert_feedback', alert_id=a.id) }}" class="flex gap center wrap" style="margin-top:10px">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <select name="verdict" style="max-width:180px">{% for v in verdicts %}<option value="{{ v }}">{{ v|replace('_',' ')|title }}</option>{% endfor %}</select>
-    <input name="note" placeholder="Optional note" style="max-width:280px">
-    <button class="btn btn-ghost btn-sm" type="submit">Send feedback</button>
+    <input name="note" data-i18n-ph="ai.opt_note" placeholder="Optional note" style="max-width:280px">
+    <button class="btn btn-ghost btn-sm" type="submit" data-i18n="ai.send_feedback">Send feedback</button>
   </form>
 </div>
 {% else %}
-<div class="ai-card"><div class="bd muted" style="text-align:center;padding:34px">No alerts match these filters.</div></div>
+<div class="ai-card"><div class="bd muted" style="text-align:center;padding:34px" data-i18n="ai.no_match">No alerts match these filters.</div></div>
 {% endfor %}
 
 {% endblock %}

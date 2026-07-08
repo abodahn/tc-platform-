@@ -1,109 +1,102 @@
 {% extends "intelligence/_base.html" %}
 {% block title %}AI Command Center{% endblock %}
-{% block ai_title %}AI Command Center{% endblock %}
+{% block ai_title %}<span data-i18n="ai.tab_center">AI Command Center</span>{% endblock %}
 {% block ai_body %}
 
 {% if not last_run %}
 <div class="ai-card"><div class="bd" style="text-align:center;padding:48px">
   <div style="font-size:40px">🧠</div>
-  <h3 style="margin:12px 0 6px">No intelligence run yet</h3>
-  <div class="muted" style="margin-bottom:16px">Run the prediction engine to analyse tickets, assets, machines, spares, procurement, payroll, HR and paper across the platform.</div>
+  <h3 style="margin:12px 0 6px" data-i18n="ai.no_run_title">No intelligence run yet</h3>
+  <div class="muted" style="margin-bottom:16px" data-i18n="ai.no_run_desc">Run the prediction engine to analyse tickets, assets, machines, spares, procurement, payroll, HR and paper across the platform.</div>
   {% if can('access_admin') %}
   <form method="post" action="{{ url_for('intelligence.recompute') }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button class="btn btn-primary" type="submit">↻ Run the prediction engine</button></form>
-  {% else %}<div class="muted">Ask an administrator to run the engine.</div>{% endif %}
+    <button class="btn btn-primary" type="submit" data-i18n="ai.run_engine">Run the prediction engine</button></form>
+  {% else %}<div class="muted" data-i18n="ai.ask_admin">Ask an administrator to run the engine.</div>{% endif %}
 </div></div>
 {% else %}
 
-{# ---------- Executive hero ---------- #}
 <div class="ai-hero">
   <div class="ai-gauge" id="healthGauge" style="--v:{{ health or 0 }}">
-    <div class="g-in"><div class="g-val">{{ health|round(0)|int if health is not none else '–' }}</div><div class="g-lbl">Health</div></div>
+    <div class="g-in"><div class="g-val">{{ health|round(0)|int if health is not none else '–' }}</div><div class="g-lbl" data-i18n="ai.health_score">Health</div></div>
   </div>
   <div>
-    <div class="ai-eyebrow">Company health score</div>
-    <h1>{{ 'Strong' if (health or 0) >= 80 else ('Stable' if (health or 0) >= 60 else ('Needs attention' if (health or 0) >= 40 else 'At risk')) }}</h1>
-    <div class="sub">{{ open_count }} open predicted risks · last run {{ last_run.finished_at }}</div>
+    <div class="ai-eyebrow" data-i18n="ai.health_score">Company health score</div>
+    <h1>{% if (health or 0) >= 80 %}<span data-i18n="ai.h_strong">Strong</span>{% elif (health or 0) >= 60 %}<span data-i18n="ai.h_stable">Stable</span>{% elif (health or 0) >= 40 %}<span data-i18n="ai.h_attention">Needs attention</span>{% else %}<span data-i18n="ai.h_risk">At risk</span>{% endif %}</h1>
+    <div class="sub">{{ open_count }} <span data-i18n="ai.open_risks">open predicted risks</span> · <span data-i18n="ai.last_run">last run</span> {{ last_run.finished_at }}</div>
     <div class="ai-hero-kpis" style="margin-top:16px">
-      <div class="ai-glass"><div class="k-val crit">{{ sev.critical }}</div><div class="k-lbl">Critical risks</div></div>
-      <div class="ai-glass"><div class="k-val warn">{{ sev.warning }}</div><div class="k-lbl">Warnings</div></div>
-      <div class="ai-glass"><div class="k-val">{{ open_count }}</div><div class="k-lbl">Total open</div></div>
+      <div class="ai-glass"><div class="k-val crit">{{ sev.critical }}</div><div class="k-lbl" data-i18n="ai.k_critical">Critical risks</div></div>
+      <div class="ai-glass"><div class="k-val warn">{{ sev.warning }}</div><div class="k-lbl" data-i18n="ai.k_warnings">Warnings</div></div>
+      <div class="ai-glass"><div class="k-val">{{ open_count }}</div><div class="k-lbl" data-i18n="ai.k_total">Total open</div></div>
       {% set topd = scores[0] if scores else None %}
-      <div class="ai-glass"><div class="k-val">{{ topd.label if topd else '–' }}</div><div class="k-lbl">Top risk area</div></div>
+      <div class="ai-glass"><div class="k-val" {% if topd %}data-i18n="ai.dom.{{ topd.domain }}"{% endif %}>{{ topd.label if topd else '–' }}</div><div class="k-lbl" data-i18n="ai.k_toparea">Top risk area</div></div>
     </div>
   </div>
 </div>
 
-{# ---------- Risk heatmap ---------- #}
-<h3 style="margin:22px 0 10px">Risk heatmap by domain</h3>
+<h3 style="margin:22px 0 10px" data-i18n="ai.heatmap">Risk heatmap by domain</h3>
 <div class="ai-heat">
   {% for s in scores %}
   <a class="ai-tile {{ s.color }}" href="{{ url_for('intelligence.breakdown') }}">
-    <span class="t-lvl">{{ s.level }}</span>
-    <div class="t-lbl">{{ s.label }}</div>
+    <span class="t-lvl" data-i18n="ai.lvl.{{ s.level|lower }}">{{ s.level }}</span>
+    <div class="t-lbl" data-i18n="ai.dom.{{ s.domain }}">{{ s.label }}</div>
     <div class="t-val">{{ s.score|round(0)|int }}</div>
   </a>
   {% endfor %}
 </div>
 
 <div class="ai-grid" style="margin-top:22px">
-  {# Top predicted issues #}
   <div class="ai-card">
-    <div class="hd"><h3>Top 10 predicted issues</h3><a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.alerts') }}">All alerts</a></div>
+    <div class="hd"><h3 data-i18n="ai.top_issues">Top 10 predicted issues</h3><a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.alerts') }}" data-i18n="ai.all_alerts">All alerts</a></div>
     <div class="bd"><div class="ai-list">
       {% for a in top_alerts %}
       <div class="ai-row">
         <div class="r-main">
           <div class="r-title">{{ a.title }}</div>
-          <div class="r-sub">{{ a.domain }} · {{ a.responsible or 'Unassigned' }}</div>
+          <div class="r-sub"><span data-i18n="ai.dom.{{ a.domain }}">{{ a.domain }}</span> · {{ a.responsible or 'Unassigned' }}</div>
         </div>
-        <div class="r-bar"><span class="{{ 'crit' if a.risk_score>=61 else ('warn' if a.risk_score>=41 else 'info') }}" style="width:{{ a.risk_score }}%;background:currentColor" ></span></div>
+        <div class="r-bar"><span class="{{ 'crit' if a.risk_score>=61 else ('warn' if a.risk_score>=41 else 'info') }}" style="width:{{ a.risk_score }}%;background:currentColor"></span></div>
         <span class="ai-score {{ 'crit' if a.risk_score>=61 else ('warn' if a.risk_score>=41 else 'info') }}">{{ a.risk_score|round(0)|int }}</span>
       </div>
-      {% else %}<div class="muted">No open risks — nicely done.</div>{% endfor %}
+      {% else %}<div class="muted" data-i18n="ai.no_open">No open risks.</div>{% endfor %}
     </div></div>
   </div>
 
-  {# AI recommendations #}
   <div class="ai-card">
-    <div class="hd"><h3>AI recommendations</h3></div>
+    <div class="hd"><h3 data-i18n="ai.recommendations">AI recommendations</h3></div>
     <div class="bd">
       {% for r in recommendations[:8] %}
       <div class="ai-rec">
         <div class="r-act">{{ r.detail }}</div>
-        <div class="r-ctx">{{ r.domain }} · {{ r.title }}</div>
+        <div class="r-ctx"><span data-i18n="ai.dom.{{ r.domain }}">{{ r.domain }}</span> · {{ r.title }}</div>
       </div>
-      {% else %}<div class="muted">No recommendations right now.</div>{% endfor %}
+      {% else %}<div class="muted" data-i18n="ai.no_recs">No recommendations right now.</div>{% endfor %}
     </div>
   </div>
 </div>
 
 <div class="ai-grid" style="margin-top:18px">
-  {# Departments to watch #}
   <div class="ai-card">
-    <div class="hd"><h3>Top departments needing attention</h3></div>
+    <div class="hd"><h3 data-i18n="ai.dept_watch">Top departments needing attention</h3></div>
     <div class="bd"><div class="ai-list">
       {% for d in dept_watch %}
       <div class="ai-row">
-        <div class="r-main"><div class="r-title">{{ d.dept }}</div><div class="r-sub">{{ d.count }} open risk(s)</div></div>
-        <span class="ai-chip {{ 'crit' if d.score>=61 else ('warn' if d.score>=41 else ('info' if d.score>=21 else 'ok')) }}"><span class="d"></span>{{ d.level }} {{ d.score|round(0)|int }}</span>
+        <div class="r-main"><div class="r-title">{{ d.dept }}</div><div class="r-sub">{{ d.count }} <span data-i18n="ai.open_count_risk">open risk(s)</span></div></div>
+        <span class="ai-chip {{ 'crit' if d.score>=61 else ('warn' if d.score>=41 else ('info' if d.score>=21 else 'ok')) }}"><span class="d"></span><span data-i18n="ai.lvl.{{ d.level|lower }}">{{ d.level }}</span> {{ d.score|round(0)|int }}</span>
       </div>
-      {% else %}<div class="muted">Nothing flagged.</div>{% endfor %}
+      {% else %}<div class="muted" data-i18n="ai.nothing_flagged">Nothing flagged.</div>{% endfor %}
     </div></div>
   </div>
 
-  {# Domain risk chart #}
   <div class="ai-card">
-    <div class="hd"><h3>Domain risk scores</h3></div>
+    <div class="hd"><h3 data-i18n="ai.domain_scores">Domain risk scores</h3></div>
     <div class="bd"><canvas id="domainChart" height="220"></canvas></div>
   </div>
 </div>
 
-{# ---------- Business impact ---------- #}
-<h3 style="margin:24px 0 10px">Estimated business impact <span class="muted" style="font-weight:400;font-size:12px">(this run)</span></h3>
+<h3 style="margin:24px 0 10px"><span data-i18n="ai.impact">Estimated business impact</span> <span class="muted" style="font-weight:400;font-size:12px" data-i18n="ai.this_run">(this run)</span></h3>
 <div class="ai-impact">
   {% for m in impact %}
-  <div class="imp"><div class="v">{{ m.value|round(0)|int if m.value is number else m.value }} <span style="font-size:12px;color:var(--muted)">{{ m.unit }}</span></div><div class="l">{{ m.label }}</div></div>
+  <div class="imp"><div class="v">{{ m.value|round(0)|int if m.value is number else m.value }} <span style="font-size:12px;color:var(--muted)">{{ m.unit }}</span></div><div class="l" data-i18n="ai.imp.{{ m.metric_key }}">{{ m.label }}</div></div>
   {% endfor %}
 </div>
 
@@ -117,7 +110,6 @@
 (function(){
   var boot=document.getElementById('ai-boot'); if(!boot) return;
   var d=JSON.parse(boot.textContent||'{}');
-  // gauge colour by health
   var g=document.getElementById('healthGauge');
   if(g){ var h=d.health||0; g.style.setProperty('--c', h>=80?'#4ade80':(h>=60?'#a3e635':(h>=40?'#fbbf24':'#ff5a6a'))); }
   var el=document.getElementById('domainChart');

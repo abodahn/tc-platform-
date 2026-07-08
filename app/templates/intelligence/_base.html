@@ -3,24 +3,24 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <div class="eyebrow">AI Prediction &amp; Intelligence Center</div>
-    <h1>{% block ai_title %}AI Command Center{% endblock %}</h1>
+    <div class="eyebrow" data-i18n="ai.suite">AI Prediction &amp; Intelligence Center</div>
+    <h1>{% block ai_title %}<span data-i18n="ai.tab_center">AI Command Center</span>{% endblock %}</h1>
   </div>
   {% if can('access_admin') %}
   <form method="post" action="{{ url_for('intelligence.recompute') }}" style="margin:0">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button class="btn btn-primary btn-sm" type="submit">↻ Recompute now</button>
+    <button class="btn btn-primary btn-sm" type="submit" data-i18n="ai.recompute">↻ Recompute now</button>
   </form>
   {% endif %}
 </div>
 
 <nav class="ai-tabs">
-  <a href="{{ url_for('intelligence.command_center') }}" class="{{ 'on' if request.endpoint=='intelligence.command_center' }}">Command Center</a>
-  <a href="{{ url_for('intelligence.alerts') }}" class="{{ 'on' if request.endpoint=='intelligence.alerts' }}">Alert Center</a>
-  <a href="{{ url_for('intelligence.breakdown') }}" class="{{ 'on' if request.endpoint=='intelligence.breakdown' }}">Risk Breakdown</a>
-  <a href="{{ url_for('intelligence.assistant') }}" class="{{ 'on' if request.endpoint=='intelligence.assistant' }}">AI Assistant</a>
-  <a href="{{ url_for('intelligence.reports') }}" class="{{ 'on' if request.endpoint=='intelligence.reports' }}">Reports</a>
-  {% if can('access_admin') %}<a href="{{ url_for('intelligence.settings') }}" class="{{ 'on' if request.endpoint=='intelligence.settings' }}">Settings</a>{% endif %}
+  <a href="{{ url_for('intelligence.command_center') }}" class="{{ 'on' if request.endpoint=='intelligence.command_center' }}" data-i18n="ai.tab_center">Command Center</a>
+  <a href="{{ url_for('intelligence.alerts') }}" class="{{ 'on' if request.endpoint=='intelligence.alerts' }}" data-i18n="ai.tab_alerts">Alert Center</a>
+  <a href="{{ url_for('intelligence.breakdown') }}" class="{{ 'on' if request.endpoint=='intelligence.breakdown' }}" data-i18n="ai.tab_breakdown">Risk Breakdown</a>
+  <a href="{{ url_for('intelligence.assistant') }}" class="{{ 'on' if request.endpoint=='intelligence.assistant' }}" data-i18n="ai.tab_assistant">AI Assistant</a>
+  <a href="{{ url_for('intelligence.reports') }}" class="{{ 'on' if request.endpoint=='intelligence.reports' }}" data-i18n="ai.tab_reports">Reports</a>
+  {% if can('access_admin') %}<a href="{{ url_for('intelligence.settings') }}" class="{{ 'on' if request.endpoint=='intelligence.settings' }}" data-i18n="ai.tab_settings">Settings</a>{% endif %}
 </nav>
 
 {% block ai_body %}{% endblock %}

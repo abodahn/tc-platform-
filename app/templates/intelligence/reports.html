@@ -1,20 +1,20 @@
 {% extends "intelligence/_base.html" %}
 {% block title %}AI Reports{% endblock %}
-{% block ai_title %}AI Reports{% endblock %}
+{% block ai_title %}<span data-i18n="ai.tab_reports">AI Reports</span>{% endblock %}
 {% block ai_body %}
 
 <div class="ai-grid">
   <div class="ai-card">
-    <div class="hd"><h3>Executive risk report</h3></div>
+    <div class="hd"><h3 data-i18n="ai.exec_report">Executive risk report</h3></div>
     <div class="bd">
-      <div class="muted" style="margin-bottom:12px">Company health, domain risk scores and the top alerts with recommendations — the daily / weekly executive intelligence pack.</div>
-      <a class="btn btn-primary btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='pdf') }}">Download PDF</a>
+      <div class="muted" style="margin-bottom:12px" data-i18n="ai.exec_desc">Company health, domain risk scores and the top alerts with recommendations.</div>
+      <a class="btn btn-primary btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='pdf') }}" data-i18n="ai.download_pdf">Download PDF</a>
     </div>
   </div>
   <div class="ai-card">
-    <div class="hd"><h3>Alerts export</h3></div>
+    <div class="hd"><h3 data-i18n="ai.alerts_export">Alerts export</h3></div>
     <div class="bd">
-      <div class="muted" style="margin-bottom:12px">Every predicted risk with score, severity, status, owner, impact and recommended action — for tracking and audit.</div>
+      <div class="muted" style="margin-bottom:12px" data-i18n="ai.alerts_export_desc">Every predicted risk with score, severity, status, owner and recommended action.</div>
       <div class="flex gap">
         <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='xlsx') }}">Excel</a>
         <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='csv') }}">CSV</a>
@@ -25,7 +25,7 @@
 
 <div class="ai-grid" style="margin-top:18px">
   <div class="ai-card">
-    <div class="hd"><h3>Model run history</h3></div>
+    <div class="hd"><h3 data-i18n="ai.run_history">Model run history</h3></div>
     <div class="bd" style="overflow-x:auto">
       <table class="tbl"><thead><tr><th>Run</th><th>Finished</th><th>Health</th><th>Alerts</th><th>Note</th></tr></thead>
       <tbody>
@@ -33,18 +33,18 @@
         <tr><td>{{ r.run_uid }}</td><td>{{ r.finished_at }}</td>
           <td><span class="ai-score {{ 'ok' if r.health_score>=80 else ('warn' if r.health_score>=40 else 'crit') }}">{{ r.health_score|round(0)|int if r.health_score is not none else '–' }}</span></td>
           <td>{{ r.n_alerts }}</td><td class="muted" style="font-size:12px">{{ r.note }}</td></tr>
-      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:18px">No runs yet.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:18px" data-i18n="ai.no_run_title">No runs yet.</td></tr>{% endfor %}
       </tbody></table>
     </div>
   </div>
   <div class="ai-card">
-    <div class="hd"><h3>Feedback &amp; accuracy</h3></div>
+    <div class="hd"><h3 data-i18n="ai.feedback_acc">Feedback &amp; accuracy</h3></div>
     <div class="bd">
       {% if feedback %}
       <div class="ai-list">
         {% for f in feedback %}<div class="ai-row"><div class="r-main"><div class="r-title">{{ f.verdict|replace('_',' ')|title }}</div></div><b>{{ f.c }}</b></div>{% endfor %}
       </div>
-      {% else %}<div class="muted">No feedback recorded yet. Rate alerts in the Alert Center to train future rules.</div>{% endif %}
+      {% else %}<div class="muted" data-i18n="ai.no_feedback">No feedback recorded yet. Rate alerts in the Alert Center to train future rules.</div>{% endif %}
     </div>
   </div>
 </div>
