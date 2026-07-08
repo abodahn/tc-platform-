@@ -402,6 +402,49 @@ def set_dept_matrix(department, stage_rows, user=None):
         conn.close()
 
 
+def delete_dept_matrix(department):
+    """Remove a department's custom responsibility matrix. A custom-added
+    department disappears from the list; a built-in one reverts to the global
+    default route. Returns (ok, was_builtin)."""
+    department = (department or "").strip()
+    if not department:
+        return False, False
+    was_builtin = department in DEPARTMENTS
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM proc_resp_matrix WHERE department=?", (department,))
+        conn.commit()
+    finally:
+        conn.close()
+    return True, was_builtin
+
+
+def rename_dept(old, new):
+    """Rename a custom department everywhere it is referenced (matrix + budgets).
+    Built-in departments (defined in code) cannot be renamed. Returns (ok, msg)."""
+    old = (old or "").strip()
+    new = (new or "").strip()[:60]
+    if not old or not new:
+        return False, "empty"
+    if old == new:
+        return True, ""
+    if old in DEPARTMENTS:
+        return False, "builtin"
+    if new in list_departments():
+        return False, "exists"
+    conn = get_db()
+    try:
+        conn.execute("UPDATE proc_resp_matrix SET department=? WHERE department=?", (new, old))
+        try:
+            conn.execute("UPDATE proc_budgets SET department=? WHERE department=?", (new, old))
+        except Exception:  # noqa: BLE001 — budgets table/column optional
+            pass
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
 def create_pr(header, items, user, ip=None, submit=True):
     """Create a PR (+items). When submit=True, build the ladder and route it.
     Returns (pr_id, pr_no)."""

@@ -934,5 +934,14 @@
   "mr.price_all": "Tüm kalemleri fiyatla",
   "mr.copy": "Notlara kopyala",
   "mr.apply_all": "Tüm fiyatları uygula",
-  "nav.garamento_kb": "Garamento kılavuzu"
+  "nav.garamento_kb": "Garamento kılavuzu",
+  "proc.manage_dept": "Bölümü yönet",
+  "proc.builtin_tag": "Yerleşik",
+  "proc.custom_tag": "Özel",
+  "proc.rename_to": "Yeni ad",
+  "proc.rename_btn": "Yeniden adlandır",
+  "proc.reset_default": "Varsayılan rotaya sıfırla",
+  "proc.remove_dept": "Bölümü kaldır",
+  "proc.builtin_note": "Yerleşik bölüm: yeniden adlandırılamaz veya silinemez — “Sıfırla” özel rotayı temizler ve varsayılan kurallara döner.",
+  "proc.custom_note": "Özel bölüm: kaldırmak özel rotasını siler ve listeden çıkarır."
 }

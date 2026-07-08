@@ -695,7 +695,9 @@ def settings():
     return render_template("approvals/settings.html", active="procurement",
                            departments=depts, department=dept,
                            matrix=svc.get_dept_matrix(dept), ladder=C.LADDER,
-                           stage_labels=C.STAGE_LABELS, default_matrix=C.APPROVAL_MATRIX)
+                           stage_labels=C.STAGE_LABELS, default_matrix=C.APPROVAL_MATRIX,
+                           is_builtin=(dept in C.DEPARTMENTS),
+                           has_custom=(dept in svc.all_dept_matrices()))
 
 
 @bp.route("/settings", methods=["POST"])
@@ -723,3 +725,34 @@ def save_settings():
     flash(f"Responsibility matrix saved for {dept}." if ok else f"Could not save ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("approvals.settings", department=dept))
+
+
+@bp.route("/settings/delete", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def delete_settings():
+    dept = (request.form.get("department") or "").strip()
+    ok, was_builtin = svc.delete_dept_matrix(dept)
+    if ok:
+        flash(f"“{dept}” reset to the default approval route." if was_builtin
+              else f"Removed “{dept}”.", "success")
+    else:
+        flash("Choose a department first.", "error")
+    return redirect(url_for("approvals.settings"))
+
+
+@bp.route("/settings/rename", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def rename_settings():
+    old = (request.form.get("department") or "").strip()
+    new = (request.form.get("rename_to") or "").strip()
+    ok, msg = svc.rename_dept(old, new)
+    if ok:
+        flash(f"Renamed to “{new}”.", "success")
+        return redirect(url_for("approvals.settings", department=new))
+    reason = {"builtin": "Built-in departments can’t be renamed.",
+              "exists": "A department with that name already exists.",
+              "empty": "Enter a new name."}.get(msg, "Could not rename.")
+    flash(reason, "error")
+    return redirect(url_for("approvals.settings", department=old))

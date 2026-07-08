@@ -934,5 +934,14 @@
   "mr.price_all": "Price all items",
   "mr.copy": "Copy to notes",
   "mr.apply_all": "Apply all prices",
-  "nav.garamento_kb": "Garamento guidance"
+  "nav.garamento_kb": "Garamento guidance",
+  "proc.manage_dept": "Manage department",
+  "proc.builtin_tag": "Built-in",
+  "proc.custom_tag": "Custom",
+  "proc.rename_to": "Rename to",
+  "proc.rename_btn": "Rename",
+  "proc.reset_default": "Reset to default route",
+  "proc.remove_dept": "Remove department",
+  "proc.builtin_note": "Built-in department: it can’t be renamed or deleted — “Reset” clears any custom route so it uses the default rules again.",
+  "proc.custom_note": "Custom department: removing it deletes its custom route and takes it off the list."
 }

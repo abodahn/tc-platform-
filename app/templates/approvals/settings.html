@@ -64,6 +64,41 @@
   </form>
 </div>
 
+<!-- Manage this department: rename (custom only) / remove or reset -->
+<div class="panel mt-3">
+  <div class="panel-head">
+    <h3 data-i18n="proc.manage_dept">Manage department</h3>
+    {% if is_builtin %}<span class="tag" data-i18n="proc.builtin_tag">Built-in</span>
+    {% else %}<span class="tag ok" data-i18n="proc.custom_tag">Custom</span>{% endif %}
+  </div>
+  <div class="panel-pad flex gap center wrap" style="gap:18px">
+    {% if not is_builtin %}
+    <form method="post" action="{{ url_for('approvals.rename_settings') }}" class="flex gap center wrap" style="margin:0;gap:10px">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="department" value="{{ department }}">
+      <div class="field" style="margin:0;min-width:220px"><label data-i18n="proc.rename_to">Rename to</label>
+        <input name="rename_to" autocomplete="off" placeholder="{{ department }}"></div>
+      <button class="btn btn-ghost" type="submit" data-i18n="proc.rename_btn">Rename</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('approvals.delete_settings') }}" style="margin:0"
+          onsubmit="return confirm('{{ 'Reset this department to the default approval route?' if is_builtin else 'Remove this department and its custom route?' }}');">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="department" value="{{ department }}">
+      <button class="btn btn-ghost" type="submit" style="color:var(--crit)">
+        {% if is_builtin %}<span data-i18n="proc.reset_default">Reset to default route</span>
+        {% else %}<span data-i18n="proc.remove_dept">Remove department</span>{% endif %}
+      </button>
+    </form>
+  </div>
+  <div class="panel-pad" style="padding-top:0">
+    <div class="muted" style="font-size:12px">
+      {% if is_builtin %}<span data-i18n="proc.builtin_note">Built-in department: it can’t be renamed or deleted — “Reset” clears any custom route so it uses the default rules again.</span>
+      {% else %}<span data-i18n="proc.custom_note">Custom department: removing it deletes its custom route and takes it off the list.</span>{% endif %}
+    </div>
+  </div>
+</div>
+
 <!-- Add a new department -->
 <div class="panel mt-3">
   <form method="post">
