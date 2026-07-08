@@ -11,6 +11,21 @@
   <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.detail', pr_id=editing.id) if editing else url_for('approvals.index') }}" data-i18n="proc.cancel">Cancel</a>
 </div>
 
+{% if not editing %}
+<div class="panel" style="border:1px solid rgba(237,28,36,.28)">
+  <div class="panel-head"><h3>✨ <span data-i18n="proc.ai_draft">Draft from a description</span></h3>
+    <span class="muted" style="font-size:12px" data-i18n="proc.ai_draft_hint">Garamento fills the form from plain words — review, then price with 🔎.</span></div>
+  <div class="panel-pad">
+    <textarea id="aiDraftText" rows="2" data-ac
+              placeholder="e.g. 500 m navy cotton twill 240gsm and 2000 YKK metal zippers 18cm for the sewing line"></textarea>
+    <div class="flex gap center mt-2">
+      <button type="button" class="btn btn-primary btn-sm" id="aiDraftBtn">✨ <span data-i18n="proc.ai_draft_btn">Draft it</span></button>
+      <span class="muted" id="aiDraftMsg" style="font-size:12.5px"></span>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <form method="post" enctype="multipart/form-data" action="{{ url_for('approvals.edit_save', pr_id=editing.id) if editing else url_for('approvals.create') }}" id="prForm">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
 
@@ -282,6 +297,32 @@
   mrApplyAll.addEventListener('click', applyAll);
   rows.addEventListener('click', function(e){ var btn = e.target.closest('.li-research'); if (btn) research(btn.closest('.li-row')); });
   document.getElementById('priceAll').addEventListener('click', priceAll);
+
+  // ---- Auto-draft the whole request from a plain-language description ----
+  var aiDraftBtn = document.getElementById('aiDraftBtn');
+  if (aiDraftBtn) aiDraftBtn.addEventListener('click', function(){
+    var ta = document.getElementById('aiDraftText'), msg = document.getElementById('aiDraftMsg');
+    var text = (ta.value || '').trim();
+    if (!text){ ta.focus(); return; }
+    aiDraftBtn.disabled = true; msg.textContent = 'Garamento is drafting…';
+    fetch('/garamento/draft-pr', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF}, body: JSON.stringify({ text: text, currency: curSel.value || 'EGP' }) })
+      .then(function(r){ return r.json(); }).then(function(d){
+        if (!d.ok){ msg.textContent = d.message || 'Could not draft.'; return; }
+        var dr = d.draft;
+        var t = document.querySelector('input[name=title]'); if (t && dr.title) t.value = dr.title;
+        var rf = document.querySelector('input[name=request_for]'); if (rf && dr.request_for) rf.value = dr.request_for;
+        var nt = document.querySelector('textarea[name=notes]'); if (nt && dr.notes) nt.value = dr.notes;
+        if (deptSelEl && dr.department) deptSelEl.value = dr.department;
+        if (dr.items && dr.items.length){
+          rows.innerHTML = '';
+          dr.items.forEach(function(it){ addRow(); fillRow(rows.lastElementChild, it); });
+          recalc();
+        }
+        msg.textContent = 'Drafted ' + (dr.items ? dr.items.length : 0) + ' item(s) — review, then price with 🔎.';
+        if (window.tcToast) tcToast('Draft ready — review it. ✨', 'success');
+      }).catch(function(){ msg.textContent = 'Could not draft right now.'; })
+      .finally(function(){ aiDraftBtn.disabled = false; });
+  });
 
   function fillRow(r, it){
     r.querySelector('[name="item[]"]').value = it.item || '';

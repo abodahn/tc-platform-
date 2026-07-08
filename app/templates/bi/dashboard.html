@@ -48,9 +48,11 @@
   <div class="panel-pad">
     <form class="bi-search" id="biSearchForm">
       <input class="input" id="biSearchInput" autocomplete="off"
-             placeholder="e.g. top 10 product by revenue" data-i18n-ph="bi.search_ph">
+             placeholder="e.g. top 10 product by revenue — or ask a question" data-i18n-ph="bi.search_ph">
       <button class="btn btn-primary btn-sm" type="submit" data-i18n="bi.go">Show</button>
+      <button class="btn btn-ghost btn-sm" type="button" id="biAskAi">✨ <span data-i18n="bi.ask_ai">Ask AI</span></button>
     </form>
+    <div id="biAiAnswer" class="mt-3" style="display:none"></div>
     <div id="biSearchMsg" class="bi-none mt-3" style="display:none"></div>
   </div>
 </div>
@@ -104,4 +106,27 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/bi.js') }}"></script>
+<script>
+// AI "ask your data" — natural-language answer over this dataset (Garamento).
+(function(){
+  var btn=document.getElementById('biAskAi'); if(!btn) return;
+  var input=document.getElementById('biSearchInput'), out=document.getElementById('biAiAnswer');
+  var CSRF=(document.querySelector('meta[name=csrf-token]')||{}).content||'';
+  var ASK="{{ url_for('bi.api_ask', ds_id=dataset.id) }}";
+  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  btn.addEventListener('click', function(){
+    var q=(input.value||'').trim(); if(!q){ input.focus(); return; }
+    btn.disabled=true; out.style.display='block';
+    out.innerHTML='<span class="bi-none">Garamento is reading the data…</span>';
+    fetch(ASK,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF},body:JSON.stringify({q:q})})
+      .then(function(r){return r.json();}).then(function(d){
+        if(!d.ok){ out.innerHTML='<span class="bi-none">'+esc(d.message||'Could not answer.')+'</span>'; return; }
+        var h='<div class="panel" style="padding:14px 16px"><div style="font-size:14px;line-height:1.55">'+esc(d.answer)+'</div>';
+        if(d.chart) h+='<div class="bi-none mt-2">Suggested chart: '+esc(d.chart.type)+' — '+esc(d.chart.agg||'')+' of '+esc(d.chart.y||'')+' by '+esc(d.chart.x||'')+'</div>';
+        h+='</div>'; out.innerHTML=h;
+      }).catch(function(){ out.innerHTML='<span class="bi-none">Could not answer right now.</span>'; })
+      .finally(function(){ btn.disabled=false; });
+  });
+})();
+</script>
 {% endblock %}

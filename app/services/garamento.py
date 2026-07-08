@@ -158,6 +158,15 @@ def chat(history, user=None):
     except Exception:  # noqa: BLE001 — knowledge is best-effort, never break chat
         pass
 
+    # Live platform status so Garamento can answer "what's open/pending" questions.
+    try:
+        from app.services import garamento_data
+        snap = garamento_data.snapshot(user)
+        if snap:
+            sys += "\n\n" + snap
+    except Exception:  # noqa: BLE001
+        pass
+
     messages = [{"role": "system", "content": sys}] + turns
     try:
         reply = _complete(messages, temperature=0.7, max_tokens=650)
@@ -460,6 +469,190 @@ def polish(text, kind="generic"):
     if not out:
         return {"ok": False, "error": "empty", "text": text}
     return {"ok": True, "text": out[:2000], "changed": out != text}
+
+
+# --------------------------------------------------------------------------
+# Auto-draft a purchase request from a plain-language description
+# --------------------------------------------------------------------------
+_DRAFT_SYS = (
+    "You turn a plain-language purchasing need into a structured purchase request "
+    "for a garment manufacturer. Extract each line item with a sensible unit and "
+    "quantity. Do NOT invent prices — set unit_price to 0 unless a price is clearly "
+    "stated. Map the department to one from the provided list when possible, else "
+    "leave it blank. Keep the title short. Answer with JSON only."
+)
+
+
+def draft_pr(text, departments=None, units=None, currency="EGP"):
+    """Draft a purchase request from free text. Returns {ok, draft:{...}}."""
+    text = (text or "").strip()
+    if not text:
+        return {"ok": False, "error": "empty", "message": "Describe what you need first."}
+    if not is_enabled():
+        return {"ok": False, "offline": True,
+                "message": "Draft is offline — no OpenRouter API key configured."}
+    dept_hint = ("Known departments: " + ", ".join(departments) + ".\n") if departments else ""
+    unit_hint = ("Valid units (pick the closest): " + ", ".join(units) + ".\n") if units else ""
+    prompt = (
+        dept_hint + unit_hint +
+        f"Currency: {currency}.\n\nNeed:\n{text[:2000]}\n\n"
+        "Respond ONLY with JSON of this shape:\n"
+        "{\n"
+        '  "title": string,\n'
+        '  "department": string,\n'
+        '  "request_for": string,\n'
+        '  "notes": string,\n'
+        '  "items": [ {"item": string, "description": string, "unit": string, '
+        '"qty": number, "unit_price": number} ]\n'
+        "}"
+    )
+    messages = [{"role": "system", "content": _DRAFT_SYS}, {"role": "user", "content": prompt}]
+    try:
+        out = _complete(messages, temperature=0.2, max_tokens=800)
+    except requests.exceptions.RequestException:
+        return {"ok": False, "error": "http", "message": "Couldn't reach the drafting service. Try again."}
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "error": "unknown", "message": "Something snagged while drafting. Try again."}
+    data = _extract_json(out) or {}
+    items = []
+    for it in (data.get("items") or [])[:30]:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("item") or "").strip()
+        if not name:
+            continue
+        items.append({
+            "item": name[:120],
+            "description": str(it.get("description") or "")[:200],
+            "unit": str(it.get("unit") or "")[:40],
+            "qty": _num(it.get("qty")) or 1,
+            "unit_price": _num(it.get("unit_price")) or 0,
+        })
+    if not items:
+        return {"ok": False, "error": "no_items",
+                "message": "I couldn't spot any line items — try naming what to buy and how many."}
+    dept = str(data.get("department") or "").strip()
+    if departments and dept and dept not in departments:
+        dept = next((d for d in departments if d.lower() == dept.lower()), "")
+    return {"ok": True, "draft": {
+        "title": str(data.get("title") or "")[:120],
+        "department": dept,
+        "request_for": str(data.get("request_for") or "")[:120],
+        "notes": str(data.get("notes") or "")[:600],
+        "items": items,
+    }}
+
+
+# --------------------------------------------------------------------------
+# Maintenance ticket triage (AI-enhanced; complements the offline engine)
+# --------------------------------------------------------------------------
+_TRIAGE_SYS = (
+    "You are a maintenance triage expert for a garment factory (sewing, cutting, "
+    "finishing, embroidery machines and utilities). From a fault description, "
+    "assess it. Be concise and practical. Answer with JSON only."
+)
+
+
+def triage_ticket(description, machine="", criticality="medium"):
+    """Return {ok, priority, category, likely_causes[], suggested_parts[], summary}."""
+    description = (description or "").strip()
+    if not description:
+        return {"ok": False, "error": "empty", "message": "Describe the fault first."}
+    if not is_enabled():
+        return {"ok": False, "offline": True,
+                "message": "AI triage is offline — no OpenRouter API key configured."}
+    ctx = f"Machine: {machine}. " if machine else ""
+    ctx += f"Machine criticality: {criticality}."
+    prompt = (
+        ctx + "\n\nFault description:\n" + description[:1500] + "\n\n"
+        "Respond ONLY with JSON:\n"
+        "{\n"
+        '  "priority": "low" | "medium" | "high" | "critical",\n'
+        '  "category": string (e.g. mechanical, electrical, pneumatic, control, safety, other),\n'
+        '  "likely_causes": [ string ],   // up to 4, most likely first\n'
+        '  "suggested_parts": [ string ], // spares that may be needed, up to 5\n'
+        '  "summary": string              // one practical sentence for the technician\n'
+        "}"
+    )
+    messages = [{"role": "system", "content": _TRIAGE_SYS}, {"role": "user", "content": prompt}]
+    try:
+        out = _complete(messages, temperature=0.2, max_tokens=500)
+    except requests.exceptions.RequestException:
+        return {"ok": False, "error": "http", "message": "Couldn't reach the triage service."}
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "error": "unknown", "message": "Something snagged during triage."}
+    d = _extract_json(out) or {}
+    pri = str(d.get("priority") or "").lower()
+    if pri not in ("low", "medium", "high", "critical"):
+        pri = criticality if criticality in ("low", "medium", "high", "critical") else "medium"
+    def _slist(v, n):
+        return [str(x)[:80] for x in (v or []) if str(x).strip()][:n] if isinstance(v, list) else []
+    return {
+        "ok": True,
+        "priority": pri,
+        "category": str(d.get("category") or "other")[:40],
+        "likely_causes": _slist(d.get("likely_causes"), 4),
+        "suggested_parts": _slist(d.get("suggested_parts"), 5),
+        "summary": str(d.get("summary") or "")[:280],
+    }
+
+
+# --------------------------------------------------------------------------
+# BI — ask a dataset a natural-language question
+# --------------------------------------------------------------------------
+_BI_SYS = (
+    "You are a careful data analyst. Answer the user's question using ONLY the "
+    "dataset provided (columns, summary stats, and sample rows). If the dataset is "
+    "a sample of a larger set, say your answer is based on the sample. Give exact "
+    "numbers when the stats support them; never fabricate. Answer with JSON only."
+)
+
+
+def bi_ask(question, columns, rows, stats=None, total_rows=None):
+    """Answer a NL question over a dataset. Returns {ok, answer, chart}."""
+    question = (question or "").strip()
+    if not question:
+        return {"ok": False, "error": "empty", "message": "Ask a question about the data."}
+    if not is_enabled():
+        return {"ok": False, "offline": True,
+                "message": "AI answers are offline — no OpenRouter API key configured."}
+    cols = [str(c) for c in (columns or [])][:40]
+    sample = rows[:40] if isinstance(rows, list) else []
+    n = total_rows if total_rows is not None else len(sample)
+    lines = ["Columns: " + ", ".join(cols),
+             f"Total rows: {n}" + (" (sample of first 40 shown)" if n > len(sample) else "")]
+    if stats:
+        try:
+            lines.append("Column stats: " + json.dumps(stats)[:1500])
+        except Exception:  # noqa: BLE001
+            pass
+    lines.append("Sample rows (JSON): " + json.dumps(sample)[:3500])
+    prompt = (
+        "\n".join(lines) + "\n\nQuestion: " + question[:400] + "\n\n"
+        "Respond ONLY with JSON:\n"
+        "{\n"
+        '  "answer": string (concise, with numbers),\n'
+        '  "chart": {"type": "bar"|"line"|"pie", "x": column, "y": column, "agg": "sum"|"avg"|"count"} | null\n'
+        "}"
+    )
+    messages = [{"role": "system", "content": _BI_SYS}, {"role": "user", "content": prompt}]
+    try:
+        out = _complete(messages, temperature=0.1, max_tokens=600)
+    except requests.exceptions.RequestException:
+        return {"ok": False, "error": "http", "message": "Couldn't reach the analysis service."}
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "error": "unknown", "message": "Something snagged during analysis."}
+    d = _extract_json(out) or {}
+    ans = str(d.get("answer") or "").strip()
+    if not ans:
+        return {"ok": False, "error": "no_answer", "message": "I couldn't answer that from the data."}
+    chart = d.get("chart") if isinstance(d.get("chart"), dict) else None
+    if chart:
+        chart = {"type": str(chart.get("type") or "bar")[:10], "x": str(chart.get("x") or "")[:60],
+                 "y": str(chart.get("y") or "")[:60], "agg": str(chart.get("agg") or "sum")[:10]}
+        if chart["x"] not in cols or (chart["y"] and chart["y"] not in cols):
+            chart = None
+    return {"ok": True, "answer": ans, "chart": chart}
 
 
 def _http_detail(exc) -> str:

@@ -67,3 +67,32 @@ def polish():
     result = g.polish(text=data.get("text", ""), kind=data.get("kind", "generic"))
     status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
     return jsonify(result), status
+
+
+@bp.post("/draft-pr")
+@permission_required("proc_create")
+def draft_pr():
+    from app.approvals import constants as C
+    from app.approvals import services as psvc
+    data = request.get_json(silent=True) or {}
+    result = g.draft_pr(
+        text=data.get("text", ""),
+        departments=psvc.list_departments(),
+        units=C.UNITS,
+        currency=data.get("currency", "EGP"),
+    )
+    status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
+    return jsonify(result), status
+
+
+@bp.post("/triage")
+@permission_required("maint_ticket_create")
+def triage():
+    data = request.get_json(silent=True) or {}
+    result = g.triage_ticket(
+        description=data.get("description", ""),
+        machine=data.get("machine", ""),
+        criticality=data.get("criticality", "medium"),
+    )
+    status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
+    return jsonify(result), status

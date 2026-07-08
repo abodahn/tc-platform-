@@ -43,6 +43,8 @@
         <b style="font-size:12px" data-i18n="m.ai_triage">AI triage suggestion</b>
       </div>
       <div id="triageBody" style="font-size:12.5px"></div>
+      <div class="mt-2"><button type="button" class="btn btn-ghost btn-sm" id="aiDeepBtn">✨ <span data-i18n="m.ai_deep">Deep AI analysis</span></button></div>
+      <div id="aiDeepOut" style="font-size:12.5px;margin-top:8px"></div>
     </div>
 
     <div class="grid cols-3">
@@ -99,6 +101,34 @@
       fetch(TRIAGE+'?'+p.toString()).then(function(r){return r.json();}).then(render).catch(function(){});
     }
     desc.addEventListener('input', function(){ clearTimeout(timer); timer=setTimeout(run,400); });
+  })();
+
+  // Deep AI triage (Garamento / OpenRouter): likely causes + suggested spare parts
+  (function(){
+    var btn=document.getElementById('aiDeepBtn'); if(!btn) return;
+    var out=document.getElementById('aiDeepOut'), desc=document.getElementById('descInput'), form=desc.form;
+    var CSRF=(document.querySelector('meta[name=csrf-token]')||{}).content||'';
+    function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+    btn.addEventListener('click', function(){
+      var q=(desc.value||'').trim();
+      if(q.length<4){ if(window.tcToast) window.tcToast('Describe the fault first.',''); desc.focus(); return; }
+      var msel=form.machine_id, machine=(msel&&msel.selectedIndex>=0)?msel.options[msel.selectedIndex].text:'';
+      btn.disabled=true; out.innerHTML='<span class="muted">Garamento is analysing…</span>';
+      fetch('/garamento/triage',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF},
+        body:JSON.stringify({description:q, machine:machine, criticality:(form.priority?form.priority.value:'medium')})})
+        .then(function(r){return r.json();}).then(function(d){
+          if(!d.ok){ out.innerHTML='<span class="muted">'+esc(d.message||'Could not analyse.')+'</span>'; return; }
+          var h='';
+          if(d.summary) h+='<div style="margin-bottom:6px"><b>'+esc(d.summary)+'</b></div>';
+          if(d.likely_causes&&d.likely_causes.length) h+='<div><b>Likely causes:</b><ul style="margin:4px 0 6px;padding-inline-start:18px">'+d.likely_causes.map(function(c){return '<li>'+esc(c)+'</li>';}).join('')+'</ul></div>';
+          if(d.suggested_parts&&d.suggested_parts.length) h+='<div style="margin-bottom:6px"><b>Suggested parts:</b> '+d.suggested_parts.map(function(p){return '<span class="tag" style="margin:2px">'+esc(p)+'</span>';}).join('')+'</div>';
+          h+='<button type="button" class="btn btn-ghost btn-sm" id="aiDeepApply">Apply priority: '+esc(d.priority)+'</button>';
+          out.innerHTML=h;
+          var ap=document.getElementById('aiDeepApply');
+          if(ap) ap.onclick=function(){ if(form.priority) form.priority.value=d.priority; if(window.tcToast) window.tcToast('Priority set to '+d.priority,'success'); };
+        }).catch(function(){ out.innerHTML='<span class="muted">Could not analyse right now.</span>'; })
+        .finally(function(){ btn.disabled=false; });
+    });
   })();
 </script>
 {% endblock %}

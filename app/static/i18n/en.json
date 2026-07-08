@@ -943,5 +943,10 @@
   "proc.reset_default": "Reset to default route",
   "proc.remove_dept": "Remove department",
   "proc.builtin_note": "Built-in department: it can’t be renamed or deleted — “Reset” clears any custom route so it uses the default rules again.",
-  "proc.custom_note": "Custom department: removing it deletes its custom route and takes it off the list."
+  "proc.custom_note": "Custom department: removing it deletes its custom route and takes it off the list.",
+  "proc.ai_draft": "Draft from a description",
+  "proc.ai_draft_hint": "Garamento fills the form from plain words — review, then price with 🔎.",
+  "proc.ai_draft_btn": "Draft it",
+  "m.ai_deep": "Deep AI analysis",
+  "bi.ask_ai": "Ask AI"
 }

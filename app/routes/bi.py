@@ -178,6 +178,24 @@ def api_query(ds_id):
     return jsonify(matched=True, spec=spec, data=data)
 
 
+@bp.route("/api/dataset/<int:ds_id>/ask", methods=["POST"])
+@permission_required("open_module")
+def api_ask(ds_id):
+    """AI 'ask your data': natural-language question over the dataset."""
+    ds = _get_dataset_or_403(ds_id)
+    body = request.get_json(silent=True) or {}
+    from app.services import garamento as g
+    result = g.bi_ask(
+        question=body.get("q", ""),
+        columns=ds["columns"],
+        rows=ds["rows"],
+        stats=(ds.get("profile") or {}).get("columns"),
+        total_rows=len(ds["rows"] or []),
+    )
+    status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
+    return jsonify(result), status
+
+
 # --- dashboard persistence --------------------------------------------------
 @bp.route("/dashboard/save", methods=["POST"])
 @permission_required("open_module")
