@@ -19,9 +19,9 @@
     <div class="panel-pad">
       <div class="grid cols-2">
         <div class="field"><label data-i18n="proc.title_l">Title *</label>
-          <input name="title" required autocomplete="off" value="{{ prefill.title or '' }}" placeholder="e.g. Repair forklift battery"></div>
+          <input name="title" required autocomplete="off" data-ac data-polish="title" value="{{ prefill.title or '' }}" placeholder="e.g. Repair forklift battery"></div>
         <div class="field"><label data-i18n="proc.request_for_l">Request for</label>
-          <input name="request_for" autocomplete="off" value="{{ prefill.request_for or '' }}" placeholder="Asset / machine / area"></div>
+          <input name="request_for" autocomplete="off" data-ac value="{{ prefill.request_for or '' }}" placeholder="Asset / machine / area"></div>
         <div class="field"><label data-i18n="proc.dept_l">Department</label>
           <select name="department" id="deptSel">
             <option value=""></option>
@@ -51,7 +51,10 @@
 
   <div class="panel mt-4">
     <div class="panel-head"><h3 data-i18n="proc.items">Line items</h3>
-      <button type="button" class="btn btn-ghost btn-sm" id="addRow" data-i18n="proc.add_item">+ Add item</button></div>
+      <span class="flex gap">
+        <button type="button" class="btn btn-ghost btn-sm" id="priceAll">🔎 <span data-i18n="mr.price_all">Price all items</span></button>
+        <button type="button" class="btn btn-ghost btn-sm" id="addRow" data-i18n="proc.add_item">+ Add item</button>
+      </span></div>
     <div class="panel-pad">
       <div class="li-head">
         <span data-i18n="proc.item">Item</span><span data-i18n="proc.desc">Description</span>
@@ -76,7 +79,7 @@
   </div>
 
   <div class="field mt-4"><label data-i18n="proc.notes_l">Notes</label>
-    <textarea name="notes" rows="2" placeholder="Anything the approvers should know…">{{ prefill.notes or '' }}</textarea></div>
+    <textarea name="notes" rows="2" data-ac data-polish="notes" placeholder="Anything the approvers should know…">{{ prefill.notes or '' }}</textarea></div>
 
   <div class="panel mt-4">
     <div class="panel-head"><h3 data-i18n="proc.attach_h">Attachments</h3>
@@ -103,7 +106,9 @@
     <div class="modal-body" id="mrBody"></div>
     <div class="modal-foot">
       <button class="btn btn-ghost" type="button" id="mrRetry" data-i18n="mr.retry">Search again</button>
+      <button class="btn btn-ghost" type="button" id="mrCopy" data-i18n="mr.copy">Copy to notes</button>
       <button class="btn btn-primary" type="button" id="mrUse" data-i18n="mr.use">Use this price</button>
+      <button class="btn btn-primary" type="button" id="mrApplyAll" data-i18n="mr.apply_all">Apply all prices</button>
     </div>
   </div>
 </div>
@@ -127,9 +132,9 @@
 
   function rowHtml(){
     return '<div class="li-row">'
-      + '<div class="li-item"><input name="item[]" placeholder="Item" autocomplete="off">'
+      + '<div class="li-item"><input name="item[]" placeholder="Item" autocomplete="off" data-ac>'
       + '<button type="button" class="li-research" title="Market price research" aria-label="Market price research">🔎</button></div>'
-      + '<input name="description[]" placeholder="Description" autocomplete="off">'
+      + '<input name="description[]" placeholder="Description" autocomplete="off" data-ac>'
       + '<select name="unit[]">'+unitOpts()+'</select>'
       + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
       + '<input name="current_stock[]" type="number" min="0" step="any" value="0">'
@@ -183,63 +188,100 @@
   var deptSelEl = document.getElementById('deptSel');
   if (deptSelEl) deptSelEl.addEventListener('change', recalc);   // re-route preview on dept change
 
-  // ---- Market research (Garamento): live approximate price per line item ----
+  // ---- Market research (Garamento): single + bulk ----
   var CSRF = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
   var mrOverlay = document.getElementById('mrOverlay');
   var mrBody = document.getElementById('mrBody');
   var mrItemEl = document.getElementById('mrItem');
   var mrUse = document.getElementById('mrUse');
   var mrRetry = document.getElementById('mrRetry');
-  var mrRow = null, mrLast = null;
+  var mrCopy = document.getElementById('mrCopy');
+  var mrApplyAll = document.getElementById('mrApplyAll');
+  var mrRow = null, mrLast = null, mrMode = 'single';
 
+  function rowList(){ return Array.prototype.slice.call(rows.querySelectorAll('.li-row')); }
   function mrClose(){ mrOverlay.classList.remove('open'); }
   document.getElementById('mrClose').addEventListener('click', mrClose);
   mrOverlay.addEventListener('click', function(e){ if (e.target === mrOverlay) mrClose(); });
   document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && mrOverlay.classList.contains('open')) mrClose(); });
 
-  function research(row){
-    var p = {
+  function setMode(m){
+    mrMode = m;
+    mrUse.style.display = (m === 'single') ? '' : 'none';
+    mrCopy.style.display = (m === 'single') ? '' : 'none';
+    mrApplyAll.style.display = (m === 'bulk') ? '' : 'none';
+  }
+  function loadingHtml(msg){
+    return '<div class="mr-loading"><div class="gm-ava"><svg aria-hidden="true"><use href="#gm-mascot"></use></svg></div><div>' + msg + '</div></div>';
+  }
+  function rowItem(row){
+    return {
       item: row.querySelector('[name="item[]"]').value.trim(),
       description: row.querySelector('[name="description[]"]').value.trim(),
       unit: (row.querySelector('[name="unit[]"]') || {}).value || '',
-      qty: parseFloat(row.querySelector('[name="qty[]"]').value) || 1,
-      currency: curSel.value || 'EGP'
+      qty: parseFloat(row.querySelector('[name="qty[]"]').value) || 1
     };
-    if (!p.item){
-      if (window.tcToast) tcToast('Type an item name first, then I’ll go price-hunting.', '');
-      row.querySelector('[name="item[]"]').focus(); return;
-    }
-    mrRow = row; mrLast = null; mrUse.disabled = true;
-    mrItemEl.textContent = '· ' + p.item;
-    mrBody.innerHTML = '<div class="mr-loading"><div class="gm-ava"><svg aria-hidden="true"><use href="#gm-mascot"></use></svg></div>'
-      + '<div>Garamento is scouring the web for prices…</div></div>';
-    mrOverlay.classList.add('open');
-    fetch('/garamento/market-research', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
-      body: JSON.stringify(p)
-    }).then(function(r){ return r.json(); }).then(function(d){
-      mrBody.innerHTML = (window.Garamento && window.Garamento.renderMarketResult)
-        ? window.Garamento.renderMarketResult(d) : JSON.stringify(d);
-      if (d && d.ok){ mrLast = d; mrUse.disabled = false; }
-    }).catch(function(){
-      mrBody.innerHTML = '<div class="mr-summary">Something snagged while researching. Try again?</div>';
-    });
   }
 
-  mrRetry.addEventListener('click', function(){ if (mrRow) research(mrRow); });
+  function research(row){
+    var p = rowItem(row); p.currency = curSel.value || 'EGP';
+    if (!p.item){ if (window.tcToast) tcToast('Type an item name first, then I’ll go price-hunting.', ''); row.querySelector('[name="item[]"]').focus(); return; }
+    mrRow = row; mrLast = null; mrUse.disabled = true; mrCopy.disabled = true; setMode('single');
+    mrItemEl.textContent = '· ' + p.item;
+    mrBody.innerHTML = loadingHtml('Garamento is scouring the web for prices…');
+    mrOverlay.classList.add('open');
+    fetch('/garamento/market-research', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF}, body: JSON.stringify(p) })
+      .then(function(r){ return r.json(); }).then(function(d){
+        mrBody.innerHTML = window.Garamento.renderMarketResult(d);
+        if (d && d.ok){ mrLast = d; mrUse.disabled = false; mrCopy.disabled = false; }
+      }).catch(function(){ mrBody.innerHTML = '<div class="mr-summary">Something snagged while researching. Try again?</div>'; });
+  }
+
+  function priceAll(){
+    var items = rowList().map(rowItem);
+    if (!items.some(function(i){ return i.item; })){ if (window.tcToast) tcToast('Add at least one item name first.', ''); return; }
+    setMode('bulk'); mrApplyAll.disabled = true;
+    mrItemEl.textContent = '· all items';
+    mrBody.innerHTML = loadingHtml('Garamento is pricing every line item…');
+    mrOverlay.classList.add('open');
+    fetch('/garamento/market-research-bulk', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF}, body: JSON.stringify({ items: items, currency: curSel.value || 'EGP' }) })
+      .then(function(r){ return r.json(); }).then(function(d){
+        mrBody.innerHTML = window.Garamento.renderMarketBulk(d, items);
+        mrApplyAll.disabled = !(d && d.ok && (d.results||[]).some(function(x){return x.ok;}));
+      }).catch(function(){ mrBody.innerHTML = '<div class="mr-summary">Something snagged while researching. Try again?</div>'; });
+  }
+
+  function applyAll(){
+    var list = rowList(), n = 0;
+    mrBody.querySelectorAll('.mr-brow[data-index]').forEach(function(el){
+      var idx = parseInt(el.getAttribute('data-index'), 10);
+      var price = parseFloat(el.getAttribute('data-price'));
+      if (list[idx] && !isNaN(price)){ list[idx].querySelector('[name="unit_price[]"]').value = price; n++; }
+    });
+    recalc();
+    if (window.tcToast) tcToast('Applied ' + n + ' price' + (n===1?'':'s') + ' from market research.', 'success');
+    mrClose();
+  }
+
+  function copyToNotes(){
+    if (!mrLast) return;
+    var notes = document.querySelector('textarea[name="notes"]');
+    if (!notes) return;
+    var line = 'Market est. for "' + (mrLast.item||'') + '": ' + mrLast.price_est + ' ' + mrLast.currency + (mrLast.unit?('/'+mrLast.unit):'') + (mrLast.as_of?(' (as of '+mrLast.as_of+')'):'') + '.';
+    notes.value = (notes.value ? notes.value.replace(/\s*$/,'') + '\n' : '') + line;
+    notes.dispatchEvent(new Event('input', {bubbles:true}));
+    if (window.tcToast) tcToast('Copied market estimate to notes.', 'success');
+  }
+
+  mrRetry.addEventListener('click', function(){ if (mrMode === 'bulk') priceAll(); else if (mrRow) research(mrRow); });
   mrUse.addEventListener('click', function(){
-    if (mrRow && mrLast && mrLast.price_est != null){
-      mrRow.querySelector('[name="unit_price[]"]').value = mrLast.price_est;
-      recalc();
-      if (window.tcToast) tcToast('Price applied from market research.', 'success');
-    }
+    if (mrRow && mrLast && mrLast.price_est != null){ mrRow.querySelector('[name="unit_price[]"]').value = mrLast.price_est; recalc(); if (window.tcToast) tcToast('Price applied from market research.', 'success'); }
     mrClose();
   });
-  rows.addEventListener('click', function(e){
-    var btn = e.target.closest('.li-research');
-    if (btn) research(btn.closest('.li-row'));
-  });
+  mrCopy.addEventListener('click', copyToNotes);
+  mrApplyAll.addEventListener('click', applyAll);
+  rows.addEventListener('click', function(e){ var btn = e.target.closest('.li-research'); if (btn) research(btn.closest('.li-row')); });
+  document.getElementById('priceAll').addEventListener('click', priceAll);
 
   function fillRow(r, it){
     r.querySelector('[name="item[]"]').value = it.item || '';

@@ -201,38 +201,82 @@
      Shared market-research renderer (used by procurement page)
      ========================================================= */
   window.Garamento = window.Garamento || {};
+
+  function fmtNum(n) {
+    return (n == null) ? "—" : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  function confPill(c) {
+    c = (c || "medium").toLowerCase();
+    return '<span class="mr-conf ' + esc(c) + '"><span class="d"></span>' +
+      esc(c.charAt(0).toUpperCase() + c.slice(1)) + " confidence</span>";
+  }
+  function priceBar(d) {
+    if (d.price_low == null || d.price_high == null || d.price_high <= d.price_low) return "";
+    var span = d.price_high - d.price_low;
+    var est = d.price_est != null ? d.price_est : (d.price_low + d.price_high) / 2;
+    var pct = Math.max(0, Math.min(100, ((est - d.price_low) / span) * 100));
+    return '<div class="mr-bar"><div class="mr-bar-track"><span class="mr-bar-est" style="inset-inline-start:' + pct.toFixed(1) + '%"></span></div>' +
+      '<div class="mr-bar-lbl"><span>' + fmtNum(d.price_low) + '</span><span>' + fmtNum(d.price_high) + '</span></div></div>';
+  }
+  function sourcesBlock(d) {
+    if (!d.sources || !d.sources.length) return "";
+    var h = '<div class="mr-sources"><div class="mr-shead">Sources</div>';
+    d.sources.forEach(function (s) {
+      var name = s.url
+        ? '<a href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' + esc(s.name) + "</a>"
+        : esc(s.name);
+      h += '<div class="mr-src"><span class="mr-sname">' + name + "</span>" +
+        (s.price ? '<span class="mr-sprice">' + esc(s.price) + "</span>" : "") + "</div>";
+    });
+    return h + "</div>";
+  }
+
   window.Garamento.renderMarketResult = function (d) {
-    if (!d || !d.ok) {
-      return '<div class="mr-summary">' + esc((d && d.message) || "No result.") + "</div>";
-    }
-    var fmt = function (n) {
-      return (n == null) ? "—" : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
-    };
-    var range = (d.price_low != null && d.price_high != null)
-      ? '<div class="mr-range">Range<br><b>' + fmt(d.price_low) + " – " + fmt(d.price_high) + "</b> " + esc(d.currency) + "</div>"
-      : "";
-    var conf = '<span class="mr-conf ' + esc(d.confidence) + '"><span class="d"></span>' +
-      esc((d.confidence || "medium").charAt(0).toUpperCase() + (d.confidence || "medium").slice(1)) + " confidence</span>";
+    if (!d || !d.ok) return '<div class="mr-summary">' + esc((d && d.message) || "No result.") + "</div>";
     var unit = d.unit ? '<span class="mr-unit">/ ' + esc(d.unit) + "</span>" : "";
+    var asof = d.as_of ? '<span class="mr-asof">as of ' + esc(d.as_of) + "</span>" : "";
     var html = '<div class="mr-result">' +
-      '<div class="mr-price"><span class="mr-big">' + fmt(d.price_est) + '</span>' +
-      '<span class="mr-cur">' + esc(d.currency) + "</span>" + unit + range + "</div>" +
-      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' + conf + "</div>" +
-      '<div class="mr-summary">' + mdRender(d.summary) + "</div>";
-    if (d.sources && d.sources.length) {
-      html += '<div class="mr-sources"><div class="mr-shead">Sources</div>';
-      d.sources.forEach(function (s) {
-        var name = s.url
-          ? '<a href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' + esc(s.name) + "</a>"
-          : esc(s.name);
-        html += '<div class="mr-src"><span class="mr-sname">' + name + "</span>" +
-          (s.price ? '<span class="mr-sprice">' + esc(s.price) + "</span>" : "") + "</div>";
-      });
-      html += "</div>";
+      '<div class="mr-price"><span class="mr-big">' + fmtNum(d.price_est) + '</span>' +
+      '<span class="mr-cur">' + esc(d.currency) + "</span>" + unit +
+      '<div class="mr-meta">' + confPill(d.confidence) + asof + "</div></div>" +
+      priceBar(d);
+    if (d.best_vendor && d.best_vendor.name) {
+      html += '<div class="mr-vendor"><span class="mr-vlabel">Best value</span>' +
+        '<span class="mr-vname">' + esc(d.best_vendor.name) + "</span>" +
+        (d.best_vendor.reason ? '<span class="mr-vreason">' + esc(d.best_vendor.reason) + "</span>" : "") + "</div>";
     }
-    html += "</div>";
+    html += '<div class="mr-summary">' + mdRender(d.summary) + "</div>";
+    if (d.note) html += '<div class="mr-note">⚠︎ ' + esc(d.note) + "</div>";
+    html += sourcesBlock(d) + "</div>";
     return html;
   };
+
+  // Bulk: a compact list of per-item results (page wires "Apply all").
+  window.Garamento.renderMarketBulk = function (data, items) {
+    if (!data || !data.ok) return '<div class="mr-summary">' + esc((data && data.message) || "No result.") + "</div>";
+    var cur = esc(data.currency || "");
+    var results = data.results || [];
+    var ok = 0, h = '<div class="mr-bulk">';
+    results.forEach(function (r) {
+      var name = esc((items && items[r.index] && items[r.index].item) || r.item || ("Item " + (r.index + 1)));
+      if (r.ok) {
+        ok++;
+        h += '<div class="mr-brow" data-index="' + r.index + '" data-price="' + r.price_est + '">' +
+          '<span class="mr-bname">' + name + '</span>' +
+          '<span class="mr-bconf ' + esc(r.confidence) + '" title="' + esc(r.confidence) + ' confidence"></span>' +
+          '<span class="mr-bprice">' + fmtNum(r.price_est) + ' ' + cur +
+          (r.unit ? '<i>/' + esc(r.unit) + '</i>' : '') + '</span></div>';
+      } else {
+        h += '<div class="mr-brow miss"><span class="mr-bname">' + name + '</span>' +
+          '<span class="mr-bprice">no price found</span></div>';
+      }
+    });
+    h += "</div>";
+    var head = '<div class="mr-summary" style="margin-bottom:6px">Priced <b>' + ok + '</b> of <b>' +
+      results.length + '</b> items in ' + cur + '. Review, then apply.</div>';
+    return head + h;
+  };
+
   window.Garamento.mdRender = mdRender;
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initChat);

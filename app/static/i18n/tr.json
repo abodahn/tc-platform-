@@ -930,5 +930,8 @@
   "gm.hint": "Garamento esprili olabilir — fiyatları ve özellikleri daima doğrulayın.",
   "mr.title": "Piyasa fiyat araştırması",
   "mr.retry": "Tekrar ara",
-  "mr.use": "Bu fiyatı kullan"
+  "mr.use": "Bu fiyatı kullan",
+  "mr.price_all": "Tüm kalemleri fiyatla",
+  "mr.copy": "Notlara kopyala",
+  "mr.apply_all": "Tüm fiyatları uygula"
 }

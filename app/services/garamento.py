@@ -162,26 +162,35 @@ def chat(history, user=None):
 # Market research (live web price)
 # --------------------------------------------------------------------------
 _MARKET_SYS = (
-    "You are Garamento, a procurement price researcher for a garment manufacturer. "
-    "Using live web results, estimate the current market price of the requested "
-    "item. Prefer B2B/wholesale and known suppliers (Alibaba, IndiaMART, "
-    "Made-in-China, local distributors). Return realistic ranges, not single "
-    "guesses. ALWAYS answer with a single JSON object and nothing else."
+    "You are Garamento, a sharp procurement price researcher for a garment "
+    "manufacturer. Using live web results, estimate the current market price of "
+    "each requested item. Prefer B2B/wholesale and reputable suppliers (Alibaba, "
+    "IndiaMART, Made-in-China, and local/regional distributors). Always price PER "
+    "the item's stated unit; if a source quotes a different unit, convert it and "
+    "note that. Give realistic ranges, flag obvious outliers, and pick the best "
+    "value vendor. If the requested currency differs from the source, convert at "
+    "a recent rate. ALWAYS answer with JSON only and nothing else."
+)
+
+_ITEM_JSON_SHAPE = (
+    "{\n"
+    '  "item": string,\n'
+    '  "currency": string (ISO code = the requested currency),\n'
+    '  "unit": string (the pricing unit, normalized, e.g. "meter", "piece", "kg"),\n'
+    '  "price_low": number,\n'
+    '  "price_high": number,\n'
+    '  "price_est": number (best single estimate, PER unit),\n'
+    '  "confidence": "low" | "medium" | "high",\n'
+    '  "as_of": string (when these prices are from, e.g. "2026" or "recent"),\n'
+    '  "best_vendor": {"name": string, "reason": string} | null,\n'
+    '  "note": string (caveats: unit conversion, outliers, currency conversion; "" if none),\n'
+    '  "summary": string (<= 220 chars, friendly, at most one gentle Garamento pun),\n'
+    '  "sources": [ {"name": string, "price": string, "url": string} ]  // up to 4, best value first\n'
+    "}"
 )
 
 _MARKET_SCHEMA_HINT = (
-    "Respond ONLY with JSON of this exact shape:\n"
-    "{\n"
-    '  "item": string,\n'
-    '  "currency": string (ISO code, use the requested currency),\n'
-    '  "unit": string (the pricing unit, e.g. \"meter\", \"piece\", \"kg\"),\n'
-    '  "price_low": number,\n'
-    '  "price_high": number,\n'
-    '  "price_est": number (best single estimate, per unit),\n'
-    '  "confidence": "low" | "medium" | "high",\n'
-    '  "summary": string (<= 240 chars, friendly, one Garamento pun allowed),\n'
-    '  "sources": [ {"name": string, "price": string, "url": string} ]  // up to 4\n'
-    "}\n"
+    "Respond ONLY with a single JSON object of this exact shape:\n" + _ITEM_JSON_SHAPE + "\n"
     "Numbers must be plain (no currency symbols, no thousands separators). If you "
     "cannot find prices, still return the JSON with your best estimate and "
     'confidence "low".'
@@ -223,63 +232,22 @@ def _num(v):
         return None
 
 
-def market_research(item, description="", unit="", qty=1, currency="EGP"):
-    """Estimate a live market price for a procurement line item.
-
-    Returns {ok, ...price fields...} or {ok:False, error}.
-    """
-    item = (item or "").strip()
-    if not item:
-        return {"ok": False, "error": "no_item", "message": "Type an item name first, then I'll go price-hunting."}
-    if not is_enabled():
-        return {
-            "ok": False,
-            "offline": True,
-            "message": ("Garamento's price radar is offline — no OpenRouter API key "
-                        "configured. Ask your admin to set OPENROUTER_API_KEY."),
-        }
-
-    currency = (currency or "EGP").strip().upper()
-    desc = f" ({description.strip()})" if description else ""
-    unit_hint = f" priced per {unit.strip()}" if unit else ""
-    prompt = (
-        f"Find the approximate current market price of: {item}{desc}{unit_hint}. "
-        f"Give the answer in {currency}. Typical order quantity: about {qty}.\n\n"
-        + _MARKET_SCHEMA_HINT
-    )
-    messages = [
-        {"role": "system", "content": _MARKET_SYS},
-        {"role": "user", "content": prompt},
-    ]
-    try:
-        text = _complete(messages, model=_web_model(), temperature=0.2,
-                         max_tokens=800, timeout=max(Config.OPENROUTER_TIMEOUT, 55))
-    except requests.exceptions.Timeout:
-        return {"ok": False, "error": "timeout",
-                "message": "The web was slow to answer — try once more?"}
-    except requests.exceptions.RequestException as exc:
-        return {"ok": False, "error": "http",
-                "message": f"Price radar hit a snag ({_http_detail(exc)})."}
-    except Exception:  # noqa: BLE001
-        return {"ok": False, "error": "unknown",
-                "message": "Something snagged while researching. Try again?"}
-
-    data = _extract_json(text) or {}
+def _normalize_price(data, item, unit, currency):
+    """Turn one raw model dict into a clean, validated price result (or None)."""
+    if not isinstance(data, dict):
+        return None
     est = _num(data.get("price_est"))
     low = _num(data.get("price_low"))
     high = _num(data.get("price_high"))
-    # Derive missing values sensibly.
     if est is None and low is not None and high is not None:
         est = round((low + high) / 2, 2)
     if est is None and (low is not None or high is not None):
         est = low if low is not None else high
     if est is None:
-        return {
-            "ok": False, "error": "no_price",
-            "message": ("Couldn't pin a solid number this time — the market's playing "
-                        "hard to get. Try a more specific item name."),
-            "raw": (text or "")[:500],
-        }
+        return None
+    # keep low/high sane relative to est
+    if low is not None and high is not None and low > high:
+        low, high = high, low
 
     sources = []
     for s in (data.get("sources") or [])[:4]:
@@ -290,6 +258,15 @@ def market_research(item, description="", unit="", qty=1, currency="EGP"):
                 "url": str(s.get("url") or "")[:400],
             })
 
+    bv = data.get("best_vendor")
+    best_vendor = None
+    if isinstance(bv, dict) and bv.get("name"):
+        best_vendor = {"name": str(bv.get("name"))[:80], "reason": str(bv.get("reason") or "")[:160]}
+
+    conf = str(data.get("confidence") or "medium").lower()
+    if conf not in ("low", "medium", "high"):
+        conf = "medium"
+
     return {
         "ok": True,
         "item": str(data.get("item") or item)[:120],
@@ -298,12 +275,178 @@ def market_research(item, description="", unit="", qty=1, currency="EGP"):
         "price_est": est,
         "price_low": low,
         "price_high": high,
-        "confidence": (str(data.get("confidence") or "medium").lower()
-                       if str(data.get("confidence") or "").lower() in ("low", "medium", "high")
-                       else "medium"),
+        "confidence": conf,
+        "as_of": str(data.get("as_of") or "")[:40],
+        "best_vendor": best_vendor,
+        "note": str(data.get("note") or "")[:240],
         "summary": str(data.get("summary") or "Approximate market estimate.")[:300],
         "sources": sources,
     }
+
+
+def _web_call(messages, extra_timeout=0):
+    """Shared web-search completion with friendly error translation.
+    Returns (text, error_dict). One of them is None."""
+    if not is_enabled():
+        return None, {"ok": False, "offline": True,
+                      "message": ("Garamento's price radar is offline — no OpenRouter API "
+                                  "key configured. Ask your admin to set OPENROUTER_API_KEY.")}
+    try:
+        text = _complete(messages, model=_web_model(), temperature=0.2,
+                         max_tokens=800 + extra_timeout,
+                         timeout=max(Config.OPENROUTER_TIMEOUT, 55) + extra_timeout / 20)
+        return text, None
+    except requests.exceptions.Timeout:
+        return None, {"ok": False, "error": "timeout", "message": "The web was slow to answer — try once more?"}
+    except requests.exceptions.RequestException as exc:
+        return None, {"ok": False, "error": "http", "message": f"Price radar hit a snag ({_http_detail(exc)})."}
+    except Exception:  # noqa: BLE001
+        return None, {"ok": False, "error": "unknown", "message": "Something snagged while researching. Try again?"}
+
+
+def market_research(item, description="", unit="", qty=1, currency="EGP"):
+    """Estimate a live market price for one procurement line item."""
+    item = (item or "").strip()
+    if not item:
+        return {"ok": False, "error": "no_item", "message": "Type an item name first, then I'll go price-hunting."}
+
+    currency = (currency or "EGP").strip().upper()
+    desc = f" ({description.strip()})" if description else ""
+    unit_hint = f" priced per {unit.strip()}" if unit else ""
+    prompt = (
+        f"Find the approximate current market price of: {item}{desc}{unit_hint}. "
+        f"Answer in {currency}. Typical order quantity: about {qty}.\n\n"
+        + _MARKET_SCHEMA_HINT
+    )
+    messages = [{"role": "system", "content": _MARKET_SYS}, {"role": "user", "content": prompt}]
+    text, err = _web_call(messages)
+    if err:
+        return err
+
+    result = _normalize_price(_extract_json(text) or {}, item, unit, currency)
+    if not result:
+        return {"ok": False, "error": "no_price",
+                "message": ("Couldn't pin a solid number this time — the market's playing hard to get. "
+                            "Try a more specific item name."),
+                "raw": (text or "")[:500]}
+    return result
+
+
+def market_research_bulk(items, currency="EGP"):
+    """Price several line items in ONE web-search call.
+
+    `items` is a list of {item, description, unit, qty}. Returns
+    {ok, currency, results:[{index, ...price fields...} | {index, ok:False, item}]}.
+    """
+    currency = (currency or "EGP").strip().upper()
+    clean = []
+    for i, it in enumerate(items or []):
+        name = (it.get("item") or "").strip()
+        if name:
+            clean.append({"index": i, "item": name,
+                          "description": (it.get("description") or "").strip(),
+                          "unit": (it.get("unit") or "").strip(),
+                          "qty": it.get("qty", 1)})
+    if not clean:
+        return {"ok": False, "error": "no_items", "message": "Add at least one item with a name first."}
+    clean = clean[:15]  # bound cost
+
+    lines = []
+    for c in clean:
+        d = f" ({c['description']})" if c["description"] else ""
+        u = f" [per {c['unit']}]" if c["unit"] else ""
+        lines.append(f'{c["index"]}. {c["item"]}{d}{u} — qty ~{c["qty"]}')
+    prompt = (
+        "Research the current approximate market price for EACH of these items and "
+        f"answer in {currency}:\n" + "\n".join(lines) + "\n\n"
+        "Respond ONLY with JSON: { \"results\": [ ITEM_OBJECT, ... ] } where each "
+        "ITEM_OBJECT has this exact shape AND an extra integer field \"index\" "
+        "matching the item number above:\n" + _ITEM_JSON_SHAPE + "\n"
+        "Return one object per requested item. Numbers must be plain (no symbols/separators)."
+    )
+    messages = [{"role": "system", "content": _MARKET_SYS}, {"role": "user", "content": prompt}]
+    text, err = _web_call(messages, extra_timeout=400)
+    if err:
+        return err
+
+    parsed = _extract_json(text) or {}
+    raw_results = parsed.get("results") if isinstance(parsed, dict) else None
+    if not isinstance(raw_results, list):
+        raw_results = parsed if isinstance(parsed, list) else []
+
+    by_index = {}
+    for pos, rd in enumerate(raw_results):
+        if not isinstance(rd, dict):
+            continue
+        idx = rd.get("index")
+        try:
+            idx = int(idx)
+        except Exception:  # noqa: BLE001
+            idx = clean[pos]["index"] if pos < len(clean) else pos
+        by_index[idx] = rd
+
+    results = []
+    for c in clean:
+        rd = by_index.get(c["index"])
+        norm = _normalize_price(rd, c["item"], c["unit"], currency) if rd else None
+        if norm:
+            norm["index"] = c["index"]
+            results.append(norm)
+        else:
+            results.append({"index": c["index"], "ok": False, "item": c["item"]})
+    return {"ok": True, "currency": currency, "results": results}
+
+
+# --------------------------------------------------------------------------
+# Text polish (spelling / grammar / terminology autocorrect)
+# --------------------------------------------------------------------------
+_POLISH_SYS = (
+    "You are a meticulous copy editor for a garment manufacturer's procurement "
+    "system. Fix spelling, grammar, capitalization and spacing, and standardize "
+    "textile/fashion/procurement terminology (correct fibre and material names, "
+    "units, common abbreviations). Preserve the original meaning, language and "
+    "intent — do NOT translate, do NOT add new facts or commentary, do NOT wrap "
+    "the text in quotes. Return ONLY the corrected text."
+)
+
+_POLISH_HINT = {
+    "title": "This is a short purchase-request title. Keep it concise (a few words), no ending period.",
+    "item": "This is a product/item name. Keep it short, specific, no ending period.",
+    "description": "This is a brief item description. Keep it short and clear.",
+    "notes": "These are notes to approvers. Keep the tone professional and clear.",
+    "generic": "Keep it natural and concise.",
+}
+
+
+def polish(text, kind="generic"):
+    """Correct spelling/grammar/terminology of a short field value.
+
+    Returns {ok, text} or {ok:False, ...} (with `text` echoing the input on failure).
+    """
+    text = (text or "").strip()
+    if not text:
+        return {"ok": False, "error": "empty", "text": ""}
+    if not is_enabled():
+        return {"ok": False, "offline": True, "text": text,
+                "message": "Polish is offline — no OpenRouter API key configured."}
+
+    kind = kind if kind in _POLISH_HINT else "generic"
+    one_line = kind in ("title", "item")
+    prompt = _POLISH_HINT[kind] + "\n\nText:\n" + text[:1500]
+    messages = [{"role": "system", "content": _POLISH_SYS}, {"role": "user", "content": prompt}]
+    try:
+        out = _complete(messages, temperature=0.1, max_tokens=400)
+    except requests.exceptions.RequestException:
+        return {"ok": False, "error": "http", "text": text}
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "error": "unknown", "text": text}
+
+    out = (out or "").strip().strip('"').strip("'").strip()
+    if one_line:
+        out = " ".join(out.split())  # collapse newlines/whitespace for single-line fields
+    if not out:
+        return {"ok": False, "error": "empty", "text": text}
+    return {"ok": True, "text": out[:2000], "changed": out != text}
 
 
 def _http_detail(exc) -> str:

@@ -46,3 +46,24 @@ def market_research():
     )
     status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
     return jsonify(result), status
+
+
+@bp.post("/market-research-bulk")
+@permission_required("proc_view")
+def market_research_bulk():
+    data = request.get_json(silent=True) or {}
+    items = data.get("items") or []
+    if not isinstance(items, list):
+        items = []
+    result = g.market_research_bulk(items, currency=data.get("currency", "EGP"))
+    status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
+    return jsonify(result), status
+
+
+@bp.post("/polish")
+@login_required
+def polish():
+    data = request.get_json(silent=True) or {}
+    result = g.polish(text=data.get("text", ""), kind=data.get("kind", "generic"))
+    status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
+    return jsonify(result), status

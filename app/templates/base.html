@@ -200,7 +200,8 @@
 {% if cu %}{% include "_garamento.html" %}{% endif %}
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-{% if cu %}<script src="{{ url_for('static', filename='js/garamento.js') }}"></script>{% endif %}
+{% if cu %}<script src="{{ url_for('static', filename='js/garamento.js') }}"></script>
+<script src="{{ url_for('static', filename='js/autocorrect.js') }}"></script>{% endif %}
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
