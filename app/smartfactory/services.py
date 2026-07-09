@@ -230,6 +230,98 @@ def costing():
         conn.close()
 
 
+# ---------------- Money-first + explainability (best-in-market differentiators) ----------------
+CPM_LOADED = 4.0     # loaded line cost per minute (EGP) — configurable
+REJECT_PER_PC = 6.0  # scrap cost per rejected piece
+
+
+def _avg_smv(conn):
+    r = conn.execute("SELECT AVG(smv) a FROM sf_styles WHERE smv>0").fetchone()
+    return (r["a"] or 25) if r else 25
+
+
+def minute_bank():
+    """Price every idle, rework and reject minute — 'money left on the floor'."""
+    conn = get_db()
+    try:
+        lines = {l["id"]: l for l in _rows(conn, "SELECT id,name FROM production_lines")}
+        prod = {}
+        for e in _rows(conn, "SELECT line_id, SUM(lost_min) lm FROM sf_prod_entries GROUP BY line_id"):
+            prod[e["line_id"]] = e["lm"] or 0
+        ql = {}
+        for q in _rows(conn, "SELECT line_id, SUM(rework) rw, SUM(reject) rj FROM sf_quality GROUP BY line_id"):
+            ql[q["line_id"]] = (q["rw"] or 0, q["rj"] or 0)
+        rows = []
+        tot_idle = tot_rw = tot_rj = 0
+        for lid in set(list(prod) + list(ql)):
+            lost = prod.get(lid, 0)
+            rw, rj = ql.get(lid, (0, 0))
+            idle = lost * CPM_LOADED
+            rwc = rw * _RATE["rework_per_pc"]
+            rjc = rj * REJECT_PER_PC
+            tot_idle += idle; tot_rw += rwc; tot_rj += rjc
+            rows.append({"line": (lines.get(lid) or {}).get("name", f"Line {lid}"),
+                         "lost_min": lost, "idle": round(idle), "rework": round(rwc),
+                         "reject": round(rjc), "total": round(idle + rwc + rjc)})
+        rows.sort(key=lambda x: x["total"], reverse=True)
+        return {"rows": rows, "total": round(tot_idle + tot_rw + tot_rj),
+                "breakdown": {"idle": round(tot_idle), "rework": round(tot_rw), "reject": round(tot_rj)}}
+    finally:
+        conn.close()
+
+
+def efficiency_bridge():
+    """Decompose the target→actual gap into named, quantified causes (minutes + money)."""
+    conn = get_db()
+    try:
+        pe = conn.execute("SELECT COALESCE(SUM(target_qty),0) t, COALESCE(SUM(actual_qty),0) a, COALESCE(SUM(lost_min),0) l FROM sf_prod_entries").fetchone()
+        target, actual, lost = pe["t"] or 0, pe["a"] or 0, pe["l"] or 0
+        q = conn.execute("SELECT COALESCE(SUM(rework),0) rw, COALESCE(SUM(reject),0) rj FROM sf_quality").fetchone()
+        rework, reject = q["rw"] or 0, q["rj"] or 0
+        smv = _avg_smv(conn)
+        eff = round(100 * actual / target, 1) if target else 0
+        gap_pcs = max(0, target - actual)
+        gap_min = gap_pcs * smv
+        lost_time_min = lost
+        quality_min = (rework + reject) * smv
+        balance_min = max(0, gap_min - lost_time_min - quality_min)
+        comps = [
+            {"name": "Downtime / no-feeding", "minutes": round(lost_time_min), "money": round(lost_time_min * CPM_LOADED)},
+            {"name": "Quality redo (rework + reject)", "minutes": round(quality_min), "money": round(quality_min * CPM_LOADED)},
+            {"name": "Line balance / bottleneck", "minutes": round(balance_min), "money": round(balance_min * CPM_LOADED)},
+        ]
+        tot_min = sum(c["minutes"] for c in comps) or 1
+        for c in comps:
+            c["pct"] = round(100 * c["minutes"] / tot_min, 1)
+        return {"efficiency": eff, "gap_pcs": gap_pcs, "components": comps,
+                "total_money": round(sum(c["money"] for c in comps))}
+    finally:
+        conn.close()
+
+
+def ship_risk():
+    """Per-order P(pass buyer AQL) estimate from live quality (AQL 2.5 acceptable ~2.5% DHU)."""
+    conn = get_db()
+    try:
+        rows = _rows(conn, "SELECT q.order_id, o.po_no, SUM(q.inspected) insp, SUM(q.defect) defq "
+                           "FROM sf_quality q LEFT JOIN sf_orders o ON o.id=q.order_id GROUP BY q.order_id")
+        top = _rows(conn, "SELECT code, SUM(qty) qty FROM sf_defects GROUP BY code ORDER BY SUM(qty) DESC LIMIT 1")
+        driving = top[0]["code"] if top else "—"
+        out = []
+        for r in rows:
+            insp = r["insp"] or 0
+            dhu = (100 * (r["defq"] or 0) / insp) if insp else 0
+            risk = max(0, min(100, (dhu - 2.5) * 18))
+            passp = round(100 - risk, 1)
+            out.append({"po_no": r["po_no"] or "—", "dhu": round(dhu, 1), "pass": passp,
+                        "rag": "green" if passp >= 90 else "amber" if passp >= 70 else "red",
+                        "driving": driving})
+        out.sort(key=lambda x: x["pass"])
+        return out
+    finally:
+        conn.close()
+
+
 # ---------------- AI insights (rule-based, LLM-ready) ----------------
 def ai_insights():
     d = dashboard()

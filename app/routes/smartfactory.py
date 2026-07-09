@@ -175,6 +175,15 @@ def ai():
     return render_template("smartfactory/ai.html", active="sf_ai", insights=svc.ai_insights())
 
 
+# ---- Smart Intelligence: money-first + explainability + ship-risk ----
+@bp.route("/intelligence")
+@login_required
+@permission_required("view_dashboard")
+def intelligence():
+    return render_template("smartfactory/intelligence.html", active="sf_intel",
+                           bridge=svc.efficiency_bridge(), bank=svc.minute_bank(), ship=svc.ship_risk())
+
+
 # ---- Smart approval engine + cost intelligence ----
 @bp.route("/approvals", methods=["GET"])
 @login_required

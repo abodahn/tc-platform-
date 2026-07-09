@@ -1191,5 +1191,18 @@
   "sf.requests": "Talepler",
   "sf.approve": "Onayla",
   "sf.reject_btn": "Reddet",
-  "sf.no_requests": "Bu filtreye uyan talep yok."
+  "sf.no_requests": "Bu filtreye uyan talep yok.",
+  "nav.sf_intel": "Akıllı Analitik",
+  "sf.intel": "Akıllı Analitik",
+  "sf.intel_sub": "Önce para ve açıklanabilir: verimlilik nerede kayboluyor, maliyeti nedir ve hangi siparişler alıcının AQL'sini geçemeyebilir.",
+  "sf.bridge": "Verimlilik köprüsü — neden %100'de değiliz?",
+  "sf.pcs_short": "adet",
+  "sf.left_floor": "sahada kaldı",
+  "sf.minute_bank": "Dakika Bankası — sahada kalan para",
+  "sf.total_loss": "Toplam kayıp (EGP)",
+  "sf.idle_cost": "Boşta",
+  "sf.no_loss": "Kayıtlı kayıp yok.",
+  "sf.ship_risk": "Sevkiyat riski — alıcı AQL'sini geçme olasılığı",
+  "sf.no_ship": "Henüz kalite verisi yok.",
+  "sf.ship_note": "Canlı DHU'ya göre bir siparişin alıcının AQL denetimini geçme olasılığı — denetim planlanmadan önce harekete geçin."
 }

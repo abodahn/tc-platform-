@@ -10,6 +10,7 @@
     theme: "tc_theme",
     collapsed: "tc_sidebar_collapsed",
     sections: "tc_collapsed_sections",
+    navOpen: "tc_nav_open",
   };
   const RTL = new Set(["ar"]);
   let DICT = {};
@@ -137,23 +138,25 @@
       }
     });
 
-    // Collapsible sections (persisted by section key)
-    let collapsed = [];
-    try { collapsed = JSON.parse(localStorage.getItem(LS.sections) || "[]"); } catch (e) {}
-    document.querySelectorAll(".nav-section").forEach(sec => {
+    // Sections render collapsed by default (server-side) except the one holding the
+    // current page. Re-open any the user explicitly expanded before, and persist that set.
+    // Open-by-exception keeps a 10-section / 60-item nav scannable instead of a wall.
+    let opened = [];
+    try { opened = JSON.parse(localStorage.getItem(LS.navOpen) || "[]"); } catch (e) {}
+    document.querySelectorAll(".nav-section[data-section]").forEach(sec => {
       const key = sec.getAttribute("data-section");
       const hasActive = sec.querySelector(".nav-item.active");
-      if (collapsed.includes(key) && !hasActive) sec.classList.add("sec-collapsed");
+      if (opened.includes(key) && !hasActive) sec.classList.remove("sec-collapsed");
       const label = sec.querySelector("[data-sec-toggle]");
       if (label) label.addEventListener("click", () => {
         if (app.classList.contains("collapsed")) return; // ignore in rail mode
         sec.classList.toggle("sec-collapsed");
         let cur = [];
-        try { cur = JSON.parse(localStorage.getItem(LS.sections) || "[]"); } catch (e) {}
-        const on = sec.classList.contains("sec-collapsed");
+        try { cur = JSON.parse(localStorage.getItem(LS.navOpen) || "[]"); } catch (e) {}
+        const isOpen = !sec.classList.contains("sec-collapsed");
         cur = cur.filter(k => k !== key);
-        if (on) cur.push(key);
-        localStorage.setItem(LS.sections, JSON.stringify(cur));
+        if (isOpen) cur.push(key);
+        localStorage.setItem(LS.navOpen, JSON.stringify(cur));
       });
     });
 
@@ -700,21 +703,50 @@
     toggle(star.closest(".nav-item"));
   }, true);
 
+  // Restore each section to its default open/closed state (active or user-opened = open).
+  function restoreSections() {
+    var opened = [];
+    try { opened = JSON.parse(localStorage.getItem("tc_nav_open") || "[]"); } catch (e) {}
+    document.querySelectorAll(".nav-section[data-section]").forEach(function (sec) {
+      var key = sec.getAttribute("data-section");
+      var openIt = !!sec.querySelector(".nav-item.active") || opened.indexOf(key) >= 0;
+      sec.classList.toggle("sec-collapsed", !openIt);
+    });
+  }
   var filter = document.getElementById("navFilter");
   if (filter) filter.addEventListener("input", function () {
     var q = (filter.value || "").toLowerCase().trim();
+    if (!q) {
+      // Cleared: show everything again and collapse back to the smart default.
+      document.querySelectorAll(".nav-section").forEach(function (sec) {
+        sec.style.display = "";
+        sec.querySelectorAll(".nav-item").forEach(function (it) { it.classList.remove("nav-hidden"); });
+      });
+      restoreSections();
+      return;
+    }
+    // Filtering: reveal matches and expand the sections that hold them.
     document.querySelectorAll(".nav-section").forEach(function (sec) {
       if (sec.id === "navPinned") return;
       var any = false;
       sec.querySelectorAll(".nav-item").forEach(function (it) {
         var lbl = it.querySelector(".lbl");
-        var show = !q || (lbl && lbl.textContent.toLowerCase().indexOf(q) >= 0);
+        var show = lbl && lbl.textContent.toLowerCase().indexOf(q) >= 0;
         it.classList.toggle("nav-hidden", !show);
         if (show) any = true;
       });
       sec.style.display = any ? "" : "none";
-      if (q) sec.classList.remove("sec-collapsed");
+      if (any) sec.classList.remove("sec-collapsed");
     });
+  });
+
+  // "/" focuses the menu filter (desktop only; ignored while typing in a field).
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (window.innerWidth <= 900) return;
+    var t = e.target, tag = t && t.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+    if (filter) { e.preventDefault(); filter.focus(); }
   });
 
   // pinned labels come from resolved i18n text, so render after translation
@@ -741,7 +773,7 @@
       if (a.closest("#navPinned")) return;
       var lbl = a.querySelector(".lbl");
       var sec = a.closest(".nav-section");
-      var gEl = sec && sec.querySelector(".nav-label span");
+      var gEl = sec && sec.querySelector(".nav-label .nl-text");
       items.push({ label: lbl ? lbl.textContent.trim() : a.getAttribute("data-navkey"),
                    href: a.getAttribute("href"), icon: a.getAttribute("data-navicon") || "grid",
                    group: gEl ? gEl.textContent.trim() : "" });

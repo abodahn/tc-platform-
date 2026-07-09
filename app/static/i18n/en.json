@@ -1191,5 +1191,18 @@
   "sf.requests": "Requests",
   "sf.approve": "Approve",
   "sf.reject_btn": "Reject",
-  "sf.no_requests": "No requests match this filter."
+  "sf.no_requests": "No requests match this filter.",
+  "nav.sf_intel": "Smart Intelligence",
+  "sf.intel": "Smart Intelligence",
+  "sf.intel_sub": "Money-first and explainable: where efficiency is lost, what it costs, and which orders may miss the buyer's AQL.",
+  "sf.bridge": "Efficiency bridge — why aren't we at 100%?",
+  "sf.pcs_short": "pcs",
+  "sf.left_floor": "left on the floor",
+  "sf.minute_bank": "Minute Bank — money left on the floor",
+  "sf.total_loss": "Total loss (EGP)",
+  "sf.idle_cost": "Idle",
+  "sf.no_loss": "No losses recorded.",
+  "sf.ship_risk": "Ship-risk — chance of passing buyer AQL",
+  "sf.no_ship": "No quality data yet.",
+  "sf.ship_note": "Estimated probability an order passes the buyer's AQL from live DHU — act before the inspection is booked."
 }

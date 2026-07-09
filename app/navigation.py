@@ -53,6 +53,7 @@ NAV = [
         ("sf_approvals", "nav.sf_approvals", "check", "smartfactory.approvals", "view_dashboard"),
         ("sf_orders", "nav.sf_orders", "cart", "smartfactory.orders", "view_dashboard"),
         ("sf_ai", "nav.sf_ai", "sparkles", "smartfactory.ai", "view_dashboard"),
+        ("sf_intel", "nav.sf_intel", "trend", "smartfactory.intelligence", "view_dashboard"),
         ("sf_reports", "nav.sf_reports", "chart", "smartfactory.reports", "view_dashboard"),
     ]},
     {"section": "nav.transformation", "items": [

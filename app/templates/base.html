@@ -35,6 +35,12 @@
 <div class="app">
 
   {# ---------------- Sidebar ---------------- #}
+  {% set sec_icons = {
+    'nav.command': 'grid', 'nav.intelligence': 'sparkles', 'nav.operations': 'activity',
+    'nav.maintenance': 'factory', 'nav.smart_factory': 'cpu', 'nav.transformation': 'rocket',
+    'nav.procurement_cycle': 'cart', 'nav.services': 'server', 'nav.govern': 'shield',
+    'nav.admin': 'settings', 'nav.in_progress': 'clock'
+  } %}
   <aside class="sidebar">
     <a class="brand" href="{{ url_for('main.dashboard') }}">
       <div class="brand-logo"><img src="{{ url_for('static', filename=brand_logo) }}" alt="T&amp;C Garments"></div>
@@ -46,20 +52,28 @@
     <div class="nav-filter">
       <svg class="ico"><use href="#i-search"></use></svg>
       <input id="navFilter" autocomplete="off" data-i18n-ph="nav.filter" placeholder="Filter menu…">
+      <kbd class="nav-kbd" aria-hidden="true">/</kbd>
     </div>
     <nav class="nav">
       <div class="nav-section nav-pinned" id="navPinned" style="display:none">
-        <div class="nav-label static"><span data-i18n="nav.pinned">Pinned</span></div>
+        <div class="nav-label static">
+          <span class="nl-ico"><svg class="ico"><use href="#i-star"></use></svg></span>
+          <span class="nl-text" data-i18n="nav.pinned">Pinned</span>
+        </div>
         <div class="nav-items" id="navPinnedItems"></div>
       </div>
       {% for section in nav %}
       {% set has_active = section['items']|selectattr('0','equalto',active)|list|length > 0 %}
-      <div class="nav-section" data-section="{{ section.section }}">
+      <div class="nav-section{{ ' has-current' if has_active }}{{ '' if has_active else ' sec-collapsed' }}" data-section="{{ section.section }}">
         <button class="nav-label" data-sec-toggle type="button">
-          <span data-i18n="{{ section.section }}">{{ section.section }}</span>
-          <svg class="ico chev"><use href="#i-chevron"></use></svg>
+          <span class="nl-ico"><svg class="ico"><use href="#i-{{ sec_icons.get(section.section, 'grid') }}"></use></svg></span>
+          <span class="nl-text" data-i18n="{{ section.section }}">{{ section.section }}</span>
+          <span class="nl-meta">
+            <span class="nav-count" aria-hidden="true">{{ section['items']|length }}</span>
+            <svg class="ico chev"><use href="#i-chevron"></use></svg>
+          </span>
         </button>
-        <div class="nav-items">
+        <div class="nav-items"><div class="nav-sub">
         {% for key, i18n, icon, endpoint, perm in section['items'] %}
           {% if endpoint == 'main.module' %}
             {% set href = url_for('main.module', key=key) %}
@@ -76,18 +90,18 @@
             </button>
           </a>
         {% endfor %}
-        </div>
+        </div></div>
       </div>
       {% endfor %}
     </nav>
     <div class="sidebar-foot">
-      <div class="sf-user">
-        <div class="avatar" style="width:32px;height:32px;flex:0 0 32px;border-radius:9px;font-size:12px">{{ (cu.full_name or cu.username)[:1]|upper }}</div>
+      <a class="sf-user" href="{{ url_for('main.profile') }}" data-i18n-title="top.profile" title="Profile">
+        <div class="avatar">{{ (cu.full_name or cu.username)[:1]|upper }}</div>
         <div class="sf-meta lbl">
           <b>{{ cu.full_name or cu.username }}</b>
           <span>{{ cu_role_label }}</span>
         </div>
-      </div>
+      </a>
       <button class="sf-collapse" id="railToggle" type="button" data-i18n-title="top.collapse" title="Collapse">
         <svg class="ico"><use href="#i-chevrons-left"></use></svg>
       </button>

@@ -82,48 +82,76 @@ a { color: inherit; text-decoration: none; }
 .nav::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.22); background-clip: padding-box; border: 2px solid transparent; }
 .nav-section + .nav-section { margin-top: 6px; }
 
-/* Section header = collapse toggle. Quiet by default; chevron surfaces on hover. */
+/* Section header = collapse toggle. Icon + label on the lead, count + chevron on the
+   trail. Quiet by default; brightens on hover and when it holds the current page. */
 .nav-label {
-  width: 100%; display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; background: transparent; border: 0; cursor: pointer;
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  background: transparent; border: 0; cursor: pointer; text-align: start;
   color: var(--sidebar-ink-soft); font-family: inherit;
-  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .9px;
-  padding: 10px 12px 6px; border-radius: 8px; transition: color .15s;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+  padding: 9px 10px 7px; border-radius: 9px; transition: color .15s, background .15s;
 }
 .nav-label:hover { color: #fff; }
-.nav-label .chev { width: 13px; height: 13px; opacity: .3; transition: transform .2s, opacity .15s; }
+.nav-label:hover .nl-ico { color: var(--sidebar-ink); opacity: .95; }
+.nl-ico { flex: 0 0 auto; display: grid; place-items: center; color: var(--sidebar-ink-soft);
+  opacity: .55; transition: color .15s, opacity .15s; }
+.nl-ico .ico { width: 15px; height: 15px; }
+.nl-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nl-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.nav-count {
+  font: 700 10px/1 var(--font); letter-spacing: 0; font-variant-numeric: tabular-nums;
+  min-width: 18px; padding: 3px 5px; border-radius: 6px; text-align: center;
+  background: rgba(255,255,255,.06); color: var(--sidebar-ink-soft);
+  transition: background .15s, color .15s;
+}
+.nav-label:hover .nav-count { background: rgba(255,255,255,.1); color: #fff; }
+.nav-label .chev { width: 13px; height: 13px; opacity: .35; transition: transform .22s cubic-bezier(.22,1,.36,1), opacity .15s; }
 .nav-label:hover .chev { opacity: .7; }
+/* Collapsed section: chevron rotates to signal "expandable". */
 .nav-section.sec-collapsed .nav-label .chev { transform: rotate(-90deg); }
 [dir="rtl"] .nav-section.sec-collapsed .nav-label .chev { transform: rotate(90deg); }
+/* The section that holds the current page — legible even while collapsed. */
+.nav-section.has-current > .nav-label { color: #fff; }
+.nav-section.has-current > .nav-label .nl-ico { color: var(--tc-red-2); opacity: 1; }
+.nav-section.has-current > .nav-label .nav-count { background: var(--sidebar-active); color: #fff; }
 
-.nav-items { overflow: hidden; transition: max-height .26s cubic-bezier(.22,1,.36,1), opacity .2s ease; max-height: 900px; opacity: 1; }
-.nav-section.sec-collapsed .nav-items { max-height: 0; opacity: 0; }
+/* Accordion via grid-template-rows (1fr↔0fr) — animates to the true content height,
+   no magic max-height, no layout thrash. .nav-sub clips content during the collapse. */
+.nav-items { min-height: 0; }
+.nav-section:not(.nav-pinned) > .nav-items {
+  display: grid; grid-template-rows: 1fr; opacity: 1;
+  transition: grid-template-rows .28s cubic-bezier(.22,1,.36,1), opacity .2s ease;
+}
+.nav-sub { min-height: 0; overflow: hidden; }
+.nav-section.sec-collapsed:not(.nav-pinned) > .nav-items { grid-template-rows: 0fr; opacity: 0; }
 
 /* ---- Nav item ---- */
 .nav-item {
-  display: flex; align-items: center; gap: 12px;
-  padding: 9px 12px; margin: 1px 0; border-radius: 10px;
+  display: flex; align-items: center; gap: 11px;
+  padding: 8px 11px; margin: 2px 0; border-radius: 10px;
   color: var(--sidebar-ink); font-size: 13.5px; font-weight: 500;
   position: relative; white-space: nowrap;
-  transition: background .16s ease, color .16s ease;
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease;
 }
-/* wayfinding rail: scales from center (GPU-composited) — faint neutral on hover,
-   brand-red when current. 60% tall bar; hover scales to 0.7 (~42%), active to full. */
+/* wayfinding rail — brand-red "you are here", scales from center (GPU-composited).
+   Active only: hover uses a soft pill so the rail unambiguously marks the current page. */
 .nav-item::before {
-  content: ""; position: absolute; inset-inline-start: -12px; top: 20%;
-  width: 3px; height: 60%; border-radius: 0 3px 3px 0; background: currentColor;
+  content: ""; position: absolute; inset-inline-start: -11px; top: 20%;
+  width: 3px; height: 60%; border-radius: 0 3px 3px 0; background: var(--tc-red);
   transform: scaleY(0); transform-origin: center; opacity: 0;
-  transition: transform .18s cubic-bezier(.22,1,.36,1), opacity .18s ease, background .16s;
+  transition: transform .2s cubic-bezier(.22,1,.36,1), opacity .18s ease;
 }
 [dir="rtl"] .nav-item::before { border-radius: 3px 0 0 3px; }
-.nav-item .ico { flex: 0 0 20px; width: 20px; height: 20px; opacity: .82; transition: opacity .16s, color .16s; }
+.nav-item .ico { flex: 0 0 20px; width: 20px; height: 20px; opacity: .78; transition: opacity .16s, color .16s, filter .16s; }
 .nav-item .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .nav-item:hover { background: var(--sidebar-hover); color: #fff; }
 .nav-item:hover .ico { opacity: 1; }
-.nav-item:hover::before { transform: scaleY(.7); opacity: .4; }
-.nav-item.active { background: var(--sidebar-active); color: #fff; font-weight: 600; }
-.nav-item.active .ico { opacity: 1; color: var(--tc-red-2); }
-.nav-item.active::before { transform: scaleY(1); opacity: 1; background: var(--tc-red); }
+.nav-item.active {
+  background: var(--sidebar-active); color: #fff; font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(237,28,36,.22);
+}
+.nav-item.active .ico { opacity: 1; color: var(--tc-red-2); filter: drop-shadow(0 0 8px rgba(237,28,36,.4)); }
+.nav-item.active::before { transform: scaleY(1); opacity: 1; }
 
 /* "soon" tag on in-progress modules (admins only) */
 .nav-item .wip-tag {
@@ -144,6 +172,13 @@ a { color: inherit; text-decoration: none; }
   padding: 5px 6px; border-radius: 10px; transition: background .16s;
 }
 .sf-user:hover { background: rgba(255,255,255,.05); }
+/* Footer avatar is fixed brand-red so the white initial stays legible on the dark
+   rail in both themes (the base .avatar keys off --ink, which flips light in dark mode). */
+.sidebar-foot .avatar {
+  width: 34px; height: 34px; flex: 0 0 34px; border-radius: 10px; font-size: 12.5px;
+  background: linear-gradient(135deg, var(--tc-red-2), var(--tc-red-deep)); color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.14);
+}
 .sf-meta { line-height: 1.2; min-width: 0; }
 .sf-meta b { color: #fff; font-size: 12.5px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sf-meta span { color: var(--sidebar-ink-soft); font-size: 11px; }
@@ -159,14 +194,13 @@ a { color: inherit; text-decoration: none; }
 
 /* ---- Collapsed (rail) mode ---- */
 .app.collapsed .nav { padding: 12px 8px; -webkit-mask-image: none; mask-image: none; }
-.app.collapsed .nav-label { pointer-events: none; justify-content: center; padding: 10px 0 4px; opacity: 1; }
-.app.collapsed .nav-label span, .app.collapsed .nav-label .chev { display: none; }
-.app.collapsed .nav-label::after {
-  content: ""; display: block; width: 16px; height: 2px; border-radius: 2px;
-  background: rgba(255,255,255,.12);
-}
+.app.collapsed .nav-label { pointer-events: none; justify-content: center; padding: 11px 0 5px; opacity: 1; gap: 0; }
+.app.collapsed .nav-label .nl-text, .app.collapsed .nav-label .nl-meta { display: none; }
+/* The section icon becomes the rail group-marker; red when it holds the current page. */
+.app.collapsed .nav-label .nl-ico { opacity: .4; }
+.app.collapsed .nav-section.has-current .nav-label .nl-ico { opacity: 1; color: var(--tc-red-2); }
 .app.collapsed .nav-section + .nav-section { margin-top: 4px; }
-.app.collapsed .nav-items { max-height: none !important; opacity: 1 !important; }
+.app.collapsed .nav-section > .nav-items { grid-template-rows: 1fr !important; opacity: 1 !important; }
 .app.collapsed .nav-item { justify-content: center; padding: 11px 0; margin: 3px auto; width: 46px; border-radius: 12px; }
 .app.collapsed .nav-item::before { display: none; }
 .app.collapsed .nav-item .lbl { display: none; }
@@ -191,22 +225,33 @@ a { color: inherit; text-decoration: none; }
 
 /* ---- Nav filter + pinned favorites + star ---- */
 .nav-filter {
-  position: relative; margin: 10px 12px 2px; flex: 0 0 auto;
+  position: relative; margin: 10px 12px 4px; flex: 0 0 auto;
 }
-.nav-filter .ico { position: absolute; inset-inline-start: 10px; top: 50%; transform: translateY(-50%);
+.nav-filter .ico { position: absolute; inset-inline-start: 11px; top: 50%; transform: translateY(-50%);
   width: 15px; height: 15px; color: var(--sidebar-ink-soft); pointer-events: none; }
 .nav-filter input {
-  width: 100%; padding: 8px 10px 8px 32px; border-radius: 9px;
-  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+  width: 100%; padding: 9px 34px; border-radius: 10px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
   color: #fff; font-family: inherit; font-size: 12.5px;
+  transition: border-color .15s, background .15s, box-shadow .15s;
 }
-[dir="rtl"] .nav-filter input { padding: 8px 32px 8px 10px; }
 .nav-filter input::placeholder { color: var(--sidebar-ink-soft); }
-.nav-filter input:focus { outline: none; border-color: rgba(237,28,36,.5); background: rgba(255,255,255,.08); }
+.nav-filter input:focus { outline: none; border-color: rgba(237,28,36,.55);
+  background: rgba(255,255,255,.09); box-shadow: 0 0 0 3px rgba(237,28,36,.14); }
+/* "/" quick-focus hint; fades out on focus or once you start typing. */
+.nav-kbd {
+  position: absolute; inset-inline-end: 9px; top: 50%; transform: translateY(-50%);
+  font: 700 10.5px/1 var(--font); color: var(--sidebar-ink-soft);
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 5px; padding: 3px 6px; pointer-events: none; transition: opacity .15s;
+}
+.nav-filter input:focus ~ .nav-kbd,
+.nav-filter input:not(:placeholder-shown) ~ .nav-kbd { opacity: 0; }
 .app.collapsed .nav-filter { display: none; }
 
 .nav-label.static { pointer-events: none; }
 .nav-pinned .nav-label { color: var(--tc-red-2); }
+.nav-pinned .nav-label .nl-ico { color: var(--tc-red-2); opacity: 1; }
 
 .nav-item { padding-inline-end: 30px; }        /* room for the star */
 .nav-star {
@@ -689,9 +734,15 @@ table.tbl tr:last-child td { border-bottom: 0; }
   .app.mobile-open .sidebar { transform: translateX(0); }
   /* keep the full sidebar on mobile even if the desktop "rail" flag is set */
   .app.collapsed .sidebar { width: min(84vw, 290px); flex-basis: min(84vw, 290px); }
-  .app.collapsed .brand-text,
-  .app.collapsed .nav-label span,
-  .app.collapsed .nav-label .chev { display: revert; }
+  .app.collapsed .brand-text { display: flex; }
+  .app.collapsed .nav-label { justify-content: flex-start; gap: 10px; padding: 9px 10px 7px; }
+  .app.collapsed .nav-label .nl-text { display: block; }
+  .app.collapsed .nav-label .nl-meta { display: flex; }
+  .app.collapsed .nav-label .nl-ico { opacity: .55; }
+  .app.collapsed .nav-item { width: auto; justify-content: flex-start; padding: 8px 11px; padding-inline-end: 30px; margin: 2px 0; border-radius: 10px; }
+  .app.collapsed .nav-item .lbl { display: block; }
+  .app.collapsed .nav-item::before { display: block; }
+  .app.collapsed .nav-star { display: grid; }
   /* dim backdrop behind the open drawer (tap to close, handled in app.js) */
   .app.mobile-open::before {
     content: ""; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 250;
