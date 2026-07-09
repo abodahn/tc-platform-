@@ -770,6 +770,12 @@ def init_db():
             _gm_kb_seed(conn)
         except Exception:
             conn.rollback()
+        # Smart Factory (MES) — create + seed if empty (reuses production_lines)
+        try:
+            from app.smartfactory.schema import create_and_seed as _sf_create_and_seed
+            _sf_create_and_seed(conn)
+        except Exception:
+            conn.rollback()
         # AI Prediction & Intelligence Center — tables + demo data
         try:
             from app.intelligence.schema import create_and_seed as _ai_create_and_seed

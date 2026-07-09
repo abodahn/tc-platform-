@@ -42,6 +42,7 @@ NAV = [
         ("maint_settings", "nav.maint_settings", "settings", "maintenance.settings", "maint_admin"),
     ]},
     {"section": "nav.transformation", "items": [
+        ("factory", "nav.factory", "factory", "smartfactory.command_center", "view_dashboard"),
         ("bi", "nav.bi", "chart", "bi.index", "open_module"),
         ("ai_hub", "nav.ai_hub", "sparkles", "main.module", "open_module"),
         ("finance", "nav.finance", "wallet", "main.module", "open_module"),

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Orders &amp; styles{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
+    <h1 data-i18n="sf.orders_styles">Orders &amp; styles</h1>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+</div>
+
+<div class="panel">
+  <div class="panel-pad" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="sf.po">PO</th><th data-i18n="sf.style">Style</th><th data-i18n="sf.buyer">Buyer</th>
+        <th data-i18n="sf.qty">Qty</th><th data-i18n="sf.color">Color</th><th>SMV</th>
+        <th data-i18n="sf.delivery">Delivery</th><th data-i18n="sf.status">Status</th>
+      </tr></thead>
+      <tbody>
+      {% for o in orders %}
+        <tr>
+          <td><b>{{ o.po_no }}</b></td><td>{{ o.style_code }} · {{ o.style_name }}</td><td>{{ o.buyer }}</td>
+          <td>{{ '{:,}'.format(o.qty) }}</td><td>{{ o.color }}</td><td>{{ o.smv }}</td>
+          <td class="muted">{{ o.delivery_date }}</td>
+          <td><span class="tag">{{ o.status|replace('_',' ') }}</span></td>
+        </tr>
+      {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_orders">No orders yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

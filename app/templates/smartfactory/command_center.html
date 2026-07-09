@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Smart Factory{% endblock %}
+{% block content %}
+<style>
+  .sf-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+  .sf-kpi{border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 18px;background:var(--panel)}
+  .sf-kpi .v{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+  .sf-kpi .l{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:4px}
+  .sf-g{color:var(--ok)} .sf-a{color:var(--warn)} .sf-r{color:var(--crit)}
+  .sf-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line-2)}
+  .sf-row:last-child{border-bottom:0}
+  .sf-dot{width:10px;height:10px;border-radius:50%}
+  .sf-bar{flex:1;height:8px;border-radius:6px;background:var(--line-2);overflow:hidden}
+  .sf-bar span{display:block;height:100%}
+  .sf-par{display:flex;align-items:center;gap:10px;font-size:13px;margin:6px 0}
+  .sf-par .track{flex:1;height:10px;border-radius:6px;background:var(--line-2);overflow:hidden}
+  .sf-par .track span{display:block;height:100%;background:var(--tc-red)}
+</style>
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
+    <h1 data-i18n="sf.command_center">Manufacturing Command Center</h1>
+    <div class="sub" data-i18n="sf.cc_sub">Live cutting-to-packing execution — efficiency, quality and denim-wash sustainability.</div>
+  </div>
+  <a class="btn btn-primary btn-sm" href="{{ url_for('smartfactory.production') }}" data-i18n="sf.enter_production">+ Production entry</a>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v {{ 'sf-g' if kpis.efficiency>=90 else 'sf-a' if kpis.efficiency>=80 else 'sf-r' }}">{{ kpis.efficiency }}%</div><div class="l" data-i18n="sf.efficiency">Line efficiency</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,}'.format(kpis.produced) }}/{{ '{:,}'.format(kpis.target) }}</div><div class="l" data-i18n="sf.produced">Produced / target</div></div>
+  <div class="sf-kpi"><div class="v {{ 'sf-g' if kpis.dhu<=5 else 'sf-r' }}">{{ kpis.dhu }}</div><div class="l" data-i18n="sf.dhu">DHU (≤5)</div></div>
+  <div class="sf-kpi"><div class="v {{ 'sf-g' if kpis.rft>=95 else 'sf-a' }}">{{ kpis.rft }}%</div><div class="l" data-i18n="sf.rft">Right-first-time</div></div>
+  <div class="sf-kpi"><div class="v">{{ kpis.orders }}</div><div class="l" data-i18n="sf.orders">Active orders</div></div>
+  <div class="sf-kpi"><div class="v {{ 'sf-r' if kpis.reject else 'sf-g' }}">{{ kpis.reject }}</div><div class="l" data-i18n="sf.rejects">Rejects</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="sf.live_lines">Live line status (RAG)</h3></div>
+    <div class="panel-pad">
+      {% for l in live %}
+      {% set c = 'var(--ok)' if l.rag=='green' else 'var(--warn)' if l.rag=='amber' else 'var(--crit)' %}
+      <div class="sf-row">
+        <span class="sf-dot" style="background:{{ c }}"></span>
+        <div style="min-width:130px">
+          <div style="font-weight:600;font-size:13.5px">{{ l.line }}</div>
+          <div class="muted" style="font-size:11.5px">{{ l.actual }}/{{ l.target }} · lost {{ l.lost }}m</div>
+        </div>
+        <div class="sf-bar"><span style="width:{{ l.efficiency if l.efficiency<=100 else 100 }}%;background:{{ c }}"></span></div>
+        <b style="color:{{ c }};min-width:48px;text-align:end">{{ l.efficiency }}%</b>
+      </div>
+      {% else %}<div class="muted" data-i18n="sf.no_entries">No production entries yet.</div>{% endfor %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="sf.defect_pareto">Defect pareto</h3></div>
+    <div class="panel-pad">
+      {% set maxd = (pareto|map(attribute='qty')|max) if pareto else 1 %}
+      {% for p in pareto %}
+      <div class="sf-par"><div style="width:130px" class="muted">{{ p.code }}</div>
+        <div class="track"><span style="width:{{ (100*p.qty/maxd)|round(0,'floor') }}%"></span></div>
+        <b style="width:28px;text-align:end">{{ p.qty }}</b></div>
+      {% else %}<div class="muted" data-i18n="sf.no_defects">No defects recorded.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3>🌿 <span data-i18n="sf.sustainability">Denim wash sustainability</span></h3>
+    <span class="muted" style="font-size:12px" data-i18n="sf.per_piece">per piece</span></div>
+  <div class="panel-pad">
+    <div class="sf-kpis">
+      <div class="sf-kpi"><div class="v">{{ sustain.water_per_pc }}<span style="font-size:13px;color:var(--muted)"> L</span></div><div class="l" data-i18n="sf.water_pc">Water / pc</div></div>
+      <div class="sf-kpi"><div class="v">{{ sustain.energy_per_pc }}<span style="font-size:13px;color:var(--muted)"> kWh</span></div><div class="l" data-i18n="sf.energy_pc">Energy / pc</div></div>
+      <div class="sf-kpi"><div class="v">{{ sustain.chemical_per_pc }}<span style="font-size:13px;color:var(--muted)"> g</span></div><div class="l" data-i18n="sf.chem_pc">Chemical / pc</div></div>
+      <div class="sf-kpi"><div class="v {{ 'sf-a' if sustain.rewash else 'sf-g' }}">{{ sustain.rewash }}</div><div class="l" data-i18n="sf.rewash">Rewash</div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
