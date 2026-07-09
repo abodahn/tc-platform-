@@ -1058,5 +1058,6 @@
   "ai.imp.assets_flagged": "Degisecek/servis varlik",
   "ai.imp.paper_saved": "Aylik tasarruf edilebilir kagit",
   "ai.imp.paper_cost_saved": "Aylik tasarruf edilebilir kagit maliyeti",
-  "ai.imp.hours_saved": "Kazanilan manuel takip saati"
+  "ai.imp.hours_saved": "Kazanilan manuel takip saati",
+  "m.approvals": "Onaylar"
 }

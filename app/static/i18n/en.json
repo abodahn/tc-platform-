@@ -1058,5 +1058,6 @@
   "ai.imp.assets_flagged": "Assets to replace/service",
   "ai.imp.paper_saved": "Paper saveable / month",
   "ai.imp.paper_cost_saved": "Paper cost saveable / month",
-  "ai.imp.hours_saved": "Manual follow-up hours saved"
+  "ai.imp.hours_saved": "Manual follow-up hours saved",
+  "m.approvals": "Approvals"
 }

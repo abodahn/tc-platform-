@@ -133,10 +133,10 @@ def test_change_own_password(client):
 # ---------------- Reports CSV export ----------------
 def test_csv_export(client):
     login(client)
-    r = client.get("/reports/export/systems.csv")
+    r = client.get("/reports/systems.csv")   # Reports Center: /reports/<key>.<fmt>
     assert r.status_code == 200
     assert "text/csv" in r.headers["Content-Type"]
-    assert b"key,name_en" in r.data
+    assert b"Key,Name" in r.data            # CSV uses human column headers
 
 
 # ---------------- Authenticated pages ----------------

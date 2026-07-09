@@ -88,7 +88,9 @@ class Config:
     HOST = os.getenv("TC_HOST", "0.0.0.0")
     # Render injects PORT; fall back to TC_PORT then a sane default.
     PORT = int(os.getenv("PORT", os.getenv("TC_PORT", "7000")))
-    DEBUG = _bool(os.getenv("TC_DEBUG"), True)
+    # Default OFF in production (never expose the interactive debugger / verbose
+    # tracebacks live); default ON only for local development.
+    DEBUG = _bool(os.getenv("TC_DEBUG"), ENV.lower() != "production")
 
     # SQLite metadata database (local). On Render, DATABASE_URL points at Postgres.
     DB_PATH = BASE_DIR / "platform.db"

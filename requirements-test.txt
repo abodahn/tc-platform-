@@ -1,0 +1,7 @@
+# TC Platform — test/QA dependencies
+# Install:  pip install -r requirements-test.txt
+pytest>=8.2
+pytest-cov>=5.0          # coverage (python run_tests.py cov)
+playwright>=1.45         # UI end-to-end (tests/e2e) — then: playwright install chromium
+requests>=2.32           # API-level checks
+openpyxl>=3.1            # reads/writes the QA Excel artifacts

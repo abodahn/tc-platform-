@@ -1058,5 +1058,6 @@
   "ai.imp.assets_flagged": "أصول للاستبدال/الصيانة",
   "ai.imp.paper_saved": "ورق يمكن توفيره/شهر",
   "ai.imp.paper_cost_saved": "تكلفة ورق يمكن توفيرها/شهر",
-  "ai.imp.hours_saved": "ساعات متابعة يدوية موفرة"
+  "ai.imp.hours_saved": "ساعات متابعة يدوية موفرة",
+  "m.approvals": "الاعتمادات"
 }
