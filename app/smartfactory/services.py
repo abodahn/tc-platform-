@@ -116,6 +116,150 @@ def list_quality(limit=200):
         conn.close()
 
 
+# ---------------- Cutting & bundles ----------------
+def bundles():
+    conn = get_db()
+    try:
+        rows = _rows(conn, "SELECT b.*, o.po_no, r.roll_no FROM sf_bundles b "
+                           "LEFT JOIN sf_orders o ON o.id=b.order_id "
+                           "LEFT JOIN sf_fabric_rolls r ON r.id=b.roll_id ORDER BY b.id DESC LIMIT 300")
+        rolls = _rows(conn, "SELECT * FROM sf_fabric_rolls ORDER BY id DESC")
+        by_stage = {}
+        pieces = 0
+        for b in rows:
+            by_stage[b["status"]] = by_stage.get(b["status"], 0) + 1
+            pieces += b["qty"] or 0
+        return {"bundles": rows, "rolls": rolls, "by_stage": by_stage, "pieces": pieces, "count": len(rows)}
+    finally:
+        conn.close()
+
+
+def add_bundle(order_id, roll_id, size, color, qty, operation_at):
+    conn = get_db()
+    try:
+        n = conn.execute("SELECT COUNT(*) c FROM sf_bundles").fetchone()["c"] + 2001
+        conn.execute("INSERT INTO sf_bundles (bundle_no,order_id,roll_id,size,color,qty,operation_at,status,created_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?)",
+                     (f"BND-{n}", order_id or None, roll_id or None, size, color, int(qty or 0), operation_at, "cut", utcnow()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------- Laundry / wash ----------------
+def wash_list():
+    conn = get_db()
+    try:
+        rows = _rows(conn, "SELECT w.*, o.po_no FROM sf_wash_batches w LEFT JOIN sf_orders o ON o.id=w.order_id ORDER BY w.id DESC")
+        tot_p = sum(r["pieces"] or 0 for r in rows) or 0
+        agg = {
+            "water": sum(r["water_l"] or 0 for r in rows), "energy": sum(r["energy_kwh"] or 0 for r in rows),
+            "chem": sum(r["chemical_kg"] or 0 for r in rows), "rewash": sum(r["rewash"] or 0 for r in rows),
+            "pieces": tot_p,
+            "water_pc": round(sum(r["water_l"] or 0 for r in rows) / tot_p, 1) if tot_p else 0,
+            "energy_pc": round(sum(r["energy_kwh"] or 0 for r in rows) / tot_p, 2) if tot_p else 0,
+        }
+        return {"rows": rows, "agg": agg}
+    finally:
+        conn.close()
+
+
+def add_wash(order_id, recipe, water, energy, chemical, pieces, shade, rewash):
+    conn = get_db()
+    try:
+        n = conn.execute("SELECT COUNT(*) c FROM sf_wash_batches").fetchone()["c"] + 9001
+        conn.execute("INSERT INTO sf_wash_batches (batch_no,order_id,recipe,water_l,energy_kwh,chemical_kg,pieces,shade,rewash,status,created_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                     (f"WB-{n}", order_id or None, recipe, float(water or 0), float(energy or 0),
+                      float(chemical or 0), int(pieces or 0), shade, int(rewash or 0), "done", utcnow()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------- Workforce / operator efficiency ----------------
+def workforce():
+    """Operator scorecards from production entries (efficiency = actual/target)."""
+    conn = get_db()
+    try:
+        ops = {o["code"]: o for o in _rows(conn, "SELECT * FROM sf_operators")}
+        entries = _rows(conn, "SELECT operator, SUM(target_qty) t, SUM(actual_qty) a, COUNT(*) h "
+                              "FROM sf_prod_entries WHERE operator IS NOT NULL AND operator<>'' GROUP BY operator")
+        out = []
+        for e in entries:
+            eff = round(100 * (e["a"] or 0) / e["t"], 1) if e["t"] else 0
+            o = ops.get(e["operator"], {})
+            out.append({"code": e["operator"], "name": o.get("name", e["operator"]), "grade": o.get("grade", "-"),
+                        "hours": e["h"], "produced": e["a"] or 0, "efficiency": eff, "rag": rag(eff)})
+        out.sort(key=lambda x: x["efficiency"])
+        avg = round(sum(x["efficiency"] for x in out) / len(out), 1) if out else 0
+        return {"rows": out, "avg": avg, "count": len(out)}
+    finally:
+        conn.close()
+
+
+# ---------------- Costing (cost-per-piece) ----------------
+_RATE = {"labor_per_min": 0.35, "rework_per_pc": 1.2, "downtime_per_min": 0.9,
+         "water_per_l": 0.006, "energy_per_kwh": 0.12, "chem_per_kg": 3.5}
+
+
+def costing():
+    conn = get_db()
+    try:
+        orders = _rows(conn, "SELECT o.*, s.smv, s.code style_code FROM sf_orders o LEFT JOIN sf_styles s ON s.id=o.style_id")
+        out = []
+        for o in orders:
+            oid = o["id"]
+            prod = conn.execute("SELECT COALESCE(SUM(actual_qty),0) a, COALESCE(SUM(lost_min),0) l FROM sf_prod_entries WHERE order_id=?", (oid,)).fetchone()
+            produced = prod["a"] or 0
+            downtime = prod["l"] or 0
+            rework = conn.execute("SELECT COALESCE(SUM(rework),0) r FROM sf_quality WHERE order_id=?", (oid,)).fetchone()["r"] or 0
+            wash = conn.execute("SELECT COALESCE(SUM(water_l),0) w, COALESCE(SUM(energy_kwh),0) e, COALESCE(SUM(chemical_kg),0) c FROM sf_wash_batches WHERE order_id=?", (oid,)).fetchone()
+            smv = o["smv"] or 0
+            labor = produced * smv * _RATE["labor_per_min"]
+            rework_c = rework * _RATE["rework_per_pc"]
+            downtime_c = downtime * _RATE["downtime_per_min"]
+            wash_c = (wash["w"] or 0) * _RATE["water_per_l"] + (wash["e"] or 0) * _RATE["energy_per_kwh"] + (wash["c"] or 0) * _RATE["chem_per_kg"]
+            total = labor + rework_c + downtime_c + wash_c
+            cpp = round(total / produced, 2) if produced else 0
+            out.append({"po_no": o["po_no"], "style": o["style_code"], "produced": produced,
+                        "labor": round(labor, 0), "rework": round(rework_c, 0), "downtime": round(downtime_c, 0),
+                        "wash": round(wash_c, 0), "total": round(total, 0), "cpp": cpp})
+        return {"rows": out, "rates": _RATE}
+    finally:
+        conn.close()
+
+
+# ---------------- AI insights (rule-based, LLM-ready) ----------------
+def ai_insights():
+    d = dashboard()
+    out = []
+    for l in d["live"]:
+        if l["efficiency"] < 85:
+            out.append({"severity": "high", "title": f"Line below target: {l['line']}",
+                        "detail": f"Efficiency {l['efficiency']}% ({l['actual']}/{l['target']}, lost {l['lost']}m). Likely a bottleneck operation.",
+                        "action": "Rebalance the line / reassign an operator to the slow operation."})
+            break
+    if d["kpis"]["dhu"] > 5:
+        top = d["pareto"][0]["code"] if d["pareto"] else "stitching"
+        out.append({"severity": "medium", "title": f"DHU above 5% ({d['kpis']['dhu']})",
+                    "detail": f"Top defect: {top}. Right-first-time is {d['kpis']['rft']}%.",
+                    "action": f"Brief the line on {top}; open a root-cause review."})
+    if d["sustain"]["rewash"] >= 15:
+        out.append({"severity": "high", "title": f"High rewash in laundry ({d['sustain']['rewash']})",
+                    "detail": "Rewash wastes water, energy and time and risks shade variance.",
+                    "action": "Review the wash recipe & shade band; check load consistency."})
+    wf = workforce()
+    if wf["rows"] and wf["rows"][0]["efficiency"] < 75:
+        w = wf["rows"][0]
+        out.append({"severity": "medium", "title": f"Low operator efficiency: {w['name']}",
+                    "detail": f"{w['efficiency']}% over {w['hours']} hours (grade {w['grade']}).",
+                    "action": "Coach or reassign; check the operation-to-skill match."})
+    if not out:
+        out.append({"severity": "info", "title": "All key metrics nominal", "detail": "No anomalies detected this run.", "action": "—"})
+    return out
+
+
 def add_quality(line_id, order_id, stage, inspected, defect, rework, reject, inspector, defects=None):
     conn = get_db()
     try:

@@ -900,3 +900,27 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .tl li:last-child::after { display: none; }
 .tl .tl-act { font-weight: 600; font-size: 13px; }
 .tl .tl-meta { color: var(--muted); font-size: 11.5px; }
+
+/* ===== Smart Factory (MES) shared components ===== */
+.sf-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+.sf-kpi{border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 18px;background:var(--panel)}
+.sf-kpi .v{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+.sf-kpi .l{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:4px}
+.sf-g{color:var(--ok)} .sf-a{color:var(--warn)} .sf-r{color:var(--crit)}
+.sf-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line-2)}
+.sf-row:last-child{border-bottom:0}
+.sf-dot{width:10px;height:10px;border-radius:50%;flex:0 0 10px}
+.sf-bar{flex:1;height:8px;border-radius:6px;background:var(--line-2);overflow:hidden}
+.sf-bar span{display:block;height:100%}
+.sf-par{display:flex;align-items:center;gap:10px;font-size:13px;margin:6px 0}
+.sf-par .track{flex:1;height:10px;border-radius:6px;background:var(--line-2);overflow:hidden}
+.sf-par .track span{display:block;height:100%;background:var(--tc-red)}
+.sf-floor{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}
+.sf-tile{border-radius:var(--r-lg);padding:20px;color:#fff;position:relative;overflow:hidden;box-shadow:var(--shadow-card)}
+.sf-tile.green{background:linear-gradient(135deg,#0f9d6e,#0b7a55)}
+.sf-tile.amber{background:linear-gradient(135deg,#d97706,#b45309)}
+.sf-tile.red{background:linear-gradient(135deg,#e11d48,#9f1239)}
+.sf-tile .name{font-weight:700;font-size:15px;opacity:.95}
+.sf-tile .big{font-size:44px;font-weight:800;line-height:1;margin:10px 0 4px;font-variant-numeric:tabular-nums}
+.sf-tile .meta{font-size:12.5px;opacity:.9}
+.sf-stage{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--r-pill);padding:4px 10px;font-size:12px;margin:3px}

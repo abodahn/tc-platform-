@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}AI insights{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
+    <h1 data-i18n="sf.ai">AI insights &amp; recommendations</h1>
+    <div class="sub" data-i18n="sf.ai_sub">Explainable, rule-based signals — line balancing, quality, wash, workforce.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+</div>
+
+<div class="grid cols-2">
+  {% for a in insights %}
+  {% set c = 'var(--crit)' if a.severity in ('critical','high') else 'var(--warn)' if a.severity=='medium' else 'var(--ok)' %}
+  <div class="panel" style="border-inline-start:0">
+    <div class="panel-pad">
+      <div class="flex gap center" style="margin-bottom:6px">
+        <span class="pill" style="background:color-mix(in srgb,{{ c }} 18%, transparent);color:{{ c }};font-weight:700;font-size:11px;padding:3px 9px;border-radius:999px;text-transform:uppercase">{{ a.severity }}</span>
+        <b>{{ a.title }}</b>
+      </div>
+      <div class="muted" style="font-size:13px;line-height:1.5">{{ a.detail }}</div>
+      <div style="color:var(--tc-red);font-size:13px;margin-top:8px">→ {{ a.action }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -46,6 +46,22 @@ CREATE TABLE IF NOT EXISTS sf_wash_batches (
     energy_kwh REAL DEFAULT 0, chemical_kg REAL DEFAULT 0, pieces INTEGER DEFAULT 0,
     shade TEXT, rewash INTEGER DEFAULT 0, status TEXT DEFAULT 'done', created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS sf_operators (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE, name TEXT, line_id INTEGER, grade TEXT DEFAULT 'B',
+    hourly_cost REAL DEFAULT 0, active INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS sf_fabric_rolls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    roll_no TEXT UNIQUE, order_id INTEGER, lot TEXT, shade TEXT, length_m REAL DEFAULT 0,
+    width_cm REAL DEFAULT 0, grade TEXT DEFAULT 'A', status TEXT DEFAULT 'received', created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS sf_bundles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bundle_no TEXT UNIQUE, order_id INTEGER, roll_id INTEGER, size TEXT, color TEXT,
+    qty INTEGER DEFAULT 0, operation_at TEXT DEFAULT 'cutting', status TEXT DEFAULT 'cut', created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sf_bundles_order ON sf_bundles(order_id, status);
 """
 
 _SLOTS = ["08:00-09:00", "09:00-10:00", "10:00-11:00", "11:00-12:00", "13:00-14:00", "14:00-15:00"]
@@ -126,4 +142,34 @@ def create_and_seed(conn):
         conn.execute("INSERT OR IGNORE INTO sf_wash_batches (batch_no,order_id,recipe,water_l,energy_kwh,chemical_kg,pieces,shade,rewash,status,created_at) "
                      "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                      ("WB-9001", wb["id"] if wb else None, "Stone + Enzyme", 4200, 310, 46, 600, "Light Blue", 12, "done", now))
+        conn.execute("INSERT OR IGNORE INTO sf_wash_batches (batch_no,order_id,recipe,water_l,energy_kwh,chemical_kg,pieces,shade,rewash,status,created_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                     ("WB-9002", wb["id"] if wb else None, "Bleach + Softener", 5100, 360, 58, 550, "Bleached", 22, "done", now))
+        conn.commit()
+
+    if _empty(conn, "sf_operators") and sew:
+        grades = ["A", "B", "C"]
+        for i in range(24):
+            ln = sew[i % len(sew)]
+            conn.execute("INSERT OR IGNORE INTO sf_operators (code,name,line_id,grade,hourly_cost,active) VALUES (?,?,?,?,?,1)",
+                         (f"OP-{1001+i}", f"Operator {i+1}", ln["id"], grades[i % 3], 18 + (i % 3) * 4))
+        conn.commit()
+
+    if _empty(conn, "sf_fabric_rolls"):
+        for i in range(6):
+            conn.execute("INSERT OR IGNORE INTO sf_fabric_rolls (roll_no,order_id,lot,shade,length_m,width_cm,grade,status,created_at) "
+                         "VALUES (?,?,?,?,?,?,?,?,?)",
+                         (f"ROLL-{500+i}", order1_id, f"LOT-{10+i%3}", ["Indigo", "Indigo", "Dark"][i % 3],
+                          round(80 + i * 6.5, 1), 150, ["A", "A", "B"][i % 3], "inspected", now))
+        conn.commit()
+
+    if _empty(conn, "sf_bundles"):
+        roll = conn.execute("SELECT id FROM sf_fabric_rolls ORDER BY id LIMIT 1").fetchone()
+        sizes = ["S", "M", "L", "XL"]
+        stages = ["cut", "cut", "sewing", "sewing", "done"]
+        for i in range(20):
+            conn.execute("INSERT OR IGNORE INTO sf_bundles (bundle_no,order_id,roll_id,size,color,qty,operation_at,status,created_at) "
+                         "VALUES (?,?,?,?,?,?,?,?,?)",
+                         (f"BND-{2000+i}", order1_id, roll["id"] if roll else None, sizes[i % 4], "Indigo",
+                          20, ["cutting", "sewing", "finishing"][i % 3], stages[i % 5], now))
         conn.commit()

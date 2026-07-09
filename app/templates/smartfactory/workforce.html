@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Workforce &amp; efficiency{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
+    <h1 data-i18n="sf.workforce">Workforce &amp; efficiency</h1>
+    <div class="sub" data-i18n="sf.workforce_sub">Operator scorecards from live production.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v {{ 'sf-g' if avg>=90 else 'sf-a' if avg>=80 else 'sf-r' }}">{{ avg }}%</div><div class="l" data-i18n="sf.avg_eff">Average efficiency</div></div>
+  <div class="sf-kpi"><div class="v">{{ count }}</div><div class="l" data-i18n="sf.operators">Operators tracked</div></div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="sf.scorecards">Operator scorecards (lowest first)</h3></div>
+  <div class="panel-pad" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th data-i18n="sf.operator">Operator</th><th data-i18n="sf.grade">Grade</th><th data-i18n="sf.hours">Hours</th><th data-i18n="sf.produced">Produced</th><th data-i18n="sf.eff">Eff%</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        {% set c = 'var(--ok)' if r.rag=='green' else 'var(--warn)' if r.rag=='amber' else 'var(--crit)' %}
+        <tr>
+          <td><b>{{ r.name }}</b> <span class="muted mono">{{ r.code }}</span></td>
+          <td>{{ r.grade }}</td><td>{{ r.hours }}</td><td>{{ r.produced }}</td>
+          <td style="color:{{ c }};font-weight:700">{{ r.efficiency }}%</td>
+          <td style="width:160px"><div class="sf-bar"><span style="width:{{ r.efficiency if r.efficiency<=100 else 100 }}%;background:{{ c }}"></span></div></td>
+        </tr>
+      {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_ops">No operator production yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

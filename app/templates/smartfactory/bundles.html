@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Cutting &amp; bundles{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
+    <h1 data-i18n="sf.bundles">Cutting &amp; bundles</h1>
+    <div class="sub" data-i18n="sf.bundles_sub">Fabric rolls → bundles with QR codes → cut-to-sew tracking.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ count }}</div><div class="l" data-i18n="sf.bundles_total">Bundles</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,}'.format(pieces) }}</div><div class="l" data-i18n="sf.pieces">Pieces</div></div>
+  <div class="sf-kpi"><div class="v">{{ rolls|length }}</div><div class="l" data-i18n="sf.rolls">Fabric rolls</div></div>
+  <div class="sf-kpi"><div class="v">{{ by_stage.get('done',0) }}</div><div class="l" data-i18n="sf.done">Done</div></div>
+</div>
+
+{% if can('manage_production') %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="sf.new_bundle">New bundle</h3></div>
+  <form method="post" action="{{ url_for('smartfactory.bundles_add') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-pad grid cols-4">
+      <div class="field"><label data-i18n="sf.order">Order</label>
+        <select name="order_id"><option value=""></option>{% for o in orders %}<option value="{{ o.id }}">{{ o.po_no }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="sf.roll">Roll</label>
+        <select name="roll_id"><option value=""></option>{% for r in rolls %}<option value="{{ r.id }}">{{ r.roll_no }} · {{ r.shade }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="sf.size">Size</label><select name="size">{% for s in ['S','M','L','XL'] %}<option>{{ s }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="sf.qty">Qty</label><input name="qty" type="number" min="1" value="20"></div>
+      <div class="field"><label data-i18n="sf.color">Color</label><input name="color" value="Indigo"></div>
+      <div class="field"><label data-i18n="sf.stage">Stage</label><select name="operation_at">{% for s in ['cutting','sewing','finishing'] %}<option>{{ s }}</option>{% endfor %}</select></div>
+      <div class="field" style="display:flex;align-items:flex-end"><button class="btn btn-primary" type="submit" data-i18n="sf.create_bundle">Create bundle</button></div>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="sf.bundles">Bundles</h3>
+    <span>{% for st,n in by_stage.items() %}<span class="sf-stage">{{ st }} · {{ n }}</span>{% endfor %}</span></div>
+  <div class="panel-pad" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th>QR / No</th><th data-i18n="sf.order">Order</th><th data-i18n="sf.roll">Roll</th><th data-i18n="sf.size">Size</th><th data-i18n="sf.qty">Qty</th><th data-i18n="sf.stage">Stage</th><th data-i18n="sf.status">Status</th></tr></thead>
+      <tbody>
+      {% for b in bundles %}
+        <tr><td class="mono"><b>{{ b.bundle_no }}</b></td><td class="muted">{{ b.po_no or '—' }}</td><td class="muted">{{ b.roll_no or '—' }}</td>
+          <td>{{ b.size }}</td><td>{{ b.qty }}</td><td>{{ b.operation_at }}</td><td><span class="tag">{{ b.status }}</span></td></tr>
+      {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_bundles">No bundles yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

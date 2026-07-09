@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Floor board{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
+    <h1 data-i18n="sf.floor">Live floor board</h1>
+    <div class="sub" data-i18n="sf.floor_sub">Every line at a glance — refreshes automatically.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+</div>
+
+<div class="sf-floor">
+  {% for l in live %}
+  <div class="sf-tile {{ l.rag }}">
+    <div class="name">{{ l.line }}</div>
+    <div class="big">{{ l.efficiency }}%</div>
+    <div class="meta">{{ l.actual }}/{{ l.target }} pcs · lost {{ l.lost }}m</div>
+  </div>
+  {% else %}
+  <div class="panel"><div class="panel-pad muted" data-i18n="sf.no_entries">No production entries yet.</div></div>
+  {% endfor %}
+</div>
+
+<script>
+  // auto-refresh the floor board every 30s
+  setTimeout(function(){ location.reload(); }, 30000);
+</script>
+{% endblock %}
