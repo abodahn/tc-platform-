@@ -50,6 +50,7 @@ NAV = [
         ("sf_wash", "nav.sf_wash", "refresh", "smartfactory.wash", "view_dashboard"),
         ("sf_workforce", "nav.sf_workforce", "users", "smartfactory.workforce", "view_dashboard"),
         ("sf_costing", "nav.sf_costing", "wallet", "smartfactory.costing", "view_dashboard"),
+        ("sf_approvals", "nav.sf_approvals", "check", "smartfactory.approvals", "view_dashboard"),
         ("sf_orders", "nav.sf_orders", "cart", "smartfactory.orders", "view_dashboard"),
         ("sf_ai", "nav.sf_ai", "sparkles", "smartfactory.ai", "view_dashboard"),
         ("sf_reports", "nav.sf_reports", "chart", "smartfactory.reports", "view_dashboard"),

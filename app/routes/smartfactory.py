@@ -14,6 +14,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for, flash
 
 from app.auth import login_required, permission_required, current_user
 from app.smartfactory import services as svc
+from app.smartfactory import approvals as appr
 
 bp = Blueprint("smartfactory", __name__, url_prefix="/factory")
 
@@ -172,6 +173,43 @@ def costing():
 @permission_required("view_dashboard")
 def ai():
     return render_template("smartfactory/ai.html", active="sf_ai", insights=svc.ai_insights())
+
+
+# ---- Smart approval engine + cost intelligence ----
+@bp.route("/approvals", methods=["GET"])
+@login_required
+@permission_required("view_dashboard")
+def approvals():
+    status = request.args.get("status", "open")
+    return render_template("smartfactory/approvals.html", active="sf_approvals",
+                           rows=appr.list_approvals(status), status=status,
+                           dash=appr.dashboard(), kinds=appr.KINDS, orders=svc.list_orders(),
+                           lines=svc.list_lines(), can_decide=(True))
+
+
+@bp.route("/approvals", methods=["POST"])
+@login_required
+@permission_required("manage_production")
+def approvals_submit():
+    f = request.form
+    try:
+        ref, st = appr.submit(f.get("kind", "rework"), f.get("title", ""), f.get("description", ""),
+                              f.get("cost_amount", 0), f.get("order_id") or None, f.get("line_id") or None,
+                              f.get("qty", 0), _u(), f.get("department", ""))
+        flash(f"Request {ref} — {st.replace('_', ' ')}.", "success")
+    except Exception:  # noqa: BLE001
+        flash("Could not submit the request.", "error")
+    return redirect(url_for("smartfactory.approvals"))
+
+
+@bp.route("/approvals/<int:aid>/decide", methods=["POST"])
+@login_required
+@permission_required("manage_production")
+def approvals_decide(aid):
+    f = request.form
+    ok = appr.decide(aid, f.get("decision", "approve"), _u(), f.get("comment", ""))
+    flash("Decision recorded." if ok else "Already decided or not found.", "success" if ok else "error")
+    return redirect(url_for("smartfactory.approvals"))
 
 
 # ---- Reports & exports ----

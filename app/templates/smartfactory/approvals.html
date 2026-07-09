@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Smart approvals{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
+    <h1 data-i18n="sf.approvals">Smart approvals &amp; cost control</h1>
+    <div class="sub" data-i18n="sf.approvals_sub">Cost-threshold routing with an AI recommendation and full audit trail.</div>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v sf-a">{{ dash.counts.pending }}</div><div class="l" data-i18n="sf.pending">Pending</div></div>
+  <div class="sf-kpi"><div class="v sf-g">{{ dash.counts.approved }}</div><div class="l" data-i18n="sf.approved">Approved</div></div>
+  <div class="sf-kpi"><div class="v sf-r">{{ dash.counts.rejected }}</div><div class="l" data-i18n="sf.rejected">Rejected</div></div>
+  <div class="sf-kpi"><div class="v">{{ dash.counts.auto_approved }}</div><div class="l" data-i18n="sf.auto">Auto-approved</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(dash.pending_value) }}</div><div class="l" data-i18n="sf.pending_value">Pending value (EGP)</div></div>
+</div>
+
+{% if can('manage_production') %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="sf.new_request">Raise a request</h3></div>
+  <form method="post" action="{{ url_for('smartfactory.approvals_submit') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-pad grid cols-4">
+      <div class="field"><label data-i18n="sf.kind">Type</label>
+        <select name="kind">{% for k,label in kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="sf.title_l">Title</label><input name="title" required placeholder="e.g. Rework 120 pcs — skip stitch"></div>
+      <div class="field"><label data-i18n="sf.cost">Cost (EGP)</label><input name="cost_amount" type="number" min="0" step="any" value="800"></div>
+      <div class="field"><label data-i18n="sf.qty">Qty</label><input name="qty" type="number" min="0" value="120"></div>
+      <div class="field"><label data-i18n="sf.order">Order</label>
+        <select name="order_id"><option value=""></option>{% for o in orders %}<option value="{{ o.id }}">{{ o.po_no }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="sf.line">Line</label>
+        <select name="line_id"><option value=""></option>{% for l in lines %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}</select></div>
+      <div class="field" style="grid-column:span 2"><label data-i18n="sf.desc">Description</label><input name="description" autocomplete="off"></div>
+      <div class="field" style="display:flex;align-items:flex-end"><button class="btn btn-primary" type="submit" data-i18n="sf.submit_req">Submit</button></div>
+    </div>
+    <div class="panel-pad muted" style="padding-top:0;font-size:12px" data-i18n="sf.threshold_note">Below the auto-approve limit it clears instantly; higher amounts route through supervisor → factory manager → executive automatically.</div>
+  </form>
+</div>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="sf.requests">Requests</h3>
+    <form method="get"><select name="status" onchange="this.form.submit()">
+      {% for s in ['open','all','pending','approved','rejected','auto_approved'] %}<option value="{{ s }}" {{ 'selected' if status==s }}>{{ s|replace('_',' ')|title }}</option>{% endfor %}
+    </select></form></div>
+  <div class="panel-pad">
+    {% for a in rows %}
+    {% set rc = 'var(--crit)' if a.ai_risk>=61 else 'var(--warn)' if a.ai_risk>=41 else 'var(--ok)' %}
+    <div class="panel" style="margin-bottom:12px">
+      <div class="panel-pad">
+        <div class="flex gap center wrap" style="gap:8px">
+          <b>{{ a.title }}</b>
+          <span class="tag">{{ kinds.get(a.kind, a.kind) }}</span>
+          <span class="tag" style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(a.cost_amount) }} {{ a.currency }}</span>
+          <span class="tag {{ 'ok' if a.status in ('approved','auto_approved') else '' }}">{{ a.status|replace('_',' ') }}</span>
+          <span class="muted mono">{{ a.ref_no }}</span>
+          <span style="margin-inline-start:auto;color:{{ rc }};font-weight:700;font-size:12px">AI: {{ a.ai_recommendation }} · risk {{ a.ai_risk }}</span>
+        </div>
+        {% if a.ai_reason %}<div class="muted" style="font-size:12.5px;margin-top:6px">💡 {{ a.ai_reason }}</div>{% endif %}
+        <div class="muted" style="font-size:12px;margin-top:6px">
+          {{ a.po_no or '—' }} · qty {{ a.qty }} · by {{ a.requested_by }}
+          {% if a.total_levels %} · level {{ a.current_level }}/{{ a.total_levels }}{% endif %}
+        </div>
+        {% if a.steps %}
+        <div class="flex gap wrap mt-2">
+          {% for s in a.steps %}
+          <span class="sf-stage" style="border-color:{{ 'var(--ok)' if s.status=='approved' else 'var(--crit)' if s.status=='rejected' else 'var(--line)' }}">
+            L{{ s.level }} · {{ s.role|replace('_',' ') }} · {{ s.status }}{% if s.approver %} ({{ s.approver }}){% endif %}
+          </span>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if a.status in ('pending','escalated') and can('manage_production') %}
+        <form method="post" action="{{ url_for('smartfactory.approvals_decide', aid=a.id) }}" class="flex gap center wrap mt-2">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input name="comment" placeholder="Comment (optional)" style="max-width:280px">
+          <button class="btn btn-primary btn-sm" name="decision" value="approve" data-i18n="sf.approve">Approve</button>
+          <button class="btn btn-ghost btn-sm" name="decision" value="reject" style="color:var(--crit)" data-i18n="sf.reject_btn">Reject</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}<div class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_requests">No requests match this filter.</div>{% endfor %}
+  </div>
+</div>
+{% endblock %}

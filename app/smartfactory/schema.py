@@ -62,6 +62,29 @@ CREATE TABLE IF NOT EXISTS sf_bundles (
     qty INTEGER DEFAULT 0, operation_at TEXT DEFAULT 'cutting', status TEXT DEFAULT 'cut', created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_sf_bundles_order ON sf_bundles(order_id, status);
+CREATE TABLE IF NOT EXISTS sf_cost_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT UNIQUE, label TEXT, currency TEXT DEFAULT 'EGP',
+    auto_below REAL DEFAULT 0, l1_below REAL DEFAULT 0, l2_below REAL DEFAULT 0,
+    l1_role TEXT DEFAULT 'production_supervisor', l2_role TEXT DEFAULT 'factory_manager', l3_role TEXT DEFAULT 'executive'
+);
+CREATE TABLE IF NOT EXISTS sf_approvals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ref_no TEXT UNIQUE, kind TEXT, title TEXT, description TEXT,
+    cost_amount REAL DEFAULT 0, currency TEXT DEFAULT 'EGP',
+    order_id INTEGER, line_id INTEGER, qty INTEGER DEFAULT 0,
+    requested_by TEXT, department TEXT,
+    status TEXT DEFAULT 'pending',            -- pending/approved/rejected/auto_approved/escalated
+    current_level INTEGER DEFAULT 1, total_levels INTEGER DEFAULT 1,
+    ai_recommendation TEXT, ai_risk INTEGER DEFAULT 0, ai_reason TEXT,
+    created_at TEXT, decided_at TEXT, decided_by TEXT, decision_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sf_appr_status ON sf_approvals(status);
+CREATE TABLE IF NOT EXISTS sf_approval_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    approval_id INTEGER, level INTEGER, role TEXT, threshold REAL DEFAULT 0,
+    status TEXT DEFAULT 'pending', approver TEXT, decided_at TEXT, comment TEXT
+);
 """
 
 _SLOTS = ["08:00-09:00", "09:00-10:00", "10:00-11:00", "11:00-12:00", "13:00-14:00", "14:00-15:00"]
@@ -172,4 +195,19 @@ def create_and_seed(conn):
                          "VALUES (?,?,?,?,?,?,?,?,?)",
                          (f"BND-{2000+i}", order1_id, roll["id"] if roll else None, sizes[i % 4], "Indigo",
                           20, ["cutting", "sewing", "finishing"][i % 3], stages[i % 5], now))
+        conn.commit()
+
+    if _empty(conn, "sf_cost_config"):
+        cfg = [
+            ("rework", "Rework / repair", 200, 1000, 5000),
+            ("wash_rerun", "Wash re-run", 500, 2500, 10000),
+            ("spare_purchase", "Spare-part purchase", 300, 2000, 10000),
+            ("overtime", "Overtime", 500, 3000, 12000),
+            ("order_change", "Order change", 0, 3000, 20000),
+            ("production_hold", "Production hold", 0, 0, 5000),
+        ]
+        for kind, label, auto, l1, l2 in cfg:
+            conn.execute("INSERT OR IGNORE INTO sf_cost_config (kind,label,currency,auto_below,l1_below,l2_below,l1_role,l2_role,l3_role) "
+                         "VALUES (?,?,?,?,?,?,?,?,?)",
+                         (kind, label, "EGP", auto, l1, l2, "production_supervisor", "factory_manager", "executive"))
         conn.commit()
