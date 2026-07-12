@@ -510,32 +510,35 @@ def _seed_systems(conn):
 
 
 def _ensure_extra_systems(conn):
-    """Idempotently register add-on standalone systems that were introduced after
-    the initial four (which only seed into an empty table). Runs on every boot,
-    INSERT OR IGNORE by key so it never disturbs an admin's later edits. Public
-    URLs are re-pointed from env (TC_URL_<KEY>) by apply_integration_overrides."""
-    host = Config.INTEGRATION_HOST
+    """Idempotently register add-on systems introduced after the initial four
+    (the base seed only runs on an empty table). Runs every boot. Probation is a
+    BUILT-IN online module (served by this platform at /hr/probation), so it is
+    registered like BI/Production: internal (is_integrated=0, no external URL),
+    and the launcher opens it directly. No VM / IP / tunnel needed."""
     extra = [
-        # key, names(en/ar/tr), desc(en/ar/tr), category, port, health_path,
-        # icon, owner, criticality, integrated, order
+        # key, names(en/ar/tr), desc(en/ar/tr), category, icon, owner, criticality, order
         ("probation",
          "Probation Evaluation", "تقييم فترة الاختبار", "Deneme Süresi Değerlendirmesi",
-         "Standalone employee probation evaluation: cases, 8-criterion scoring, confirm/extend workflow.",
-         "تقييم فترة اختبار الموظفين المستقل: الحالات وتقييم 8 معايير وسير عمل التثبيت/التمديد.",
-         "Bağımsız çalışan deneme değerlendirmesi: 8 kriterli puanlama, onay/uzatma iş akışı.",
-         "hr", 5005, "/login", "users", "Human Resources", "high", 1, 45),
+         "Employee probation evaluation: cases, 8-criterion scoring, confirm/extend workflow.",
+         "تقييم فترة اختبار الموظفين: الحالات وتقييم 8 معايير وسير عمل التثبيت/التمديد.",
+         "Çalışan deneme değerlendirmesi: 8 kriterli puanlama, onay/uzatma iş akışı.",
+         "hr", "users", "Human Resources", "high", 45),
     ]
     for (key, name_en, name_ar, name_tr, desc_en, desc_ar, desc_tr, category,
-         port, health_path, icon, owner, criticality, integrated, order) in extra:
-        base_url = f"http://{host}:{port}" if port else None
-        health_url = (base_url + health_path) if (port and health_path) else None
+         icon, owner, criticality, order) in extra:
         conn.execute(
             """INSERT OR IGNORE INTO systems
                (key,name_en,name_ar,name_tr,desc_en,desc_ar,desc_tr,category,base_url,
                 health_url,port,icon,owner,criticality,is_integrated,sort_order)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (key, name_en, name_ar, name_tr, desc_en, desc_ar, desc_tr, category,
-             base_url, health_url, port, icon, owner, criticality, integrated, order))
+             None, None, None, icon, owner, criticality, 0, order))
+    # Converge the earlier external (VM IP :5005) registration to the built-in
+    # online module — clears the dead LAN URL so the tile opens /hr/probation and
+    # stops health-checking a private IP. Leaves any custom admin URL untouched.
+    conn.execute(
+        "UPDATE systems SET base_url=NULL, health_url=NULL, port=NULL, is_integrated=0 "
+        "WHERE key='probation' AND (base_url LIKE '%:5005' OR base_url LIKE '%10.100.1.13%')")
 
 
 def _ensure_demo_users(conn):
@@ -663,7 +666,6 @@ _INTEGRATION_ENDPOINTS = {
     "assets":       (5001, "/api/health"),
     "monitoring":   (5002, "/health"),
     "commandtrack": (5003, "/"),
-    "probation":    (5005, "/login"),
 }
 
 
