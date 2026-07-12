@@ -336,7 +336,43 @@ def import_data():
     return render_template("probation/import.html", active="prob_import", report=report)
 
 
+_HDR_TOKENS = ("employee", "code", "كود", "الاسم", "name", "department",
+               "الادارة", "designation", "الوظيفة")
+
+
+def _c(x):
+    return "" if x is None else str(x).strip()
+
+
+def _rows_from_grid(grid):
+    """Find the header row (first row within the first 12 with >=3 non-empty cells
+    that carries a known header token — tolerates a title/logo row above it), then
+    return the data rows below as {header: value} dicts."""
+    if not grid:
+        return []
+    hdr = None
+    for i, r in enumerate(grid[:12]):
+        nonempty = [_c(x) for x in r if _c(x)]
+        if len(nonempty) >= 3 and any(any(t in c.lower() for t in _HDR_TOKENS) for c in nonempty):
+            hdr = i
+            break
+    if hdr is None:
+        return []
+    headers = [_c(h) for h in grid[hdr]]
+    out = []
+    for r in grid[hdr + 1:]:
+        if not any(x is not None and str(x).strip() for x in r):
+            continue
+        out.append({headers[i]: (r[i] if i < len(r) else None)
+                    for i in range(len(headers)) if headers[i]})
+    return out
+
+
 def _parse_upload(fs):
+    """Accept the official probation workbook in its real shape: multiple sheets
+    (Arabic 'T&C' + 'English version'), a header row that is not necessarily the
+    first row, and Arabic OR English headers. Reads EVERY sheet; the code-keyed
+    upsert in import_rows dedupes any overlap between sheets."""
     if not fs or not fs.filename:
         return None
     name = fs.filename.lower()
@@ -344,16 +380,14 @@ def _parse_upload(fs):
         if name.endswith(".csv"):
             import csv, io
             text = fs.read().decode("utf-8-sig", errors="replace")
-            return list(csv.DictReader(io.StringIO(text)))
+            return _rows_from_grid([tuple(r) for r in csv.reader(io.StringIO(text))])
         if name.endswith((".xlsx", ".xlsm")):
             from openpyxl import load_workbook
             wb = load_workbook(fs, read_only=True, data_only=True)
-            ws = wb.active
-            rows = list(ws.iter_rows(values_only=True))
-            if not rows:
-                return []
-            headers = [str(h).strip() if h is not None else "" for h in rows[0]]
-            return [dict(zip(headers, r)) for r in rows[1:] if any(c is not None for c in r)]
+            rows = []
+            for ws in wb.worksheets:
+                rows += _rows_from_grid(list(ws.iter_rows(values_only=True)))
+            return rows
     except Exception:  # noqa: BLE001
         return None
     return None

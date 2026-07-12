@@ -833,20 +833,31 @@ def notification_history(user, limit=200):
 # ==========================================================================
 # Import (idempotent) + export
 # ==========================================================================
+# Header aliases (exact-normalised match wins; then a safe "contains" fallback).
+# Covers the official T&C sheet in BOTH its Arabic ("T&C") and English
+# ("English version") header styles. Order the aliases specific -> generic and
+# avoid ambiguous short tokens (e.g. never bare "leaves", which appears in the
+# absence header too).
 _IMPORT_MAP = {
-    "employee_code": ["employee_code", "code", "emp_code", "id", "الكود", "كود الموظف"],
-    "employee_name": ["employee_name", "name", "full_name", "الاسم", "اسم الموظف"],
-    "department": ["department", "dept", "القسم"],
-    "section": ["section", "القسم الفرعي", "الخط"],
-    "designation": ["designation", "job_title", "title", "الوظيفة", "المسمى"],
-    "direct_manager": ["direct_manager", "manager", "المدير"],
-    "section_head": ["section_head", "head", "رئيس القسم"],
-    "joining_date": ["joining_date", "join_date", "hire_date", "تاريخ التعيين"],
-    "probation_end_date": ["probation_end_date", "probation_end", "end_date", "نهاية الاختبار"],
-    "warnings_count": ["warnings_count", "warnings", "إنذارات"],
-    "unauthorized_absence_count": ["unauthorized_absence_count", "absence", "غياب"],
-    "penalties_count": ["penalties_count", "penalties", "جزاءات"],
-    "annual_leaves_count": ["annual_leaves_count", "leaves", "إجازات"],
+    "employee_code": ["employee code (id)", "employee_code", "كود الموظف", "employee code", "الكود", "code", "emp_code"],
+    "employee_name": ["employee name", "employee_name", "الاسم", "اسم الموظف", "full name", "name"],
+    "department": ["department", "الادارة", "الإدارة", "dept", "الإدارة/القسم"],
+    "section": ["section", "القسم", "الخط", "sub department"],
+    "designation": ["designation", "الوظيفة", "job title", "المسمى الوظيفي", "المسمى", "title"],
+    "direct_manager": ["direct manager", "direct_manager", "المدير", "المشرف", "manager", "supervisor"],
+    "section_head": ["section head", "section_head", "رئيس القسم", "head"],
+    "joining_date": ["joining date", "joining_date", "تاريخ التعيين", "hire date", "join date"],
+    "probation_end_date": ["probation period end date", "probation_end_date", "تاريخ نهاية فترة الاختبار",
+                           "probation end date", "نهاية فترة الاختبار", "نهاية الاختبار", "probation end", "end date"],
+    "evaluation_date": ["evaluation date", "تاريخ التقييم", "evaluation_date"],
+    "warnings_count": ["no.warnings", "عدد الانذارات", "warnings_count", "warnings", "الانذارات", "انذار"],
+    "unauthorized_absence_count": ["no.unauthorized absence leaves", "عدد ايام الغياب بدون اذن",
+                                   "unauthorized_absence_count", "unauthorized absence", "الغياب بدون اذن", "absence", "غياب"],
+    "penalties_count": ["no.penalties", "الجزاءات", "penalties_count", "penalties", "عدد الجزاءات", "penalty"],
+    "annual_leaves_count": ["no. annual leaves", "عدد ايام الاجازات السنويه", "annual_leaves_count",
+                            "annual leaves", "الاجازات السنوية", "annual", "اجازات سنوية"],
+    "imported_final_recommendation": ["final recommendation", "التوصية النهائية", "imported_final_recommendation",
+                                      "recommendation", "التوصية"],
 }
 
 
@@ -860,33 +871,37 @@ def import_rows(rows, user, file_name="import"):
         for i, raw in enumerate(rows, 1):
             report["total"] += 1
             rec = _map_row(raw)
-            code = (rec.get("employee_code") or "").strip()
+            code = str(rec.get("employee_code") or "").strip()
+            if code.endswith(".0"):        # int codes read as 51324.0
+                code = code[:-2]
             if not code:
                 report["skipped"] += 1
                 report["details"].append({"row": i, "status": "skipped", "reason": "no employee_code"})
                 continue
             try:
                 existing = conn.execute("SELECT id FROM prob_employees WHERE employee_code=?", (code,)).fetchone()
-                vals = (rec.get("employee_name"), rec.get("department"), rec.get("section"),
-                        rec.get("designation"), rec.get("direct_manager"), rec.get("section_head"),
+                vals = (_txt(rec.get("employee_name")), _txt(rec.get("department")), _txt(rec.get("section")),
+                        _txt(rec.get("designation")), _txt(rec.get("direct_manager")), _txt(rec.get("section_head")),
                         _date_or_none(rec.get("joining_date")), _date_or_none(rec.get("probation_end_date")),
                         _int_or_none(rec.get("warnings_count")) or 0,
                         _int_or_none(rec.get("unauthorized_absence_count")) or 0,
                         _int_or_none(rec.get("penalties_count")) or 0,
-                        _int_or_none(rec.get("annual_leaves_count")) or 0)
+                        _int_or_none(rec.get("annual_leaves_count")) or 0,
+                        _txt(rec.get("imported_final_recommendation")))
                 if existing:
                     conn.execute(
                         "UPDATE prob_employees SET employee_name=?,department=?,section=?,designation=?,"
                         "direct_manager=?,section_head=?,joining_date=?,probation_end_date=?,warnings_count=?,"
-                        "unauthorized_absence_count=?,penalties_count=?,annual_leaves_count=?,source_file=?,"
-                        "updated_at=? WHERE id=?", vals + (file_name, now, existing["id"]))
+                        "unauthorized_absence_count=?,penalties_count=?,annual_leaves_count=?,"
+                        "imported_final_recommendation=?,source_file=?,updated_at=? WHERE id=?",
+                        vals + (file_name, now, existing["id"]))
                     report["updated"] += 1
                 else:
                     conn.execute(
                         "INSERT INTO prob_employees (employee_name,department,section,designation,direct_manager,"
                         "section_head,joining_date,probation_end_date,warnings_count,unauthorized_absence_count,"
-                        "penalties_count,annual_leaves_count,employee_code,source_file,source_row,active,"
-                        "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "penalties_count,annual_leaves_count,imported_final_recommendation,employee_code,source_file,"
+                        "source_row,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         vals + (code, file_name, i, 1, now, now))
                     report["created"] += 1
             except Exception as exc:  # noqa: BLE001
@@ -985,13 +1000,35 @@ def _emp_label(case):
     return f"{case.get('employee_name') or ''} ({case.get('employee_code') or case.get('case_no')})".strip()
 
 
+def _norm_key(s):
+    return " ".join(str(s).strip().lower().split()) if s is not None else ""
+
+
 def _map_row(raw):
-    low = {str(k).strip().lower(): v for k, v in raw.items()}
+    norm = {}
+    for k, v in raw.items():
+        nk = _norm_key(k)
+        if nk and nk not in norm:
+            norm[nk] = v
     out = {}
     for field, aliases in _IMPORT_MAP.items():
-        for a in aliases:
-            if a.lower() in low and low[a.lower()] not in (None, ""):
-                out[field] = low[a.lower()]; break
+        val = None
+        for a in aliases:                       # 1) exact normalised header match
+            na = _norm_key(a)
+            if na in norm and norm[na] not in (None, ""):
+                val = norm[na]; break
+        if val is None:                         # 2) safe "contains" fallback
+            for a in aliases:
+                na = _norm_key(a)
+                if not na:
+                    continue
+                for hk, hv in norm.items():
+                    if na in hk and hv not in (None, ""):
+                        val = hv; break
+                if val is not None:
+                    break
+        if val is not None:
+            out[field] = val
     return out
 
 
@@ -1018,12 +1055,14 @@ def _days_between(a_iso, b_iso):
 
 
 def _to_date(v):
-    if not v:
+    if v in (None, ""):
         return None
+    if isinstance(v, datetime):      # Excel cells come back as datetime — check first
+        return v.date()
     if isinstance(v, date):
         return v
     s = str(v).strip()[:10]
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
@@ -1043,6 +1082,14 @@ def _int_or_none(v):
         return int(float(v))
     except (TypeError, ValueError):
         return None
+
+
+def _txt(v):
+    """Coerce any cell value (int/float/datetime/str) to trimmed text or None."""
+    if v in (None, ""):
+        return None
+    s = str(v).strip()
+    return s or None
 
 
 def _cell(v):
