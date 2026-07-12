@@ -92,6 +92,43 @@ def build_ladder(total):
     return [s for s in LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
 
 
+# --- Pricing gate (controlled Procure-to-Pay) -------------------------------
+# A purchase request is raised WITHOUT any commercial value: the requester only
+# states what they need (item, qty, unit, spec). Pricing is entered later, by
+# Purchasing, at the purchasing stage — that's the "pricing gate". Only then do
+# the value-based financial approvals (Finance / CFO / CEO) join the ladder.
+PRICING_STATUSES = ["unpriced", "priced"]
+
+# Stages that are always required regardless of value (threshold 0): these form
+# the "demand approval" part of the ladder that runs BEFORE pricing.
+DEMAND_STAGES = [s for s in LADDER if APPROVAL_MATRIX.get(s, 0) <= 0]
+
+# Value-gated stages (threshold > 0): they only join the ladder once Purchasing
+# has priced the request and the total clears their threshold.
+VALUE_STAGES = [s for s in LADDER if APPROVAL_MATRIX.get(s, 0) > 0]
+
+# The stage at which Purchasing enters pricing (the gate). A request cannot pass
+# this stage until it has been priced.
+PRICING_GATE_STAGE = "purchasing"
+
+# Commercial fields the requester must NEVER set (enforced server-side): they are
+# stripped on create/edit for anyone without proc_purchasing, and only Purchasing
+# can fill them through the pricing action.
+REQUESTER_BLOCKED_HEADER_FIELDS = ("tax_rate", "payment_condition")
+REQUESTER_BLOCKED_ITEM_FIELDS = ("unit_price", "est_cost")
+
+
+def value_stages_for(total, matrix=None):
+    """Ordered value-gated stages a PR of `total` requires under `matrix`
+    (defaults to the global APPROVAL_MATRIX)."""
+    m = matrix or APPROVAL_MATRIX
+    try:
+        t = float(total or 0)
+    except (TypeError, ValueError):
+        t = 0.0
+    return [s for s in VALUE_STAGES if (s in m if matrix else True) and t >= m.get(s, 0)]
+
+
 # --- Parallel approval groups ----------------------------------------------
 # Stages that sit in the SAME set here run in parallel (same ladder rung): all of
 # them must approve before the request advances, and any single one can reject.

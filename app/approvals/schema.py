@@ -201,6 +201,12 @@ _PR_MIGRATIONS = [
     ("paid_amount", "ALTER TABLE pr_requests ADD COLUMN paid_amount REAL DEFAULT 0"),
     ("payment_status", "ALTER TABLE pr_requests ADD COLUMN payment_status TEXT DEFAULT 'unpaid'"),
     ("due_date", "ALTER TABLE pr_requests ADD COLUMN due_date TEXT"),
+    # Pricing gate: existing rows default to 'priced' (they already carry a value,
+    # so behaviour is unchanged); new requester-raised PRs are set 'unpriced' until
+    # Purchasing prices them. priced_at/priced_by record who entered the pricing.
+    ("pricing_status", "ALTER TABLE pr_requests ADD COLUMN pricing_status TEXT DEFAULT 'priced'"),
+    ("priced_at", "ALTER TABLE pr_requests ADD COLUMN priced_at TEXT"),
+    ("priced_by", "ALTER TABLE pr_requests ADD COLUMN priced_by TEXT"),
 ]
 
 # Columns added to pr_items after first release (line-level receiving).

@@ -14,7 +14,8 @@
 {% if not editing %}
 <div class="panel" style="border:1px solid rgba(237,28,36,.28)">
   <div class="panel-head"><h3>✨ <span data-i18n="proc.ai_draft">Draft from a description</span></h3>
-    <span class="muted" style="font-size:12px" data-i18n="proc.ai_draft_hint">Garamento fills the form from plain words — review, then price with 🔎.</span></div>
+    {% if can_price %}<span class="muted" style="font-size:12px" data-i18n="proc.ai_draft_hint">Garamento fills the form from plain words — review, then price with 🔎.</span>
+    {% else %}<span class="muted" style="font-size:12px" data-i18n="proc.ai_draft_hint_req">Garamento fills the form from plain words — review the items, then submit.</span>{% endif %}</div>
   <div class="panel-pad">
     <textarea id="aiDraftText" rows="2" data-ac
               placeholder="e.g. 500 m navy cotton twill 240gsm and 2000 YKK metal zippers 18cm for the sewing line"></textarea>
@@ -53,8 +54,10 @@
           </select></div>
         <div class="field"><label data-i18n="proc.currency_l">Currency</label>
           <select name="currency">{% for c in currencies %}<option value="{{ c }}" {{ 'selected' if prefill.currency==c }}>{{ c }}</option>{% endfor %}</select></div>
+        {% if can_price %}
         <div class="field"><label data-i18n="proc.payment_l">Payment condition</label>
           <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}" {{ 'selected' if prefill.payment_condition==p }}>{{ p }}</option>{% endfor %}</select></div>
+        {% endif %}
         <div class="field"><label data-i18n="proc.delivery_l">Delivery condition</label>
           <select name="delivery_condition"><option value=""></option>
             {% for d in deliveries %}<option value="{{ d }}" {{ 'selected' if prefill.delivery_condition==d }}>{{ d }}</option>{% endfor %}
@@ -67,21 +70,31 @@
   <div class="panel mt-4">
     <div class="panel-head"><h3 data-i18n="proc.items">Line items</h3>
       <span class="flex gap">
-        <button type="button" class="btn btn-ghost btn-sm" id="priceAll">🔎 <span data-i18n="mr.price_all">Price all items</span></button>
+        {% if can_price %}<button type="button" class="btn btn-ghost btn-sm" id="priceAll">🔎 <span data-i18n="mr.price_all">Price all items</span></button>{% endif %}
         <button type="button" class="btn btn-ghost btn-sm" id="addRow" data-i18n="proc.add_item">+ Add item</button>
       </span></div>
     <div class="panel-pad">
-      <div class="li-head">
+      {% if not can_price %}
+      <div class="flex gap center" style="font-size:12.5px;color:var(--muted);background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:9px 13px;margin-bottom:12px">
+        <svg class="ico" style="flex:none;color:var(--tc-red)"><use href="#i-sparkles"></use></svg>
+        <span data-i18n="proc.requester_no_price">Just tell us what you need — item, quantity and any spec. Pricing is added later by Purchasing; you don't enter any cost.</span>
+      </div>
+      {% endif %}
+      <div class="li-head {{ '' if can_price else 'no-price' }}">
         <span data-i18n="proc.item">Item</span><span data-i18n="proc.desc">Description</span>
         <span data-i18n="proc.unit">Unit</span><span data-i18n="proc.qty">Qty</span>
-        <span data-i18n="proc.stock">Stock</span><span data-i18n="proc.unit_price">Unit price</span>
-        <span class="li-cost" data-i18n="proc.cost">Cost</span><span></span>
+        <span data-i18n="proc.stock">Stock</span>
+        {% if can_price %}<span data-i18n="proc.unit_price">Unit price</span>
+        <span class="li-cost" data-i18n="proc.cost">Cost</span>{% endif %}
+        <span></span>
       </div>
       <div id="rows"></div>
+      {% if can_price %}
       <div class="total-bar mt-3">
         <span data-i18n="proc.est_total">Estimated total</span>
         <span class="tval"><span id="totalVal">0</span> <span id="curLabel">EGP</span></span>
       </div>
+      {% endif %}
     </div>
   </div>
 
@@ -110,7 +123,8 @@
   </div>
 </form>
 
-{# ---- Garamento market-research modal ---- #}
+{# ---- Garamento market-research modal (pricing is Purchasing-only) ---- #}
+{% if can_price %}
 <div class="modal-overlay" id="mrOverlay">
   <div class="modal" role="dialog" aria-modal="true" aria-label="Market price research">
     <div class="modal-head">
@@ -127,16 +141,18 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 <script>
 (function () {
+  var CAN_PRICE = {{ 'true' if can_price else 'false' }};  // only Purchasing sees pricing
   var UNITS = {{ units|tojson }};
   var MATRIX = {{ matrix|tojson }};              // global default: stage -> threshold
   var LADDER = {{ ladder|tojson }};               // ordered stage keys
   var LABELS = {{ stage_labels|tojson }};         // stage -> label
   var DEPT_MATRICES = {{ dept_matrices|tojson }}; // department -> {stage: threshold} (custom matrices)
   var rows = document.getElementById('rows');
-  var totalVal = document.getElementById('totalVal');
+  var totalVal = document.getElementById('totalVal');   // absent in requester view
   var ladderPrev = document.getElementById('ladderPreview');
 
   // default date = today
@@ -146,16 +162,21 @@
   function unitOpts(){ return UNITS.map(function(u){return '<option>'+u+'</option>';}).join(''); }
 
   function rowHtml(){
-    return '<div class="li-row">'
-      + '<div class="li-item"><input name="item[]" placeholder="Item" autocomplete="off" data-ac>'
-      + '<button type="button" class="li-research" title="Market price research" aria-label="Market price research">🔎</button></div>'
+    var priceCells = CAN_PRICE
+      ? '<input name="unit_price[]" type="number" min="0" step="any" value="0" class="js-calc">'
+        + '<input name="item_notes[]" type="hidden">'
+        + '<span class="li-cost js-cost">0</span>'
+      : '<input name="item_notes[]" type="hidden">';
+    var research = CAN_PRICE
+      ? '<button type="button" class="li-research" title="Market price research" aria-label="Market price research">🔎</button>'
+      : '';
+    return '<div class="li-row' + (CAN_PRICE ? '' : ' no-price') + '">'
+      + '<div class="li-item"><input name="item[]" placeholder="Item" autocomplete="off" data-ac>' + research + '</div>'
       + '<input name="description[]" placeholder="Description" autocomplete="off" data-ac>'
       + '<select name="unit[]">'+unitOpts()+'</select>'
       + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
       + '<input name="current_stock[]" type="number" min="0" step="any" value="0">'
-      + '<input name="unit_price[]" type="number" min="0" step="any" value="0" class="js-calc">'
-      + '<input name="item_notes[]" type="hidden">'
-      + '<span class="li-cost js-cost">0</span>'
+      + priceCells
       + '<button type="button" class="li-del" title="Remove">✕</button>'
       + '</div>';
   }
@@ -163,23 +184,40 @@
 
   function recalc(){
     var total = 0;
-    rows.querySelectorAll('.li-row').forEach(function(r){
-      var q = parseFloat(r.querySelector('[name="qty[]"]').value)||0;
-      var p = parseFloat(r.querySelector('[name="unit_price[]"]').value)||0;
-      var c = q*p;
-      r.querySelector('.js-cost').textContent = c.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-      total += c;
-    });
-    totalVal.textContent = total.toLocaleString(undefined,{maximumFractionDigits:0});
+    if (CAN_PRICE) {
+      rows.querySelectorAll('.li-row').forEach(function(r){
+        var q = parseFloat(r.querySelector('[name="qty[]"]').value)||0;
+        var p = parseFloat(r.querySelector('[name="unit_price[]"]').value)||0;
+        var c = q*p;
+        r.querySelector('.js-cost').textContent = c.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+        total += c;
+      });
+      if (totalVal) totalVal.textContent = total.toLocaleString(undefined,{maximumFractionDigits:0});
+    }
     renderLadder(total);
   }
 
   function renderLadder(total){
+    if (!ladderPrev) return;
     var deptSel = document.getElementById('deptSel');
     var dept = deptSel ? deptSel.value : '';
     var custom = DEPT_MATRICES[dept];        // undefined => use the global default
     var m = custom || MATRIX;
     var chips = ['<span class="lc req">'+ (LABELS.requester||'Requester') +'</span>'];
+    if (!CAN_PRICE) {
+      // Requester view: show only the always-required demand stages, then note
+      // that value-based approvals join once Purchasing has priced the request.
+      LADDER.forEach(function(stage){
+        var eligible = custom ? (stage in m) : true;
+        if (eligible && (m[stage]||0) <= 0) {
+          chips.push('<span class="arrow">›</span><span class="lc">'+(LABELS[stage]||stage)+'</span>');
+        }
+      });
+      chips.push('<span class="arrow">›</span><span class="lc" style="border-style:dashed;opacity:.7" data-i18n="proc.after_pricing">Finance approvals after pricing</span>');
+      ladderPrev.innerHTML = chips.join(' ');
+      if (window.tcApplyI18n) window.tcApplyI18n(ladderPrev);
+      return;
+    }
     LADDER.forEach(function(stage){
       var eligible = custom ? (stage in m) : true;
       if (eligible && total >= (m[stage]||0)) {
@@ -199,104 +237,109 @@
   });
   document.getElementById('addRow').addEventListener('click', addRow);
   var curSel = document.querySelector('select[name=currency]');
-  curSel.addEventListener('change', function(){ document.getElementById('curLabel').textContent = curSel.value; });
   var deptSelEl = document.getElementById('deptSel');
   if (deptSelEl) deptSelEl.addEventListener('change', recalc);   // re-route preview on dept change
-
-  // ---- Market research (Garamento): single + bulk ----
   var CSRF = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
-  var mrOverlay = document.getElementById('mrOverlay');
-  var mrBody = document.getElementById('mrBody');
-  var mrItemEl = document.getElementById('mrItem');
-  var mrUse = document.getElementById('mrUse');
-  var mrRetry = document.getElementById('mrRetry');
-  var mrCopy = document.getElementById('mrCopy');
-  var mrApplyAll = document.getElementById('mrApplyAll');
-  var mrRow = null, mrLast = null, mrMode = 'single';
 
-  function rowList(){ return Array.prototype.slice.call(rows.querySelectorAll('.li-row')); }
-  function mrClose(){ mrOverlay.classList.remove('open'); }
-  document.getElementById('mrClose').addEventListener('click', mrClose);
-  mrOverlay.addEventListener('click', function(e){ if (e.target === mrOverlay) mrClose(); });
-  document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && mrOverlay.classList.contains('open')) mrClose(); });
+  // Market research + live pricing are Purchasing-only; the requester form has no
+  // price inputs, cost cells, total bar or research modal, so bind nothing here.
+  if (CAN_PRICE) {
+    curSel.addEventListener('change', function(){ var cl = document.getElementById('curLabel'); if (cl) cl.textContent = curSel.value; });
 
-  function setMode(m){
-    mrMode = m;
-    mrUse.style.display = (m === 'single') ? '' : 'none';
-    mrCopy.style.display = (m === 'single') ? '' : 'none';
-    mrApplyAll.style.display = (m === 'bulk') ? '' : 'none';
-  }
-  function loadingHtml(msg){
-    return '<div class="mr-loading"><div class="gm-ava"><svg aria-hidden="true"><use href="#gm-mascot"></use></svg></div><div>' + msg + '</div></div>';
-  }
-  function rowItem(row){
-    return {
-      item: row.querySelector('[name="item[]"]').value.trim(),
-      description: row.querySelector('[name="description[]"]').value.trim(),
-      unit: (row.querySelector('[name="unit[]"]') || {}).value || '',
-      qty: parseFloat(row.querySelector('[name="qty[]"]').value) || 1
+    // ---- Market research (Garamento): single + bulk ----
+    var mrOverlay = document.getElementById('mrOverlay');
+    var mrBody = document.getElementById('mrBody');
+    var mrItemEl = document.getElementById('mrItem');
+    var mrUse = document.getElementById('mrUse');
+    var mrRetry = document.getElementById('mrRetry');
+    var mrCopy = document.getElementById('mrCopy');
+    var mrApplyAll = document.getElementById('mrApplyAll');
+    var mrRow = null, mrLast = null, mrMode = 'single';
+
+    var rowList = function(){ return Array.prototype.slice.call(rows.querySelectorAll('.li-row')); };
+    var mrClose = function(){ mrOverlay.classList.remove('open'); };
+    document.getElementById('mrClose').addEventListener('click', mrClose);
+    mrOverlay.addEventListener('click', function(e){ if (e.target === mrOverlay) mrClose(); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && mrOverlay.classList.contains('open')) mrClose(); });
+
+    var setMode = function(m){
+      mrMode = m;
+      mrUse.style.display = (m === 'single') ? '' : 'none';
+      mrCopy.style.display = (m === 'single') ? '' : 'none';
+      mrApplyAll.style.display = (m === 'bulk') ? '' : 'none';
     };
-  }
+    var loadingHtml = function(msg){
+      return '<div class="mr-loading"><div class="gm-ava"><svg aria-hidden="true"><use href="#gm-mascot"></use></svg></div><div>' + msg + '</div></div>';
+    };
+    var rowItem = function(row){
+      return {
+        item: row.querySelector('[name="item[]"]').value.trim(),
+        description: row.querySelector('[name="description[]"]').value.trim(),
+        unit: (row.querySelector('[name="unit[]"]') || {}).value || '',
+        qty: parseFloat(row.querySelector('[name="qty[]"]').value) || 1
+      };
+    };
 
-  function research(row){
-    var p = rowItem(row); p.currency = curSel.value || 'EGP';
-    if (!p.item){ if (window.tcToast) tcToast('Type an item name first, then I’ll go price-hunting.', ''); row.querySelector('[name="item[]"]').focus(); return; }
-    mrRow = row; mrLast = null; mrUse.disabled = true; mrCopy.disabled = true; setMode('single');
-    mrItemEl.textContent = '· ' + p.item;
-    mrBody.innerHTML = loadingHtml('Garamento is scouring the web for prices…');
-    mrOverlay.classList.add('open');
-    fetch('/garamento/market-research', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF}, body: JSON.stringify(p) })
-      .then(function(r){ return r.json(); }).then(function(d){
-        mrBody.innerHTML = window.Garamento.renderMarketResult(d);
-        if (d && d.ok){ mrLast = d; mrUse.disabled = false; mrCopy.disabled = false; }
-      }).catch(function(){ mrBody.innerHTML = '<div class="mr-summary">Something snagged while researching. Try again?</div>'; });
-  }
+    var research = function(row){
+      var p = rowItem(row); p.currency = curSel.value || 'EGP';
+      if (!p.item){ if (window.tcToast) tcToast('Type an item name first, then I’ll go price-hunting.', ''); row.querySelector('[name="item[]"]').focus(); return; }
+      mrRow = row; mrLast = null; mrUse.disabled = true; mrCopy.disabled = true; setMode('single');
+      mrItemEl.textContent = '· ' + p.item;
+      mrBody.innerHTML = loadingHtml('Garamento is scouring the web for prices…');
+      mrOverlay.classList.add('open');
+      fetch('/garamento/market-research', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF}, body: JSON.stringify(p) })
+        .then(function(r){ return r.json(); }).then(function(d){
+          mrBody.innerHTML = window.Garamento.renderMarketResult(d);
+          if (d && d.ok){ mrLast = d; mrUse.disabled = false; mrCopy.disabled = false; }
+        }).catch(function(){ mrBody.innerHTML = '<div class="mr-summary">Something snagged while researching. Try again?</div>'; });
+    };
 
-  function priceAll(){
-    var items = rowList().map(rowItem);
-    if (!items.some(function(i){ return i.item; })){ if (window.tcToast) tcToast('Add at least one item name first.', ''); return; }
-    setMode('bulk'); mrApplyAll.disabled = true;
-    mrItemEl.textContent = '· all items';
-    mrBody.innerHTML = loadingHtml('Garamento is pricing every line item…');
-    mrOverlay.classList.add('open');
-    fetch('/garamento/market-research-bulk', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF}, body: JSON.stringify({ items: items, currency: curSel.value || 'EGP' }) })
-      .then(function(r){ return r.json(); }).then(function(d){
-        mrBody.innerHTML = window.Garamento.renderMarketBulk(d, items);
-        mrApplyAll.disabled = !(d && d.ok && (d.results||[]).some(function(x){return x.ok;}));
-      }).catch(function(){ mrBody.innerHTML = '<div class="mr-summary">Something snagged while researching. Try again?</div>'; });
-  }
+    var priceAll = function(){
+      var items = rowList().map(rowItem);
+      if (!items.some(function(i){ return i.item; })){ if (window.tcToast) tcToast('Add at least one item name first.', ''); return; }
+      setMode('bulk'); mrApplyAll.disabled = true;
+      mrItemEl.textContent = '· all items';
+      mrBody.innerHTML = loadingHtml('Garamento is pricing every line item…');
+      mrOverlay.classList.add('open');
+      fetch('/garamento/market-research-bulk', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF}, body: JSON.stringify({ items: items, currency: curSel.value || 'EGP' }) })
+        .then(function(r){ return r.json(); }).then(function(d){
+          mrBody.innerHTML = window.Garamento.renderMarketBulk(d, items);
+          mrApplyAll.disabled = !(d && d.ok && (d.results||[]).some(function(x){return x.ok;}));
+        }).catch(function(){ mrBody.innerHTML = '<div class="mr-summary">Something snagged while researching. Try again?</div>'; });
+    };
 
-  function applyAll(){
-    var list = rowList(), n = 0;
-    mrBody.querySelectorAll('.mr-brow[data-index]').forEach(function(el){
-      var idx = parseInt(el.getAttribute('data-index'), 10);
-      var price = parseFloat(el.getAttribute('data-price'));
-      if (list[idx] && !isNaN(price)){ list[idx].querySelector('[name="unit_price[]"]').value = price; n++; }
+    var applyAll = function(){
+      var list = rowList(), n = 0;
+      mrBody.querySelectorAll('.mr-brow[data-index]').forEach(function(el){
+        var idx = parseInt(el.getAttribute('data-index'), 10);
+        var price = parseFloat(el.getAttribute('data-price'));
+        if (list[idx] && !isNaN(price)){ list[idx].querySelector('[name="unit_price[]"]').value = price; n++; }
+      });
+      recalc();
+      if (window.tcToast) tcToast('Applied ' + n + ' price' + (n===1?'':'s') + ' from market research.', 'success');
+      mrClose();
+    };
+
+    var copyToNotes = function(){
+      if (!mrLast) return;
+      var notes = document.querySelector('textarea[name="notes"]');
+      if (!notes) return;
+      var line = 'Market est. for "' + (mrLast.item||'') + '": ' + mrLast.price_est + ' ' + mrLast.currency + (mrLast.unit?('/'+mrLast.unit):'') + (mrLast.as_of?(' (as of '+mrLast.as_of+')'):'') + '.';
+      notes.value = (notes.value ? notes.value.replace(/\s*$/,'') + '\n' : '') + line;
+      notes.dispatchEvent(new Event('input', {bubbles:true}));
+      if (window.tcToast) tcToast('Copied market estimate to notes.', 'success');
+    };
+
+    mrRetry.addEventListener('click', function(){ if (mrMode === 'bulk') priceAll(); else if (mrRow) research(mrRow); });
+    mrUse.addEventListener('click', function(){
+      if (mrRow && mrLast && mrLast.price_est != null){ mrRow.querySelector('[name="unit_price[]"]').value = mrLast.price_est; recalc(); if (window.tcToast) tcToast('Price applied from market research.', 'success'); }
+      mrClose();
     });
-    recalc();
-    if (window.tcToast) tcToast('Applied ' + n + ' price' + (n===1?'':'s') + ' from market research.', 'success');
-    mrClose();
+    mrCopy.addEventListener('click', copyToNotes);
+    mrApplyAll.addEventListener('click', applyAll);
+    rows.addEventListener('click', function(e){ var btn = e.target.closest('.li-research'); if (btn) research(btn.closest('.li-row')); });
+    document.getElementById('priceAll').addEventListener('click', priceAll);
   }
-
-  function copyToNotes(){
-    if (!mrLast) return;
-    var notes = document.querySelector('textarea[name="notes"]');
-    if (!notes) return;
-    var line = 'Market est. for "' + (mrLast.item||'') + '": ' + mrLast.price_est + ' ' + mrLast.currency + (mrLast.unit?('/'+mrLast.unit):'') + (mrLast.as_of?(' (as of '+mrLast.as_of+')'):'') + '.';
-    notes.value = (notes.value ? notes.value.replace(/\s*$/,'') + '\n' : '') + line;
-    notes.dispatchEvent(new Event('input', {bubbles:true}));
-    if (window.tcToast) tcToast('Copied market estimate to notes.', 'success');
-  }
-
-  mrRetry.addEventListener('click', function(){ if (mrMode === 'bulk') priceAll(); else if (mrRow) research(mrRow); });
-  mrUse.addEventListener('click', function(){
-    if (mrRow && mrLast && mrLast.price_est != null){ mrRow.querySelector('[name="unit_price[]"]').value = mrLast.price_est; recalc(); if (window.tcToast) tcToast('Price applied from market research.', 'success'); }
-    mrClose();
-  });
-  mrCopy.addEventListener('click', copyToNotes);
-  mrApplyAll.addEventListener('click', applyAll);
-  rows.addEventListener('click', function(e){ var btn = e.target.closest('.li-research'); if (btn) research(btn.closest('.li-row')); });
-  document.getElementById('priceAll').addEventListener('click', priceAll);
 
   // ---- Auto-draft the whole request from a plain-language description ----
   var aiDraftBtn = document.getElementById('aiDraftBtn');
@@ -318,7 +361,8 @@
           dr.items.forEach(function(it){ addRow(); fillRow(rows.lastElementChild, it); });
           recalc();
         }
-        msg.textContent = 'Drafted ' + (dr.items ? dr.items.length : 0) + ' item(s) — review, then price with 🔎.';
+        msg.textContent = 'Drafted ' + (dr.items ? dr.items.length : 0) + ' item(s) — review'
+          + (CAN_PRICE ? ', then price with 🔎.' : ' the items, then submit.');
         if (window.tcToast) tcToast('Draft ready — review it. ✨', 'success');
       }).catch(function(){ msg.textContent = 'Could not draft right now.'; })
       .finally(function(){ aiDraftBtn.disabled = false; });
@@ -330,7 +374,8 @@
     if (it.unit) r.querySelector('[name="unit[]"]').value = it.unit;
     r.querySelector('[name="qty[]"]').value = (it.qty != null ? it.qty : 1);
     r.querySelector('[name="current_stock[]"]').value = (it.current_stock != null ? it.current_stock : 0);
-    r.querySelector('[name="unit_price[]"]').value = (it.unit_price != null ? it.unit_price : 0);
+    var up = r.querySelector('[name="unit_price[]"]');   // absent in requester view
+    if (up) up.value = (it.unit_price != null ? it.unit_price : 0);
   }
 
   // Editing an existing draft: render all its line items.

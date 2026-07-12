@@ -14,7 +14,8 @@ from app.security import has_permission
 from app.approvals import constants as C
 from app.approvals.constants import (
     build_ladder, ladder_rungs, rungs_from_stages, stage_label, STAGE_ROLES,
-    PR_STATUSES, LADDER, APPROVAL_MATRIX, DEPARTMENTS)
+    PR_STATUSES, LADDER, APPROVAL_MATRIX, DEPARTMENTS,
+    VALUE_STAGES, DEMAND_STAGES, PRICING_GATE_STAGE)
 
 
 def _now():
@@ -445,12 +446,18 @@ def rename_dept(old, new):
         conn.close()
 
 
-def create_pr(header, items, user, ip=None, submit=True):
+def create_pr(header, items, user, ip=None, submit=True, priced=None):
     """Create a PR (+items). When submit=True, build the ladder and route it.
-    Returns (pr_id, pr_no)."""
+
+    `priced` records whether the request already carries commercial pricing:
+    when None it is inferred (a request with a positive total is 'priced', a
+    zero-value requester-raised request is 'unpriced' and must be priced by
+    Purchasing at the pricing gate). Returns (pr_id, pr_no)."""
     conn = get_db()
     try:
         total = round(sum(_amount(it) for it in items), 2)
+        if priced is None:
+            priced = total > 0
         now = _now()
         uname = user.get("username") if user else "system"
         cur = conn.execute(
@@ -482,11 +489,13 @@ def create_pr(header, items, user, ip=None, submit=True):
                  it.get("vendor") or header.get("vendor"),
                  float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes")))
         try:
-            conn.execute("UPDATE pr_requests SET tax_rate=? WHERE id=?",
-                         (float(header.get("tax_rate") or 0), pr_id))
+            conn.execute("UPDATE pr_requests SET tax_rate=?, pricing_status=? WHERE id=?",
+                         (float(header.get("tax_rate") or 0),
+                          "priced" if priced else "unpriced", pr_id))
         except Exception:
             pass
-        audit(conn, pr_id, uname, "created", f"PR {pr_no} created (total {total})", ip)
+        audit(conn, pr_id, uname, "created",
+              f"PR {pr_no} created" + (f" (total {total})" if priced else " (pricing pending)"), ip)
         conn.commit()
     finally:
         conn.close()
@@ -587,6 +596,100 @@ def submit_pr(pr_id, user, ip=None):
 
 
 # --------------------------------------------------------------------------
+# Pricing gate (Purchasing enters the commercial value)
+# --------------------------------------------------------------------------
+def _reconcile_value_ladder(conn, pr_id, department, total):
+    """After a pending PR is priced, bring its value-based rungs (Finance / CFO /
+    CEO) in line with the new total: append the ones now required that aren't in
+    the ladder yet, and drop any not-yet-reached value rungs that no longer
+    qualify. Never touches steps that are approved, rejected, or currently active,
+    so an in-flight approval is never disturbed."""
+    row = conn.execute("SELECT current_seq FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+    cur_seq = (row["current_seq"] or 0) if row else 0
+    # Reuse the tested department-aware ladder, keep only the value stages.
+    target = [s for s in dept_ladder(conn, department, total) if s in VALUE_STAGES]
+    existing = conn.execute(
+        "SELECT id, seq, stage, status FROM pr_steps WHERE pr_id=? ORDER BY seq",
+        (pr_id,)).fetchall()
+    have = {r["stage"] for r in existing}
+    max_seq = max([r["seq"] for r in existing] or [0])
+    now = _now()
+    # 1) prune future, still-pending value rungs that no longer qualify
+    for r in existing:
+        if r["stage"] in VALUE_STAGES and r["stage"] not in target \
+           and r["status"] == "pending" and r["seq"] > cur_seq:
+            conn.execute("DELETE FROM pr_steps WHERE id=?", (r["id"],))
+    # 2) append any newly-required value rungs (in ladder order) after the last seq
+    nxt = max_seq
+    for s in target:
+        if s not in have:
+            nxt += 1
+            conn.execute(
+                "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at) "
+                "VALUES (?,?,?,?,?,?)", (pr_id, nxt, s, "pending", stage_label(s), now))
+
+
+def price_pr(pr_id, prices, meta, user, ip=None):
+    """Purchasing enters commercial pricing for a request — the pricing gate.
+
+    `prices` maps pr_items.id -> unit_price; `meta` may carry tax_rate,
+    payment_condition, vendor and currency (all Purchasing-owned). The line
+    costs and PR total are recomputed, the PR is marked 'priced', and — if it is
+    already circulating — the value-based approval rungs the new total requires
+    are added to the ladder. Returns (ok, msg)."""
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] in ("approved", "po_issued", "partially_received",
+                             "received", "closed", "cancelled"):
+            return False, "locked"
+        items = conn.execute(
+            "SELECT id, qty, unit_price FROM pr_items WHERE pr_id=? ORDER BY seq",
+            (pr_id,)).fetchall()
+        total = 0.0
+        for it in items:
+            up = prices.get(it["id"], prices.get(str(it["id"])))
+            try:
+                up = float(up)
+            except (TypeError, ValueError):
+                up = float(it["unit_price"] or 0)   # keep existing if not supplied
+            up = max(up, 0.0)
+            est = round(float(it["qty"] or 0) * up, 2)
+            conn.execute("UPDATE pr_items SET unit_price=?, est_cost=? WHERE id=?",
+                         (up, est, it["id"]))
+            total += est
+        total = round(total, 2)
+
+        sets = ["total=?", "pricing_status='priced'", "priced_at=?", "priced_by=?"]
+        params = [total, _now(), (user or {}).get("username")]
+        tax_rate = meta.get("tax_rate")
+        if tax_rate is not None and str(tax_rate).strip() != "":
+            sets.append("tax_rate=?"); params.append(float(tax_rate or 0))
+        for col in ("payment_condition", "vendor", "currency"):
+            val = meta.get(col)
+            if val:
+                sets.append(f"{col}=?"); params.append(val)
+        params.append(pr_id)
+        conn.execute("UPDATE pr_requests SET " + ", ".join(sets) + " WHERE id=?", params)
+
+        if pr["status"] == "pending":
+            _reconcile_value_ladder(conn, pr_id, pr["department"], total)
+
+        cur = meta.get("currency") or pr["currency"]
+        audit(conn, pr_id, (user or {}).get("username"), "priced",
+              f"Pricing entered by Purchasing — total {total:,.2f} {cur}", ip)
+        notify_users(conn, [pr["requester"]], "info", "Request priced",
+                     f"{pr['pr_no']} has been priced by Purchasing and is moving "
+                     f"through the approval ladder.", link=_pr_link(pr_id))
+        conn.commit()
+        return True, "priced"
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------
 # approve / reject
 # --------------------------------------------------------------------------
 def act_on_step(pr_id, user, decision, comment=None, ip=None):
@@ -609,6 +712,13 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         step = next((s for s in cur_steps if can_act(user, s["stage"])), None)
         if not step:
             return False, "forbidden"
+
+        # Pricing gate: the purchasing stage cannot be signed off until Purchasing
+        # has entered the commercial value. Approving it unpriced would let a
+        # zero-value request slip past the value-based Finance / CFO / CEO rungs.
+        if decision == "approve" and step["stage"] == PRICING_GATE_STAGE \
+           and (pr["pricing_status"] or "priced") != "priced":
+            return False, "needs_pricing"
 
         uname = user.get("username")
         sig_png, sig_name = _user_sig(uname)

@@ -991,9 +991,12 @@ table.tbl tr:last-child td { border-bottom: 0; }
   border-radius: var(--r-sm); height: 34px; cursor: pointer; display: grid; place-items: center; }
 .li-row .li-del:hover { border-color: var(--crit); color: var(--crit); }
 .li-cost { text-align: end; font-variant-numeric: tabular-nums; font-weight: 600; }
+/* Requester view: no commercial columns (unit price / cost are Purchasing-only) */
+.li-head.no-price, .li-row.no-price { grid-template-columns: 1.4fr 2fr .7fr .7fr .8fr 34px; }
 @media (max-width: 820px) {
   .li-head { display: none; }
   .li-row { grid-template-columns: 1fr 1fr; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel-2); }
+  .li-row.no-price { grid-template-columns: 1fr 1fr; }
   .li-row .li-del { grid-column: 2; justify-self: end; }
 }
 

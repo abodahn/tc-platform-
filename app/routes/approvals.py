@@ -107,17 +107,24 @@ def new():
                            deliveries=C.DELIVERY_CONDITIONS, departments=svc.list_departments(),
                            matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
                            dept_matrices=svc.all_dept_matrices(),
-                           stage_labels=C.STAGE_LABELS, prefill=prefill)
+                           stage_labels=C.STAGE_LABELS, prefill=prefill,
+                           can_price=_can_price())
 
 
-def _parse_header(f):
-    return {
+def _can_price():
+    """Only Purchasing (proc_purchasing) may set commercial values. Requesters
+    state WHAT they need; pricing is entered later, at the pricing gate."""
+    return user_can("proc_purchasing")
+
+
+def _parse_header(f, can_price=False):
+    h = {
         "title": f.get("title", "").strip(),
         "request_for": f.get("request_for", "").strip(),
         "department": f.get("department", "").strip(),
         "request_date": f.get("request_date", "").strip(),
         "currency": f.get("currency", "EGP"),
-        "vendor": f.get("vendor", "").strip(),
+        "vendor": f.get("vendor", "").strip(),               # a *suggested* vendor is allowed
         "payment_condition": f.get("payment_condition", "").strip(),
         "delivery_condition": f.get("delivery_condition", "").strip(),
         "req_del_date": f.get("req_del_date", "").strip(),
@@ -125,9 +132,15 @@ def _parse_header(f):
         "notes": f.get("notes", "").strip(),
         "tax_rate": f.get("tax_rate", "").strip() or 0,
     }
+    if not can_price:
+        # Server-side commercial lockout (defence-in-depth — independent of the UI):
+        # a requester can never set the payment terms or tax, whatever is POSTed.
+        h["payment_condition"] = ""
+        h["tax_rate"] = 0
+    return h
 
 
-def _parse_items(f):
+def _parse_items(f, can_price=False):
     items = []
     names = f.getlist("item[]"); descs = f.getlist("description[]")
     units = f.getlist("unit[]"); qtys = f.getlist("qty[]")
@@ -142,7 +155,9 @@ def _parse_items(f):
             "unit": units[i] if i < len(units) else "Pcs",
             "qty": qtys[i] if i < len(qtys) else 0,
             "current_stock": stocks[i] if i < len(stocks) else 0,
-            "unit_price": prices[i] if i < len(prices) else 0,
+            # Commercial lockout: unit price is forced to 0 for requesters, no
+            # matter what the form (or a hand-crafted request) sends.
+            "unit_price": (prices[i] if i < len(prices) else 0) if can_price else 0,
             "notes": notes[i] if i < len(notes) else "",
         })
     return items
@@ -152,11 +167,16 @@ def _parse_items(f):
 @login_required
 @permission_required("proc_create")
 def create():
-    header, items = _parse_header(request.form), _parse_items(request.form)
+    can_price = _can_price()
+    header = _parse_header(request.form, can_price)
+    items = _parse_items(request.form, can_price)
     if not header["title"] or not items:
         flash("A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.new"))
     submit = request.form.get("action") != "draft"
+    # priced=None -> inferred from the total: a requester's locked (zero-value)
+    # request is 'unpriced' and routed to the pricing gate; a Purchasing-priced
+    # one is 'priced'.
     pr_id, pr_no = svc.create_pr(header, items, _u(), ip=_ip(), submit=submit)
     n = _save_attachments(pr_id, _u())
     flash(f"Purchase request {pr_no} created." + (f" {n} file(s) attached." if n else ""),
@@ -190,7 +210,8 @@ def edit(pr_id):
                            matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
-                           editing=pr, edit_items=bundle["items"])
+                           editing=pr, edit_items=bundle["items"],
+                           can_price=_can_price())
 
 
 @bp.route("/pr/<int:pr_id>/edit", methods=["POST"])
@@ -202,7 +223,9 @@ def edit_save(pr_id):
         abort(404)
     if bundle["pr"]["requester"] != (_u() or {}).get("username") and not user_can("proc_admin"):
         abort(403)
-    header, items = _parse_header(request.form), _parse_items(request.form)
+    can_price = _can_price()
+    header = _parse_header(request.form, can_price)
+    items = _parse_items(request.form, can_price)
     if not header["title"] or not items:
         flash("A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.edit", pr_id=pr_id))
@@ -250,6 +273,13 @@ def detail(pr_id):
                 break
     has_sig = bool((user or {}).get("sig_png"))
     cur_label = " + ".join(C.stage_label(s) for s in current_stages) if current_stages else None
+    can_purchasing = user_can("proc_purchasing")
+    is_priced = (pr.get("pricing_status") or "priced") == "priced"
+    # Purchasing can enter pricing while the PR is still being decided.
+    needs_pricing = (can_purchasing and not is_priced
+                     and pr["status"] in ("draft", "rejected", "pending"))
+    # Requesters don't see commercial figures until Purchasing has priced the PR.
+    show_commercial = is_priced or can_purchasing
     return render_template("approvals/detail.html", active="procurement",
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
                            stage_label=C.stage_label, queued=queued,
@@ -257,7 +287,9 @@ def detail(pr_id):
                            match=svc.three_way_match(pr_id),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
                            budget=svc.budget_status(pr.get("department")),
-                           can_purchasing=user_can("proc_purchasing"),
+                           can_purchasing=can_purchasing, is_priced=is_priced,
+                           needs_pricing=needs_pricing, show_commercial=show_commercial,
+                           currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            is_owner=(pr["requester"] == (user or {}).get("username")))
 
 
@@ -412,6 +444,8 @@ def approve(pr_id):
     if not ok:
         flash({"forbidden": "You are not authorised for this approval stage.",
                "not_pending": "This request is not awaiting approval.",
+               "needs_pricing": "Enter the pricing before approving the Purchasing stage — "
+                                "the request has no commercial value yet.",
                "no_active_step": "No active approval step."}.get(msg, f"Could not approve ({msg})."),
               "error")
     else:
@@ -430,6 +464,33 @@ def reject(pr_id):
     ok, msg = svc.act_on_step(pr_id, _u(), "reject", comment=reason, ip=_ip())
     flash("Request rejected and returned to the requester." if ok
           else f"Could not reject ({msg}).", "warning" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/price", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def price(pr_id):
+    """Purchasing enters the commercial value at the pricing gate."""
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    f = request.form
+    prices = {}
+    for it in bundle["items"]:
+        raw = f.get("price_%s" % it["id"])
+        if raw is not None and str(raw).strip() != "":
+            prices[it["id"]] = raw
+    meta = {"tax_rate": f.get("tax_rate", "").strip(),
+            "payment_condition": f.get("payment_condition", "").strip(),
+            "vendor": f.get("vendor", "").strip(),
+            "currency": f.get("currency", "").strip()}
+    ok, msg = svc.price_pr(pr_id, prices, meta, _u(), ip=_ip())
+    flash("Pricing saved — the request now carries its commercial value and any "
+          "value-based approvals have joined the ladder." if ok
+          else {"locked": "This request can no longer be priced."}.get(
+              msg, f"Could not save pricing ({msg})."),
+          "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
