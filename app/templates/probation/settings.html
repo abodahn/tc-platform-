@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Probation Settings{% endblock %}
+{% block content %}
+{% set lang = (cu.lang_pref or 'en') %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="prob.eyebrow">Human Resources · Probation Management</div>
+    <h1 data-i18n="prob.nav.settings">Module settings</h1>
+    <div class="sub" data-i18n="prob.settings.sub">Scoring thresholds, approval flow and reminder cadence.</div>
+  </div>
+</div>
+
+<form method="post">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="prob.settings.scoring">Scoring &amp; workflow</h3></div>
+    <div class="panel-pad grid cols-2">
+      <div class="field"><label data-i18n="prob.settings.threshold_pass">Confirm threshold (%)</label>
+        <input type="number" name="threshold_pass" min="0" max="100" value="{{ settings.threshold_pass }}"></div>
+      <div class="field"><label data-i18n="prob.settings.threshold_review">HR-review threshold (%)</label>
+        <input type="number" name="threshold_review" min="0" max="100" value="{{ settings.threshold_review }}"></div>
+      <div class="field"><label data-i18n="prob.settings.flow">Approval flow</label>
+        <select name="approval_flow">
+          <option value="one_level" {{ 'selected' if settings.approval_flow=='one_level' }} data-i18n="prob.settings.one_level">One level (manager → HR)</option>
+          <option value="two_level" {{ 'selected' if settings.approval_flow=='two_level' }} data-i18n="prob.settings.two_level">Two levels (section head → manager → HR)</option>
+        </select></div>
+      <div class="field"><label data-i18n="prob.settings.require_notes">Require a note for scores ≤</label>
+        <input type="number" name="require_notes_below" min="0" max="5" value="{{ settings.require_notes_below }}"></div>
+      <div class="field"><label data-i18n="prob.settings.offsets">Reminder days before due (comma-separated)</label>
+        <input name="reminder_offsets" value="{{ settings.reminder_offsets }}"></div>
+      <div class="field"><label data-i18n="prob.settings.sla">Manager SLA (days) before HR escalation</label>
+        <input type="number" name="manager_sla_days" min="1" value="{{ settings.manager_sla_days }}"></div>
+    </div>
+    <div class="panel-pad" style="padding-top:0"><button class="btn btn-primary" data-i18n="prob.action.save">Save settings</button></div>
+  </div>
+</form>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="prob.settings.template">Default evaluation template</h3><span class="tag">{{ criteria|length }} <span data-i18n="prob.settings.criteria">criteria</span></span></div>
+  <div class="panel-pad">
+    {% for catkey, cat in CATEGORIES.items() %}
+    <h4 style="margin:8px 0" data-i18n="prob.cat.{{ catkey }}">{{ cat['label_' + lang] or cat.label_en }}</h4>
+    <table class="tbl" style="margin-bottom:14px">
+      <thead><tr><th data-i18n="prob.settings.criterion">Criterion</th><th data-i18n="prob.settings.weight">Weight</th><th data-i18n="prob.settings.range">Range</th></tr></thead>
+      <tbody>{% for c in criteria if c.category == catkey %}
+        <tr><td>{{ c['label_' + lang] or c.label_en }}</td><td>{{ c.weight }}</td><td>1–5</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endfor %}
+    <div class="muted" style="font-size:12px" data-i18n="prob.settings.template_note">Editing template criteria per department/level can be enabled here; submitted evaluations always keep their original criteria snapshot.</div>
+  </div>
+</div>
+{% endblock %}

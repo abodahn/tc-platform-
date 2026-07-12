@@ -56,6 +56,17 @@ NAV = [
         ("sf_intel", "nav.sf_intel", "trend", "smartfactory.intelligence", "view_dashboard"),
         ("sf_reports", "nav.sf_reports", "chart", "smartfactory.reports", "view_dashboard"),
     ]},
+    {"section": "nav.hr", "items": [
+        ("prob_dashboard", "nav.prob_dashboard", "grid", "probation.dashboard", "prob_view"),
+        ("prob_mine", "nav.prob_mine", "check", "probation.mine", "prob_view"),
+        ("prob_cases", "nav.prob_cases", "users", "probation.cases", "prob_view"),
+        ("prob_initiate", "nav.prob_initiate", "report", "probation.initiate", "prob_hr_review"),
+        ("prob_review", "nav.prob_review", "check", "probation.review", "prob_hr_review"),
+        ("prob_reminders", "nav.prob_reminders", "clock", "probation.reminders", "prob_hr_review"),
+        ("prob_reports", "nav.prob_reports", "chart", "probation.reports", "prob_reports"),
+        ("prob_import", "nav.prob_import", "boxes", "probation.import_data", "prob_import"),
+        ("prob_settings", "nav.prob_settings", "settings", "probation.settings", "prob_admin"),
+    ]},
     {"section": "nav.transformation", "items": [
         ("bi", "nav.bi", "chart", "bi.index", "open_module"),
         ("ai_hub", "nav.ai_hub", "sparkles", "main.module", "open_module"),

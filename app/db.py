@@ -85,7 +85,7 @@ def _pg_candidates():
 
 
 # Tables whose primary key is NOT `id` (so we never append RETURNING id).
-_NO_ID_TABLES = {"mnt_settings", "ai_system_settings"}
+_NO_ID_TABLES = {"mnt_settings", "ai_system_settings", "prob_settings"}
 
 
 def translate_ddl(sql, dialect):
@@ -707,6 +707,9 @@ def init_db():
             ("sig_updated_at", "ALTER TABLE users ADD COLUMN sig_updated_at TEXT"),
             ("extra_perms", "ALTER TABLE users ADD COLUMN extra_perms TEXT"),
             ("notif_prefs", "ALTER TABLE users ADD COLUMN notif_prefs TEXT"),
+            # HR org-scope for probation managers/section heads (match employee dept/section)
+            ("scope_department", "ALTER TABLE users ADD COLUMN scope_department TEXT"),
+            ("scope_section", "ALTER TABLE users ADD COLUMN scope_section TEXT"),
         ):
             try:
                 conn.execute(_ddl)
@@ -780,6 +783,12 @@ def init_db():
         try:
             from app.intelligence.schema import create_and_seed as _ai_create_and_seed
             _ai_create_and_seed(conn)
+        except Exception:
+            conn.rollback()
+        # HR — Probation Management module — tables + default template + demo data
+        try:
+            from app.probation.schema import create_and_seed as _prob_create_and_seed
+            _prob_create_and_seed(conn)
         except Exception:
             conn.rollback()
         # Auto-provision a signature for every user who doesn't have one yet, so it

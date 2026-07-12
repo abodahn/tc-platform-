@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ case.case_no }} — Evaluation{% endblock %}
+{% block content %}
+{% set ev = case.evaluation %}
+{% set lang = (cu.lang_pref or 'en') %}
+<div class="panel" style="max-width:820px;margin:0 auto">
+  <div class="panel-pad">
+    <div class="flex gap center" style="justify-content:space-between;border-bottom:2px solid var(--tc-red);padding-bottom:12px;margin-bottom:16px">
+      <div><b style="font-size:18px">T&amp;C Garments — <span data-i18n="prob.print.title">Probation Evaluation</span></b>
+        <div class="muted">{{ case.case_no }}</div></div>
+      <div style="text-align:end"><b>{{ ev.percentage_score or 0 }}%</b><div class="muted">{{ ev.total_score or 0 }} / {{ ev.max_score }}</div></div>
+    </div>
+
+    <table class="tbl" style="margin-bottom:16px">
+      <tbody>
+        <tr><th data-i18n="prob.field.employee">Employee</th><td>{{ case.employee.employee_name }} ({{ case.employee.employee_code }})</td>
+            <th data-i18n="prob.field.department">Department</th><td>{{ case.department }} / {{ case.section }}</td></tr>
+        <tr><th data-i18n="prob.field.designation">Job title</th><td>{{ case.employee.designation or '—' }}</td>
+            <th data-i18n="prob.field.manager">Manager</th><td>{{ case.direct_manager or '—' }}</td></tr>
+        <tr><th data-i18n="prob.field.joining">Joining</th><td>{{ case.joining_date or '—' }}</td>
+            <th data-i18n="prob.field.probation_end">Probation end</th><td>{{ case.probation_end_date or '—' }}</td></tr>
+      </tbody>
+    </table>
+
+    <table class="tbl" style="margin-bottom:16px">
+      <thead><tr><th data-i18n="prob.settings.criterion">Criterion</th><th data-i18n="prob.print.score">Score</th><th data-i18n="prob.form.note_ph">Notes</th></tr></thead>
+      <tbody>
+        {% for s in case.scores %}
+        <tr><td>{{ s['label_' + lang] or s.label_en }}</td><td style="text-align:center"><b>{{ s.score if s.score is not none else '—' }}</b>/5</td><td class="muted">{{ s.notes or '' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div style="margin-bottom:8px"><b data-i18n="prob.form.comments">Manager comments</b><div>{{ ev.manager_comments or '—' }}</div></div>
+    {% if ev.strengths %}<div style="margin-bottom:8px"><b data-i18n="prob.form.strengths">Strengths</b><div>{{ ev.strengths }}</div></div>{% endif %}
+    {% if ev.improvement_points %}<div style="margin-bottom:8px"><b data-i18n="prob.form.improvement">Improvement</b><div>{{ ev.improvement_points }}</div></div>{% endif %}
+
+    <div class="flex gap center" style="justify-content:space-between;border-top:1px solid var(--line);padding-top:12px;margin-top:12px">
+      <div><b data-i18n="prob.form.outcome">Outcome</b>:
+        <span data-i18n="{{ Outcome.I18N.get(case.final_outcome, '') }}">{{ Outcome.LABEL_EN.get(case.final_outcome, '—') }}</span></div>
+      <div class="muted">{{ ev.hr_reviewer_name or '' }} · {{ ev.approved_at or '' }}</div>
+    </div>
+  </div>
+</div>
+<div class="no-print" style="text-align:center;margin-top:16px">
+  <button class="btn btn-primary" onclick="window.print()" data-i18n="prob.action.print">Print</button>
+</div>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Reminders & Due Dates{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="prob.eyebrow">Human Resources · Probation Management</div>
+    <h1 data-i18n="prob.nav.reminders">Reminders &amp; due dates</h1>
+    <div class="sub" data-i18n="prob.reminders.sub">Automatic reminders before probation end, manager escalations and overdue alerts.</div>
+  </div>
+  <form method="post" action="{{ url_for('probation.reminders_run') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn btn-primary btn-sm" data-i18n="prob.action.run_scan">Run reminder scan now</button>
+  </form>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.due30 }}</div><div class="l" data-i18n="prob.kpi.due30">Due in 30 days</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.due7 }}</div><div class="l" data-i18n="prob.kpi.due7">Due in 7 days</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.overdue }}</div><div class="l" data-i18n="prob.kpi.overdue">Overdue</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.pending_hr }}</div><div class="l" data-i18n="prob.kpi.pending_hr">Pending HR</div></div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="prob.reminders.history">Notification history</h3><span class="tag">{{ history|length }}</span></div>
+  <div class="panel-pad" style="padding:0">
+    <table class="tbl">
+      <thead><tr><th data-i18n="prob.field.when">When</th><th data-i18n="prob.field.kind">Kind</th>
+        <th data-i18n="prob.field.recipient">Recipient</th><th data-i18n="prob.field.case">Case</th>
+        <th data-i18n="prob.field.title">Title</th><th data-i18n="prob.field.status">Status</th></tr></thead>
+      <tbody>
+      {% for n in history %}
+        <tr><td class="mono" style="font-size:11.5px">{{ n.sent_at or n.created_at }}</td>
+          <td><span class="pb-badge pb-{{ 'crit' if n.kind=='overdue' else ('warn' if n.kind in ('due','escalation') else 'info') }}">{{ n.kind }}</span></td>
+          <td>{{ n.target_user }}</td><td class="mono">{{ n.case_no or '—' }}</td>
+          <td>{{ n.title }}</td><td><span class="pb-badge pb-ok">{{ n.status }}</span></td></tr>
+      {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:22px" data-i18n="prob.empty.reminders">No reminders sent yet. Run a scan to generate due-date reminders.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

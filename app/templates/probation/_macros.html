@@ -1,0 +1,21 @@
+{# Probation shared macros — status/outcome badges + score bar #}
+{% macro sbadge(status, Status) %}
+  {% set tone = Status.TONE.get(status, 'muted') %}
+  <span class="pb-badge pb-{{ tone }}" data-i18n="{{ Status.I18N.get(status, status) }}">{{ Status.LABEL_EN.get(status, status) }}</span>
+{% endmacro %}
+
+{% macro obadge(outcome, Outcome) %}
+  {% if outcome %}
+  {% set tone = 'ok' if outcome == 'confirm' else ('warn' if outcome == 'extend' else 'crit') %}
+  <span class="pb-badge pb-{{ tone }}" data-i18n="{{ Outcome.I18N.get(outcome, outcome) }}">{{ Outcome.LABEL_EN.get(outcome, outcome) }}</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro daysleft(days) %}
+  {% if days is not none %}
+    {% if days < 0 %}<span class="pb-badge pb-crit">{{ -days }} <span data-i18n="prob.days_over">days over</span></span>
+    {% elif days <= 7 %}<span class="pb-badge pb-warn">{{ days }} <span data-i18n="prob.days_left">days left</span></span>
+    {% elif days <= 30 %}<span class="pb-badge pb-info">{{ days }} <span data-i18n="prob.days_left">days left</span></span>
+    {% else %}<span class="muted" style="font-variant-numeric:tabular-nums">{{ days }} <span data-i18n="prob.days_left">days left</span></span>{% endif %}
+  {% else %}<span class="muted">—</span>{% endif %}
+{% endmacro %}

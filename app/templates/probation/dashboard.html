@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "probation/_macros.html" import sbadge %}
+{% block title %}Probation Dashboard{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="prob.eyebrow">Human Resources · Probation Management</div>
+    <h1 data-i18n="prob.nav.dashboard">Probation Dashboard</h1>
+    <div class="sub" data-i18n="prob.dash.sub">Live view of every employee in probation — due dates, pending actions and outcomes.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('prob_hr_review') %}<a class="btn btn-primary btn-sm" href="{{ url_for('probation.initiate') }}" data-i18n="prob.action.initiate">Initiate evaluation</a>{% endif %}
+    {% if can('prob_reports') %}<a class="btn btn-ghost btn-sm" href="{{ url_for('probation.reports') }}" data-i18n="prob.nav.reports">Reports</a>{% endif %}
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.total_active }}</div><div class="l" data-i18n="prob.kpi.active">Active cases</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.due30 }}</div><div class="l" data-i18n="prob.kpi.due30">Due in 30 days</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.due7 }}</div><div class="l" data-i18n="prob.kpi.due7">Due in 7 days</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.overdue }}</div><div class="l" data-i18n="prob.kpi.overdue">Overdue</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.pending_hr }}</div><div class="l" data-i18n="prob.kpi.pending_hr">Pending HR</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.pending_mgr }}</div><div class="l" data-i18n="prob.kpi.pending_mgr">Pending manager</div></div>
+</div>
+
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.confirmed }}</div><div class="l" data-i18n="prob.kpi.confirmed">Confirmed</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.extended }}</div><div class="l" data-i18n="prob.kpi.extended">Extended</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.not_confirmed }}</div><div class="l" data-i18n="prob.kpi.not_confirmed">Not confirmed</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.avg_score }}%</div><div class="l" data-i18n="prob.kpi.avg">Average score</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="prob.dash.by_dept">By department</h3>
+      <span class="tag">{{ d.completion }}% <span data-i18n="prob.dash.completion">completion</span></span></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="prob.field.department">Department</th><th data-i18n="prob.dash.cases">Cases</th>
+          <th data-i18n="prob.kpi.confirmed">Confirmed</th><th data-i18n="prob.kpi.overdue">Overdue</th></tr></thead>
+        <tbody>
+          {% for r in d.by_dept %}
+          <tr><td>{{ r.department }}</td><td>{{ r.total }}</td><td>{{ r.confirmed }}</td>
+            <td>{% if r.overdue %}<span class="pb-badge pb-crit">{{ r.overdue }}</span>{% else %}0{% endif %}</td></tr>
+          {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="prob.empty.none">No cases yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="prob.dash.status_dist">Status distribution</h3></div>
+    <div class="panel-pad">
+      {% set total = d.total_cases or 1 %}
+      {% for st, n in d.status_counts.items() %}
+      <div class="pb-crit-row" style="padding:9px 0;border:0">
+        <div class="flex gap center" style="justify-content:space-between;margin-bottom:5px">
+          {{ sbadge(st, Status) }}<b style="font-variant-numeric:tabular-nums">{{ n }}</b>
+        </div>
+        <div class="pb-meter"><span style="width:{{ (100*n/total)|round(0,'floor') }}%"></span></div>
+      </div>
+      {% else %}<div class="muted" data-i18n="prob.empty.none">No cases yet.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="prob.dash.attention">Needs attention</h3>
+    <a class="tag" href="{{ url_for('probation.cases') }}" data-i18n="prob.action.view_all">View all cases</a></div>
+  <div class="panel-pad muted" data-i18n="prob.dash.attention_hint">Open “Probation Cases” to filter by status, department and due date, or “My Evaluations” for what needs your action.</div>
+</div>
+{% endblock %}

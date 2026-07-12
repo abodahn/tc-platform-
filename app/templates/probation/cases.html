@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "probation/_macros.html" import sbadge, obadge, daysleft %}
+{% block title %}Probation Cases{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="prob.eyebrow">Human Resources · Probation Management</div>
+    <h1 data-i18n="{{ title_key }}">Probation Cases</h1>
+    <div class="sub"><span data-i18n="prob.cases.count">Cases</span>: {{ rows|length }}</div>
+  </div>
+  {% if can('prob_hr_review') %}<a class="btn btn-primary btn-sm" href="{{ url_for('probation.initiate') }}" data-i18n="prob.action.initiate">Initiate evaluation</a>{% endif %}
+</div>
+
+{% if not mine %}
+<div class="panel">
+  <form method="get" class="panel-pad grid cols-4" style="align-items:end">
+    <div class="field"><label data-i18n="prob.filter.search">Search</label>
+      <input name="q" value="{{ filters.q or '' }}" placeholder="Name, code or case #"></div>
+    <div class="field"><label data-i18n="prob.field.status">Status</label>
+      <select name="status"><option value="" data-i18n="prob.filter.all">All</option>
+        {% for s in Status.ALL %}<option value="{{ s }}" {{ 'selected' if filters.status==s }} data-i18n="{{ Status.I18N[s] }}">{{ Status.LABEL_EN[s] }}</option>{% endfor %}
+      </select></div>
+    <div class="field"><label data-i18n="prob.field.outcome">Outcome</label>
+      <select name="outcome"><option value="" data-i18n="prob.filter.all">All</option>
+        {% for o in Outcome.ALL %}<option value="{{ o }}" {{ 'selected' if filters.outcome==o }} data-i18n="{{ Outcome.I18N[o] }}">{{ Outcome.LABEL_EN[o] }}</option>{% endfor %}
+      </select></div>
+    <div class="field" style="display:flex;gap:8px">
+      <button class="btn btn-primary" type="submit" data-i18n="prob.filter.apply">Filter</button>
+      {% if can('prob_reports') %}<a class="btn btn-ghost" href="{{ url_for('probation.reports_csv', **filters) }}" data-i18n="prob.action.export">Export</a>{% endif %}
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-pad" style="padding:0">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="prob.field.case">Case</th>
+        <th data-i18n="prob.field.employee">Employee</th>
+        <th data-i18n="prob.field.department">Department</th>
+        <th data-i18n="prob.field.probation_end">Probation end</th>
+        <th data-i18n="prob.field.due">Due</th>
+        <th data-i18n="prob.field.status">Status</th>
+        <th data-i18n="prob.field.outcome">Outcome</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr onclick="location.href='{{ url_for('probation.case_detail', case_id=r.id) }}'" style="cursor:pointer">
+          <td class="mono">{{ r.case_no }}</td>
+          <td><b>{{ r.employee_name }}</b><div class="muted" style="font-size:11.5px">{{ r.employee_code }} · {{ r.designation or '' }}</div></td>
+          <td>{{ r.department or '—' }}<div class="muted" style="font-size:11.5px">{{ r.section or '' }}</div></td>
+          <td style="font-variant-numeric:tabular-nums">{{ r.probation_end_date or '—' }}</td>
+          <td>{{ daysleft(r.days_left) }}</td>
+          <td>{{ sbadge(r.status, Status) }}</td>
+          <td>{{ obadge(r.final_outcome, Outcome) }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="muted" style="text-align:center;padding:26px" data-i18n="prob.empty.cases">No probation cases match this view.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

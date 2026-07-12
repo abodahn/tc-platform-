@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Initiate Evaluation{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="prob.eyebrow">Human Resources · Probation Management</div>
+    <h1 data-i18n="prob.nav.initiate">Initiate evaluation</h1>
+    <div class="sub" data-i18n="prob.initiate.sub">Pick an employee to open a probation case and its evaluation.</div>
+  </div>
+  {% if can('prob_import') %}<a class="btn btn-ghost btn-sm" href="{{ url_for('probation.import_data') }}" data-i18n="prob.nav.import">Import roster</a>{% endif %}
+</div>
+
+<div class="panel">
+  <form method="get" class="panel-pad flex gap center wrap">
+    <input name="q" value="{{ q }}" placeholder="Search name or code" style="min-width:240px" data-i18n-ph="prob.filter.search">
+    <button class="btn btn-primary btn-sm" data-i18n="prob.filter.apply">Search</button>
+  </form>
+  <div class="panel-pad" style="padding-top:0">
+    <table class="tbl">
+      <thead><tr><th data-i18n="prob.field.code">Code</th><th data-i18n="prob.field.employee">Employee</th>
+        <th data-i18n="prob.field.department">Department</th><th data-i18n="prob.field.probation_end">Probation end</th><th></th></tr></thead>
+      <tbody>
+      {% for e in employees %}
+        <tr>
+          <td class="mono">{{ e.employee_code }}</td>
+          <td><b>{{ e.employee_name }}</b><div class="muted" style="font-size:11.5px">{{ e.designation or '' }}</div></td>
+          <td>{{ e.department or '—' }} <span class="muted">{{ e.section or '' }}</span></td>
+          <td style="font-variant-numeric:tabular-nums">{{ e.probation_end_date or '—' }}</td>
+          <td style="text-align:end">
+            <form method="post" action="{{ url_for('probation.case_new') }}" style="display:inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="employee_id" value="{{ e.id }}">
+              <button class="btn btn-primary btn-sm" data-i18n="prob.action.open_case">Open case</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:24px" data-i18n="prob.empty.employees">No employees found. Import the roster first.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

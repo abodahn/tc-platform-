@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Import Roster{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="prob.eyebrow">Human Resources · Probation Management</div>
+    <h1 data-i18n="prob.nav.import">Import employee roster</h1>
+    <div class="sub" data-i18n="prob.import.sub">Upload a .csv or .xlsx export. Matching is by employee code — re-importing updates, never duplicates.</div>
+  </div>
+</div>
+
+<div class="panel">
+  <form method="post" enctype="multipart/form-data" class="panel-pad flex gap center wrap">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="file" name="file" accept=".csv,.xlsx,.xlsm" required>
+    <button class="btn btn-primary" data-i18n="prob.action.import">Import</button>
+    <span class="muted" style="font-size:12px" data-i18n="prob.import.cols">Columns: employee_code, employee_name, department, section, designation, direct_manager, section_head, joining_date, probation_end_date (Arabic headers also recognised).</span>
+  </form>
+</div>
+
+{% if report %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="prob.import.result">Import result</h3></div>
+  <div class="panel-pad">
+    <div class="sf-kpis">
+      <div class="sf-kpi"><div class="v">{{ report.total }}</div><div class="l" data-i18n="prob.import.total">Rows</div></div>
+      <div class="sf-kpi pb-kpi-g"><div class="v">{{ report.created }}</div><div class="l" data-i18n="prob.import.created">Created</div></div>
+      <div class="sf-kpi pb-kpi-a"><div class="v">{{ report.updated }}</div><div class="l" data-i18n="prob.import.updated">Updated</div></div>
+      <div class="sf-kpi"><div class="v">{{ report.skipped }}</div><div class="l" data-i18n="prob.import.skipped">Skipped</div></div>
+      <div class="sf-kpi pb-kpi-r"><div class="v">{{ report.errors }}</div><div class="l" data-i18n="prob.import.errors">Errors</div></div>
+    </div>
+    {% if report.details %}
+    <table class="tbl mt-4">
+      <thead><tr><th data-i18n="prob.import.row">Row</th><th data-i18n="prob.field.status">Status</th><th data-i18n="prob.import.reason">Reason</th></tr></thead>
+      <tbody>{% for d in report.details[:50] %}<tr><td>{{ d.row }}</td>
+        <td><span class="pb-badge pb-{{ 'crit' if d.status=='error' else 'muted' }}">{{ d.status }}</span></td>
+        <td class="muted">{{ d.reason }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

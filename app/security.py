@@ -212,9 +212,12 @@ from app.maintenance.constants import (  # noqa: E402
     MAINT_PERMISSIONS, MAINT_ROLE_PERMS, MAINT_ROLE_LABELS)
 from app.approvals.constants import (  # noqa: E402
     PROC_PERMISSIONS, PROC_ROLE_PERMS, PROC_ROLE_LABELS)
+from app.probation.constants import (  # noqa: E402
+    HR_PERMISSIONS, HR_ROLE_PERMS, HR_ROLE_LABELS)
 
 _merge_module_rbac(MAINT_PERMISSIONS, MAINT_ROLE_PERMS, MAINT_ROLE_LABELS)
 _merge_module_rbac(PROC_PERMISSIONS, PROC_ROLE_PERMS, PROC_ROLE_LABELS)
+_merge_module_rbac(HR_PERMISSIONS, HR_ROLE_PERMS, HR_ROLE_LABELS)
 
 
 # --- Permission catalogue + built-in set (for the Admin -> Roles editor) ----
@@ -243,6 +246,12 @@ PERMISSION_LABELS = {
     "proc_approve": "Procurement: approve stages",
     "proc_purchasing": "Procurement: purchasing / PO / vendors",
     "proc_admin": "Procurement: admin (any stage, budgets)",
+    "prob_view": "Probation: view",
+    "prob_evaluate": "Probation: evaluate (manager)",
+    "prob_hr_review": "Probation: HR review & decision",
+    "prob_reports": "Probation: reports & export",
+    "prob_import": "Probation: import data",
+    "prob_admin": "Probation: admin (config, templates, reopen)",
 }
 
 
@@ -269,6 +278,12 @@ PERMISSION_DESC = {
     "proc_approve": "Approve/reject a stage you're eligible for.",
     "proc_purchasing": "Issue POs, manage vendors and quotes.",
     "proc_admin": "Act on any stage; manage budgets/matrix.",
+    "prob_view": "See probation dashboards and cases within your scope.",
+    "prob_evaluate": "Evaluate employees assigned to you (draft, submit, correct).",
+    "prob_hr_review": "Create/manage cases and take the final HR decision.",
+    "prob_reports": "View and export probation reports and analytics.",
+    "prob_import": "Import the employee roster or migrate legacy probation data.",
+    "prob_admin": "Configure templates, workflow and thresholds; reopen locked cases.",
 }
 
 
@@ -282,13 +297,15 @@ def permission_desc(p):
 
 def permission_catalogue():
     """Permissions grouped for the editor: {group: [(key, label, desc), ...]}."""
-    groups = {"Platform": [], "Maintenance": [], "Procurement": []}
+    groups = {"Platform": [], "Maintenance": [], "Procurement": [], "HR / Probation": []}
     for p in PERMISSIONS:
         entry = (p, permission_label(p), permission_desc(p))
         if p.startswith("maint_"):
             groups["Maintenance"].append(entry)
         elif p.startswith("proc_"):
             groups["Procurement"].append(entry)
+        elif p.startswith("prob_"):
+            groups["HR / Probation"].append(entry)
         else:
             groups["Platform"].append(entry)
     return groups

@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% from "probation/_macros.html" import sbadge, obadge, daysleft %}
+{% block title %}{{ case.case_no }} · {{ case.employee.employee_name }}{% endblock %}
+{% block content %}
+{% set ev = case.evaluation %}
+{% set editable = ev and ev.status in Status.EDITABLE_BY_EVALUATOR and can_evaluate %}
+{% set lang = (cu.lang_pref or 'en') %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow"><a href="{{ url_for('probation.cases') }}" data-i18n="prob.nav.cases">Probation Cases</a> · {{ case.case_no }}</div>
+    <h1>{{ case.employee.employee_name }}</h1>
+    <div class="sub flex gap center wrap">
+      {{ sbadge(case.status, Status) }}{{ obadge(case.final_outcome, Outcome) }}{{ daysleft(case.days_left) }}
+    </div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('probation.case_print', case_id=case.id) }}" target="_blank" data-i18n="prob.action.print">Print</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('probation.cases') }}" data-i18n="prob.action.back">Back</a>
+  </div>
+</div>
+
+{# ---- Employee context ---- #}
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="prob.section.profile">Employee profile</h3><span class="tag mono">{{ case.employee.employee_code }}</span></div>
+  <div class="panel-pad grid cols-4">
+    {% for label, val in [
+      ('prob.field.designation', case.employee.designation), ('prob.field.department', case.department),
+      ('prob.field.section', case.section), ('prob.field.manager', case.direct_manager),
+      ('prob.field.section_head', case.section_head), ('prob.field.hr_rep', case.hr_rep),
+      ('prob.field.joining', case.joining_date), ('prob.field.probation_end', case.probation_end_date) ] %}
+      <div><div class="muted" style="font-size:11.5px" data-i18n="{{ label }}">{{ label }}</div><b>{{ val or '—' }}</b></div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ---- Score summary ---- #}
+{% if ev %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="prob.section.score">Score summary</h3>
+    {% if ev.auto_recommendation %}<span class="pb-badge pb-{{ 'ok' if ev.auto_recommendation=='pass' else ('warn' if ev.auto_recommendation=='hr_review' else 'crit') }}"
+      data-i18n="{{ Recommendation.I18N.get(ev.auto_recommendation) }}">{{ Recommendation.LABEL_EN.get(ev.auto_recommendation) }}</span>{% endif %}</div>
+  <div class="panel-pad">
+    <div class="flex gap center" style="justify-content:space-between;margin-bottom:8px">
+      <div><b style="font-size:26px;font-variant-numeric:tabular-nums">{{ ev.percentage_score or 0 }}%</b>
+        <span class="muted">· {{ ev.total_score or 0 }} / {{ ev.max_score }}</span></div>
+    </div>
+    <div class="pb-meter"><span style="width:{{ ev.percentage_score or 0 }}%"></span></div>
+  </div>
+</div>
+{% endif %}
+
+{# ---- Evaluation form (editable) or read-only ---- #}
+{% if ev %}
+<form method="post" action="{{ url_for('probation.case_save', case_id=case.id) }}" id="evalForm">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  {% for catkey, cat in CATEGORIES.items() %}
+  <div class="panel mt-4">
+    <div class="panel-head"><h3 data-i18n="prob.cat.{{ catkey }}">{{ cat['label_' + lang] or cat.label_en }}</h3></div>
+    <div class="panel-pad">
+      {% for s in case.scores if s.category == catkey %}
+      <div class="pb-crit-row">
+        <div class="flex gap center wrap" style="justify-content:space-between">
+          <div style="flex:1;min-width:220px">
+            <b data-i18n="prob.crit.{{ s.criterion_key }}">{{ s['label_' + lang] or s.label_en }}</b>
+            <div class="muted" style="font-size:12px" data-i18n="prob.critdesc.{{ s.criterion_key }}"></div>
+          </div>
+          <div class="pb-scale">
+            {% for r in RATING_SCALE %}
+            <label title="{{ r[lang] or r.en }}">
+              <input type="radio" name="score_{{ s.criterion_key }}" value="{{ r.value }}" {{ 'checked' if s.score == r.value }} {{ 'disabled' if not editable }}>
+              <span class="chip">{{ r.value }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        {% if editable %}
+        <input name="notes_{{ s.criterion_key }}" value="{{ s.notes or '' }}" placeholder="Notes (required for score ≤ 2)" style="width:100%;margin-top:8px" data-i18n-ph="prob.form.note_ph">
+        {% elif s.notes %}<div class="muted" style="margin-top:6px;font-size:12.5px">📝 {{ s.notes }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+
+  {# HR / manager narrative + decision #}
+  <div class="panel mt-4">
+    <div class="panel-head"><h3 data-i18n="prob.section.summary">Manager summary</h3></div>
+    <div class="panel-pad grid cols-2">
+      <div class="field"><label data-i18n="prob.form.strengths">Strengths</label>
+        <textarea name="strengths" rows="2" {{ 'readonly' if not editable }}>{{ ev.strengths or '' }}</textarea></div>
+      <div class="field"><label data-i18n="prob.form.improvement">Improvement points</label>
+        <textarea name="improvement_points" rows="2" {{ 'readonly' if not editable }}>{{ ev.improvement_points or '' }}</textarea></div>
+      <div class="field"><label data-i18n="prob.form.training">Training needs</label>
+        <textarea name="training_needs" rows="2" {{ 'readonly' if not editable }}>{{ ev.training_needs or '' }}</textarea></div>
+      <div class="field"><label data-i18n="prob.form.recommendation">Final recommendation <span class="muted">*</span></label>
+        <select name="final_recommendation" {{ 'disabled' if not editable }}>
+          <option value="" data-i18n="prob.filter.all">— Select —</option>
+          {% for fr in final_recos %}<option value="{{ fr.key }}" {{ 'selected' if ev.final_recommendation==fr.key }}>{{ fr[lang] or fr.en }}</option>{% endfor %}
+        </select></div>
+      <div class="field span-2"><label data-i18n="prob.form.comments">Manager comments <span class="muted">*</span></label>
+        <textarea name="manager_comments" rows="3" {{ 'readonly' if not editable }}>{{ ev.manager_comments or '' }}</textarea></div>
+      <label class="flex gap center" style="grid-column:span 2"><input type="checkbox" name="employee_acknowledged" {{ 'checked' if ev.employee_acknowledged }} {{ 'disabled' if not editable }}>
+        <span data-i18n="prob.form.acknowledged">Employee acknowledged the evaluation</span></label>
+    </div>
+    {% if editable %}
+    <div class="panel-pad flex gap center wrap" style="padding-top:0">
+      <button class="btn btn-ghost" type="submit" data-i18n="prob.action.save_draft">Save draft</button>
+      <button class="btn btn-primary" type="submit" formaction="{{ url_for('probation.case_submit', case_id=case.id) }}"
+        onclick="return confirm('Submit this evaluation for review?')" data-i18n="prob.action.submit">Submit for review</button>
+    </div>
+    {% endif %}
+  </div>
+</form>
+{% endif %}
+
+{# ---- Two-level: manager forward ---- #}
+{% if ev and ev.status == Status.PENDING_MANAGER and can_evaluate %}
+<div class="panel mt-4"><div class="panel-pad">
+  <form method="post" action="{{ url_for('probation.case_forward', case_id=case.id) }}" class="flex gap center wrap">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input name="comment" placeholder="Comment (optional)" style="flex:1">
+    <button class="btn btn-primary" data-i18n="prob.action.forward">Forward to HR</button>
+  </form>
+</div></div>
+{% endif %}
+
+{# ---- HR decision ---- #}
+{% if is_hr and ev and ev.status == Status.PENDING_HR_REVIEW %}
+<div class="panel mt-4" style="border-color:var(--tc-red)">
+  <div class="panel-head"><h3 data-i18n="prob.section.hr_decision">HR review &amp; decision</h3></div>
+  <form method="post" action="{{ url_for('probation.case_decide', case_id=case.id) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-pad grid cols-2">
+      <div class="field"><label data-i18n="prob.form.outcome">Outcome</label>
+        <select name="final_outcome">
+          {% for o in Outcome.ALL %}<option value="{{ o }}" {{ 'selected' if ev.final_recommendation==o }} data-i18n="{{ Outcome.I18N[o] }}">{{ Outcome.LABEL_EN[o] }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="prob.form.override">Override justification <span class="muted" data-i18n="prob.form.if_changed">(if changing the recommendation)</span></label>
+        <input name="override_reason"></div>
+      <div class="field span-2"><label data-i18n="prob.form.reason">Reason <span class="muted" data-i18n="prob.form.reason_hint">(required to return or not-confirm)</span></label>
+        <input name="reason"></div>
+    </div>
+    <div class="panel-pad flex gap center wrap" style="padding-top:0">
+      <button class="btn btn-primary" name="decision" value="approve" onclick="return confirm('Approve and lock this evaluation?')" data-i18n="prob.action.approve">Approve</button>
+      <button class="btn btn-ghost" name="decision" value="return" data-i18n="prob.action.return">Return for correction</button>
+      <button class="btn btn-ghost" name="decision" value="reject" style="color:var(--crit)" onclick="return confirm('Record a NOT-CONFIRMED outcome?')" data-i18n="prob.action.not_confirm">Do not confirm</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+{# ---- HR tools: extend / reopen / cancel ---- #}
+{% if is_hr %}
+<div class="grid cols-3 mt-4">
+  <div class="panel"><div class="panel-pad">
+    <form method="post" action="{{ url_for('probation.case_extend', case_id=case.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <label class="muted" style="font-size:12px" data-i18n="prob.action.extend">Extend probation</label>
+      <input type="date" name="new_end_date" style="width:100%;margin:6px 0"><input name="reason" placeholder="Reason" style="width:100%;margin-bottom:6px">
+      <button class="btn btn-ghost btn-sm" data-i18n="prob.action.extend">Extend</button>
+    </form>
+  </div></div>
+  <div class="panel"><div class="panel-pad">
+    <form method="post" action="{{ url_for('probation.case_cancel', case_id=case.id) }}" onsubmit="return confirm('Cancel this probation case?')">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <label class="muted" style="font-size:12px" data-i18n="prob.action.cancel">Cancel case</label>
+      <input name="reason" placeholder="Reason" style="width:100%;margin:6px 0">
+      <button class="btn btn-ghost btn-sm" style="color:var(--crit)" data-i18n="prob.action.cancel">Cancel case</button>
+    </form>
+  </div></div>
+  {% if is_admin and case.status in Status.LOCKED %}
+  <div class="panel"><div class="panel-pad">
+    <form method="post" action="{{ url_for('probation.case_reopen', case_id=case.id) }}" onsubmit="return confirm('Reopen this locked case? This is audited.')">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <label class="muted" style="font-size:12px" data-i18n="prob.action.reopen">Reopen (admin)</label>
+      <input name="reason" placeholder="Reason (required)" required style="width:100%;margin:6px 0">
+      <button class="btn btn-ghost btn-sm" data-i18n="prob.action.reopen">Reopen</button>
+    </form>
+  </div></div>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ---- Timeline + comments ---- #}
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="prob.section.timeline">Workflow timeline</h3></div>
+    <div class="panel-pad">
+      <ul class="pb-timeline">
+        {% for a in case.actions %}
+        <li><b>{{ a.action_by_name or '—' }}</b> · <span class="muted">{{ a.created_at }}</span>
+          <div style="font-size:12.5px">{{ a.action_type|capitalize }}{% if a.to_status %} → {{ Status.LABEL_EN.get(a.to_status, a.to_status) }}{% endif %}{% if a.comment %} — {{ a.comment }}{% endif %}</div></li>
+        {% else %}<li class="muted" data-i18n="prob.empty.timeline">No activity yet.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="prob.section.comments">Comments</h3></div>
+    <div class="panel-pad">
+      <form method="post" action="{{ url_for('probation.case_comment', case_id=case.id) }}" style="margin-bottom:12px">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <textarea name="body" rows="2" placeholder="Add a comment…" style="width:100%" data-i18n-ph="prob.form.comment_ph"></textarea>
+        <div class="flex gap center" style="margin-top:6px">
+          {% if is_hr %}<label class="flex gap center" style="font-size:12px"><input type="checkbox" name="confidential"> <span data-i18n="prob.form.confidential">HR-only (confidential)</span></label>{% endif %}
+          <button class="btn btn-primary btn-sm" style="margin-inline-start:auto" data-i18n="prob.action.post">Post</button>
+        </div>
+      </form>
+      {% for c in case.comments %}
+      <div class="pb-crit-row" style="padding:9px 0">
+        <div class="flex gap center" style="justify-content:space-between">
+          <b style="font-size:13px">{{ c.author_name }}{% if c.is_confidential %} <span class="pb-badge pb-crit" data-i18n="prob.form.confidential">HR-only</span>{% endif %}</b>
+          <span class="muted" style="font-size:11.5px">{{ c.created_at }}</span>
+        </div>
+        <div style="font-size:13px;margin-top:3px">{{ c.body }}</div>
+      </div>
+      {% else %}<div class="muted" data-i18n="prob.empty.comments">No comments.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}
