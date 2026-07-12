@@ -11,6 +11,7 @@ from werkzeug.security import check_password_hash
 
 from app.db import get_db, log_audit
 from app.auth import current_user
+from app.accounts import services as svc
 
 bp = Blueprint("auth", __name__)
 
@@ -62,21 +63,34 @@ def login():
             flash("too_many_attempts", "error")
             return render_template("login.html", next=request.args.get("next", ""))
 
-        conn = get_db()
-        try:
-            row = conn.execute(
-                "SELECT * FROM users WHERE username = ? AND is_active = 1", (username,)
-            ).fetchone()
-        finally:
-            conn.close()
+        # Accept email OR username OR employee id (existing username logins unchanged).
+        row = svc.find_login_user(username)
 
         if row and check_password_hash(row["password_hash"], password):
+            # Correct password — but the account may not be allowed a session yet
+            # (unverified / pending approval / suspended / locked). Guide, don't grant.
+            reason = svc.login_block_reason(row)
+            if reason:
+                log_audit(username, "login_blocked", reason, request.remote_addr or "")
+                try:
+                    svc.audit("login_blocked", target_id=row["id"], target_ref=username, result=reason)
+                except Exception:  # noqa: BLE001
+                    pass
+                flash(reason, "error")
+                return render_template("login.html", next=request.args.get("next", ""),
+                                       blocked=reason, ident=username)
             _clear(key)
             session.clear()
             session.permanent = True
             session["uid"] = row["id"]
+            try:
+                ep = row["session_epoch"]
+            except Exception:  # noqa: BLE001
+                ep = 0
+            session["ep"] = ep if ep is not None else 0
             g.pop("user", None)
-            log_audit(username, "login", "Successful login", request.remote_addr or "")
+            svc.on_login_success(row["id"])
+            log_audit(row["username"], "login", "Successful login", request.remote_addr or "")
             # Only allow internal redirects
             if not nxt.startswith("/"):
                 nxt = url_for("main.dashboard")

@@ -85,7 +85,7 @@ def _pg_candidates():
 
 
 # Tables whose primary key is NOT `id` (so we never append RETURNING id).
-_NO_ID_TABLES = {"mnt_settings", "ai_system_settings", "prob_settings"}
+_NO_ID_TABLES = {"mnt_settings", "ai_system_settings", "prob_settings", "auth_settings"}
 
 
 def translate_ddl(sql, dialect):
@@ -710,6 +710,30 @@ def init_db():
             # HR org-scope for probation managers/section heads (match employee dept/section)
             ("scope_department", "ALTER TABLE users ADD COLUMN scope_department TEXT"),
             ("scope_section", "ALTER TABLE users ADD COLUMN scope_section TEXT"),
+            # Account management (self-registration, verification, approval lifecycle).
+            # account_status DEFAULTs to 'active' so every EXISTING user keeps logging in.
+            ("employee_id", "ALTER TABLE users ADD COLUMN employee_id TEXT"),
+            ("mobile", "ALTER TABLE users ADD COLUMN mobile TEXT"),
+            ("company", "ALTER TABLE users ADD COLUMN company TEXT"),
+            ("department", "ALTER TABLE users ADD COLUMN department TEXT"),
+            ("job_title", "ALTER TABLE users ADD COLUMN job_title TEXT"),
+            ("location", "ALTER TABLE users ADD COLUMN location TEXT"),
+            ("manager", "ALTER TABLE users ADD COLUMN manager TEXT"),
+            ("account_status", "ALTER TABLE users ADD COLUMN account_status TEXT DEFAULT 'active'"),
+            ("email_verified_at", "ALTER TABLE users ADD COLUMN email_verified_at TEXT"),
+            ("registration_source", "ALTER TABLE users ADD COLUMN registration_source TEXT"),
+            ("approved_by", "ALTER TABLE users ADD COLUMN approved_by TEXT"),
+            ("approved_at", "ALTER TABLE users ADD COLUMN approved_at TEXT"),
+            ("rejected_by", "ALTER TABLE users ADD COLUMN rejected_by TEXT"),
+            ("rejected_at", "ALTER TABLE users ADD COLUMN rejected_at TEXT"),
+            ("rejection_reason", "ALTER TABLE users ADD COLUMN rejection_reason TEXT"),
+            ("last_password_change_at", "ALTER TABLE users ADD COLUMN last_password_change_at TEXT"),
+            ("failed_login_count", "ALTER TABLE users ADD COLUMN failed_login_count INTEGER DEFAULT 0"),
+            ("locked_until", "ALTER TABLE users ADD COLUMN locked_until TEXT"),
+            ("last_login_at", "ALTER TABLE users ADD COLUMN last_login_at TEXT"),
+            ("terms_accepted_at", "ALTER TABLE users ADD COLUMN terms_accepted_at TEXT"),
+            ("privacy_accepted_at", "ALTER TABLE users ADD COLUMN privacy_accepted_at TEXT"),
+            ("session_epoch", "ALTER TABLE users ADD COLUMN session_epoch INTEGER DEFAULT 0"),
         ):
             try:
                 conn.execute(_ddl)
@@ -789,6 +813,12 @@ def init_db():
         try:
             from app.probation.schema import create_and_seed as _prob_create_and_seed
             _prob_create_and_seed(conn)
+        except Exception:
+            conn.rollback()
+        # Accounts (Auth & Account Management) — auth_* tables + settings + org options
+        try:
+            from app.accounts.schema import create_and_seed as _acc_create_and_seed
+            _acc_create_and_seed(conn)
         except Exception:
             conn.rollback()
         # Auto-provision a signature for every user who doesn't have one yet, so it

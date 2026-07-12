@@ -16,6 +16,8 @@ from app.security import (all_role_choices, ROLES, validate_password,
                           has_permission, role_label, PERMISSIONS,
                           effective_roles, refresh_db_roles, permission_catalogue,
                           BUILTIN_ROLE_KEYS)
+from app.accounts import services as accsvc
+from app.accounts.constants import AccountStatus
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -55,6 +57,119 @@ def index():
                            roles=all_role_choices(), counts=counts, active="admin",
                            roles_list=roles_list, perm_groups=permission_catalogue(),
                            audit_actions=audit_actions)
+
+
+# ==========================================================================
+# Account registration management (server-side authorised via users_* perms)
+# ==========================================================================
+@bp.route("/registrations")
+@permission_required("users_view")
+def registrations():
+    status = request.args.get("status") or None
+    q = request.args.get("q") or None
+    return render_template("admin_registrations.html", active="admin",
+                           rows=accsvc.list_registrations(status, q),
+                           counts=accsvc.status_counts(), status=status or "", q=q or "",
+                           AccountStatus=AccountStatus)
+
+
+@bp.route("/registrations/<int:uid>")
+@permission_required("users_view")
+def registration_detail(uid):
+    acc = accsvc.get_account(uid)
+    if not acc:
+        abort(404)
+    return render_template("admin_registration_detail.html", active="admin", acc=acc,
+                           history=accsvc.security_history(uid), roles=all_role_choices(),
+                           org=accsvc.org_options(), AccountStatus=AccountStatus)
+
+
+@bp.route("/registrations/<int:uid>/approve", methods=["POST"])
+@permission_required("users_approve")
+def registration_approve(uid):
+    f = request.form
+    ok, err = accsvc.approve(current_user(), uid, f.get("role"),
+                             f.get("scope_department") or None, f.get("scope_section") or None)
+    flash("Account approved and activated." if ok else f"Could not approve ({err}).",
+          "success" if ok else "error")
+    return redirect(url_for("admin.registration_detail", uid=uid))
+
+
+@bp.route("/registrations/<int:uid>/reject", methods=["POST"])
+@permission_required("users_reject")
+def registration_reject(uid):
+    ok, err = accsvc.reject(current_user(), uid, request.form.get("reason", ""))
+    flash("Registration rejected." if ok else "A reason is required to reject.",
+          "success" if ok else "error")
+    return redirect(url_for("admin.registration_detail", uid=uid))
+
+
+@bp.route("/registrations/<int:uid>/suspend", methods=["POST"])
+@permission_required("users_suspend")
+def registration_suspend(uid):
+    accsvc.suspend(current_user(), uid)
+    flash("Account suspended.", "success")
+    return redirect(url_for("admin.registration_detail", uid=uid))
+
+
+@bp.route("/registrations/<int:uid>/reactivate", methods=["POST"])
+@permission_required("users_suspend")
+def registration_reactivate(uid):
+    accsvc.reactivate(current_user(), uid)
+    flash("Account reactivated.", "success")
+    return redirect(url_for("admin.registration_detail", uid=uid))
+
+
+@bp.route("/registrations/<int:uid>/unlock", methods=["POST"])
+@permission_required("users_unlock")
+def registration_unlock(uid):
+    accsvc.unlock(current_user(), uid)
+    flash("Account unlocked.", "success")
+    return redirect(url_for("admin.registration_detail", uid=uid))
+
+
+@bp.route("/registrations/<int:uid>/reset", methods=["POST"])
+@permission_required("users_initiate_password_reset")
+def registration_reset(uid):
+    accsvc.admin_initiate_reset(current_user(), uid)
+    flash("Password-reset email sent to the user.", "success")
+    return redirect(url_for("admin.registration_detail", uid=uid))
+
+
+@bp.route("/registrations/<int:uid>/role", methods=["POST"])
+@permission_required("users_assign_role")
+def registration_role(uid):
+    f = request.form
+    ok, err = accsvc.assign_role(current_user(), uid, f.get("role"),
+                                 f.get("scope_department") or None, f.get("scope_section") or None)
+    flash("Role & scope updated." if ok else "Could not assign that role.",
+          "success" if ok else "error")
+    return redirect(url_for("admin.registration_detail", uid=uid))
+
+
+@bp.route("/registrations/export.csv")
+@permission_required("users_view")
+def registrations_export():
+    import io
+    import csv
+    from flask import Response
+    rows = accsvc.list_registrations(request.args.get("status") or None,
+                                     request.args.get("q") or None, 100000)
+
+    def cell(v):
+        s = "" if v is None else str(v)
+        return "'" + s if s[:1] in ("=", "+", "-", "@") else s
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Name", "Email", "Employee ID", "Company", "Department", "Job Title",
+                "Status", "Role", "Registered"])
+    for r in rows:
+        w.writerow([cell(r.get("full_name")), cell(r.get("email")), cell(r.get("employee_id")),
+                    cell(r.get("company")), cell(r.get("department")), cell(r.get("job_title")),
+                    cell(r.get("account_status")), cell(r.get("role")), cell(r.get("created_at"))])
+    return Response(buf.getvalue().encode("utf-8-sig"), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=registrations.csv"})
 
 
 @bp.route("/roles/save", methods=["POST"])

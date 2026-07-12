@@ -1,0 +1,65 @@
+{% extends "accounts/_auth_base.html" %}
+{% block title %}Reset Password{% endblock %}
+{% block auth %}
+{% if state == 'form' %}
+  <h2 data-i18n="acc.reset.title">Set a new password</h2>
+  <div class="muted" data-i18n="acc.reset.sub">Choose a strong password you haven’t used before.</div>
+  {% if errors %}
+  <div class="acc-alert crit" role="alert">
+    {% for e in errors %}<div data-i18n="{{ e }}"></div>{% endfor %}
+  </div>
+  {% endif %}
+  <form method="post" class="acc-form" id="resetForm" novalidate>
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="token" value="{{ token }}">
+    <div class="field">
+      <label data-i18n="acc.field.new_password">New password <span class="req">*</span></label>
+      <div class="acc-pw-wrap">
+        <input name="password" id="pw" type="password" autocomplete="new-password" required aria-describedby="pwlist">
+        <button type="button" class="acc-pw-toggle" data-pw-toggle="pw" aria-label="Show password">👁</button>
+      </div>
+      <div class="acc-caps" data-caps>⇪ <span data-i18n="acc.pw.caps">Caps Lock is on</span></div>
+      <div class="pw-meter" data-score="0"><i></i><i></i><i></i><i></i></div>
+      <div class="pw-strength" data-pw-strength data-i18n="acc.pw.very_weak">Very weak</div>
+      <ul class="pw-checklist" id="pwlist">
+        <li data-rule="len" data-i18n="acc.pw.rule_len">At least 12 characters</li>
+        <li data-rule="upper" data-i18n="acc.pw.rule_upper">An uppercase letter</li>
+        <li data-rule="lower" data-i18n="acc.pw.rule_lower">A lowercase letter</li>
+        <li data-rule="digit" data-i18n="acc.pw.rule_digit">A number</li>
+        <li data-rule="special" data-i18n="acc.pw.rule_special">A special character</li>
+      </ul>
+    </div>
+    <div class="field">
+      <label data-i18n="acc.field.confirm_password">Confirm password <span class="req">*</span></label>
+      <div class="acc-pw-wrap">
+        <input name="confirm_password" id="pw2" type="password" autocomplete="new-password" required>
+        <button type="button" class="acc-pw-toggle" data-pw-toggle="pw2" aria-label="Show password">👁</button>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-block" type="submit" data-submit style="height:46px;margin-top:6px">
+      <span data-i18n="acc.action.reset">Reset Password</span>
+    </button>
+  </form>
+{% elif state == 'done' %}
+  <div style="text-align:center">
+    <div class="acc-state-ico ok">✓</div>
+    <h2 data-i18n="acc.reset.done_title">Password updated</h2>
+    <p class="muted" data-i18n="acc.reset.done_sub">Your password has been changed and you’ve been signed out of other sessions. You can now sign in.</p>
+    <a class="btn btn-primary btn-block" href="{{ url_for('auth.login') }}" style="height:46px" data-i18n="acc.link.back_signin">Back to Sign In</a>
+  </div>
+{% else %}
+  <div style="text-align:center">
+    <div class="acc-state-ico crit">⚠</div>
+    <h2 data-i18n="acc.reset.bad_title">This link can’t be used</h2>
+    <p class="muted">
+      {% if state == 'expired' %}<span data-i18n="acc.reset.expired">This reset link has expired. Please request a new one.</span>
+      {% elif state == 'used' %}<span data-i18n="acc.reset.used">This reset link has already been used. Request a new one if you still need to change your password.</span>
+      {% else %}<span data-i18n="acc.reset.invalid">This reset link is invalid. Please request a new one.</span>{% endif %}
+    </p>
+    <div class="acc-links">
+      <a href="{{ url_for('accounts.forgot_password') }}" data-i18n="acc.action.send_reset">Send Reset Link</a>
+      <a href="{{ url_for('auth.login') }}" data-i18n="acc.link.back_signin">Back to Sign In</a>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

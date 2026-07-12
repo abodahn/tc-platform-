@@ -1,0 +1,43 @@
+{% extends "accounts/_auth_base.html" %}
+{% block title %}Verify Email{% endblock %}
+{% block auth %}
+{% set good = state in ('verify_active','verify_pending_approval','verify_already','resend_sent') %}
+{% if state == 'resend_form' %}
+  <h2 data-i18n="acc.verify.resend_title">Resend verification email</h2>
+  <div class="muted" data-i18n="acc.verify.resend_sub">Enter your work email and we’ll send a new verification link if your account still needs it.</div>
+  <form method="post" action="{{ url_for('accounts.resend_verification') }}" class="acc-form" id="resendForm">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="field">
+      <label data-i18n="acc.field.email">Work email</label>
+      <input name="identifier" type="email" autocomplete="email" autofocus required>
+    </div>
+    <button class="btn btn-primary btn-block" type="submit" data-submit style="height:46px" data-i18n="acc.action.resend">Resend verification</button>
+  </form>
+  <div class="acc-links"><a href="{{ url_for('auth.login') }}" data-i18n="acc.link.back_signin">Back to Sign In</a></div>
+{% else %}
+  <div style="text-align:center">
+    <div class="acc-state-ico {{ 'ok' if good else 'crit' }}">{{ '✓' if good else '⚠' }}</div>
+    <h2>
+      {% if state == 'verify_active' %}<span data-i18n="acc.verify.active_title">Email verified</span>
+      {% elif state == 'verify_pending_approval' %}<span data-i18n="acc.verify.pending_title">Email verified</span>
+      {% elif state == 'verify_already' %}<span data-i18n="acc.verify.already_title">Already verified</span>
+      {% elif state == 'resend_sent' %}<span data-i18n="acc.verify.resent_title">Verification sent</span>
+      {% else %}<span data-i18n="acc.verify.bad_title">Verification problem</span>{% endif %}
+    </h2>
+    <p class="muted">
+      {% if state == 'verify_active' %}<span data-i18n="acc.verify.active_sub">Your email is confirmed and your account is active. You can sign in.</span>
+      {% elif state == 'verify_pending_approval' %}<span data-i18n="acc.verify.pending_sub">Thanks — your email is confirmed. An administrator will review and approve your account, and you’ll be notified by email.</span>
+      {% elif state == 'verify_already' %}<span data-i18n="acc.verify.already_sub">This account is already verified. You can sign in.</span>
+      {% elif state == 'resend_sent' %}<span data-i18n="acc.verify.resent_sub">If your account still needs verification, a new link is on its way.</span>
+      {% elif state == 'verify_expired' %}<span data-i18n="acc.verify.expired_sub">This verification link has expired. Request a new one below.</span>
+      {% elif state == 'verify_used' %}<span data-i18n="acc.verify.used_sub">This verification link has already been used. If you haven’t verified yet, request a new one.</span>
+      {% else %}<span data-i18n="acc.verify.invalid_sub">This verification link is invalid. Request a new one below.</span>{% endif %}
+    </p>
+    <div class="acc-links">
+      {% if good %}<a href="{{ url_for('auth.login') }}" data-i18n="acc.link.back_signin">Back to Sign In</a>
+      {% else %}<a href="{{ url_for('accounts.resend_verification') }}" data-i18n="acc.action.resend">Resend verification</a>
+      <a href="{{ url_for('auth.login') }}" data-i18n="acc.link.back_signin">Back to Sign In</a>{% endif %}
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

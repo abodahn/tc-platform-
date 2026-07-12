@@ -88,6 +88,48 @@ def send_email_to(recipients, subject: str, body: str, attachments=None) -> bool
         return False
 
 
+def _safe_header(s):
+    """Strip CR/LF to prevent email-header injection; cap length."""
+    return " ".join(str(s or "").splitlines()).strip()[:200]
+
+
+def _html_to_text(html):
+    import re as _re
+    t = _re.sub(r"(?i)<br\s*/?>", "\n", html or "")
+    t = _re.sub(r"(?i)</p>", "\n\n", t)
+    t = _re.sub(r"<[^>]+>", "", t)
+    t = (t.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+           .replace("&nbsp;", " ").replace("&#39;", "'").replace("&quot;", '"'))
+    return _re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+def send_html_to(recipients, subject: str, html: str, text: str = None) -> bool:
+    """Send a branded HTML email (with a plain-text fallback) to specific recipients.
+    Reuses the platform SMTP config. Header-injection safe. No-op when SMTP isn't
+    configured. Never logs the body or any token/secret it may contain."""
+    recips = [r for r in (recipients or []) if r and "@" in r and "\n" not in r and "\r" not in r]
+    if not (Config.SMTP_HOST and recips):
+        log.info("EMAIL (skipped — SMTP not configured / no recipients): %s", _safe_header(subject))
+        return False
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = _safe_header(subject)
+        msg["From"] = Config.SMTP_FROM
+        msg["To"] = ", ".join(recips)
+        msg.set_content(text or _html_to_text(html))
+        msg.add_alternative(html, subtype="html")
+        with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as s:
+            if Config.SMTP_TLS:
+                s.starttls(context=ssl.create_default_context())
+            if Config.SMTP_USER:
+                s.login(Config.SMTP_USER, Config.SMTP_PASS)
+            s.send_message(msg)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("send_html_to failed: %s", exc)
+        return False
+
+
 def post_webhook(payload: dict) -> bool:
     """POST a JSON payload to the configured webhook (WhatsApp/Slack/Teams/n8n)."""
     if not Config.ALERT_WEBHOOK_URL:

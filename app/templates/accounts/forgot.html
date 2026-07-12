@@ -1,0 +1,29 @@
+{% extends "accounts/_auth_base.html" %}
+{% block title %}Forgot Password{% endblock %}
+{% block auth %}
+{% if sent %}
+  <div style="text-align:center">
+    <div class="acc-state-ico ok">✉</div>
+    <h2 data-i18n="acc.forgot.sent_title">Check your email</h2>
+    <p class="muted" data-i18n="acc.forgot.neutral">If an eligible account matches the information provided, password-reset instructions will be sent.</p>
+    <div class="acc-links"><a href="{{ url_for('auth.login') }}" data-i18n="acc.link.back_signin">Back to Sign In</a></div>
+  </div>
+{% else %}
+  <h2 data-i18n="acc.forgot.title">Forgot your password?</h2>
+  <div class="muted" data-i18n="acc.forgot.sub">Enter your work email or employee ID and we’ll send a reset link.</div>
+  <form method="post" class="acc-form" id="forgotForm">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="field">
+      <label data-i18n="acc.field.identifier">Work email or employee ID</label>
+      <input name="identifier" autocomplete="username" autofocus required>
+    </div>
+    <button class="btn btn-primary btn-block" type="submit" data-submit style="height:46px;margin-top:6px">
+      <span data-i18n="acc.action.send_reset">Send Reset Link</span>
+    </button>
+  </form>
+  <div class="acc-links">
+    <a href="{{ url_for('auth.login') }}" data-i18n="acc.link.back_signin">Back to Sign In</a>
+    <a href="{{ url_for('accounts.signup') }}" data-i18n="acc.action.create">Create Account</a>
+  </div>
+{% endif %}
+{% endblock %}

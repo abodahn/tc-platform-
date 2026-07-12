@@ -99,6 +99,7 @@ def create_app():
     from app.routes.intelligence import bp as intelligence_bp
     from app.routes.smartfactory import bp as smartfactory_bp
     from app.routes.probation import bp as probation_bp
+    from app.routes.accounts import bp as accounts_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -113,6 +114,7 @@ def create_app():
     app.register_blueprint(intelligence_bp)
     app.register_blueprint(smartfactory_bp)
     app.register_blueprint(probation_bp)
+    app.register_blueprint(accounts_bp)
 
     # --- Error handlers ---
     from flask import render_template

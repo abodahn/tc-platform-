@@ -214,10 +214,13 @@ from app.approvals.constants import (  # noqa: E402
     PROC_PERMISSIONS, PROC_ROLE_PERMS, PROC_ROLE_LABELS)
 from app.probation.constants import (  # noqa: E402
     HR_PERMISSIONS, HR_ROLE_PERMS, HR_ROLE_LABELS)
+from app.accounts.constants import (  # noqa: E402
+    USERS_PERMISSIONS, USERS_ROLE_PERMS, USERS_ROLE_LABELS)
 
 _merge_module_rbac(MAINT_PERMISSIONS, MAINT_ROLE_PERMS, MAINT_ROLE_LABELS)
 _merge_module_rbac(PROC_PERMISSIONS, PROC_ROLE_PERMS, PROC_ROLE_LABELS)
 _merge_module_rbac(HR_PERMISSIONS, HR_ROLE_PERMS, HR_ROLE_LABELS)
+_merge_module_rbac(USERS_PERMISSIONS, USERS_ROLE_PERMS, USERS_ROLE_LABELS)
 
 
 # --- Permission catalogue + built-in set (for the Admin -> Roles editor) ----
@@ -252,6 +255,15 @@ PERMISSION_LABELS = {
     "prob_reports": "Probation: reports & export",
     "prob_import": "Probation: import data",
     "prob_admin": "Probation: admin (config, templates, reopen)",
+    "users_view": "Accounts: view registrations",
+    "users_create": "Accounts: create users",
+    "users_approve": "Accounts: approve registrations",
+    "users_reject": "Accounts: reject registrations",
+    "users_suspend": "Accounts: suspend / reactivate",
+    "users_unlock": "Accounts: unlock",
+    "users_assign_role": "Accounts: assign role & scope",
+    "users_initiate_password_reset": "Accounts: initiate password reset",
+    "users_view_security_audit": "Accounts: view security audit",
 }
 
 
@@ -284,6 +296,15 @@ PERMISSION_DESC = {
     "prob_reports": "View and export probation reports and analytics.",
     "prob_import": "Import the employee roster or migrate legacy probation data.",
     "prob_admin": "Configure templates, workflow and thresholds; reopen locked cases.",
+    "users_view": "See pending registrations and account details.",
+    "users_create": "Create user accounts directly.",
+    "users_approve": "Approve a registration and assign a role/scope.",
+    "users_reject": "Reject a registration with a mandatory reason.",
+    "users_suspend": "Suspend or reactivate an account.",
+    "users_unlock": "Unlock a locked account.",
+    "users_assign_role": "Assign an authorised role and organisation scope.",
+    "users_initiate_password_reset": "Send a secure password-reset email.",
+    "users_view_security_audit": "View the account security audit trail.",
 }
 
 
@@ -297,7 +318,8 @@ def permission_desc(p):
 
 def permission_catalogue():
     """Permissions grouped for the editor: {group: [(key, label, desc), ...]}."""
-    groups = {"Platform": [], "Maintenance": [], "Procurement": [], "HR / Probation": []}
+    groups = {"Platform": [], "Maintenance": [], "Procurement": [],
+              "HR / Probation": [], "Accounts / Users": []}
     for p in PERMISSIONS:
         entry = (p, permission_label(p), permission_desc(p))
         if p.startswith("maint_"):
@@ -306,6 +328,8 @@ def permission_catalogue():
             groups["Procurement"].append(entry)
         elif p.startswith("prob_"):
             groups["HR / Probation"].append(entry)
+        elif p.startswith("users_"):
+            groups["Accounts / Users"].append(entry)
         else:
             groups["Platform"].append(entry)
     return groups

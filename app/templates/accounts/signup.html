@@ -1,0 +1,139 @@
+{% extends "accounts/_auth_base.html" %}
+{% block title %}Create Account{% endblock %}
+{% block auth %}
+{% if submitted %}
+  <div style="text-align:center">
+    <div class="acc-state-ico ok">✓</div>
+    <h2 data-i18n="acc.signup.done_title">Registration received</h2>
+    <p class="muted" data-i18n="acc.signup.done_sub">Please check your email to verify your address. Once verified, an administrator will review and approve your account.</p>
+    <div class="acc-links">
+      <a href="{{ url_for('auth.login') }}" data-i18n="acc.link.back_signin">Back to Sign In</a>
+      <a href="{{ url_for('accounts.resend_verification') }}" data-i18n="acc.link.resend">Resend verification</a>
+    </div>
+  </div>
+{% else %}
+  <h2 data-i18n="acc.signup.title">Create your account</h2>
+  <div class="muted" data-i18n="acc.signup.sub">Request access to the T&amp;C digital workplace.</div>
+
+  {% if errors %}
+  <div class="acc-alert crit" role="alert">
+    {% if errors._ %}<span data-i18n="{{ errors._ }}"></span>{% else %}<span data-i18n="acc.err.fix_below">Please correct the highlighted fields.</span>{% endif %}
+  </div>
+  {% endif %}
+
+  <form method="post" class="acc-form" autocomplete="on" novalidate id="signupForm">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="acc-grid">
+      <div class="field {{ 'has-error' if errors.first_name }}">
+        <label data-i18n="acc.field.first_name">First name <span class="req">*</span></label>
+        <input name="first_name" autocomplete="given-name" value="{{ values.first_name or '' }}" required>
+        {% if errors.first_name %}<span class="acc-err" data-i18n="{{ errors.first_name }}"></span>{% endif %}
+      </div>
+      <div class="field {{ 'has-error' if errors.last_name }}">
+        <label data-i18n="acc.field.last_name">Last name <span class="req">*</span></label>
+        <input name="last_name" autocomplete="family-name" value="{{ values.last_name or '' }}" required>
+        {% if errors.last_name %}<span class="acc-err" data-i18n="{{ errors.last_name }}"></span>{% endif %}
+      </div>
+    </div>
+    <div class="field {{ 'has-error' if errors.email }}">
+      <label data-i18n="acc.field.email">Work email <span class="req">*</span></label>
+      <input name="email" type="email" autocomplete="email" inputmode="email" value="{{ values.email or '' }}" required>
+      {% if errors.email %}<span class="acc-err" data-i18n="{{ errors.email }}"></span>{% endif %}
+    </div>
+    <div class="acc-grid">
+      <div class="field {{ 'has-error' if errors.employee_id }}">
+        <label data-i18n="acc.field.employee_id">Employee ID <span class="req">*</span></label>
+        <input name="employee_id" autocomplete="off" value="{{ values.employee_id or '' }}" required>
+        {% if errors.employee_id %}<span class="acc-err" data-i18n="{{ errors.employee_id }}"></span>{% endif %}
+      </div>
+      <div class="field {{ 'has-error' if errors.mobile }}">
+        <label data-i18n="acc.field.mobile">Mobile number</label>
+        <input name="mobile" type="tel" autocomplete="tel" inputmode="tel" placeholder="+20…" value="{{ values.mobile or '' }}">
+        {% if errors.mobile %}<span class="acc-err" data-i18n="{{ errors.mobile }}"></span>{% endif %}
+      </div>
+    </div>
+    <div class="field {{ 'has-error' if errors.company }}">
+      <label data-i18n="acc.field.company">Company / entity <span class="req">*</span></label>
+      <input name="company" list="dl-company" autocomplete="organization" value="{{ values.company or '' }}" required>
+      <datalist id="dl-company">{% for v in org.company %}<option value="{{ v }}">{% endfor %}</datalist>
+      {% if errors.company %}<span class="acc-err" data-i18n="{{ errors.company }}"></span>{% endif %}
+    </div>
+    <div class="acc-grid">
+      <div class="field {{ 'has-error' if errors.department }}">
+        <label data-i18n="acc.field.department">Department <span class="req">*</span></label>
+        <input name="department" list="dl-department" value="{{ values.department or '' }}" required>
+        <datalist id="dl-department">{% for v in org.department %}<option value="{{ v }}">{% endfor %}</datalist>
+        {% if errors.department %}<span class="acc-err" data-i18n="{{ errors.department }}"></span>{% endif %}
+      </div>
+      <div class="field {{ 'has-error' if errors.job_title }}">
+        <label data-i18n="acc.field.job_title">Job title <span class="req">*</span></label>
+        <input name="job_title" list="dl-jobtitle" autocomplete="organization-title" value="{{ values.job_title or '' }}" required>
+        <datalist id="dl-jobtitle">{% for v in org.job_title %}<option value="{{ v }}">{% endfor %}</datalist>
+        {% if errors.job_title %}<span class="acc-err" data-i18n="{{ errors.job_title }}"></span>{% endif %}
+      </div>
+    </div>
+    <div class="acc-grid">
+      <div class="field">
+        <label data-i18n="acc.field.location">Location / site</label>
+        <input name="location" list="dl-location" value="{{ values.location or '' }}">
+        <datalist id="dl-location">{% for v in org.location %}<option value="{{ v }}">{% endfor %}</datalist>
+      </div>
+      <div class="field">
+        <label data-i18n="acc.field.manager">Manager</label>
+        <input name="manager" list="dl-manager" value="{{ values.manager or '' }}">
+        <datalist id="dl-manager">{% for v in org.manager %}<option value="{{ v }}">{% endfor %}</datalist>
+      </div>
+    </div>
+    <div class="field">
+      <label data-i18n="acc.field.language">Preferred language</label>
+      <select name="preferred_language">
+        <option value="en" {{ 'selected' if values.preferred_language=='en' }}>English</option>
+        <option value="ar" {{ 'selected' if values.preferred_language=='ar' }}>العربية</option>
+        <option value="tr" {{ 'selected' if values.preferred_language=='tr' }}>Türkçe</option>
+      </select>
+    </div>
+
+    <div class="field {{ 'has-error' if errors.password }}">
+      <label data-i18n="acc.field.password">Password <span class="req">*</span></label>
+      <div class="acc-pw-wrap">
+        <input name="password" id="pw" type="password" autocomplete="new-password" required aria-describedby="pwlist">
+        <button type="button" class="acc-pw-toggle" data-pw-toggle="pw" aria-label="Show password">👁</button>
+      </div>
+      <div class="acc-caps" data-caps>⇪ <span data-i18n="acc.pw.caps">Caps Lock is on</span></div>
+      <div class="pw-meter" data-score="0"><i></i><i></i><i></i><i></i></div>
+      <div class="pw-strength" data-pw-strength data-i18n="acc.pw.very_weak">Very weak</div>
+      <ul class="pw-checklist" id="pwlist">
+        <li data-rule="len" data-i18n="acc.pw.rule_len">At least 12 characters</li>
+        <li data-rule="upper" data-i18n="acc.pw.rule_upper">An uppercase letter</li>
+        <li data-rule="lower" data-i18n="acc.pw.rule_lower">A lowercase letter</li>
+        <li data-rule="digit" data-i18n="acc.pw.rule_digit">A number</li>
+        <li data-rule="special" data-i18n="acc.pw.rule_special">A special character</li>
+      </ul>
+      {% if errors.password %}<span class="acc-err" data-i18n="{{ errors.password }}"></span>{% endif %}
+    </div>
+    <div class="field {{ 'has-error' if errors.confirm_password }}">
+      <label data-i18n="acc.field.confirm_password">Confirm password <span class="req">*</span></label>
+      <div class="acc-pw-wrap">
+        <input name="confirm_password" id="pw2" type="password" autocomplete="new-password" required>
+        <button type="button" class="acc-pw-toggle" data-pw-toggle="pw2" aria-label="Show password">👁</button>
+      </div>
+      {% if errors.confirm_password %}<span class="acc-err" data-i18n="{{ errors.confirm_password }}"></span>{% endif %}
+    </div>
+
+    <div class="acc-terms">
+      <label class="{{ 'has-error' if errors.accept_terms }}"><input type="checkbox" name="accept_terms" value="1" {{ 'checked' if values.accept_terms }} required>
+        <span data-i18n="acc.field.accept_terms">I accept the Terms of Use.</span></label>
+      <label class="{{ 'has-error' if errors.accept_privacy }}"><input type="checkbox" name="accept_privacy" value="1" {{ 'checked' if values.accept_privacy }} required>
+        <span data-i18n="acc.field.accept_privacy">I acknowledge the Privacy Notice.</span></label>
+    </div>
+
+    <button class="btn btn-primary btn-block" type="submit" data-submit style="height:46px;margin-top:10px">
+      <span data-i18n="acc.action.create">Create Account</span>
+    </button>
+  </form>
+
+  <div class="acc-links">
+    <a href="{{ url_for('auth.login') }}" data-i18n="acc.link.have_account">Already have an account? Sign in</a>
+  </div>
+{% endif %}
+{% endblock %}

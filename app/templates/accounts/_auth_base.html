@@ -1,17 +1,12 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="{{ (cu.lang_pref if cu else 'en') }}" data-theme="{{ (cu.theme_pref if cu else 'light') }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token }}">
-  <title>Sign in · TC Platform</title>
+  <title>{% block title %}Account{% endblock %} · TC Platform</title>
   <link rel="icon" href="{{ url_for('static', filename='img/favicon.png') }}">
-  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <meta name="theme-color" content="#07080b">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="TC Platform">
-  <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon-192.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   <script>
@@ -23,7 +18,6 @@
 </head>
 <body>
 <div id="tcbar" aria-hidden="true"></div>
-<script>(function(){var b=document.getElementById('tcbar');if(b)b.classList.add('run');})();</script>
 {% include "_icons.html" %}
 <div class="login-wrap">
 
@@ -36,7 +30,7 @@
     </div>
     <div class="la-mid">
       <h1 data-i18n="dash.hero_title">Unified Digital<br>Operations Platform</h1>
-      <p data-i18n="login.tagline">One ecosystem for IT, operations, finance and transformation.</p>
+      <p data-i18n="acc.tagline">Secure access to T&amp;C Garments’ unified digital workplace.</p>
       <div style="margin-top:26px">
         <div class="feat"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red-2)"><use href="#i-check"></use></svg><span data-i18n="login.f1">Unified executive command center</span></div>
         <div class="feat"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red-2)"><use href="#i-check"></use></svg><span data-i18n="login.f2">Service desk, assets, monitoring & work in one place</span></div>
@@ -58,48 +52,8 @@
         <div class="brand-logo"><img src="{{ url_for('static', filename=brand_logo) }}" alt="T&amp;C"></div>
         <div class="brand-text"><b style="color:var(--ink);font-size:17px">TC Platform</b><span data-i18n="app.subtitle">Digital Operations</span></div>
       </div>
-      <h2 data-i18n="login.welcome">Welcome back</h2>
-      <div class="muted" data-i18n="login.sub">Sign in to the T&amp;C Digital Operations Platform</div>
 
-      {% if blocked %}
-      <div class="acc-alert warn" role="alert" style="margin-bottom:14px">
-        <span data-i18n="{{ blocked }}"></span>
-        {% if blocked == 'acc.login.unverified' %}
-        <div style="margin-top:6px"><a href="{{ url_for('accounts.resend_verification') }}" style="color:var(--warn);font-weight:700" data-i18n="acc.action.resend">Resend verification</a></div>
-        {% endif %}
-      </div>
-      {% endif %}
-
-      <form method="post" action="{{ url_for('auth.login') }}">
-        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <input type="hidden" name="next" value="{{ next }}">
-        <div class="field">
-          <label data-i18n="login.identifier">Email or username</label>
-          <input name="username" autofocus autocomplete="username" value="{{ ident or '' }}" required>
-        </div>
-        <div class="field">
-          <label data-i18n="login.password">Password</label>
-          <div class="acc-pw-wrap">
-            <input name="password" id="pw" type="password" autocomplete="current-password" required>
-            <button type="button" class="acc-pw-toggle" data-pw-toggle="pw" aria-label="Show password">👁</button>
-          </div>
-          <div class="acc-caps" data-caps>⇪ <span data-i18n="acc.pw.caps">Caps Lock is on</span></div>
-        </div>
-        <button class="btn btn-primary btn-block" type="submit" data-submit style="height:46px;margin-top:6px">
-          <svg class="ico"><use href="#i-logout"></use></svg>
-          <span data-i18n="login.signin">Sign in</span>
-        </button>
-      </form>
-
-      <div class="acc-links">
-        <a href="{{ url_for('accounts.forgot_password') }}" data-i18n="acc.link.forgot">Forgot Password?</a>
-        <a href="{{ url_for('accounts.signup') }}" data-i18n="acc.action.create">Create Account</a>
-      </div>
-
-      <button type="button" id="pwaInstall" class="btn btn-ghost btn-block pwa-install" style="margin-top:16px">
-        <span style="font-size:18px;line-height:1">📲</span>
-        <span data-i18n="pwa.install">Install app</span>
-      </button>
+      {% block auth %}{% endblock %}
 
       <div class="flex center gap" style="justify-content:center;margin-top:18px">
         <div class="seg">
@@ -111,12 +65,8 @@
     </div>
   </div>
 </div>
-<script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
-  }
-</script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 <script src="{{ url_for('static', filename='js/accounts.js') }}"></script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

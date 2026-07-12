@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Account Registrations{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="acc.admin.eyebrow">Administration · Accounts</div>
+    <h1 data-i18n="acc.admin.title">Account Registrations</h1>
+    <div class="sub" data-i18n="acc.admin.sub">Review, approve and manage user registrations.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.registrations_export', status=status, q=q) }}" data-i18n="acc.admin.export">Export CSV</a>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ (counts.get('pending_verification',0) + counts.get('email_verified',0) + counts.get('pending_approval',0)) }}</div><div class="l" data-i18n="acc.admin.pending">Pending</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ counts.get('active',0) }}</div><div class="l" data-i18n="acc.status.active">Active</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ counts.get('suspended',0) + counts.get('locked',0) }}</div><div class="l" data-i18n="acc.admin.blocked">Suspended / Locked</div></div>
+  <div class="sf-kpi"><div class="v">{{ counts.get('rejected',0) }}</div><div class="l" data-i18n="acc.status.rejected">Rejected</div></div>
+</div>
+
+<div class="panel mt-4">
+  <form method="get" class="panel-pad flex gap center wrap">
+    <input name="q" value="{{ q }}" placeholder="Name, email, employee ID…" style="min-width:220px" data-i18n-ph="acc.admin.search">
+    <select name="status" onchange="this.form.submit()">
+      <option value="" data-i18n="acc.admin.pending">Pending</option>
+      <option value="all" {{ 'selected' if status=='all' }} data-i18n="acc.admin.all">All</option>
+      {% for s in AccountStatus.ALL %}<option value="{{ s }}" {{ 'selected' if status==s }} data-i18n="{{ AccountStatus.I18N[s] }}">{{ AccountStatus.LABEL_EN[s] }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-primary btn-sm" data-i18n="acc.admin.filter">Filter</button>
+  </form>
+  <div class="panel-pad" style="padding:0">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="acc.field.employee">User</th><th data-i18n="acc.field.email">Email</th>
+        <th data-i18n="acc.field.department">Department</th><th data-i18n="acc.admin.registered">Registered</th>
+        <th data-i18n="acc.field.status">Status</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr onclick="location.href='{{ url_for('admin.registration_detail', uid=r.id) }}'" style="cursor:pointer">
+          <td><b>{{ r.full_name or r.username }}</b><div class="muted" style="font-size:11.5px">{{ r.employee_id or '' }} · {{ r.company or '' }}</div></td>
+          <td class="mono" style="font-size:12px">{{ r.email or '—' }}</td>
+          <td>{{ r.department or '—' }}<div class="muted" style="font-size:11.5px">{{ r.job_title or '' }}</div></td>
+          <td class="mono" style="font-size:11.5px">{{ (r.created_at or '')[:16] }}</td>
+          <td><span class="pb-badge pb-{{ AccountStatus.TONE.get(r.account_status,'muted') }}" data-i18n="{{ AccountStatus.I18N.get(r.account_status, r.account_status) }}">{{ AccountStatus.LABEL_EN.get(r.account_status, r.account_status) }}</span></td>
+          <td style="text-align:end"><a class="btn btn-ghost btn-sm" href="{{ url_for('admin.registration_detail', uid=r.id) }}" data-i18n="acc.admin.review">Review</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="muted" style="text-align:center;padding:24px" data-i18n="acc.admin.empty">No registrations match this view.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

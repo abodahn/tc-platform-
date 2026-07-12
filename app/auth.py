@@ -22,7 +22,21 @@ def current_user():
         row = conn.execute("SELECT * FROM users WHERE id = ? AND is_active = 1", (uid,)).fetchone()
     finally:
         conn.close()
-    g.user = dict(row) if row else None
+    g.user = None
+    if row:
+        # Session-epoch guard: a password reset / suspend / admin action bumps the
+        # user's session_epoch, which ends their previously-issued sessions on the
+        # next request. Sessions issued before this feature have no "ep" (==0) and
+        # existing users default to session_epoch 0, so nobody is logged out on upgrade.
+        try:
+            row_ep = row["session_epoch"]
+        except Exception:  # noqa: BLE001
+            row_ep = 0
+        row_ep = row_ep if row_ep is not None else 0
+        if session.get("ep", 0) != row_ep:
+            session.clear()
+            return None
+        g.user = dict(row)
     return g.user
 
 

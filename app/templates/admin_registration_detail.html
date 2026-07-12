@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ acc.full_name or acc.username }}{% endblock %}
+{% block content %}
+{% set pending = acc.account_status in ('pending_verification','email_verified','pending_approval') %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow"><a href="{{ url_for('admin.registrations') }}" data-i18n="acc.admin.title">Account Registrations</a></div>
+    <h1>{{ acc.full_name or acc.username }}</h1>
+    <div class="sub"><span class="pb-badge pb-{{ AccountStatus.TONE.get(acc.account_status,'muted') }}" data-i18n="{{ AccountStatus.I18N.get(acc.account_status, acc.account_status) }}">{{ AccountStatus.LABEL_EN.get(acc.account_status, acc.account_status) }}</span></div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.registrations') }}" data-i18n="acc.action.back">Back</a>
+</div>
+
+<div class="grid cols-2">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="acc.admin.details">Registration details</h3></div>
+    <div class="panel-pad grid cols-2">
+      {% for label, val in [
+        ('acc.field.email', acc.email), ('acc.field.employee_id', acc.employee_id),
+        ('acc.field.mobile', acc.mobile), ('acc.field.company', acc.company),
+        ('acc.field.department', acc.department), ('acc.field.job_title', acc.job_title),
+        ('acc.field.location', acc.location), ('acc.field.manager', acc.manager),
+        ('acc.admin.source', acc.registration_source), ('acc.admin.registered', (acc.created_at or '')[:16]),
+        ('acc.admin.verified', (acc.email_verified_at or '—')[:16]), ('acc.admin.role', acc.role) ] %}
+      <div><div class="muted" style="font-size:11.5px" data-i18n="{{ label }}">{{ label }}</div><b>{{ val or '—' }}</b></div>
+      {% endfor %}
+      {% if acc.rejection_reason %}<div style="grid-column:span 2"><div class="muted" style="font-size:11.5px" data-i18n="acc.admin.reject_reason">Rejection reason</div><b style="color:var(--crit)">{{ acc.rejection_reason }}</b></div>{% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="acc.admin.actions">Actions</h3></div>
+    <div class="panel-pad">
+      {% if pending and can('users_approve') %}
+      <form method="post" action="{{ url_for('admin.registration_approve', uid=acc.id) }}" style="margin-bottom:14px">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <label class="muted" style="font-size:12px" data-i18n="acc.admin.approve_assign">Approve &amp; assign role</label>
+        <div class="grid cols-2" style="margin:6px 0">
+          <select name="role">{% for k,l in roles %}<option value="{{ k }}" {{ 'selected' if k==acc.role }}>{{ l }}</option>{% endfor %}</select>
+          <input name="scope_department" list="dl-dept" placeholder="Scope: department (optional)">
+        </div>
+        <input name="scope_section" list="dl-sec" placeholder="Scope: section (optional)" style="width:100%;margin-bottom:8px">
+        <datalist id="dl-dept">{% for v in org.department %}<option value="{{ v }}">{% endfor %}</datalist>
+        <datalist id="dl-sec">{% for v in org.location %}<option value="{{ v }}">{% endfor %}</datalist>
+        <button class="btn btn-primary btn-block" onclick="return confirm('Approve and activate this account?')" data-i18n="acc.admin.approve">Approve &amp; Activate</button>
+      </form>
+      {% endif %}
+
+      {% if pending and can('users_reject') %}
+      <form method="post" action="{{ url_for('admin.registration_reject', uid=acc.id) }}" style="margin-bottom:14px">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input name="reason" placeholder="Reason (required, shown to applicant)" required style="width:100%;margin-bottom:6px" data-i18n-ph="acc.admin.reason_ph">
+        <button class="btn btn-ghost btn-block" style="color:var(--crit)" data-i18n="acc.admin.reject">Reject</button>
+      </form>
+      {% endif %}
+
+      {% if not pending and can('users_assign_role') %}
+      <form method="post" action="{{ url_for('admin.registration_role', uid=acc.id) }}" style="margin-bottom:14px">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <label class="muted" style="font-size:12px" data-i18n="acc.admin.assign_role">Assign role &amp; scope</label>
+        <div class="grid cols-2" style="margin:6px 0">
+          <select name="role">{% for k,l in roles %}<option value="{{ k }}" {{ 'selected' if k==acc.role }}>{{ l }}</option>{% endfor %}</select>
+          <input name="scope_department" value="{{ acc.scope_department or '' }}" placeholder="Department">
+        </div>
+        <input name="scope_section" value="{{ acc.scope_section or '' }}" placeholder="Section" style="width:100%;margin-bottom:8px">
+        <button class="btn btn-primary btn-block" data-i18n="acc.admin.save_role">Save role &amp; scope</button>
+      </form>
+      {% endif %}
+
+      <div class="flex gap center wrap">
+        {% if can('users_suspend') and acc.account_status == 'active' %}
+        <form method="post" action="{{ url_for('admin.registration_suspend', uid=acc.id) }}" onsubmit="return confirm('Suspend this account? Their sessions end immediately.')">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn btn-ghost btn-sm" style="color:var(--crit)" data-i18n="acc.admin.suspend">Suspend</button></form>
+        {% endif %}
+        {% if can('users_suspend') and acc.account_status in ('suspended','archived') %}
+        <form method="post" action="{{ url_for('admin.registration_reactivate', uid=acc.id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn btn-ghost btn-sm" data-i18n="acc.admin.reactivate">Reactivate</button></form>
+        {% endif %}
+        {% if can('users_unlock') and (acc.account_status == 'locked' or acc.locked_until) %}
+        <form method="post" action="{{ url_for('admin.registration_unlock', uid=acc.id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn btn-ghost btn-sm" data-i18n="acc.admin.unlock">Unlock</button></form>
+        {% endif %}
+        {% if can('users_initiate_password_reset') and acc.email %}
+        <form method="post" action="{{ url_for('admin.registration_reset', uid=acc.id) }}" onsubmit="return confirm('Send a password-reset email to this user?')">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn btn-ghost btn-sm" data-i18n="acc.admin.send_reset">Send reset email</button></form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if can('users_view_security_audit') %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="acc.admin.history">Security history</h3><span class="tag">{{ history|length }}</span></div>
+  <div class="panel-pad" style="padding:0">
+    <table class="tbl">
+      <thead><tr><th data-i18n="acc.admin.when">When</th><th data-i18n="acc.admin.event">Event</th>
+        <th data-i18n="acc.admin.actor">By</th><th data-i18n="acc.admin.result">Result</th><th>IP</th></tr></thead>
+      <tbody>
+      {% for h in history %}
+        <tr><td class="mono" style="font-size:11.5px">{{ (h.created_at or '')[:19] }}</td>
+          <td><span class="tag">{{ h.event }}</span></td><td>{{ h.actor_name or '—' }}</td>
+          <td class="muted">{{ h.result or '' }}</td><td class="mono" style="font-size:11px">{{ h.ip or '' }}</td></tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:18px" data-i18n="acc.admin.no_history">No security events yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
