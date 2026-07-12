@@ -117,6 +117,10 @@ class Config:
         "assets": (os.getenv("TC_URL_ASSETS", "") or "").strip().rstrip("/"),
         "monitoring": (os.getenv("TC_URL_MONITORING", "") or "").strip().rstrip("/"),
         "commandtrack": (os.getenv("TC_URL_COMMANDTRACK", "") or "").strip().rstrip("/"),
+        # Standalone Probation Evaluation Platform (separate app on :5005). Set to
+        # its Cloudflare hostname (e.g. https://probation.tcgarments.com) so the
+        # cloud portal can reach it; blank keeps the LAN URL (http://<host>:5005).
+        "probation": (os.getenv("TC_URL_PROBATION", "") or "").strip().rstrip("/"),
     }
 
     # --- Observability & external alerting -------------------------------

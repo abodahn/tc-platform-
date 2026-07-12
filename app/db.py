@@ -509,6 +509,35 @@ def _seed_systems(conn):
         )
 
 
+def _ensure_extra_systems(conn):
+    """Idempotently register add-on standalone systems that were introduced after
+    the initial four (which only seed into an empty table). Runs on every boot,
+    INSERT OR IGNORE by key so it never disturbs an admin's later edits. Public
+    URLs are re-pointed from env (TC_URL_<KEY>) by apply_integration_overrides."""
+    host = Config.INTEGRATION_HOST
+    extra = [
+        # key, names(en/ar/tr), desc(en/ar/tr), category, port, health_path,
+        # icon, owner, criticality, integrated, order
+        ("probation",
+         "Probation Evaluation", "تقييم فترة الاختبار", "Deneme Süresi Değerlendirmesi",
+         "Standalone employee probation evaluation: cases, 8-criterion scoring, confirm/extend workflow.",
+         "تقييم فترة اختبار الموظفين المستقل: الحالات وتقييم 8 معايير وسير عمل التثبيت/التمديد.",
+         "Bağımsız çalışan deneme değerlendirmesi: 8 kriterli puanlama, onay/uzatma iş akışı.",
+         "hr", 5005, "/login", "users", "Human Resources", "high", 1, 45),
+    ]
+    for (key, name_en, name_ar, name_tr, desc_en, desc_ar, desc_tr, category,
+         port, health_path, icon, owner, criticality, integrated, order) in extra:
+        base_url = f"http://{host}:{port}" if port else None
+        health_url = (base_url + health_path) if (port and health_path) else None
+        conn.execute(
+            """INSERT OR IGNORE INTO systems
+               (key,name_en,name_ar,name_tr,desc_en,desc_ar,desc_tr,category,base_url,
+                health_url,port,icon,owner,criticality,is_integrated,sort_order)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (key, name_en, name_ar, name_tr, desc_en, desc_ar, desc_tr, category,
+             base_url, health_url, port, icon, owner, criticality, integrated, order))
+
+
 def _ensure_demo_users(conn):
     """Idempotently ensure the role/approver demo accounts exist (password
     DEMO_PASSWORD = Admin@1122). Runs on every init. Creates any missing account,
@@ -634,6 +663,7 @@ _INTEGRATION_ENDPOINTS = {
     "assets":       (5001, "/api/health"),
     "monitoring":   (5002, "/health"),
     "commandtrack": (5003, "/"),
+    "probation":    (5005, "/login"),
 }
 
 
@@ -770,6 +800,7 @@ def init_db():
         _ensure_demo_users(conn)
         if conn.execute("SELECT COUNT(*) AS c FROM systems").fetchone()["c"] == 0:
             _seed_systems(conn)
+        _ensure_extra_systems(conn)   # add-on standalone systems (idempotent, every boot)
         if conn.execute("SELECT COUNT(*) AS c FROM notifications").fetchone()["c"] == 0:
             _seed_notifications(conn)
         if conn.execute("SELECT COUNT(*) AS c FROM production_lines").fetchone()["c"] == 0:
