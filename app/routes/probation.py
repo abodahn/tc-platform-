@@ -106,6 +106,21 @@ def initiate():
                            q=request.args.get("q", ""))
 
 
+@bp.route("/initiate/open-cases", methods=["POST"])
+@login_required
+@permission_required("prob_hr_review")
+def open_cases_bulk():
+    """Open probation cases for the rostered employees who don't have one yet."""
+    only_in_prob = request.form.get("scope", "in_probation") != "all"
+    res = svc.bulk_open_cases(_u(), only_in_probation=only_in_prob)
+    if res["opened"]:
+        flash(f"Opened {res['opened']} probation case(s). "
+              f"{res['skipped_existing']} already had one.", "success")
+    else:
+        flash("No new cases to open — every eligible employee already has a case.", "info")
+    return redirect(url_for("probation.cases"))
+
+
 @bp.route("/cases/new", methods=["POST"])
 @login_required
 @permission_required("prob_hr_review")
@@ -331,8 +346,18 @@ def import_data():
             flash("Unsupported file. Upload a .csv or .xlsx exported from the HR sheet.", "error")
         else:
             report = svc.import_rows(rows, _u(), (request.files["file"].filename or "import"))
-            flash(f"Import done — created {report['created']}, updated {report['updated']}, "
-                  f"skipped {report['skipped']}, errors {report['errors']}.", "success")
+            msg = (f"Import done — created {report['created']}, updated {report['updated']}, "
+                   f"skipped {report['skipped']}, errors {report['errors']}.")
+            # Bridge the roster into live probation cases so the import "takes
+            # effect" on the dashboard. Default ON; opens a case for each imported
+            # employee still within their probation window (idempotent).
+            if request.form.get("open_cases", "1") not in ("", "0", "off", None):
+                res = svc.bulk_open_cases(_u(), only_in_probation=True)
+                report["cases_opened"] = res["opened"]
+                report["cases_considered"] = res["considered"]
+                if res["opened"]:
+                    msg += f" Opened {res['opened']} probation case(s)."
+            flash(msg, "success")
     return render_template("probation/import.html", active="prob_import", report=report)
 
 

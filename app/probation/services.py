@@ -335,6 +335,64 @@ def _create_eval(conn, case, template_id, user, emp):
     return ev["id"]
 
 
+def roster_without_case_count(only_in_probation=True):
+    """How many rostered employees have no active probation case yet."""
+    conn = get_db()
+    try:
+        sql = ("SELECT COUNT(*) c FROM prob_employees e WHERE e.is_deleted=0 AND e.active=1 "
+               "AND NOT EXISTS (SELECT 1 FROM prob_cases c WHERE c.employee_id=e.id "
+               "AND c.is_deleted=0 AND c.status NOT IN (?,?,?,?))")
+        params = [Status.APPROVED, Status.REJECTED, Status.CLOSED, Status.CANCELLED]
+        if only_in_probation:
+            sql += " AND e.probation_end_date IS NOT NULL AND e.probation_end_date >= ?"
+            params.append(_today())
+        return conn.execute(sql, params).fetchone()["c"]
+    finally:
+        conn.close()
+
+
+def bulk_open_cases(user, only_in_probation=True, codes=None):
+    """Open a probation case for every rostered employee that does not already
+    have an active one — the bridge that makes an imported roster "take effect"
+    (they show up on the dashboard and in Cases). `only_in_probation` limits to
+    employees whose probation end date is today or later; `codes` (optional)
+    limits to a set of employee_codes, e.g. a just-imported batch. Idempotent.
+    Returns {opened, skipped_existing, considered}."""
+    conn = get_db()
+    try:
+        sql = ("SELECT id, employee_code FROM prob_employees "
+               "WHERE is_deleted=0 AND active=1")
+        params = []
+        if only_in_probation:
+            sql += " AND probation_end_date IS NOT NULL AND probation_end_date >= ?"
+            params.append(_today())
+        emps = [dict(r) for r in conn.execute(sql, params).fetchall()]
+        cased = {r["employee_id"] for r in conn.execute(
+            "SELECT DISTINCT employee_id FROM prob_cases WHERE is_deleted=0 "
+            "AND status NOT IN (?,?,?,?)",
+            (Status.APPROVED, Status.REJECTED, Status.CLOSED, Status.CANCELLED)).fetchall()}
+    finally:
+        conn.close()
+    code_set = set(codes) if codes else None
+    considered = opened = skipped = 0
+    for e in emps:
+        if code_set is not None and e["employee_code"] not in code_set:
+            continue
+        considered += 1
+        if e["id"] in cased:
+            skipped += 1
+            continue
+        try:
+            cid, err = create_case(user, e["id"])
+            if cid and not err:
+                opened += 1
+            else:
+                skipped += 1
+        except Exception:  # noqa: BLE001 — never let one bad row abort the batch
+            skipped += 1
+    return {"opened": opened, "skipped_existing": skipped, "considered": considered}
+
+
 def list_cases(user, status=None, department=None, q=None, outcome=None, limit=1000):
     where, params = _scope_where(user, alias="c")
     sql = ("SELECT c.*, e.employee_name, e.employee_code, e.designation "
@@ -716,12 +774,20 @@ def dashboard(user):
     status_counts = {}
     for r in rows:
         status_counts[r["status"]] = status_counts.get(r["status"], 0) + 1
+    # Roster visibility: how many imported employees are still awaiting a case.
+    # Only meaningful for HR/admin, who can act on the whole roster.
+    roster_pending = 0
+    if is_hr(user) or is_admin(user):
+        try:
+            roster_pending = roster_without_case_count(only_in_probation=True)
+        except Exception:  # noqa: BLE001
+            roster_pending = 0
     return {
         "total_active": total_active, "due30": due30, "due7": due7, "overdue": overdue,
         "pending_mgr": pending_mgr, "pending_hr": pending_hr, "confirmed": confirmed,
         "extended": extended, "not_confirmed": not_confirmed, "completion": completion,
         "avg_score": avg, "by_dept": by_dept[:8], "status_counts": status_counts,
-        "total_cases": len(rows),
+        "total_cases": len(rows), "roster_pending": roster_pending,
     }
 
 

@@ -10,11 +10,17 @@
 </div>
 
 <div class="panel">
-  <form method="post" enctype="multipart/form-data" class="panel-pad flex gap center wrap">
+  <form method="post" enctype="multipart/form-data" class="panel-pad">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <input type="file" name="file" accept=".csv,.xlsx,.xlsm" required>
-    <button class="btn btn-primary" data-i18n="prob.action.import">Import</button>
-    <span class="muted" style="font-size:12px" data-i18n="prob.import.cols">Columns: employee_code, employee_name, department, section, designation, direct_manager, section_head, joining_date, probation_end_date (Arabic headers also recognised).</span>
+    <div class="flex gap center wrap">
+      <input type="file" name="file" accept=".csv,.xlsx,.xlsm" required>
+      <button class="btn btn-primary" data-i18n="prob.action.import">Import</button>
+    </div>
+    <label class="flex gap center mt-3" style="cursor:pointer;font-size:13px">
+      <input type="checkbox" name="open_cases" value="1" checked>
+      <span data-i18n="prob.import.open_cases">Open a probation case for each imported employee still in their probation period (so they appear on the dashboard).</span>
+    </label>
+    <div class="muted mt-2" style="font-size:12px" data-i18n="prob.import.cols">Columns: employee_code, employee_name, department, section, designation, direct_manager, section_head, joining_date, probation_end_date (Arabic headers also recognised).</div>
   </form>
 </div>
 
@@ -28,6 +34,9 @@
       <div class="sf-kpi pb-kpi-a"><div class="v">{{ report.updated }}</div><div class="l" data-i18n="prob.import.updated">Updated</div></div>
       <div class="sf-kpi"><div class="v">{{ report.skipped }}</div><div class="l" data-i18n="prob.import.skipped">Skipped</div></div>
       <div class="sf-kpi pb-kpi-r"><div class="v">{{ report.errors }}</div><div class="l" data-i18n="prob.import.errors">Errors</div></div>
+      {% if report.cases_opened is defined %}
+      <div class="sf-kpi pb-kpi-g"><div class="v">{{ report.cases_opened }}</div><div class="l" data-i18n="prob.import.cases_opened">Cases opened</div></div>
+      {% endif %}
     </div>
     {% if report.details %}
     <table class="tbl mt-4">

@@ -14,6 +14,25 @@
   </div>
 </div>
 
+{% if d.roster_pending and can('prob_hr_review') %}
+<div class="panel mt-2" style="border:1px solid var(--tc-red)">
+  <div class="panel-pad flex between center wrap gap">
+    <div class="flex gap center">
+      <svg class="ico" style="color:var(--tc-red);flex:none"><use href="#i-users"></use></svg>
+      <div>
+        <b>{{ d.roster_pending }}</b> <span data-i18n="prob.dash.roster_pending">employees are on the roster but have no probation case yet.</span>
+        <div class="muted" style="font-size:12px" data-i18n="prob.dash.roster_hint">These were imported but aren't tracked until a case is opened.</div>
+      </div>
+    </div>
+    <form method="post" action="{{ url_for('probation.open_cases_bulk') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="scope" value="in_probation">
+      <button class="btn btn-primary btn-sm" data-i18n="prob.action.open_cases">Open cases for them</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 <div class="sf-kpis">
   <div class="sf-kpi"><div class="v">{{ d.total_active }}</div><div class="l" data-i18n="prob.kpi.active">Active cases</div></div>
   <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.due30 }}</div><div class="l" data-i18n="prob.kpi.due30">Due in 30 days</div></div>
