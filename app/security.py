@@ -74,6 +74,14 @@ ROLES = {
         "label": "Normal User",
         "perms": ["view_dashboard", "open_module"],
     },
+    # ITSM-only account: can sign in and open the IT Service Desk, nothing more.
+    # Unlike normal_user (which the Procurement/Probation modules augment with
+    # their own view perms), this role is NOT listed in any module's RBAC merge,
+    # so it never gains procurement/probation/admin access — just the baseline.
+    "itsm_user": {
+        "label": "ITSM User",
+        "perms": ["view_dashboard", "open_module"],
+    },
 }
 
 DEFAULT_ROLE = "normal_user"
