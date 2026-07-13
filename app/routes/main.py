@@ -18,7 +18,7 @@ from config import Config
 from app.db import get_db, log_audit, utcnow
 from app.auth import login_required, permission_required, current_user, user_can
 from app.security import (has_permission, role_label, ROLES, validate_password,
-                          user_has_permission)
+                          user_has_permission, system_scope)
 from app.navigation import NAV
 from app.services import health as health_svc
 from app.services import seed_content as sc
@@ -80,6 +80,26 @@ def _brand_logo_file():
     return "img/logo-mark.svg"
 
 
+# Blueprints a scope-locked user may reach: infra + their own system's launch
+# goes through main/sso (self-gated). Feature blueprints are bounced. `api` and
+# `garamento` stay open so the global header polling / assistant widget keep
+# working on the pages they CAN see.
+_SCOPE_OK_BLUEPRINTS = {None, "main", "auth", "sso", "accounts", "api", "garamento"}
+
+
+@bp.before_app_request
+def _enforce_system_scope():
+    """Belt-and-suspenders for scope-locked roles (e.g. itsm_user): block every
+    out-of-scope feature blueprint outright, so a hand-typed URL like /bi or
+    /production can't bypass the hidden nav. Redirects them to their own system."""
+    scope = system_scope(current_user())
+    if scope is None:
+        return
+    if request.endpoint == "static" or request.blueprint in _SCOPE_OK_BLUEPRINTS:
+        return
+    return redirect(url_for("main.dashboard"))
+
+
 @bp.app_context_processor
 def inject_globals():
     user = current_user()
@@ -89,13 +109,19 @@ def inject_globals():
         notifs, unread = _unread_notifications(user["username"])
         from app.navigation import WIP_KEYS
         is_admin = user_has_permission(user, "access_admin")
+        scope = system_scope(user)   # None = unrestricted; a set = only those keys
+        if scope is not None:
+            # Scope-locked users only see bell alerts for their own system(s).
+            notifs = [n for n in notifs if not n["module"] or n["module"] in scope]
+            unread = sum(1 for n in notifs if not n["is_read"])
         for section in NAV:
             items = [it for it in section["items"]
-                     if user_has_permission(user, it[4]) and it[0] not in WIP_KEYS]
+                     if user_has_permission(user, it[4]) and it[0] not in WIP_KEYS
+                     and (scope is None or it[0] in scope)]
             if items:
                 visible_nav.append({"section": section["section"], "items": items})
         # Admins additionally see the not-yet-built modules under "In Progress".
-        if is_admin:
+        if is_admin and not scope:
             wip = [it for section in NAV for it in section["items"]
                    if user_has_permission(user, it[4]) and it[0] in WIP_KEYS]
             if wip:
@@ -119,6 +145,13 @@ def inject_globals():
 @bp.route("/")
 @login_required
 def dashboard():
+    # Scope-locked users (e.g. itsm_user) never see the command center — send
+    # them straight to their system (single scope) or the filtered launcher.
+    scope = system_scope(current_user())
+    if scope:
+        if len(scope) == 1:
+            return redirect(url_for("main.module", key=next(iter(scope))))
+        return redirect(url_for("main.launcher"))
     systems = _systems()
     statuses = health_svc.check_all(systems)
     sync_health_notifications(systems, statuses)
@@ -183,7 +216,8 @@ def dashboard():
 @bp.route("/launcher")
 @permission_required("open_module")
 def launcher():
-    systems = _systems()
+    scope = system_scope(current_user())
+    systems = [s for s in _systems() if scope is None or s["key"] in scope]
     statuses = health_svc.check_all(systems)
     return render_template("launcher.html", systems=systems, statuses=statuses,
                            active="launcher")
@@ -257,6 +291,10 @@ MODULE_TABLES = {
 @bp.route("/module/<key>")
 @permission_required("open_module")
 def module(key):
+    # Scope-locked users can only open their own system(s).
+    scope = system_scope(current_user())
+    if scope is not None and key not in scope:
+        abort(403)
     # Production Visibility, BI and Probation are real working modules with their
     # own blueprints — open them directly (fully online, no external host needed).
     if key == "production":
@@ -383,6 +421,8 @@ def roadmap():
 @bp.route("/registry")
 @permission_required("open_module")
 def registry():
+    if system_scope(current_user()) is not None:   # scope-locked roles can't see the cross-system registry
+        abort(403)
     from app.services.registry import fetch_registry
     data = fetch_registry(_systems())
     return render_template("registry.html", registry=data, active="registry")

@@ -75,16 +75,35 @@ ROLES = {
         "perms": ["view_dashboard", "open_module"],
     },
     # ITSM-only account: can sign in and open the IT Service Desk, nothing more.
-    # Unlike normal_user (which the Procurement/Probation modules augment with
-    # their own view perms), this role is NOT listed in any module's RBAC merge,
-    # so it never gains procurement/probation/admin access — just the baseline.
+    # Deliberately has NO view_dashboard (so the command center, AI Intelligence,
+    # Smart Factory and roadmap pages 403) and is scope-locked to the 'itsm'
+    # system via ROLE_SYSTEM_SCOPE below (so the nav, launcher and launch routes
+    # only ever expose ITSM). It gains nothing from any module's RBAC merge.
     "itsm_user": {
         "label": "ITSM User",
-        "perms": ["view_dashboard", "open_module"],
+        "perms": ["open_module"],
     },
 }
 
 DEFAULT_ROLE = "normal_user"
+
+# --- Per-role system scope --------------------------------------------------
+# Roles listed here may reach ONLY these system / nav keys, regardless of their
+# baseline open_module permission. Keys match navigation.py item keys AND
+# systems.key. A role absent here (value None) is unrestricted. Enforced in the
+# nav builder, the launcher, and the /module + /sso/launch routes.
+ROLE_SYSTEM_SCOPE = {
+    "itsm_user": {"itsm"},
+}
+
+
+def system_scope(user):
+    """Return the set of system/nav keys a scope-locked user may reach, or None
+    when the user is unrestricted (sees everything their perms allow)."""
+    if not user:
+        return None
+    return ROLE_SYSTEM_SCOPE.get(user.get("role"))
+
 
 # --- Password policy -------------------------------------------------------
 PASSWORD_MIN_LENGTH = 8

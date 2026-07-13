@@ -26,6 +26,7 @@ import urllib.parse
 from flask import Blueprint, redirect, request, abort
 
 from app.auth import login_required, current_user
+from app.security import system_scope
 from app.db import get_db, log_audit
 from app.services import sso as sso_lib
 from config import Config
@@ -64,6 +65,11 @@ def launch(key):
         abort(404)
 
     user = current_user()
+
+    # Scope-locked users (e.g. itsm_user) may only launch their own system(s).
+    scope = system_scope(user)
+    if scope is not None and key not in scope:
+        abort(403)
 
     # Graceful fallback — SSO off / secret unusable: just open the system as-is.
     if not Config.SSO_ENABLED:
