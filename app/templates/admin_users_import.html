@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Import Users{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">Admin Center · Users</div>
+    <h1>Import users from Excel / CSV</h1>
+    <div class="sub">Upload an address list (Display Name · Alias · Primary SMTP Address).
+      Matched by username — re-importing skips anyone who already exists.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.index') }}#users">Back to Admin</a>
+</div>
+
+<div class="panel">
+  <form method="post" enctype="multipart/form-data" class="panel-pad">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="grid cols-2" style="gap:16px">
+      <div class="field">
+        <label>File (.xlsx or .csv)</label>
+        <input type="file" name="file" accept=".xlsx,.xlsm,.csv" required>
+      </div>
+      <div class="field">
+        <label>Role for every imported user</label>
+        <select name="role">
+          {% for key, label in roles %}
+          <option value="{{ key }}" {{ 'selected' if key=='itsm_user' }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="field mt-2">
+      <label>Initial password</label>
+      <label class="flex gap center" style="cursor:pointer;font-weight:400;font-size:13.5px">
+        <input type="radio" name="pw_mode" value="random" checked>
+        <span>Generate a unique random password for each user (download a credentials sheet) — recommended</span>
+      </label>
+      <label class="flex gap center mt-1" style="cursor:pointer;font-weight:400;font-size:13.5px">
+        <input type="radio" name="pw_mode" value="shared">
+        <span>Use one shared starter password:</span>
+        <input name="shared_password" placeholder="e.g. TCitsm@2026" style="max-width:220px">
+      </label>
+      <div class="muted mt-1" style="font-size:12px">Users change their password after first login (Profile → Security).</div>
+    </div>
+    <div class="flex gap wrap mt-3">
+      <button class="btn btn-primary" type="submit">Import users</button>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3>Import result — role: <code>{{ result.role }}</code></h3></div>
+  <div class="panel-pad">
+    <div class="sf-kpis">
+      <div class="sf-kpi"><div class="v">{{ result.total }}</div><div class="l">In file</div></div>
+      <div class="sf-kpi pb-kpi-g"><div class="v">{{ result.created }}</div><div class="l">Created</div></div>
+      <div class="sf-kpi"><div class="v">{{ result.skipped }}</div><div class="l">Skipped (existed)</div></div>
+      <div class="sf-kpi pb-kpi-r"><div class="v">{{ result.errors }}</div><div class="l">Errors</div></div>
+    </div>
+    {% if result.cred_b64 %}
+    <div class="flex gap center wrap mt-4" style="background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:14px 16px">
+      <svg class="ico" style="color:var(--tc-red);flex:none"><use href="#i-shield"></use></svg>
+      <div style="flex:1;min-width:200px">
+        <b>{{ result.n_creds }} credentials generated.</b>
+        <div class="muted" style="font-size:12.5px">Download now and distribute privately — the passwords are not stored on the server.</div>
+      </div>
+      <a class="btn btn-primary btn-sm" download="itsm_users_credentials.csv"
+         href="data:text/csv;base64,{{ result.cred_b64 }}">Download credentials CSV</a>
+    </div>
+    {% elif result.shared %}
+    <div class="muted mt-3" style="font-size:13px">All new users share the starter password you entered — have them change it after first login.</div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

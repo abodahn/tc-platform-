@@ -52,7 +52,8 @@
 <section data-panel="users" id="users">
   {% if can('manage_users') %}
   <div class="panel accent" style="margin-bottom:18px">
-    <div class="panel-head"><h3 data-i18n="admin.add_user">Add user</h3></div>
+    <div class="panel-head"><h3 data-i18n="admin.add_user">Add user</h3>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.import_users') }}">⬆ Import from Excel / CSV</a></div>
     <form class="panel-pad" method="post" action="{{ url_for('admin.add_user') }}">
       <div class="grid cols-3">
         <div class="field"><label data-i18n="admin.username">Username</label><input name="username" required></div>

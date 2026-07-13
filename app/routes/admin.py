@@ -268,6 +268,134 @@ def add_user():
     return redirect(url_for("admin.index") + "#users")
 
 
+_UHDR = {
+    "username": ("alias", "username", "user name", "login", "samaccountname", "user id"),
+    "full_name": ("display name", "name", "full name", "displayname"),
+    "email": ("primary smtp address", "email", "e-mail", "mail", "smtp", "email address"),
+}
+
+
+def _parse_user_rows(fs):
+    """Parse an uploaded .xlsx/.csv address list into [{username, full_name, email}].
+    Tolerates a header row (Display Name / Alias / Primary SMTP Address, or common
+    equivalents) and reads every worksheet. Returns None if the file is unusable."""
+    name = (fs.filename or "").lower()
+    try:
+        if name.endswith((".xlsx", ".xlsm")):
+            from openpyxl import load_workbook
+            wb = load_workbook(fs, read_only=True, data_only=True)
+            grids = [list(ws.iter_rows(values_only=True)) for ws in wb.worksheets]
+        elif name.endswith(".csv"):
+            import csv as _csv
+            import io as _io
+            text = fs.read().decode("utf-8-sig", errors="replace")
+            grids = [[tuple(r) for r in _csv.reader(_io.StringIO(text))]]
+        else:
+            return None
+    except Exception:
+        return None
+    out = []
+    for grid in grids:
+        if not grid:
+            continue
+        hdr_i, cols = None, {}
+        for i, row in enumerate(grid[:6]):
+            cells = [("" if c is None else str(c)).strip().lower() for c in row]
+            found = {}
+            for field, names in _UHDR.items():
+                for j, c in enumerate(cells):
+                    if c in names:
+                        found[field] = j
+                        break
+            if "email" in found or "username" in found:
+                hdr_i, cols = i, found
+                break
+        if hdr_i is None:
+            continue
+        for row in grid[hdr_i + 1:]:
+            def cell(field):
+                j = cols.get(field)
+                return "" if (j is None or j >= len(row) or row[j] is None) else str(row[j]).strip()
+            email = cell("email")
+            username = (cell("username") or (email.split("@")[0] if email else "")).lower()
+            if username:
+                out.append({"username": username, "full_name": cell("full_name"), "email": email})
+    return out
+
+
+@bp.route("/users/import", methods=["GET", "POST"])
+@permission_required("manage_users")
+def import_users():
+    """Bulk-create users from an uploaded Excel/CSV (default role: itsm_user)."""
+    roles = all_role_choices()
+    valid_roles = {r[0] for r in roles} | set(ROLES.keys())
+    if request.method == "GET":
+        return render_template("admin_users_import.html", roles=roles, result=None, active="admin")
+
+    fs = request.files.get("file")
+    role = (request.form.get("role") or "itsm_user").strip()
+    mode = request.form.get("pw_mode") or "random"
+    shared = request.form.get("shared_password") or ""
+    if role not in valid_roles:
+        role = "itsm_user"
+    rows = _parse_user_rows(fs) if (fs and fs.filename) else None
+    if rows is None:
+        flash("Upload a .xlsx or .csv with Display Name / Alias / Primary SMTP Address columns.", "error")
+        return redirect(url_for("admin.import_users"))
+    if mode == "shared":
+        ok, msg = validate_password(shared)
+        if not ok:
+            flash(msg, "error")
+            return redirect(url_for("admin.import_users"))
+
+    import secrets as _secrets
+    import string as _string
+    import io as _io
+    import csv as _csv
+    import base64 as _b64
+    alphabet = _string.ascii_letters + _string.digits + "!@#$%*?"
+    now = utcnow()
+    created = skipped = errors = 0
+    creds, seen = [], set()
+    conn = get_db()
+    try:
+        for r in rows:
+            u = r["username"]
+            if u in seen:
+                continue
+            seen.add(u)
+            try:
+                if conn.execute("SELECT 1 FROM users WHERE username=?", (u,)).fetchone():
+                    skipped += 1
+                    continue
+                pw = shared if mode == "shared" else "".join(_secrets.choice(alphabet) for _ in range(12))
+                conn.execute(
+                    "INSERT INTO users (username,password_hash,full_name,email,role,created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (u, generate_password_hash(pw), r["full_name"] or u, r["email"], role, now))
+                created += 1
+                if mode != "shared":
+                    creds.append((u, r["full_name"], r["email"], pw))
+            except Exception:  # noqa: BLE001
+                errors += 1
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(current_user()["username"], "users_import",
+              f"Imported {created} users as {role} (skipped {skipped}, errors {errors})",
+              request.remote_addr or "")
+    cred_b64 = None
+    if creds:
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(["username", "full_name", "email", "temp_password"])
+        w.writerows(creds)
+        cred_b64 = _b64.b64encode(buf.getvalue().encode("utf-8-sig")).decode("ascii")
+    result = {"total": len(rows), "created": created, "skipped": skipped, "errors": errors,
+              "role": role, "cred_b64": cred_b64, "n_creds": len(creds), "shared": mode == "shared"}
+    return render_template("admin_users_import.html", roles=roles, result=result, active="admin")
+
+
 @bp.route("/users/<int:uid>/edit", methods=["POST"])
 @permission_required("manage_users")
 def edit_user(uid):
