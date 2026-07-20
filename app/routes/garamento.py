@@ -43,6 +43,9 @@ def market_research():
         unit=data.get("unit", ""),
         qty=data.get("qty", 1),
         currency=data.get("currency", "EGP"),
+        area=data.get("area", ""),
+        radius_km=data.get("radius_km"),
+        lang=data.get("lang", "en"),
     )
     status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
     return jsonify(result), status
@@ -55,7 +58,10 @@ def market_research_bulk():
     items = data.get("items") or []
     if not isinstance(items, list):
         items = []
-    result = g.market_research_bulk(items, currency=data.get("currency", "EGP"))
+    result = g.market_research_bulk(items, currency=data.get("currency", "EGP"),
+                                    area=data.get("area", ""),
+                                    radius_km=data.get("radius_km"),
+                                    lang=data.get("lang", "en"))
     status = 200 if result.get("ok") else (503 if result.get("offline") else 200)
     return jsonify(result), status
 

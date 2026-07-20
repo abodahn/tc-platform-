@@ -207,7 +207,10 @@ _ITEM_JSON_SHAPE = (
     '  "best_vendor": {"name": string, "reason": string} | null,\n'
     '  "note": string (caveats: unit conversion, outliers, currency conversion; "" if none),\n'
     '  "summary": string (<= 220 chars, friendly, at most one gentle Garamento pun),\n'
-    '  "sources": [ {"name": string, "price": string, "url": string} ]  // up to 4, best value first\n'
+    '  "sources": [ {"name": string, "price": string, "url": string} ],  // up to 4, best value first\n'
+    '  "local_suppliers": [ {"name": string, "area": string, "approx_km": number, '
+    '"price": string, "contact": string, "url": string} ],  // ONLY when a search area was given; [] otherwise\n'
+    '  "search_area": string  // "<area> +<radius>km" when a search area was given; "" otherwise\n'
     "}"
 )
 
@@ -289,6 +292,20 @@ def _normalize_price(data, item, unit, currency):
     if conf not in ("low", "medium", "high"):
         conf = "medium"
 
+    # Local-market results (area-scoped research): physical suppliers near the
+    # chosen area, each with an approximate distance inside the search radius.
+    local = []
+    for s in (data.get("local_suppliers") or [])[:5]:
+        if isinstance(s, dict) and s.get("name"):
+            local.append({
+                "name": str(s.get("name"))[:90],
+                "area": str(s.get("area") or "")[:90],
+                "approx_km": _num(s.get("approx_km")),
+                "price": str(s.get("price") or "")[:60],
+                "contact": str(s.get("contact") or s.get("phone_or_where") or "")[:120],
+                "url": str(s.get("url") or "")[:400],
+            })
+
     return {
         "ok": True,
         "item": str(data.get("item") or item)[:120],
@@ -303,7 +320,43 @@ def _normalize_price(data, item, unit, currency):
         "note": str(data.get("note") or "")[:240],
         "summary": str(data.get("summary") or "Approximate market estimate.")[:300],
         "sources": sources,
+        "local_suppliers": local,
+        "search_area": str(data.get("search_area") or "")[:120],
     }
+
+
+def _local_block(area, radius_km, lang="en"):
+    """Extra research instructions for area-scoped, local-market-first pricing.
+    Returned string is appended to the user prompt when an area is chosen."""
+    area = (area or "").strip()
+    if not area:
+        return ""
+    try:
+        r = max(0, min(30, int(float(radius_km or 30))))
+    except (TypeError, ValueError):
+        r = 30
+    lang_line = {"ar": "Write summary/note fields in Arabic.",
+                 "tr": "Write summary/note fields in Turkish."}.get(lang, "")
+    return (
+        f"\n\nLOCAL MARKET RESEARCH — MANDATORY:\n"
+        f"The buyer is located in: {area} (Egypt unless the area says otherwise). "
+        f"Search radius: {r} km around that area.\n"
+        f"1) Search DEEPLY for physical suppliers, dealers, wholesalers and industrial "
+        f"markets WITHIN {r} km of {area}: search in Arabic too "
+        f"(e.g. 'موردين', 'اسعار', 'سوق', 'تجار جملة' + the item + the area name), "
+        f"check local marketplaces (Dubizzle/OLX Egypt, Facebook marketplace listings), "
+        f"business directories (yellowpages.com.eg, dalilak), and the industrial zones "
+        f"near the area (e.g. El Obour industrial zone, 10th of Ramadan, Badr) when in range.\n"
+        f"2) Fill `local_suppliers` with up to 5 REAL nearby options: name, area/district, "
+        f"approx_km (your best estimate of distance from {area}, must be <= {r}), their "
+        f"price if quoted, and contact (phone / address / where to find them) when public. "
+        f"NEVER invent a supplier — if you cannot verify nearby options, return fewer or "
+        f"an empty list and say so in `note`.\n"
+        f"3) Local prices FIRST: when a local price within the radius exists, weight "
+        f"price_est toward it; use national/online B2B prices only as the fallback and "
+        f"comparison sources.\n"
+        f"4) Set `search_area` to \"{area} +{r}km\". {lang_line}"
+    )
 
 
 def _web_call(messages, extra_timeout=0):
@@ -326,8 +379,14 @@ def _web_call(messages, extra_timeout=0):
         return None, {"ok": False, "error": "unknown", "message": "Something snagged while researching. Try again?"}
 
 
-def market_research(item, description="", unit="", qty=1, currency="EGP"):
-    """Estimate a live market price for one procurement line item."""
+def market_research(item, description="", unit="", qty=1, currency="EGP",
+                    area="", radius_km=None, lang="en"):
+    """Estimate a live market price for one procurement line item.
+
+    When `area` is given the research is LOCAL-FIRST: physical suppliers within
+    `radius_km` (0-30) of the chosen area are searched deeply (Arabic sources
+    included) and returned in `local_suppliers`, with the estimate weighted
+    toward verified local prices."""
     item = (item or "").strip()
     if not item:
         return {"ok": False, "error": "no_item", "message": "Type an item name first, then I'll go price-hunting."}
@@ -337,11 +396,13 @@ def market_research(item, description="", unit="", qty=1, currency="EGP"):
     unit_hint = f" priced per {unit.strip()}" if unit else ""
     prompt = (
         f"Find the approximate current market price of: {item}{desc}{unit_hint}. "
-        f"Answer in {currency}. Typical order quantity: about {qty}.\n\n"
-        + _MARKET_SCHEMA_HINT
+        f"Answer in {currency}. Typical order quantity: about {qty}."
+        + _local_block(area, radius_km, lang)
+        + "\n\n" + _MARKET_SCHEMA_HINT
     )
     messages = [{"role": "system", "content": _MARKET_SYS}, {"role": "user", "content": prompt}]
-    text, err = _web_call(messages)
+    # area mode digs deeper (local + national + Arabic sources) -> bigger budget
+    text, err = _web_call(messages, extra_timeout=600 if (area or "").strip() else 0)
     if err:
         return err
 
@@ -354,11 +415,12 @@ def market_research(item, description="", unit="", qty=1, currency="EGP"):
     return result
 
 
-def market_research_bulk(items, currency="EGP"):
+def market_research_bulk(items, currency="EGP", area="", radius_km=None, lang="en"):
     """Price several line items in ONE web-search call.
 
     `items` is a list of {item, description, unit, qty}. Returns
     {ok, currency, results:[{index, ...price fields...} | {index, ok:False, item}]}.
+    `area`/`radius_km` switch on the local-market-first deep research.
     """
     currency = (currency or "EGP").strip().upper()
     clean = []
@@ -380,14 +442,15 @@ def market_research_bulk(items, currency="EGP"):
         lines.append(f'{c["index"]}. {c["item"]}{d}{u} — qty ~{c["qty"]}')
     prompt = (
         "Research the current approximate market price for EACH of these items and "
-        f"answer in {currency}:\n" + "\n".join(lines) + "\n\n"
+        f"answer in {currency}:\n" + "\n".join(lines)
+        + _local_block(area, radius_km, lang) + "\n\n"
         "Respond ONLY with JSON: { \"results\": [ ITEM_OBJECT, ... ] } where each "
         "ITEM_OBJECT has this exact shape AND an extra integer field \"index\" "
         "matching the item number above:\n" + _ITEM_JSON_SHAPE + "\n"
         "Return one object per requested item. Numbers must be plain (no symbols/separators)."
     )
     messages = [{"role": "system", "content": _MARKET_SYS}, {"role": "user", "content": prompt}]
-    text, err = _web_call(messages, extra_timeout=400)
+    text, err = _web_call(messages, extra_timeout=600 if (area or "").strip() else 400)
     if err:
         return err
 

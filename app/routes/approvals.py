@@ -131,9 +131,12 @@ def new():
 
 
 def _can_price():
-    """Only Purchasing (proc_purchasing) may set commercial values. Requesters
-    state WHAT they need; pricing is entered later, at the pricing gate."""
-    return user_can("proc_purchasing")
+    """NOBODY prices a request at creation/edit time — not Purchasing, not even
+    a super admin. A requester states WHAT they need; the commercial value
+    enters the system exactly once, at the Purchasing pricing gate
+    (svc.price_pr), where the RFQ rule and the value ladder are enforced.
+    Hardcoded False on purpose: this is a governance rule, not a permission."""
+    return False
 
 
 def _parse_header(f, can_price=False):

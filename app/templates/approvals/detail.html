@@ -129,6 +129,16 @@
   <div class="panel-head"><h3>🔎 <span data-i18n="proc.pricing_gate">Purchasing — enter pricing</span></h3>
     <span class="muted" style="font-size:12px" data-i18n="proc.pricing_gate_hint">This request carries no commercial value yet. Enter the unit prices — the value-based Finance / CFO / CEO approvals are added automatically from the total.</span></div>
   <div class="panel-pad">
+    {# Local-market research controls: pick the buyer's area + radius (0-30 km);
+       the 🔎 buttons research suppliers near that area FIRST, then national. #}
+    <div class="grid cols-3" style="align-items:end;margin-bottom:10px">
+      <div class="field"><label data-i18n="mr.area">Search area</label>
+        <input id="mrArea" placeholder="e.g. El Obour, Cairo" autocomplete="off"></div>
+      <div class="field"><label><span data-i18n="mr.radius">Radius</span> (0–30 <span data-i18n="mr.km">km</span>)</label>
+        <input id="mrRadius" type="number" min="0" max="30" step="1" value="30" style="max-width:110px"></div>
+      <div class="muted" style="font-size:12px;padding-bottom:8px" data-i18n="mr.local_hint">
+        Local market first: research prioritises suppliers inside your radius, then national / online options.</div>
+    </div>
     <form method="post" action="{{ url_for('approvals.price', pr_id=pr.id) }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <div style="overflow-x:auto">
@@ -144,8 +154,18 @@
             <td><div style="font-weight:600">{{ it.item }}</div>
                 <div class="muted" style="font-size:12px">{{ it.description }}</div></td>
             <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}</td>
-            <td><input type="number" name="price_{{ it.id }}" min="0" step="any"
-                       value="{{ '%g'|format(it.unit_price or 0) }}" style="max-width:150px"></td>
+            <td>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="number" name="price_{{ it.id }}" id="price_{{ it.id }}" min="0" step="any"
+                       value="{{ '%g'|format(it.unit_price or 0) }}" style="max-width:150px">
+                <button type="button" class="btn btn-ghost btn-sm mr-btn" title="Market price research"
+                        data-target="price_{{ it.id }}" data-item="{{ it.item }}"
+                        data-desc="{{ it.description or '' }}" data-unit="{{ it.unit or '' }}"
+                        data-qty="{{ '%g'|format(it.qty or 1) }}">🔎</button>
+              </div>
+              <div class="mr-out muted" id="mrout_price_{{ it.id }}"
+                   style="display:none;font-size:12px;margin-top:6px;max-width:420px"></div>
+            </td>
           </tr>
         {% endfor %}
         </tbody>
@@ -169,6 +189,81 @@
     </form>
   </div>
 </div>
+<script>
+(function () {
+  // Local-market price research at the pricing gate. Area + radius persist in
+  // localStorage so Purchasing sets them once ("which area I chose").
+  var areaEl = document.getElementById("mrArea");
+  var radEl = document.getElementById("mrRadius");
+  if (!areaEl) return;
+  areaEl.value = localStorage.getItem("tc_mr_area") || "El Obour, Cairo";
+  radEl.value = localStorage.getItem("tc_mr_radius") || "30";
+  areaEl.addEventListener("change", function () { localStorage.setItem("tc_mr_area", areaEl.value); });
+  radEl.addEventListener("change", function () {
+    var v = Math.max(0, Math.min(30, parseInt(radEl.value || "30", 10) || 30));
+    radEl.value = v; localStorage.setItem("tc_mr_radius", String(v));
+  });
+  var esc = function (s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  };
+  function render(out, r, targetId) {
+    if (!r || r.ok === false) {
+      out.innerHTML = "⚠️ " + esc((r && r.message) || "Research failed — try again.");
+      return;
+    }
+    var cur = esc(r.currency || "EGP");
+    var h = "<div><b>" + esc(r.price_est) + " " + cur + "</b>";
+    if (r.price_low != null && r.price_high != null)
+      h += " <span>(" + esc(r.price_low) + " – " + esc(r.price_high) + ")</span>";
+    h += " · " + esc(r.confidence || "") +
+         " <button type='button' class='btn btn-ghost btn-sm mr-use' data-t='" + targetId +
+         "' data-v='" + esc(r.price_est) + "'>✔ <span data-i18n='mr.use'>Use this price</span></button></div>";
+    if (r.search_area) h += "<div>📍 " + esc(r.search_area) + "</div>";
+    if (r.local_suppliers && r.local_suppliers.length) {
+      h += "<div style='margin-top:4px'><b data-i18n='mr.local'>Nearby suppliers</b>:</div>";
+      r.local_suppliers.forEach(function (s) {
+        h += "<div>• " + esc(s.name) + (s.area ? " — " + esc(s.area) : "") +
+             (s.approx_km != null ? " (~" + esc(s.approx_km) + " km)" : "") +
+             (s.price ? " · " + esc(s.price) : "") +
+             (s.contact ? " · " + esc(s.contact) : "") + "</div>";
+      });
+    }
+    if (r.summary) h += "<div style='margin-top:4px'>" + esc(r.summary) + "</div>";
+    out.innerHTML = h;
+  }
+  document.querySelectorAll(".mr-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var out = document.getElementById("mrout_" + btn.dataset.target);
+      out.style.display = "block";
+      out.textContent = "🔎 Researching the local market…";
+      btn.disabled = true;
+      fetch("{{ url_for('garamento.market_research') }}", {
+        method: "POST",
+        headers: {"Content-Type": "application/json",
+                  "X-CSRF-Token": "{{ csrf_token }}"},
+        body: JSON.stringify({
+          item: btn.dataset.item, description: btn.dataset.desc,
+          unit: btn.dataset.unit, qty: btn.dataset.qty,
+          currency: document.querySelector("select[name=currency]").value || "EGP",
+          area: areaEl.value.trim(), radius_km: radEl.value,
+          lang: document.documentElement.lang || "en"
+        })
+      }).then(function (r) { return r.json(); })
+        .then(function (r) { render(out, r, btn.dataset.target); })
+        .catch(function () { out.textContent = "⚠️ Network error — try again."; })
+        .finally(function () { btn.disabled = false; });
+    });
+  });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".mr-use");
+    if (!b) return;
+    var input = document.getElementById(b.dataset.t);
+    if (input) { input.value = b.dataset.v; input.focus(); }
+  });
+})();
+</script>
 {% endif %}
 
 <!-- Foreign currency: EGP-equivalent threshold routing -->
