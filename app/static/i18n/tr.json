@@ -1088,6 +1088,7 @@
   "proc.attach": "Ekle",
   "proc.attach_h": "Ekler",
   "proc.attach_hint": "Teklifler, teknik özellikler veya çizimler — PDF, görsel, Excel veya CSV, her biri en fazla 3 MB.",
+  "proc.audit_baseline": "2026-07-21",
   "proc.avg_cycle": "Ort. onay süresi (gün)",
   "proc.avg_hours": "Ort. işlem saati",
   "proc.awaiting": "Bekliyor",

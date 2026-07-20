@@ -229,7 +229,7 @@ def edit_save(pr_id):
     if not header["title"] or not items:
         flash("A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.edit", pr_id=pr_id))
-    ok, msg = svc.update_pr(pr_id, header, items, _u(), ip=_ip())
+    ok, msg = svc.update_pr(pr_id, header, items, _u(), ip=_ip(), can_price=can_price)
     if not ok:
         flash(f"Could not save ({msg}).", "error")
         return redirect(url_for("approvals.edit", pr_id=pr_id))
@@ -498,6 +498,12 @@ def price(pr_id):
 @login_required
 @permission_required("proc_create")
 def submit(pr_id):
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    # only the owner (or an admin) may put a request into circulation
+    if bundle["pr"]["requester"] != (_u() or {}).get("username") and not user_can("proc_admin"):
+        abort(403)
     ok, msg = svc.submit_pr(pr_id, _u(), ip=_ip())
     flash("Submitted for approval." if ok else f"Could not submit ({msg}).",
           "success" if ok else "error")
@@ -508,8 +514,11 @@ def submit(pr_id):
 @login_required
 @permission_required("proc_purchasing")
 def issue_po(pr_id):
-    ok, res = svc.issue_po(pr_id, _u(), ip=_ip())
-    flash(f"Purchase Order {res} issued." if ok else f"Could not issue PO ({res}).",
+    ok, res = svc.issue_po(pr_id, _u(), ip=_ip(), force=user_can("proc_admin"))
+    flash(f"Purchase Order {res} issued." if ok else
+          {"over_budget": "The department budget for this period is exceeded — "
+                          "an administrator must issue this PO (or raise the budget).",
+           }.get(res, f"Could not issue PO ({res})."),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
@@ -577,11 +586,15 @@ def add_invoice(pr_id):
             return redirect(url_for("approvals.detail", pr_id=pr_id))
         fn, ct, b64 = file.filename, (file.mimetype or "application/octet-stream"), \
             base64.b64encode(raw).decode("ascii")
-    svc.add_invoice(pr_id, {
+    ok, msg = svc.add_invoice(pr_id, {
         "invoice_no": f.get("invoice_no", "").strip(), "invoice_date": f.get("invoice_date", "").strip(),
         "amount": f.get("amount"), "tax": f.get("tax"), "notes": f.get("notes", "").strip(),
     }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
-    flash("Invoice recorded and matched.", "success")
+    flash("Invoice recorded and matched." if ok else
+          {"not_invoicable": "Invoices can be recorded once the request is approved / ordered.",
+           "duplicate_invoice": "An invoice with this number is already recorded on this request.",
+           }.get(msg, f"Could not record invoice ({msg})."),
+          "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -611,8 +624,15 @@ def add_payment(pr_id):
         "amount": f.get("amount"), "method": f.get("method", "").strip(),
         "reference": f.get("reference", "").strip(), "paid_at": f.get("paid_at", "").strip(),
         "invoice_id": f.get("invoice_id"), "notes": f.get("notes", "").strip(),
-    }, _u(), ip=_ip())
-    flash(f"Payment recorded ({res})." if ok else f"Could not record payment ({res}).",
+    }, _u(), ip=_ip(), force=user_can("proc_admin"))
+    flash(f"Payment recorded ({res})." if ok else
+          {"not_payable": "Payments start once the Purchase Order is issued.",
+           "match_blocked": "Payment blocked: the 3-way match shows over-billing "
+                            "(invoice exceeds the PO or the received value). Resolve "
+                            "the mismatch first — an administrator can override.",
+           "over_payment": "This payment would exceed the PO total. Check the amount — "
+                           "an administrator can override if intentional.",
+           }.get(res, f"Could not record payment ({res})."),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
@@ -631,8 +651,14 @@ def close(pr_id):
 @login_required
 @permission_required("proc_create")
 def cancel(pr_id):
-    ok, msg = svc.cancel_pr(pr_id, _u(), ip=_ip())
-    flash("Request cancelled." if ok else f"Could not cancel ({msg}).",
+    ok, msg = svc.cancel_pr(pr_id, _u(), ip=_ip(),
+                            is_purchasing=user_can("proc_purchasing"),
+                            is_admin=user_can("proc_admin"))
+    flash("Request cancelled." if ok else
+          {"forbidden": "Only the requester (or Purchasing/an admin) can cancel this request.",
+           "needs_admin": "This request is already approved — only an administrator can cancel it.",
+           "already_received": "Goods were already received against this order — close it instead of cancelling.",
+           }.get(msg, f"Could not cancel ({msg})."),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 

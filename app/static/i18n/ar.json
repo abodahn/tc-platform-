@@ -1088,6 +1088,7 @@
   "proc.attach": "إرفاق",
   "proc.attach_h": "المرفقات",
   "proc.attach_hint": "عروض الأسعار أو المواصفات أو الرسومات — PDF أو صورة أو Excel أو CSV، حتى 3 ميجابايت لكل ملف.",
+  "proc.audit_baseline": "2026-07-21",
   "proc.avg_cycle": "متوسط زمن الاعتماد (أيام)",
   "proc.avg_hours": "متوسط ساعات الإجراء",
   "proc.awaiting": "بانتظار",

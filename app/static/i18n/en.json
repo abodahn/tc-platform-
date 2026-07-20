@@ -1088,6 +1088,7 @@
   "proc.attach": "Attach",
   "proc.attach_h": "Attachments",
   "proc.attach_hint": "Quotations, specs or drawings — PDF, image, Excel or CSV, up to 3 MB each.",
+  "proc.audit_baseline": "2026-07-21",
   "proc.avg_cycle": "Avg approval time (days)",
   "proc.avg_hours": "Avg hours to act",
   "proc.awaiting": "Awaiting",

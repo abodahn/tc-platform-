@@ -534,26 +534,43 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
     return pr_id, pr_no
 
 
-def update_pr(pr_id, header, items, user, ip=None):
+def update_pr(pr_id, header, items, user, ip=None, can_price=True):
     """Replace a DRAFT (or rejected) PR's header + line items. Only the owner /
-    an admin should reach this. Returns (ok, msg)."""
+    an admin should reach this. Returns (ok, msg).
+
+    `can_price=False` (a requester editing): the edit replaces the lines with
+    zero prices, so any pricing Purchasing had entered is gone — the PR MUST
+    drop back to 'unpriced' and pass the pricing gate again. Without this, an
+    edit-after-reject kept pricing_status='priced' on a now-zero total, which
+    skipped the pricing gate AND the value-based Finance/CFO/CEO rungs."""
     conn = get_db()
     try:
-        pr = conn.execute("SELECT status, requester FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        pr = conn.execute(
+            "SELECT status, requester, tax_rate, payment_condition, pricing_status "
+            "FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
         if pr["status"] not in ("draft", "rejected"):
             return False, "not_editable"
         total = round(sum(_amount(it) for it in items), 2)
+        # Requesters can't set commercial terms: keep whatever Purchasing entered.
+        tax_rate = float(header.get("tax_rate") or 0) if can_price \
+            else float(pr["tax_rate"] or 0)
+        pay_cond = header.get("payment_condition") if can_price \
+            else pr["payment_condition"]
         conn.execute(
             """UPDATE pr_requests SET title=?, request_for=?, department=?, currency=?,
                vendor=?, payment_condition=?, delivery_condition=?, req_del_date=?,
                asset_code=?, notes=?, tax_rate=?, total=? WHERE id=?""",
             (header.get("title"), header.get("request_for"), header.get("department"),
              header.get("currency") or "EGP", header.get("vendor"),
-             header.get("payment_condition"), header.get("delivery_condition"),
+             pay_cond, header.get("delivery_condition"),
              header.get("req_del_date"), header.get("asset_code"), header.get("notes"),
-             float(header.get("tax_rate") or 0), total, pr_id))
+             tax_rate, total, pr_id))
+        if not can_price and (pr["pricing_status"] or "priced") == "priced":
+            # the lines were replaced unpriced -> back through the pricing gate
+            conn.execute("UPDATE pr_requests SET pricing_status='unpriced', "
+                         "priced_at=NULL, priced_by=NULL WHERE id=?", (pr_id,))
         conn.execute("DELETE FROM pr_items WHERE pr_id=?", (pr_id,))
         for i, it in enumerate(items, start=1):
             conn.execute(
@@ -876,8 +893,11 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         conn.close()
 
 
-def issue_po(pr_id, user, ip=None):
-    """Mark an approved PR's PO as issued (purchasing action)."""
+def issue_po(pr_id, user, ip=None, force=False):
+    """Mark an approved PR's PO as issued (purchasing action). When an explicit
+    department budget exists and this PO would leave it exceeded, issuing is
+    blocked unless an admin overrides (audited). Departments with no budget row
+    configured are never blocked."""
     conn = get_db()
     try:
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
@@ -885,6 +905,17 @@ def issue_po(pr_id, user, ip=None):
             return False, "not_found"
         if pr["status"] not in ("approved",):
             return False, "not_approved"
+    finally:
+        conn.close()
+    if not force:
+        b = budget_status(pr["department"])   # PR already counted in 'spent' (approved)
+        if b and b.get("amount") is not None and b.get("over"):
+            return False, "over_budget"
+    conn = get_db()
+    try:
+        if force:
+            audit(conn, pr_id, (user or {}).get("username"), "po_override",
+                  "PO issued with admin override (budget exceeded)", ip)
         po_no = pr["po_no"] or doc_no("PO", pr_id)
         conn.execute("UPDATE pr_requests SET status='po_issued', po_no=? WHERE id=?",
                      (po_no, pr_id))
@@ -953,8 +984,10 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
             if add <= 0:
                 continue
             ordered = float(it["qty"] or 0)
+            if ordered <= 0:
+                continue    # never book receipts against a zero-quantity line
             already = float(it["received_qty"] or 0)
-            new_total = min(ordered, already + add) if ordered else already + add
+            new_total = min(ordered, already + add)
             conn.execute("UPDATE pr_items SET received_qty=? WHERE id=?", (new_total, it["id"]))
             any_recv = True
         if not any_recv:
@@ -1012,6 +1045,17 @@ def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
+        # invoices only make sense once the request is an actual order
+        if pr["status"] not in ("approved", "po_issued", "partially_received",
+                                "received", "closed"):
+            return False, "not_invoicable"
+        inv_no = (data.get("invoice_no") or "").strip()
+        if inv_no:
+            dup = conn.execute(
+                "SELECT id FROM pr_invoices WHERE pr_id=? AND invoice_no=?",
+                (pr_id, inv_no)).fetchone()
+            if dup:
+                return False, "duplicate_invoice"
         now = _now()
         conn.execute(
             """INSERT INTO pr_invoices (pr_id, invoice_no, invoice_date, amount, tax,
@@ -1103,17 +1147,41 @@ def get_invoice(inv_id):
         conn.close()
 
 
-def add_payment(pr_id, data, user, ip=None):
-    """Record a payment against the PR/invoice and roll up the payment status."""
+def add_payment(pr_id, data, user, ip=None, force=False):
+    """Record a payment against the PR/invoice and roll up the payment status.
+
+    Business gates (bypassable only with `force` = admin override, audited):
+      * payments start once a PO exists (po_issued and later) — never on a
+        draft/pending/cancelled request;
+      * the 3-way match must not show over-billing (invoice > PO, or invoice >
+        received value) — "payment block on mismatch";
+      * total paid may not exceed the PO grand total (+1% tolerance)."""
+    # run the match first (own connections) — before opening ours
+    match = three_way_match(pr_id)
     conn = get_db()
     try:
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
+        if pr["status"] not in ("po_issued", "partially_received", "received", "closed"):
+            return False, "not_payable"
         amount = float(data.get("amount") or 0)
         if amount <= 0:
             return False, "bad_amount"
+        # over-billing block (short delivery alone does NOT block: paying for
+        # what WAS received on a partial delivery is legitimate)
+        if match and match["has_invoice"] and not force \
+           and (not match["price_ok"] or not match["receipt_inv_ok"]):
+            return False, "match_blocked"
+        grand = pr_amounts(pr)["grand"]
+        tol = max(1.0, grand * 0.01)
+        already = float(pr["paid_amount"] or 0)
+        if not force and grand > 0 and already + amount > grand + tol:
+            return False, "over_payment"
         now = _now()
+        if force:
+            audit(conn, pr_id, (user or {}).get("username"), "payment_override",
+                  "Payment recorded with admin override (match/limit checks bypassed)", ip)
         conn.execute(
             """INSERT INTO pr_payments (pr_id, invoice_id, amount, currency, method,
                reference, paid_at, notes, created_by, created_at)
@@ -1200,7 +1268,11 @@ def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
     return (True, "sent") if ok else (True, "logged")   # logged = SMTP not set yet
 
 
-def cancel_pr(pr_id, user, ip=None):
+def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
+    """Withdraw a request. Authority: the requester may cancel their OWN request
+    while it is still in flight (draft/pending/rejected); Purchasing may cancel
+    anything not yet approved (incl. bridge auto-PRs); only an admin may cancel
+    after approval — and never once goods have been received."""
     conn = get_db()
     try:
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
@@ -1208,9 +1280,18 @@ def cancel_pr(pr_id, user, ip=None):
             return False, "not_found"
         if pr["status"] in ("closed", "cancelled"):
             return False, "already_closed"
+        if pr["status"] in ("partially_received", "received"):
+            return False, "already_received"     # goods in the door — close it, don't erase it
+        uname = (user or {}).get("username")
+        is_owner = uname and pr["requester"] == uname
+        if pr["status"] in ("approved", "po_issued"):
+            if not is_admin:
+                return False, "needs_admin"      # committed spend: admin decision only
+        elif not (is_owner or is_purchasing or is_admin):
+            return False, "forbidden"
         conn.execute("UPDATE pr_requests SET status='cancelled', current_seq=0 WHERE id=?",
                      (pr_id,))
-        audit(conn, pr_id, user.get("username"), "cancelled", "Request cancelled", ip)
+        audit(conn, pr_id, uname, "cancelled", "Request cancelled", ip)
         conn.commit()
         return True, ""
     finally:
@@ -1309,6 +1390,10 @@ def choose_quote(pr_id, quote_id, user, ip=None):
                          (quote_id, pr_id)).fetchone()
         if not q:
             return False, "not_found"
+        pr = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if pr and pr["status"] in ("approved", "po_issued", "partially_received",
+                                   "received", "closed", "cancelled"):
+            return False, "locked"   # the vendor is fixed once the PR is approved
         conn.execute("UPDATE pr_quotes SET is_chosen=0 WHERE pr_id=?", (pr_id,))
         conn.execute("UPDATE pr_quotes SET is_chosen=1 WHERE id=?", (quote_id,))
         conn.execute("UPDATE pr_requests SET vendor=? WHERE id=?", (q["vendor"], pr_id))
@@ -1388,7 +1473,7 @@ def budget_status(department, period=None, extra=0.0):
                          (department, period)).fetchone()
         spent = conn.execute(
             "SELECT COALESCE(SUM(total),0) s FROM pr_requests WHERE department=? "
-            "AND status IN ('approved','po_issued','closed') "
+            "AND status IN ('approved','po_issued','partially_received','received','closed') "
             "AND substr(COALESCE(request_date, created_at),1,4)=?", (department, period)).fetchone()["s"]
     finally:
         conn.close()
