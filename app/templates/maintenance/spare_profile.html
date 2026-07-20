@@ -7,11 +7,12 @@
     <div class="sub">{{ sp.warehouse }} · {{ sp.bin }}</div></div>
 </div>
 
+{% set reserved = sp.reserved_qty or 0 %}{% set avail = (sp.stock_qty or 0) - reserved %}
 <div class="grid cols-4">
-  <div class="kpi {{ 'warn' if sp.stock_qty<=sp.reorder_level else 'good' }}"><div class="kval">{{ sp.stock_qty }}</div><div class="klabel" data-i18n="m.stock">Stock ({{ sp.uom }})</div></div>
+  <div class="kpi"><div class="kval">{{ sp.stock_qty }}</div><div class="klabel" data-i18n="m.stock">Physical stock ({{ sp.uom }})</div></div>
+  <div class="kpi {{ 'warn' if avail<=sp.reorder_level else 'good' }}"><div class="kval">{{ avail }}</div><div class="klabel"><span data-i18n="m.available">Available</span>{% if reserved %} · {{ reserved }} <span data-i18n="m.reserved">reserved</span>{% endif %}</div></div>
   <div class="kpi"><div class="kval">{{ sp.reorder_level }}</div><div class="klabel" data-i18n="m.reorder">Reorder level</div></div>
   <div class="kpi info"><div class="kval">{{ '%.2f'|format(sp.avg_cost or 0) }}</div><div class="klabel" data-i18n="m.cost">Avg cost</div></div>
-  <div class="kpi"><div class="kval" style="font-size:18px;margin-top:14px">{{ sp.criticality|mhuman }}</div><div class="klabel" data-i18n="m.criticality">Criticality</div></div>
 </div>
 
 <div class="grid cols-3 mt-6">

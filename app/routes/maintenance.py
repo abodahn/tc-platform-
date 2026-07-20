@@ -126,6 +126,7 @@ def dashboard():
     conn = _db()
     try:
         svc.sync_stock_alerts(conn)  # refresh low/out-of-stock alerts on the bell
+        svc.sync_sla_breaches(conn)  # flag tickets past their resolution SLA
 
         def c(sql, a=()):
             return conn.execute(sql, a).fetchone()["c"]
@@ -303,10 +304,17 @@ def ticket_new():
                 "est_downtime_min": f.get("est_downtime_min"), "shift": f.get("shift"),
                 "remarks": f.get("remarks"),
             }
-            tid = svc.create_ticket(data, _u(), request.remote_addr)
-            svc.save_attachments(request.files.getlist("photos"), "ticket", tid, "issue", _u())
-            flash("m_ticket_created", "success")
-            return redirect(url_for("maintenance.ticket_detail", tid=tid))
+            data["allow_duplicate"] = f.get("allow_duplicate") == "on"
+            tid, err = svc.create_ticket(data, _u(), request.remote_addr)
+            if err and err.startswith("duplicate_open:"):
+                flash("This machine already has an open ticket (%s). Tick "
+                      "'create anyway' if this is a separate fault." % err.split(":", 1)[1], "error")
+            elif err:
+                flash("m_desc_required", "error")
+            else:
+                svc.save_attachments(request.files.getlist("photos"), "ticket", tid, "issue", _u())
+                flash("m_ticket_created", "success")
+                return redirect(url_for("maintenance.ticket_detail", tid=tid))
     machines = _all("SELECT id,code,name,department,area,line_no FROM mnt_machines WHERE is_active=1 ORDER BY code")
     prefill = request.args.get("machine", "")
     return render_template("maintenance/ticket_new.html", machines=machines, prefill=prefill,

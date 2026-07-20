@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS mnt_spare_parts (
     name TEXT, description TEXT, category TEXT,
     compatible_types TEXT, brand TEXT, spec TEXT,
     uom TEXT DEFAULT 'pcs',
-    stock_qty REAL DEFAULT 0, min_level REAL DEFAULT 0,
+    stock_qty REAL DEFAULT 0, reserved_qty REAL DEFAULT 0, min_level REAL DEFAULT 0,
     reorder_level REAL DEFAULT 0, max_level REAL DEFAULT 0,
     warehouse TEXT, bin TEXT,
     avg_cost REAL DEFAULT 0, last_price REAL DEFAULT 0,
@@ -233,9 +233,23 @@ CREATE TABLE IF NOT EXISTS mnt_settings (
 """
 
 
+# Columns added after first release — applied as idempotent ALTERs on every boot
+# so already-deployed databases pick them up (safe: each wrapped in try/except).
+_MIGRATIONS = [
+    ("mnt_spare_parts", "reserved_qty",
+     "ALTER TABLE mnt_spare_parts ADD COLUMN reserved_qty REAL DEFAULT 0"),
+]
+
+
 def create_and_seed(conn):
-    """Create maintenance tables and seed sample data when empty."""
+    """Create maintenance tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
+    for _tbl, _col, _ddl in _MIGRATIONS:
+        try:
+            conn.execute(_ddl)
+            conn.commit()
+        except Exception:
+            conn.rollback()
     if conn.execute("SELECT COUNT(*) c FROM mnt_machines").fetchone()["c"] > 0:
         return  # already seeded; never overwrite
 

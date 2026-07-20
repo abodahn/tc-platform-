@@ -31,12 +31,14 @@
 
 <div class="panel"><div class="tbl-wrap"><table class="tbl">
   <thead><tr><th data-i18n="m.part">Code</th><th data-i18n="m.machine_name">Name</th><th data-i18n="m.category">Category</th>
-    <th data-i18n="m.stock">Stock</th><th data-i18n="m.reorder">Reorder</th><th data-i18n="m.criticality">Criticality</th>
+    <th data-i18n="m.stock">Stock</th><th data-i18n="m.available">Available</th><th data-i18n="m.reorder">Reorder</th><th data-i18n="m.criticality">Criticality</th>
     <th data-i18n="m.cost">Avg cost</th><th data-i18n="m.actions">Actions</th></tr></thead>
   <tbody>{% for s in spares %}
+    {% set reserved = s.reserved_qty or 0 %}{% set avail = (s.stock_qty or 0) - reserved %}
     <tr><td><a href="{{ url_for('maintenance.spare_profile', sid=s.id) }}"><b>{{ s.code }}</b></a></td>
       <td>{{ s.name }}</td><td><span class="tag">{{ s.category|mhuman }}</span></td>
-      <td><span class="badge {{ 'b-critical' if s.stock_qty<=0 else ('b-warning' if s.stock_qty<=s.reorder_level else 'b-live') }}">{{ s.stock_qty }} {{ s.uom }}</span></td>
+      <td>{{ s.stock_qty }} {{ s.uom }}{% if reserved %} <span class="muted" style="font-size:11px" data-i18n-title="m.reserved" title="Reserved">({{ reserved }} res.)</span>{% endif %}</td>
+      <td><span class="badge {{ 'b-critical' if avail<=0 else ('b-warning' if avail<=s.reorder_level else 'b-live') }}">{{ avail }} {{ s.uom }}</span></td>
       <td>{{ s.reorder_level }}</td><td><span class="badge {{ mbadge(s.criticality) }}">{{ s.criticality|mhuman }}</span></td>
       <td>{{ '%.2f'|format(s.avg_cost or 0) }}</td>
       <td><a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.spare_profile', sid=s.id) }}" data-i18n="m.view">View</a></td></tr>

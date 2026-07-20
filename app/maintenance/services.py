@@ -6,7 +6,7 @@ spare-part issue is fully transactional (rolls back on any failure) and stock
 can never go negative. Status transitions are guarded.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from werkzeug.utils import secure_filename
 
@@ -16,9 +16,32 @@ from app.maintenance.constants import TICKET_TRANSITIONS
 
 YEAR = None  # set lazily per call to avoid import-time clock reads in tooling
 
+# Statuses that count as "actively being worked" -- a machine shouldn't collect a
+# SECOND ticket for the same in-progress breakdown. Excludes 'resolved' (repair
+# already done, only awaiting closure) so a genuinely new fault isn't blocked.
+OPEN_TICKET_STATUSES = (
+    "submitted", "under_review", "assigned", "diagnosis",
+    "spare_required", "waiting_stock", "waiting_approval", "approved_issue",
+    "parts_issued", "repair", "testing", "reopened",
+)
+# SLA target scales with priority (critical is far tighter than the base hours).
+_SLA_FACTOR = {"critical": 0.25, "high": 0.5, "medium": 1.0, "low": 2.0}
+
 
 def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _setting(conn, key, default=None):
+    r = conn.execute("SELECT value FROM mnt_settings WHERE key=?", (key,)).fetchone()
+    return r["value"] if (r and r["value"] not in (None, "")) else default
+
+
+def _parse_dt(s):
+    try:
+        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
 
 
 def _year():
@@ -90,6 +113,23 @@ def set_ticket_status(conn, ticket_id, target, user, ip=None, force=False, comme
 
 
 # --- inventory helpers -----------------------------------------------------
+def available_qty(conn, spare_id):
+    """Physical stock minus what's already committed (approved-but-not-yet-issued
+    requests). This is the number that should gate any new commitment -- reading
+    raw stock_qty is what let two requests each claim the last part."""
+    sp = conn.execute("SELECT stock_qty, reserved_qty FROM mnt_spare_parts WHERE id=?",
+                      (spare_id,)).fetchone()
+    if not sp:
+        return 0.0
+    return (sp["stock_qty"] or 0) - (sp["reserved_qty"] or 0)
+
+
+def _reserve(conn, spare_id, qty):
+    """Add/release a reservation (qty may be negative to release)."""
+    conn.execute("UPDATE mnt_spare_parts SET reserved_qty=MAX(0, COALESCE(reserved_qty,0)+?) "
+                 "WHERE id=?", (qty, spare_id))
+
+
 def _move_stock(conn, spare_id, mtype, qty, user, ticket_id=None, request_id=None,
                 machine_id=None, notes=None, approved_by=None):
     """Apply a signed stock delta and record a movement. Returns (ok, msg)."""
@@ -101,20 +141,41 @@ def _move_stock(conn, spare_id, mtype, qty, user, ticket_id=None, request_id=Non
     if after < 0:
         return False, "stock_would_go_negative"
     conn.execute("UPDATE mnt_spare_parts SET stock_qty=? WHERE id=?", (after, spare_id))
-    n = conn.execute("SELECT COUNT(*) c FROM mnt_stock_movements").fetchone()["c"] + 1
-    conn.execute(
-        """INSERT INTO mnt_stock_movements (movement_no,type,spare_id,qty,before_qty,
+    # Number the movement from its own row id -- unique and collision-free. The
+    # old COUNT(*)+1 scheme repeated numbers after any delete and clashed with the
+    # seed's id-based numbers (violating the UNIQUE constraint).
+    cur = conn.execute(
+        """INSERT INTO mnt_stock_movements (type,spare_id,qty,before_qty,
            after_qty,ticket_id,request_id,machine_id,performed_by,approved_by,notes,created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (doc_no("STK", n), mtype, spare_id, qty, before, after, ticket_id, request_id,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (mtype, spare_id, qty, before, after, ticket_id, request_id,
          machine_id, user.get("username") if user else "system", approved_by, notes, _now()))
+    conn.execute("UPDATE mnt_stock_movements SET movement_no=? WHERE id=?",
+                 (doc_no("STK", cur.lastrowid), cur.lastrowid))
     return True, ""
 
 
 # --- ticket lifecycle ------------------------------------------------------
 def create_ticket(data, user, ip=None, submit=True):
+    """Returns (ticket_id, err). err '' on success; 'description_required' or
+    'duplicate_open:<ticket_no>' otherwise (pass data['allow_duplicate']=True to
+    override the duplicate guard)."""
     conn = get_db()
     try:
+        if not (data.get("description") or "").strip():
+            return None, "description_required"
+        # Guard: don't let one machine collect several open tickets for the same
+        # breakdown. If it already has an open ticket, point back to it.
+        mid = data.get("machine_id") or None
+        if mid and submit and not data.get("allow_duplicate"):
+            dup = conn.execute(
+                "SELECT ticket_no FROM mnt_tickets WHERE machine_id=? AND is_active=1 "
+                "AND status IN (%s) ORDER BY id DESC LIMIT 1" % ",".join("?" * len(OPEN_TICKET_STATUSES)),
+                (mid, *OPEN_TICKET_STATUSES)).fetchone()
+            if dup:
+                return None, "duplicate_open:%s" % dup["ticket_no"]
+
+        priority = data.get("priority", "medium")
         cur = conn.execute(
             """INSERT INTO mnt_tickets
                (requester,requester_user_id,department,area,line_no,machine_id,machine_code,
@@ -123,26 +184,39 @@ def create_ticket(data, user, ip=None, submit=True):
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (data.get("requester") or (user.get("full_name") or user.get("username")),
              user.get("id"), data.get("department"), data.get("area"), data.get("line_no"),
-             data.get("machine_id") or None, data.get("machine_code"),
+             mid, data.get("machine_code"),
              data.get("issue_category"), data.get("description"),
-             data.get("priority", "medium"), data.get("severity", "moderate"),
+             priority, data.get("severity", "moderate"),
              1 if data.get("safety_impact") else 0,
              1 if data.get("production_stopped") else 0,
              int(data.get("est_downtime_min") or 0), data.get("shift"),
              data.get("remarks"), "submitted" if submit else "draft", _now()))
         tid = cur.lastrowid
-        conn.execute("UPDATE mnt_tickets SET ticket_no=? WHERE id=?", (doc_no("MNT", tid), tid))
+        # Start the SLA clock at creation (scaled by priority) -- previously the
+        # response/resolution due dates were only set at assignment, so a fresh
+        # critical ticket had no clock and sla_breach was never computed.
+        try:
+            factor = _SLA_FACTOR.get(priority, 1.0)
+            resp_h = float(_setting(conn, "response_sla_hours", 4)) * factor
+            reso_h = float(_setting(conn, "resolution_sla_hours", 24)) * factor
+            base = datetime.now(timezone.utc).replace(tzinfo=None)
+            conn.execute(
+                "UPDATE mnt_tickets SET ticket_no=?, response_due=?, resolution_due=? WHERE id=?",
+                (doc_no("MNT", tid),
+                 (base + timedelta(hours=resp_h)).strftime("%Y-%m-%d %H:%M:%S"),
+                 (base + timedelta(hours=reso_h)).strftime("%Y-%m-%d %H:%M:%S"), tid))
+        except Exception:
+            conn.execute("UPDATE mnt_tickets SET ticket_no=? WHERE id=?", (doc_no("MNT", tid), tid))
         # if machine reported as production-stopped, reflect machine status
-        if data.get("machine_id") and data.get("production_stopped"):
-            conn.execute("UPDATE mnt_machines SET status='stopped' WHERE id=?",
-                         (data.get("machine_id"),))
+        if mid and data.get("production_stopped"):
+            conn.execute("UPDATE mnt_machines SET status='stopped' WHERE id=?", (mid,))
         audit(conn, user, "ticket_create", "ticket", tid, None, doc_no("MNT", tid), ip=ip)
         if submit:
             notify(conn, "maintenance_manager", "New maintenance ticket",
                    f"{doc_no('MNT', tid)} on {data.get('machine_code') or 'a machine'}",
                    "ticket", tid, "warning", f"/maintenance/tickets/{tid}")
         conn.commit()
-        return tid
+        return tid, ""
     finally:
         conn.close()
 
@@ -166,12 +240,26 @@ def review_assign(ticket_id, technician, priority, response_due, resolution_due,
         conn.close()
 
 
+def _release_ticket_reservations(conn, ticket_id):
+    """Free any parts reserved by this ticket's still-approved (unissued) requests,
+    and mark those requests cancelled -- so cancelling/rejecting a ticket can't
+    strand reserved stock as permanently unavailable."""
+    reqs = conn.execute("SELECT id FROM mnt_requests WHERE ticket_id=? AND status='approved'",
+                        (ticket_id,)).fetchall()
+    for r in reqs:
+        for it in conn.execute("SELECT spare_id, qty_approved FROM mnt_request_items "
+                                "WHERE request_id=? AND spare_id IS NOT NULL", (r["id"],)).fetchall():
+            _reserve(conn, it["spare_id"], -(it["qty_approved"] or 0))
+        conn.execute("UPDATE mnt_requests SET status='cancelled' WHERE id=?", (r["id"],))
+
+
 def reject_ticket(ticket_id, reason, user, ip=None):
     if not (reason or "").strip():
         return False, "reason_required"
     conn = get_db()
     try:
         conn.execute("UPDATE mnt_tickets SET rejection_reason=? WHERE id=?", (reason, ticket_id))
+        _release_ticket_reservations(conn, ticket_id)
         ok, msg = set_ticket_status(conn, ticket_id, "rejected", user, ip, force=True, comment=reason)
         audit(conn, user, "ticket_reject", "ticket", ticket_id, None, reason, comment=reason, ip=ip)
         conn.commit()
@@ -249,7 +337,9 @@ def create_request(ticket_id, items, reason, urgency, user, ip=None):
                              (it["spare_id"],)).fetchone()
             if not sp:
                 continue
-            avail = sp["stock_qty"] or 0
+            # Available = physical stock minus parts already committed to other
+            # approved requests, so two requests can't both claim the last one.
+            avail = available_qty(conn, it["spare_id"])
             if it["qty"] > avail:
                 any_out = True
             conn.execute(
@@ -336,6 +426,11 @@ def decide_approval(approval_id, decision, comment, user, ip=None):
             # fully approved -> set approved qty = requested, ready for storekeeper to issue
             conn.execute("UPDATE mnt_request_items SET qty_approved=qty_requested WHERE request_id=?",
                          (rid,))
+            # Reserve the approved quantity so it can't be handed to another
+            # request before this one is issued (released at issue time).
+            for it in conn.execute("SELECT spare_id, qty_approved FROM mnt_request_items "
+                                    "WHERE request_id=? AND spare_id IS NOT NULL", (rid,)).fetchall():
+                _reserve(conn, it["spare_id"], it["qty_approved"] or 0)
             conn.execute("UPDATE mnt_requests SET status='approved',decided_at=? WHERE id=?",
                          (_now(), rid))
             req = conn.execute("SELECT ticket_id FROM mnt_requests WHERE id=?", (rid,)).fetchone()
@@ -375,8 +470,11 @@ def issue_parts(request_id, received_by, user, ip=None):
             if not sp or (sp["stock_qty"] or 0) < qty:
                 return False, "insufficient_stock"
         # apply
+        parts_cost = 0.0
         for it in items:
             qty = it["qty_approved"] or it["qty_requested"]
+            sp = conn.execute("SELECT avg_cost FROM mnt_spare_parts WHERE id=?",
+                              (it["spare_id"],)).fetchone()
             ok, msg = _move_stock(conn, it["spare_id"], "issue", -qty, user,
                                   ticket_id=req["ticket_id"], request_id=request_id,
                                   machine_id=req["machine_id"],
@@ -385,17 +483,26 @@ def issue_parts(request_id, received_by, user, ip=None):
             if not ok:
                 conn.rollback()
                 return False, msg
+            _reserve(conn, it["spare_id"], -qty)     # release the reservation we're now fulfilling
+            parts_cost += qty * ((sp["avg_cost"] if sp else 0) or 0)
             conn.execute("UPDATE mnt_request_items SET qty_issued=? WHERE id=?", (qty, it["id"]))
-            n = conn.execute("SELECT COUNT(*) c FROM mnt_vouchers").fetchone()["c"] + 1
-            conn.execute(
-                """INSERT INTO mnt_vouchers (voucher_no,request_id,ticket_id,spare_id,part_code,
+            vc = conn.execute(
+                """INSERT INTO mnt_vouchers (request_id,ticket_id,spare_id,part_code,
                    part_name,qty_issued,issued_by,received_by,machine_code,created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (doc_no("ISS", n), request_id, req["ticket_id"], it["spare_id"],
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (request_id, req["ticket_id"], it["spare_id"],
                  it["part_code"], it["part_name"], qty, user.get("username"),
                  received_by, ticket["machine_code"] if ticket else None, _now()))
+            conn.execute("UPDATE mnt_vouchers SET voucher_no=? WHERE id=?",
+                         (doc_no("ISS", vc.lastrowid), vc.lastrowid))
         conn.execute("UPDATE mnt_requests SET status='issued',decided_at=? WHERE id=?",
                      (_now(), request_id))
+        # Roll the value of the issued parts into the ticket cost. close_ticket
+        # then rolls the ticket cost into the machine's cost_to_date, so spare
+        # spend actually flows into maintenance cost reporting.
+        if req["ticket_id"] and parts_cost:
+            conn.execute("UPDATE mnt_tickets SET cost=COALESCE(cost,0)+? WHERE id=?",
+                         (round(parts_cost, 2), req["ticket_id"]))
         if req["ticket_id"]:
             set_ticket_status(conn, req["ticket_id"], "parts_issued", user, ip, force=True)
         notify(conn, "maintenance_technician", "Spare parts issued",
@@ -470,26 +577,28 @@ def record_test(ticket_id, d, user, ip=None):
 def close_ticket(ticket_id, user, ip=None):
     conn = get_db()
     try:
-        t = conn.execute("SELECT status,machine_id,created_at,cost FROM mnt_tickets WHERE id=?",
-                        (ticket_id,)).fetchone()
+        t = conn.execute("SELECT status,machine_id,created_at,cost,production_stopped "
+                         "FROM mnt_tickets WHERE id=?", (ticket_id,)).fetchone()
         if not t:
             return False, "not_found"
         if t["status"] != "resolved":
             return False, "must_be_resolved"
-        # compute downtime from creation to now (minutes)
-        try:
-            created = datetime.strptime(t["created_at"], "%Y-%m-%d %H:%M:%S")
-            downtime = int((datetime.now(timezone.utc).replace(tzinfo=None) - created).total_seconds() // 60)
-        except Exception:
-            downtime = 0
+        # compute elapsed time from creation to now (minutes)
+        created = _parse_dt(t["created_at"])
+        downtime = int((datetime.now(timezone.utc).replace(tzinfo=None) - created).total_seconds() // 60) \
+            if created else 0
+        downtime = max(downtime, 0)
         conn.execute("UPDATE mnt_tickets SET status='closed', closed_at=?, total_downtime_min=? WHERE id=?",
-                     (_now(), max(downtime, 0), ticket_id))
+                     (_now(), downtime, ticket_id))
         if t["machine_id"]:
+            # Only charge the machine's downtime meter when production was actually
+            # stopped -- otherwise administrative waiting time (approvals, parts)
+            # would inflate machine downtime for a fault that never halted the line.
+            machine_downtime = downtime if t["production_stopped"] else 0
             conn.execute(
                 "UPDATE mnt_machines SET status='running', breakdowns=breakdowns+1, "
-                "total_downtime_min=total_downtime_min+?, cost_to_date=cost_to_date+?, "
-                "last_pm_date=last_pm_date WHERE id=?",
-                (max(downtime, 0), t["cost"] or 0, t["machine_id"]))
+                "total_downtime_min=total_downtime_min+?, cost_to_date=cost_to_date+? WHERE id=?",
+                (machine_downtime, t["cost"] or 0, t["machine_id"]))
         audit(conn, user, "ticket_close", "ticket", ticket_id, t["status"], "closed", ip=ip)
         conn.commit()
         return True, ""
@@ -583,6 +692,37 @@ def sync_stock_alerts(conn=None):
             conn.close()
 
 
+def sync_sla_breaches(conn=None):
+    """Flag open tickets whose resolution SLA has elapsed. Sets sla_breach=1 and
+    raises a one-time notification. Safe to call on each dashboard load -- the
+    SLA fields existed but nothing ever evaluated them."""
+    own = conn is None
+    if own:
+        conn = get_db()
+    try:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        rows = conn.execute(
+            "SELECT id, ticket_no, resolution_due, machine_code FROM mnt_tickets "
+            "WHERE is_active=1 AND sla_breach=0 AND resolution_due IS NOT NULL "
+            "AND status NOT IN ('draft','closed','cancelled','rejected','resolved')").fetchall()
+        flagged = 0
+        for t in rows:
+            due = _parse_dt(t["resolution_due"])
+            if due and now > due:
+                conn.execute("UPDATE mnt_tickets SET sla_breach=1 WHERE id=?", (t["id"],))
+                notify(conn, "maintenance_manager", "SLA breached",
+                       f"{t['ticket_no']} on {t['machine_code'] or 'a machine'} passed its "
+                       f"resolution SLA.", "ticket", t["id"], "critical",
+                       f"/maintenance/tickets/{t['id']}")
+                flagged += 1
+        if flagged:
+            conn.commit()
+        return flagged
+    finally:
+        if own:
+            conn.close()
+
+
 def machine_health(conn, machine):
     """0-100 health score from live signals: status, open/critical tickets,
     breakdown history and PM overdue. Returns (score, band)."""
@@ -648,13 +788,28 @@ def save_attachments(files, entity_type, entity_id, kind, user, limit=5):
 def receive_stock(spare_id, qty, price, user, ip=None):
     conn = get_db()
     try:
-        ok, msg = _move_stock(conn, spare_id, "purchase_receiving", abs(float(qty)), user,
+        qty = abs(float(qty))
+        sp = conn.execute("SELECT stock_qty, avg_cost FROM mnt_spare_parts WHERE id=?",
+                          (spare_id,)).fetchone()
+        if not sp:
+            return False, "not_found"
+        before = sp["stock_qty"] or 0
+        ok, msg = _move_stock(conn, spare_id, "purchase_receiving", qty, user,
                               notes="Stock receiving")
         if not ok:
             conn.rollback()
             return False, msg
         if price:
-            conn.execute("UPDATE mnt_spare_parts SET last_price=? WHERE id=?", (price, spare_id))
+            # Moving weighted-average cost: (old_qty*old_avg + recv_qty*price) /
+            # (old_qty+recv_qty). Previously only last_price moved, so avg_cost --
+            # which drives cost-based approval routing and ticket costing -- was
+            # frozen at the seed value forever.
+            price = float(price)
+            old_avg = sp["avg_cost"] or 0
+            total = before + qty
+            new_avg = ((before * old_avg) + (qty * price)) / total if total > 0 else price
+            conn.execute("UPDATE mnt_spare_parts SET last_price=?, avg_cost=? WHERE id=?",
+                         (price, round(new_avg, 4), spare_id))
         audit(conn, user, "stock_receive", "spare", spare_id, None, qty, ip=ip)
         conn.commit()
         return True, ""
