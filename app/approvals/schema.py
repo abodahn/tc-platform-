@@ -188,6 +188,9 @@ _STEP_MIGRATIONS = [
     ("activated_at", "ALTER TABLE pr_steps ADD COLUMN activated_at TEXT"),
     ("escalated", "ALTER TABLE pr_steps ADD COLUMN escalated INTEGER DEFAULT 0"),
     ("escalated_at", "ALTER TABLE pr_steps ADD COLUMN escalated_at TEXT"),
+    # Level-2 escalation stamp (step older than 2x the stage SLA): set once by
+    # run_escalations, doubles as its own dedupe flag like escalated_at above.
+    ("escalated2_at", "ALTER TABLE pr_steps ADD COLUMN escalated2_at TEXT"),
 ]
 
 # Columns added to pr_requests after first release (tax + goods receipt + PO email
@@ -212,6 +215,14 @@ _PR_MIGRATIONS = [
     # Lets goods receipts post back into the source system's stock.
     ("source_module", "ALTER TABLE pr_requests ADD COLUMN source_module TEXT"),
     ("source_ref", "ALTER TABLE pr_requests ADD COLUMN source_ref TEXT"),
+    # RFQ control (P3): Purchasing's recorded justification for waiving the
+    # competitive-quote rule on a high-value PR (single/sole-source purchase).
+    ("single_source_reason", "ALTER TABLE pr_requests ADD COLUMN single_source_reason TEXT"),
+    # Foreign-currency support: fx_rate converts the PR total (in `currency`)
+    # to EGP so the EGP-based approval thresholds route honestly. po_rev counts
+    # PO revisions (0 = original order; history kept in pr_po_revisions).
+    ("fx_rate", "ALTER TABLE pr_requests ADD COLUMN fx_rate REAL DEFAULT 1"),
+    ("po_rev", "ALTER TABLE pr_requests ADD COLUMN po_rev INTEGER DEFAULT 0"),
 ]
 
 # Verifiable signature events: one immutable row per approve/reject signature.
@@ -234,6 +245,23 @@ CREATE TABLE IF NOT EXISTS pr_sign_events (
 CREATE INDEX IF NOT EXISTS ix_sign_events_pr ON pr_sign_events(pr_id);
 """
 
+# PO revision history: one immutable row per revision. `snapshot_json` freezes
+# the order lines + total + PO number as they stood when the revision was
+# opened, so what changed between Rev N-1 and Rev N is always reconstructable.
+_PO_REV_DDL = """
+CREATE TABLE IF NOT EXISTS pr_po_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    rev_no INTEGER,
+    reason TEXT,
+    po_no TEXT,
+    snapshot_json TEXT,
+    created_by TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_po_rev_pr ON pr_po_revisions(pr_id);
+"""
+
 # Columns added to pr_items after first release (line-level receiving).
 _ITEM_MIGRATIONS = [
     ("received_qty", "ALTER TABLE pr_items ADD COLUMN received_qty REAL DEFAULT 0"),
@@ -244,6 +272,7 @@ def create_and_seed(conn):
     """Create procurement tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
     conn.executescript(_SIGN_EVENTS_DDL)
+    conn.executescript(_PO_REV_DDL)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in _STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS:

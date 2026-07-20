@@ -612,7 +612,9 @@ def submit_pr(pr_id, user, ip=None):
         conn.execute("DELETE FROM pr_steps WHERE pr_id=?", (pr_id,))
         # Department-aware ladder: use the department's responsibility matrix if
         # it has one, else the global default. Each rung = parallel stages.
-        rungs = rungs_from_stages(dept_ladder(conn, pr["department"], pr["total"]))
+        # Thresholds are EGP-based, so a foreign-currency PR routes on its
+        # EGP-equivalent total (total * fx_rate), never the raw foreign figure.
+        rungs = rungs_from_stages(dept_ladder(conn, pr["department"], egp_total(pr)))
         now = _now()
         for i, rung in enumerate(rungs, start=1):
             for stage in rung:
@@ -651,10 +653,20 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     the ladder yet, and drop any not-yet-reached value rungs that no longer
     qualify. Never touches steps that are approved, rejected, or currently active,
     so an in-flight approval is never disturbed."""
-    row = conn.execute("SELECT current_seq FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+    row = conn.execute(
+        "SELECT current_seq, currency, fx_rate FROM pr_requests WHERE id=?",
+        (pr_id,)).fetchone()
     cur_seq = (row["current_seq"] or 0) if row else 0
+    # Thresholds are EGP-based: convert `total` (PR currency) to its EGP
+    # equivalent using the row's currency/fx_rate. Reading them HERE (instead of
+    # making each caller convert) keeps the call sites unchanged — price_pr and
+    # set_fx pass the raw total, and any currency/fx_rate they just UPDATEd in
+    # this same transaction is already visible to this SELECT.
+    total_egp = egp_total({"total": total,
+                           "currency": row["currency"] if row else "EGP",
+                           "fx_rate": row["fx_rate"] if row else 1})
     # Reuse the tested department-aware ladder, keep only the value stages.
-    target = [s for s in dept_ladder(conn, department, total) if s in VALUE_STAGES]
+    target = [s for s in dept_ladder(conn, department, total_egp) if s in VALUE_STAGES]
     existing = conn.execute(
         "SELECT id, seq, stage, status FROM pr_steps WHERE pr_id=? ORDER BY seq",
         (pr_id,)).fetchall()
@@ -714,6 +726,16 @@ def price_pr(pr_id, prices, meta, user, ip=None):
         tax_rate = meta.get("tax_rate")
         if tax_rate is not None and str(tax_rate).strip() != "":
             sets.append("tax_rate=?"); params.append(float(tax_rate or 0))
+        # FX rate (EGP per unit of the PR currency) — Purchasing may set it while
+        # pricing so the value ladder below routes on the true EGP equivalent.
+        fx_rate = meta.get("fx_rate")
+        if fx_rate is not None and str(fx_rate).strip() != "":
+            try:
+                fx_val = float(fx_rate)
+            except (TypeError, ValueError):
+                fx_val = 0.0
+            if fx_val > 0:
+                sets.append("fx_rate=?"); params.append(fx_val)
         for col in ("payment_condition", "vendor", "currency"):
             val = meta.get(col)
             if val:
@@ -806,6 +828,32 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         if not step:
             return False, "forbidden"
 
+        uname = user.get("username")
+
+        # Segregation of Duties (P6). Two independence rules:
+        #   (a) self-approval — the requester may never sign a stage of their own
+        #       request: raising it IS their signature, so signing it again would
+        #       collapse originator and approver into one person;
+        #   (b) dual-role — one person may not sign two DIFFERENT stages of the
+        #       same request (e.g. warehouse, then factory via a delegation): each
+        #       rung must be an independent pair of eyes. Steps of a rejected +
+        #       resubmitted PR are rebuilt from scratch, so old history rows never
+        #       trip this check.
+        # Platform admins (super_admin / proc_admin — the same predicate can_act
+        # uses) are exempt while C.SOD_ADMIN_EXEMPT is True, so a small team can
+        # still operate the full ladder.
+        role = user.get("role")
+        _is_admin = role == "super_admin" or has_permission(role, "proc_admin")
+        if not (C.SOD_ADMIN_EXEMPT and _is_admin):
+            if pr["requester"] == uname:
+                return False, "self_approval"
+            other = conn.execute(
+                "SELECT 1 FROM pr_steps WHERE pr_id=? AND id!=? AND approver_user=? "
+                "AND status IN ('approved','rejected') LIMIT 1",
+                (pr_id, step["id"], uname)).fetchone()
+            if other:
+                return False, "dual_role"
+
         # Pricing gate: the purchasing stage cannot be signed off until Purchasing
         # has entered the commercial value. Approving it unpriced would let a
         # zero-value request slip past the value-based Finance / CFO / CEO rungs.
@@ -813,7 +861,13 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
            and (pr["pricing_status"] or "priced") != "priced":
             return False, "needs_pricing"
 
-        uname = user.get("username")
+        # RFQ gate: high-value orders need competitive quotes (or a recorded
+        # single-source justification) before Purchasing signs off.
+        if decision == "approve" and step["stage"] == PRICING_GATE_STAGE:
+            ok_rfq, rfq_msg = rfq_gate_check(conn, pr)
+            if not ok_rfq:
+                return False, rfq_msg
+
         sig_png, sig_name = _user_sig(uname)
         now = _now()
 
@@ -923,6 +977,110 @@ def issue_po(pr_id, user, ip=None, force=False):
         bell(conn, "info", "Purchase Order issued", f"{po_no} issued for {pr['pr_no']}.")
         conn.commit()
         return True, po_no
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------
+# Foreign currency (FX) + PO revisions
+# --------------------------------------------------------------------------
+def egp_total(pr):
+    """EGP-equivalent total for a PR dict/row: total * fx_rate when the PR is in
+    a foreign currency, else the total unchanged. Defensive on missing columns
+    and bad values so ladder routing never crashes on a legacy row."""
+    def _g(key):
+        try:
+            return pr.get(key) if isinstance(pr, dict) else pr[key]
+        except (KeyError, IndexError):
+            return None
+    if pr is None:
+        return 0.0
+    try:
+        total = float(_g("total") or 0)
+    except (TypeError, ValueError):
+        total = 0.0
+    cur = str(_g("currency") or "EGP").strip().upper()
+    if cur == "EGP":
+        return round(total, 2)
+    try:
+        rate = float(_g("fx_rate") or 1)
+    except (TypeError, ValueError):
+        rate = 1.0
+    if rate <= 0:
+        rate = 1.0
+    return round(total * rate, 2)
+
+
+def set_fx(pr_id, rate, user, ip=None):
+    """Purchasing sets the EGP conversion rate for a foreign-currency request so
+    the EGP-based value thresholds route on the true equivalent. Locked once the
+    request is approved or beyond (the signed ladder must never shift under a
+    finished approval). While the PR is still pending, the value rungs (Finance /
+    CFO / CEO) are reconciled against the NEW EGP-equivalent total — the rate is
+    UPDATEd first, so _reconcile_value_ladder reads it in-transaction and the
+    raw `total` it receives converts with the fresh rate. Returns (ok, msg)."""
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        return False, "bad_rate"
+    if rate <= 0:
+        return False, "bad_rate"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] in ("approved", "po_issued", "partially_received",
+                            "received", "closed", "cancelled"):
+            return False, "locked"
+        conn.execute("UPDATE pr_requests SET fx_rate=? WHERE id=?", (rate, pr_id))
+        uname = (user or {}).get("username")
+        audit(conn, pr_id, uname, "fx_set",
+              f"FX rate set to {rate:g} ({pr['currency'] or 'EGP'} -> EGP)", ip)
+        if pr["status"] == "pending":
+            _reconcile_value_ladder(conn, pr_id, pr["department"], pr["total"])
+        conn.commit()
+        return True, "fx_set"
+    finally:
+        conn.close()
+
+
+def revise_po(pr_id, reason, user, ip=None):
+    """Open a numbered revision on an issued Purchase Order: freeze the current
+    order lines + total + PO number into pr_po_revisions (immutable history),
+    bump po_rev, audit the reason and ring the bell. Only an issued or partially
+    received order can be revised. Returns (True, new_rev) or (False, msg)."""
+    reason = (reason or "").strip()
+    if not reason:
+        return False, "reason_required"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] not in ("po_issued", "partially_received"):
+            return False, "not_revisable"
+        items = conn.execute(
+            "SELECT id, item, qty, unit_price, est_cost FROM pr_items "
+            "WHERE pr_id=? ORDER BY seq, id", (pr_id,)).fetchall()
+        snapshot = _json_dumps({
+            "items": [dict(r) for r in items],
+            "total": float(pr["total"] or 0),
+            "po_no": pr["po_no"],
+        })
+        new_rev = int(pr["po_rev"] or 0) + 1
+        uname = (user or {}).get("username")
+        conn.execute(
+            """INSERT INTO pr_po_revisions
+               (pr_id, rev_no, reason, po_no, snapshot_json, created_by, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (pr_id, new_rev, reason, pr["po_no"], snapshot, uname, _now()))
+        conn.execute("UPDATE pr_requests SET po_rev=? WHERE id=?", (new_rev, pr_id))
+        audit(conn, pr_id, uname, "po_revised", f"PO revision {new_rev}: {reason}", ip)
+        bell(conn, "info", "PO revised",
+             f"{pr['po_no']} (ref {pr['pr_no']}) revised — Rev {new_rev}: {reason}")
+        conn.commit()
+        return True, new_rev
     finally:
         conn.close()
 
@@ -1421,6 +1579,74 @@ def quote_comparison(quotes):
     return {"lowest": min(amts), "highest": max(amts), "saving": round(max(amts) - min(amts), 2)}
 
 
+def _pr_field(pr, key, default=None):
+    """Read a column off a PR row (dict, sqlite3.Row or _PGRow) tolerantly —
+    a missing column (pre-migration database) returns `default`, never raises."""
+    if pr is None:
+        return default
+    try:
+        if isinstance(pr, dict):
+            return pr.get(key, default)
+        return pr[key]
+    except (KeyError, IndexError):
+        return default
+
+
+def rfq_gate_check(conn, pr):
+    """RFQ / competitive-quotation gate for the Purchasing sign-off (pure check,
+    no writes). A PRICED request whose total is at/above C.RFQ_VALUE_THRESHOLD
+    must carry at least C.RFQ_QUOTE_MIN competing vendor quotes — unless
+    Purchasing has recorded a single-source justification on the PR.
+
+    `pr` is the pr_requests row (dict or Row). Returns (ok, msg):
+    (False, "needs_quotes") when the rule blocks the sign-off, else (True, "")."""
+    if (_pr_field(pr, "pricing_status") or "priced") != "priced":
+        return True, ""          # unpriced: the pricing gate rules first
+    # Threshold is EGP-based: compare the EGP-EQUIVALENT total (fx-converted),
+    # not the raw foreign figure — a 60,000 TRY (~3,000 EGP) order must not
+    # trigger the competitive-quote rule meant for 25,000+ EGP purchases.
+    try:
+        total = float(egp_total(pr))
+    except (TypeError, ValueError):
+        total = 0.0
+    if total < C.RFQ_VALUE_THRESHOLD:
+        return True, ""          # below the competitive-quote threshold
+    if str(_pr_field(pr, "single_source_reason") or "").strip():
+        return True, ""          # justified single/sole-source purchase
+    n = conn.execute("SELECT COUNT(*) c FROM pr_quotes WHERE pr_id=?",
+                     (_pr_field(pr, "id"),)).fetchone()["c"]
+    if int(n or 0) < C.RFQ_QUOTE_MIN:
+        return False, "needs_quotes"
+    return True, ""
+
+
+def set_single_source(pr_id, reason, user, ip=None):
+    """Purchasing records why competitive quotes are waived for this PR (single/
+    sole-source purchase: only OEM vendor, proprietary part, emergency, ...).
+    Satisfies rfq_gate_check without C.RFQ_QUOTE_MIN quotes. Returns (ok, msg)."""
+    reason = (reason or "").strip()
+    if not reason:
+        return False, "reason_required"
+    reason = reason[:1000]       # keep the justification a sane size
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT id, status FROM pr_requests WHERE id=?",
+                          (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] in ("approved", "po_issued", "partially_received",
+                            "received", "closed", "cancelled"):
+            return False, "locked"   # sourcing is fixed once the PR is approved
+        conn.execute("UPDATE pr_requests SET single_source_reason=? WHERE id=?",
+                     (reason, pr_id))
+        audit(conn, pr_id, (user or {}).get("username") or "system", "single_source",
+              f"Single-source justification recorded: {reason}", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
 # --------------------------------------------------------------------------
 # department budgets
 # --------------------------------------------------------------------------
@@ -1532,20 +1758,52 @@ def revoke_delegation(deleg_id):
 # SLA escalation job (call from a scheduler / admin action)
 # --------------------------------------------------------------------------
 def run_escalations():
-    """Flag approval steps that have sat past the SLA and raise a bell alert once.
-    Returns the number of steps newly escalated."""
+    """Escalate stuck approvals, once per level per step (P7).
+
+    Level 1 (unchanged): the active step is older than SLA_HOURS_PER_STAGE ->
+      flag it (escalated / escalated_at) and warn the stage's approvers.
+    Level 2: the same step is older than 2x the SLA and escalated2_at is not
+      set yet -> stamp escalated2_at, raise a CRITICAL bell broadcast and
+      notify the stage's approvers plus every active super_admin.
+    Pricing stall: a pending, still-unpriced PR submitted more than
+      SLA_HOURS_PER_STAGE (48h) ago -> remind Purchasing once per PR (the
+      audit trail's 'pricing_reminder' event doubles as the dedupe flag).
+
+    Each level dedupes on its own stamp (escalated_at / escalated2_at / the
+    audit row), so repeated scheduler runs never re-alert. Returns the total
+    number of newly raised escalations + reminders."""
     conn = get_db()
     n = 0
     try:
         prs = conn.execute("SELECT * FROM pr_requests WHERE status='pending'").fetchall()
         for pr in prs:
+            # ---- pricing-stall reminder (independent of the ladder position) ----
+            if (pr["pricing_status"] or "priced") == "unpriced":
+                sub_hrs = _age_hours(pr["submitted_at"])
+                if sub_hrs is not None and sub_hrs > C.SLA_HOURS_PER_STAGE:
+                    prior = conn.execute(
+                        "SELECT 1 FROM pr_events WHERE pr_id=? AND action='pricing_reminder' "
+                        "LIMIT 1", (pr["id"],)).fetchone()
+                    if not prior:
+                        audit(conn, pr["id"], "system", "pricing_reminder",
+                              f"Unpriced for {round(sub_hrs)}h — Purchasing reminded")
+                        notify_users(conn, eligible_approvers(conn, "purchasing"),
+                                     "warning", "Pricing pending",
+                                     f"{pr['pr_no']} has waited {round(sub_hrs)}h without "
+                                     f"commercial pricing — enter the value so it can move on.",
+                                     link=_pr_link(pr["id"]))
+                        n += 1
+
             step = conn.execute(
                 "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
                 (pr["id"], pr["current_seq"])).fetchone()
-            if not step or step["escalated"]:
+            if not step:
                 continue
             hrs = _age_hours(step["activated_at"] or pr["submitted_at"])
-            if hrs is not None and hrs > C.SLA_HOURS_PER_STAGE:
+            if hrs is None:
+                continue
+            # ---- level 1: overdue (once, keyed on escalated/escalated_at) ----
+            if not step["escalated"] and hrs > C.SLA_HOURS_PER_STAGE:
                 conn.execute("UPDATE pr_steps SET escalated=1, escalated_at=? WHERE id=?",
                              (_now(), step["id"]))
                 audit(conn, pr["id"], "system", "escalated",
@@ -1553,6 +1811,24 @@ def run_escalations():
                 targets = eligible_approvers(conn, step["stage"]) or [pr["requester"]]
                 notify_users(conn, targets, "warning", "Approval overdue",
                              f"{pr['pr_no']} has waited {round(hrs)}h at {stage_label(step['stage'])}.",
+                             link=_pr_link(pr["id"]))
+                n += 1
+            # ---- level 2: > 2x SLA (once, keyed on escalated2_at) ----
+            if step["escalated2_at"] is None and hrs > 2 * C.SLA_HOURS_PER_STAGE:
+                conn.execute("UPDATE pr_steps SET escalated2_at=? WHERE id=?",
+                             (_now(), step["id"]))
+                audit(conn, pr["id"], "system", "escalated2",
+                      f"{stage_label(step['stage'])} critically overdue ({round(hrs)}h, >2x SLA)")
+                admins = [r["username"] for r in conn.execute(
+                    "SELECT username FROM users WHERE is_active=1 AND role='super_admin'"
+                ).fetchall()]
+                targets = set(eligible_approvers(conn, step["stage"])) | set(admins)
+                bell(conn, "critical", "Approval overdue (level 2)",
+                     f"{pr['pr_no']} stuck {round(hrs)}h at {stage_label(step['stage'])} — "
+                     f"more than twice the stage SLA.", link=_pr_link(pr["id"]))
+                notify_users(conn, list(targets), "critical", "Approval overdue (level 2)",
+                             f"{pr['pr_no']} has waited {round(hrs)}h at "
+                             f"{stage_label(step['stage'])} — management attention needed.",
                              link=_pr_link(pr["id"]))
                 n += 1
         conn.commit()
@@ -1627,6 +1903,86 @@ def analytics_summary():
         "stage_rejections": stage_rej,
         "bottleneck": stage_label(bottleneck) if bottleneck else None,
     }
+
+
+# Statuses that represent committed (approved-or-later) spend for reporting.
+_SPEND_STATUSES = ("approved", "po_issued", "partially_received", "received", "closed")
+
+
+def export_dataset(key):
+    """Rows for a named CSV report: returns (headers, rows) or (None, None).
+
+    Keys: register | spend_dept | spend_vendor | open_orders | payments.
+    Headers are plain-English column titles; rows are lists in header order,
+    ready for csv.writer (None values serialise as empty cells).
+    """
+    conn = get_db()
+    try:
+        if key == "register":
+            rows = conn.execute(
+                "SELECT pr_no, title, department, requester, vendor, status, "
+                "pricing_status, currency, total, tax_rate, request_date, "
+                "approved_at, po_no, payment_status, paid_amount "
+                "FROM pr_requests WHERE is_active=1 ORDER BY id").fetchall()
+            return (["PR No", "Title", "Department", "Requester", "Vendor",
+                     "Status", "Pricing", "Currency", "Total", "Tax %",
+                     "Request Date", "Approved At", "PO No", "Payment Status",
+                     "Paid Amount"],
+                    [[r["pr_no"], r["title"], r["department"], r["requester"],
+                      r["vendor"], r["status"], r["pricing_status"], r["currency"],
+                      r["total"], r["tax_rate"], r["request_date"], r["approved_at"],
+                      r["po_no"], r["payment_status"], r["paid_amount"]]
+                     for r in rows])
+
+        ph = ",".join("?" * len(_SPEND_STATUSES))
+        if key == "spend_dept":
+            rows = conn.execute(
+                "SELECT COALESCE(NULLIF(department,''),'—') d, COUNT(*) n, "
+                "ROUND(SUM(COALESCE(total,0)),2) t "
+                "FROM pr_requests WHERE is_active=1 AND status IN (" + ph + ") "
+                "GROUP BY d ORDER BY t DESC", _SPEND_STATUSES).fetchall()
+            return (["Department", "PRs", "Total"],
+                    [[r["d"], r["n"], r["t"]] for r in rows])
+
+        if key == "spend_vendor":
+            rows = conn.execute(
+                "SELECT COALESCE(NULLIF(vendor,''),'(unassigned)') v, COUNT(*) n, "
+                "ROUND(SUM(COALESCE(total,0)),2) t "
+                "FROM pr_requests WHERE is_active=1 AND status IN (" + ph + ") "
+                "GROUP BY v ORDER BY t DESC", _SPEND_STATUSES).fetchall()
+            return (["Vendor", "PRs", "Total"],
+                    [[r["v"], r["n"], r["t"]] for r in rows])
+
+        if key == "open_orders":
+            rows = conn.execute(
+                "SELECT p.pr_no, p.po_no, p.vendor, p.department, p.total, "
+                "p.currency, p.payment_status, "
+                "COALESCE(SUM(i.received_qty),0) rq, COALESCE(SUM(i.qty),0) oq "
+                "FROM pr_requests p LEFT JOIN pr_items i ON i.pr_id = p.id "
+                "WHERE p.is_active=1 AND p.status IN (?,?) "
+                "GROUP BY p.id ORDER BY p.id",
+                ("po_issued", "partially_received")).fetchall()
+            return (["PR No", "PO No", "Vendor", "Department", "Total",
+                     "Currency", "Received", "Payment Status"],
+                    [[r["pr_no"], r["po_no"], r["vendor"], r["department"],
+                      r["total"], r["currency"],
+                      "{:g}/{:g}".format(r["rq"] or 0, r["oq"] or 0),
+                      r["payment_status"]] for r in rows])
+
+        if key == "payments":
+            rows = conn.execute(
+                "SELECT y.paid_at, p.pr_no, p.vendor, y.amount, y.currency, "
+                "y.method, y.reference "
+                "FROM pr_payments y JOIN pr_requests p ON p.id = y.pr_id "
+                "ORDER BY y.paid_at, y.id").fetchall()
+            return (["Paid At", "PR No", "Vendor", "Amount", "Currency",
+                     "Method", "Reference"],
+                    [[r["paid_at"], r["pr_no"], r["vendor"], r["amount"],
+                      r["currency"], r["method"], r["reference"]]
+                     for r in rows])
+    finally:
+        conn.close()
+    return (None, None)
 
 
 def _group_sum(rows, key, val):

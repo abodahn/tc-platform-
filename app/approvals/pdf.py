@@ -512,16 +512,31 @@ def po_pdf(bundle):
     w, h = A4
     pn = {"page": 1, "notes": None}
 
-    y = _draw_header(c, w, h, cm, "PURCHASE ORDER", pr.get("po_no") or "PO",
+    # Revision-aware document number: "PO-... · Rev N" once the order has been
+    # revised, so a reprinted PDF is never mistaken for the original issue.
+    po_no = pr.get("po_no") or "PO"
+    try:
+        po_rev = int(pr.get("po_rev") or 0)
+    except (TypeError, ValueError):
+        po_rev = 0
+    y = _draw_header(c, w, h, cm, "PURCHASE ORDER",
+                     f"{po_no} · Rev {po_rev}" if po_rev > 0 else po_no,
                      "Ref " + (pr.get("pr_no") or ""))
 
-    y = _meta_grid(c, w, cm, y, [
+    try:
+        fx = float(pr.get("fx_rate") or 0)
+    except (TypeError, ValueError):
+        fx = 0.0
+    meta_pairs = [
         ("Vendor", pr.get("vendor")), ("Department", pr.get("department")),
         ("Payment terms", pr.get("payment_condition")),
         ("Delivery", pr.get("delivery_condition")),
         ("Approved on", (pr.get("approved_at") or "")[:10]),
         ("Currency", pr.get("currency")),
-    ])
+    ]
+    if fx not in (0.0, 1.0):
+        meta_pairs.append(("FX rate", f"1 {pr.get('currency') or ''} = {fx:g} EGP"))
+    y = _meta_grid(c, w, cm, y, meta_pairs)
 
     cur = pr.get("currency") or ""
     rows = [[str(i), (it.get("item") or "", it.get("description") or ""),
@@ -534,6 +549,22 @@ def po_pdf(bundle):
 
     y = _totals_block(c, w, cm, y, pr, cur)
 
+    # EGP-equivalent line for foreign-currency orders (thresholds routed on it).
+    # Same rule as services.egp_total, computed inline: total * fx when the
+    # order currency is not EGP.
+    if fx not in (0.0, 1.0):
+        try:
+            _tot = float(pr.get("total") or 0)
+        except (TypeError, ValueError):
+            _tot = 0.0
+        egp_eq = _tot * fx if (str(pr.get("currency") or "EGP").upper() != "EGP") else _tot
+        c.setFont("Helvetica-Oblique", 8.5)
+        c.setFillColorRGB(0.3, 0.3, 0.3)
+        c.drawString(1.5 * cm, y,
+                     f"EGP equivalent: {_fmt(egp_eq)} EGP (@ {fx:g} EGP / {cur or 'unit'})")
+        c.setFillColorRGB(0, 0, 0)
+        y -= 0.45 * cm
+
     c.setFont("Helvetica", 8.5)
     c.setFillColorRGB(0.4, 0.4, 0.4)
     c.drawString(1.5 * cm, y, "Authorised by Purchasing — TC Garments. This order references the approved "
@@ -541,6 +572,132 @@ def po_pdf(bundle):
     c.setFillColorRGB(0, 0, 0)
 
     _footer(c, w, cm, pn["page"], None)
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+# --------------------------------------------------------------------------
+# Goods Received Note
+# --------------------------------------------------------------------------
+_GRN_NOTES = [
+    "• Goods received as listed above; discrepancies must be reported within 48 hours.",
+]
+
+
+def grn_doc_no(pr_no):
+    """PR-2026-000012 -> GRN-2026-000012 (fallback: plain GRN prefix)."""
+    s = str(pr_no or "").strip()
+    if s.upper().startswith("PR-"):
+        return "GRN-" + s[3:]
+    return ("GRN-" + s) if s else "GRN"
+
+
+def _grn_sign_strip(c, w, cm, y, boxes):
+    """Three manual sign-off boxes (no signature images): dark role strip on top,
+    then a Name line and a Date line — pre-filled only where we have the data."""
+    per_row, gap = 3, 0.3 * cm
+    bw = (w - 3 * cm - (per_row - 1) * gap) / per_row
+    bh = 2.2 * cm
+    x0 = 1.5 * cm
+    y -= bh
+    for idx, (role, name, date) in enumerate(boxes[:per_row]):
+        x = x0 + idx * (bw + gap)
+        # role header strip
+        c.setFillColorRGB(0.11, 0.12, 0.16)
+        c.roundRect(x, y + bh - 0.55 * cm, bw, 0.55 * cm, 3, stroke=0, fill=1)
+        c.setFillColorRGB(1, 1, 1)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(x + 0.2 * cm, y + bh - 0.38 * cm,
+                     _clip(c, role, "Helvetica-Bold", 8, bw - 0.4 * cm))
+        # body box
+        c.setStrokeColorRGB(0.82, 0.82, 0.85)
+        c.setLineWidth(0.6)
+        c.rect(x, y, bw, bh - 0.55 * cm, stroke=1, fill=0)
+        # name + date rule lines
+        for label, value, ly in (("Name:", name, y + 0.95 * cm),
+                                 ("Date:", date, y + 0.35 * cm)):
+            c.setFont("Helvetica", 7.2)
+            c.setFillColorRGB(0.5, 0.5, 0.5)
+            c.drawString(x + 0.2 * cm, ly, label)
+            c.setStrokeColorRGB(0.88, 0.88, 0.9)
+            c.setLineWidth(0.5)
+            c.line(x + 1.05 * cm, ly - 0.06 * cm, x + bw - 0.2 * cm, ly - 0.06 * cm)
+            if value:
+                c.setFont("Helvetica-Bold", 8.2)
+                c.setFillColorRGB(0.1, 0.1, 0.1)
+                c.drawString(x + 1.1 * cm, ly,
+                             _clip(c, value, "Helvetica-Bold", 8.2, bw - 1.35 * cm))
+        c.setFillColorRGB(0, 0, 0)
+        c.setStrokeColorRGB(0, 0, 0)
+    return y - 0.5 * cm
+
+
+def grn_pdf(bundle):
+    """Goods Received Note: ordered vs received (with outstanding balance) per
+    line, plus a three-box manual sign-off strip. Read-only receipt record."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.pdfgen import canvas
+
+    pr, items = bundle["pr"], bundle["items"]
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    pn = {"page": 1, "notes": _GRN_NOTES}
+
+    y = _draw_header(c, w, h, cm, "GOODS RECEIVED NOTE", grn_doc_no(pr.get("pr_no")),
+                     "Ref " + (pr.get("po_no") or pr.get("pr_no") or ""))
+
+    # received_at is only stamped on the PR once FULLY received; for a partial
+    # receipt fall back to the latest goods-receipt entry in the audit trail.
+    received_at = (pr.get("received_at") or "")[:10]
+    if not received_at:
+        for ev in bundle.get("events") or []:      # newest first
+            if ev.get("action") in ("goods_received", "received"):
+                received_at = (ev.get("created_at") or "")[:10]
+                break
+
+    pairs = [
+        ("Vendor", pr.get("vendor")), ("Department", pr.get("department")),
+        ("PO No", pr.get("po_no") or pr.get("pr_no")),
+        ("Received by", pr.get("received_by")),
+        ("Received at", received_at),
+        ("Delivery condition", pr.get("delivery_condition")),
+    ]
+    if pr.get("receipt_notes"):
+        pairs.append(("Receipt notes", pr.get("receipt_notes")))
+    y = _meta_grid(c, w, cm, y, pairs)
+
+    rows = []
+    for i, it in enumerate(items, 1):
+        ordered = float(it.get("qty") or 0)
+        received = float(it.get("received_qty") or 0)
+        rows.append([str(i), (it.get("item") or "", it.get("description") or ""),
+                     it.get("unit") or "", _fmt(ordered), _fmt(received),
+                     _fmt(max(0.0, ordered - received))])
+    y = _table(c, w, cm, y, [
+        (0.6, "#", "l"), (8.4, "ITEM / DESCRIPTION", "l"), (1.5, "UNIT", "l"),
+        (2.0, "ORDERED", "r"), (2.0, "RECEIVED", "r"), (2.3, "OUTSTANDING", "r")],
+        rows, h, pn, title="Received lines", wrap_col=1)
+
+    # three-box sign-off strip (page-break guard first)
+    if y - 3.2 * cm < 2.2 * cm:
+        _footer(c, w, cm, pn["page"], _GRN_NOTES)
+        c.showPage()
+        pn["page"] += 1
+        y = h - 2.5 * cm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(1.5 * cm, y, "Goods receipt sign-off")
+    y -= 0.35 * cm
+    _grn_sign_strip(c, w, cm, y, [
+        ("Received by (Warehouse)", pr.get("received_by"), received_at),
+        ("Checked by (Purchasing)", None, None),
+        ("Approved by (Manager)", None, None),
+    ])
+
+    _footer(c, w, cm, pn["page"], _GRN_NOTES)
     c.showPage()
     c.save()
     buf.seek(0)

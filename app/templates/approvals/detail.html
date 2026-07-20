@@ -171,6 +171,36 @@
 </div>
 {% endif %}
 
+<!-- Foreign currency: EGP-equivalent threshold routing -->
+{% set fxr = pr.fx_rate or 1 %}
+{% if fxr != 1 or (can_purchasing and pr.currency != 'EGP' and pr.status in ('draft','rejected','pending')) %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="proc.fx.title">Foreign currency</h3>
+    {% if fxr != 1 %}<span class="badge b-pending">1 {{ pr.currency }} = {{ '%g'|format(fxr) }} EGP</span>{% endif %}
+  </div>
+  <div class="panel-pad">
+    {% if fxr != 1 %}
+    <div class="muted" style="margin-bottom:10px;font-size:13px">
+      <span data-i18n="proc.fx.egp_equiv">EGP equivalent</span>:
+      <b style="font-variant-numeric:tabular-nums;color:var(--ink)">{{ '{:,.2f}'.format((pr.total or 0) * fxr) }} EGP</b>
+      · <span data-i18n="proc.fx.routing_hint">approval thresholds route on this EGP value, not the foreign figure.</span>
+    </div>
+    {% endif %}
+    {% if can_purchasing and pr.currency != 'EGP' and pr.status in ('draft','rejected','pending') %}
+    <form method="post" action="{{ url_for('approvals.set_fx', pr_id=pr.id) }}" class="flex gap center wrap">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="field" style="margin:0">
+        <label><span data-i18n="proc.fx.rate_input">FX rate to EGP</span> (1 {{ pr.currency }} = ? EGP)</label>
+        <input type="number" name="fx_rate" min="0" step="any" required
+               value="{{ '%g'|format(fxr) }}" style="max-width:160px">
+      </div>
+      <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.fx.save">Save FX rate</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <!-- Purchasing / owner actions -->
 {% if pr.status == 'approved' and can_purchasing %}
 <div class="panel mt-4"><div class="panel-pad flex between center wrap gap">
@@ -242,6 +272,10 @@
     </form>
     {% elif pr.status in ('received','closed') %}
     <div class="muted" style="margin-bottom:12px"><b data-i18n="proc.received_ok">Delivery confirmed.</b> {{ (pr.received_at or '')[:16] }}{% if pr.receipt_notes %} · {{ pr.receipt_notes }}{% endif %}</div>
+    {% endif %}
+    {% if pr.status in ('partially_received','received','closed') %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.grn_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener" style="margin-top:6px">
+      <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.grn.pdf">GRN PDF</span></a>
     {% endif %}
 
     {# --- Invoices --- #}
@@ -333,6 +367,34 @@
   </form>
   {% if pr.po_sent_at %}<span class="tag" data-i18n="proc.po_sent">Sent ✓</span>{% endif %}
 </div></div>
+{% endif %}
+
+<!-- PO revisions: numbered, reasoned, immutable history -->
+{% if (pr.po_rev or 0) > 0 or (can_purchasing and pr.status in ('po_issued','partially_received')) %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="proc.po.title">Purchase Order</h3>
+    <div class="flex gap center">
+      {% if pr.po_no %}<span class="tag">{{ pr.po_no }}</span>{% endif %}
+      {% if (pr.po_rev or 0) > 0 %}<span class="badge b-pending">Rev {{ pr.po_rev }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="panel-pad">
+    {% if (pr.po_rev or 0) > 0 %}
+    <div class="muted" style="margin-bottom:10px;font-size:12.5px" data-i18n="proc.po.rev_hint">This order has been revised — the PO PDF carries the revision number, and every revision (with its reason and a snapshot of the lines) is kept on file.</div>
+    {% endif %}
+    {% if can_purchasing and pr.status in ('po_issued','partially_received') %}
+    <details>
+      <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.po.revise">Revise this PO</summary>
+      <form method="post" action="{{ url_for('approvals.revise_po', pr_id=pr.id) }}" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field"><label data-i18n="proc.po.reason">Reason for revision *</label>
+          <textarea name="reason" rows="2" required placeholder="What changed and why?" data-i18n-ph="proc.po.reason_ph"></textarea></div>
+        <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.po.open_rev">Open revision</button>
+      </form>
+    </details>
+    {% endif %}
+  </div>
+</div>
 {% endif %}
 
 {% if pr.status in ('draft', 'rejected') and is_owner %}
@@ -444,6 +506,14 @@
         {% if quote_cmp and quote_cmp.saving %}
         <span class="badge b-approved" data-i18n-title="proc.saving">▼ {{ '{:,.0f}'.format(quote_cmp.saving) }} {{ pr.currency }}</span>
         {% endif %}
+        {% if rfq_required %}
+        <span class="badge {{ 'b-approved' if (b.quotes|length >= rfq_min or pr.single_source_reason) else 'b-warning' }}">
+          <span data-i18n="proc.rfq.quotes_label">Quotes:</span> {{ b.quotes|length }}
+          <span data-i18n="proc.rfq.of_required">of</span> {{ rfq_min }}
+          <span data-i18n="proc.rfq.required_for">required for orders ≥</span>
+          {{ '{:,.0f}'.format(rfq_threshold) }} EGP
+        </span>
+        {% endif %}
       </div>
       <div class="panel-pad">
         {% if b.quotes %}
@@ -477,6 +547,24 @@
         </table>
         {% else %}
         <div class="muted" style="margin-bottom:12px" data-i18n="proc.no_quotes2">Add competing quotes to compare vendors.</div>
+        {% endif %}
+        {% if pr.single_source_reason %}
+        <div class="muted" style="margin-bottom:12px">
+          <strong data-i18n="proc.rfq.single_source">Single-source justification</strong>: {{ pr.single_source_reason }}
+        </div>
+        {% endif %}
+        {% if can_purchasing and rfq_required and (b.quotes|length) < rfq_min and not rfq_locked %}
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.rfq.waive">Waive competitive quotes (single source)</summary>
+          <form method="post" action="{{ url_for('approvals.single_source', pr_id=pr.id) }}" class="mt-2">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <div class="field">
+              <label data-i18n="proc.rfq.reason_l">Justification (why only one vendor can supply this)</label>
+              <textarea name="reason" rows="2" required maxlength="1000">{{ pr.single_source_reason or '' }}</textarea>
+            </div>
+            <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.rfq.save">Save justification</button>
+          </form>
+        </details>
         {% endif %}
         {% if is_owner or can_purchasing %}
         <details>

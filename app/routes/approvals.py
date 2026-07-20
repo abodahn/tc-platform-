@@ -78,6 +78,25 @@ def analytics():
                            a=svc.analytics_summary())
 
 
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("proc_view")
+def export_csv(key):
+    """Download a procurement report as CSV (register / spend / orders / payments)."""
+    import csv  # local import keeps this addition self-contained
+    headers, rows = svc.export_dataset(key)
+    if headers is None:
+        abort(404)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(headers)
+    writer.writerows(rows)
+    # utf-8-sig (BOM) so Excel detects the encoding and renders Arabic text.
+    data = ("\ufeff" + buf.getvalue()).encode("utf-8")
+    return send_file(io.BytesIO(data), mimetype="text/csv", as_attachment=True,
+                     download_name=f"procurement_{key}.csv")
+
+
 @bp.route("/list")
 @login_required
 @permission_required("proc_view")
@@ -290,6 +309,10 @@ def detail(pr_id):
                            can_purchasing=can_purchasing, is_priced=is_priced,
                            needs_pricing=needs_pricing, show_commercial=show_commercial,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
+                           rfq_min=C.RFQ_QUOTE_MIN, rfq_threshold=C.RFQ_VALUE_THRESHOLD,
+                           rfq_required=(is_priced and float(pr.get("total") or 0) >= C.RFQ_VALUE_THRESHOLD),
+                           rfq_locked=(pr["status"] in ("approved", "po_issued", "partially_received",
+                                                        "received", "closed", "cancelled")),
                            is_owner=(pr["requester"] == (user or {}).get("username")))
 
 
@@ -334,6 +357,23 @@ def choose_quote(pr_id, quote_id):
     ok, msg = svc.choose_quote(pr_id, quote_id, _u(), ip=_ip())
     flash("Quote selected." if ok else f"Could not select quote ({msg}).",
           "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/single-source", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def single_source(pr_id):
+    """Purchasing waives the competitive-quote (RFQ) rule with a justification."""
+    if not svc.get_pr(pr_id):
+        abort(404)
+    ok, msg = svc.set_single_source(pr_id, request.form.get("reason", ""), _u(), ip=_ip())
+    if ok:
+        flash("Single-source justification saved — competitive quotes waived.", "success")
+    else:
+        flash({"reason_required": "A justification is required to waive competitive quotes.",
+               "locked": "Sourcing is locked — this request is already approved or closed."
+               }.get(msg, f"Could not save the justification ({msg})."), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -446,6 +486,13 @@ def approve(pr_id):
                "not_pending": "This request is not awaiting approval.",
                "needs_pricing": "Enter the pricing before approving the Purchasing stage — "
                                 "the request has no commercial value yet.",
+               "needs_quotes": "Competitive quotes required — attach at least 2 vendor "
+                               "quotes for this order value, or record a single-source "
+                               "justification in the Vendor quotes panel.",
+               "self_approval": "You cannot approve your own request — raising it is "
+                                "your signature.",
+               "dual_role": "You already signed another stage of this request — a "
+                            "different approver must take this one.",
                "no_active_step": "No active approval step."}.get(msg, f"Could not approve ({msg})."),
               "error")
     else:
@@ -519,6 +566,37 @@ def issue_po(pr_id):
           {"over_budget": "The department budget for this period is exceeded — "
                           "an administrator must issue this PO (or raise the budget).",
            }.get(res, f"Could not issue PO ({res})."),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/revise-po", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def revise_po(pr_id):
+    """Open a numbered revision on an issued PO (reason required, history kept)."""
+    ok, res = svc.revise_po(pr_id, request.form.get("reason", ""), _u(), ip=_ip())
+    flash(f"PO revision opened — the order now reads Rev {res}." if ok else
+          {"reason_required": "Enter the reason for the revision — it is kept in "
+                              "the PO history.",
+           "not_revisable": "Only an issued (or partially received) Purchase Order "
+                            "can be revised.",
+           }.get(res, f"Could not revise the PO ({res})."),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/fx", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def set_fx(pr_id):
+    """Purchasing sets the EGP conversion rate for a foreign-currency request."""
+    ok, res = svc.set_fx(pr_id, request.form.get("fx_rate", ""), _u(), ip=_ip())
+    flash("FX rate saved — approval thresholds now route on the EGP equivalent."
+          if ok else
+          {"bad_rate": "Enter a valid FX rate greater than zero.",
+           "locked": "The FX rate is locked once the request is approved.",
+           }.get(res, f"Could not set the FX rate ({res})."),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
@@ -698,6 +776,24 @@ def po_pdf(pr_id):
     return send_file(io.BytesIO(data), mimetype="application/pdf",
                      as_attachment=False,
                      download_name=f"{bundle['pr'].get('po_no', 'PO')}.pdf")
+
+
+@bp.route("/pr/<int:pr_id>/grn.pdf")
+@login_required
+@permission_required("proc_view")
+def grn_pdf(pr_id):
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    if bundle["pr"]["status"] not in ("partially_received", "received", "closed"):
+        abort(400, "The Goods Received Note is available once a delivery is recorded.")
+    try:
+        data = pdfgen.grn_pdf(bundle)
+    except Exception:
+        return jsonify(error="PDF support unavailable."), 500
+    return send_file(io.BytesIO(data), mimetype="application/pdf",
+                     as_attachment=False,
+                     download_name=f"{pdfgen.grn_doc_no(bundle['pr'].get('pr_no'))}.pdf")
 
 
 # --------------------------------------------------------------------------

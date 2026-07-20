@@ -47,6 +47,20 @@
   </div>
 </div>
 
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="proc.export.title">Exports</h3></div>
+  <div class="panel-pad">
+    <div class="muted" style="margin-bottom:10px" data-i18n="proc.export.sub">Download live CSV reports — Excel-ready (UTF-8).</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px">
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.export_csv', key='register') }}" data-i18n="proc.export.register">PR register</a>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.export_csv', key='spend_dept') }}" data-i18n="proc.export.spend_dept">Spend by department</a>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.export_csv', key='spend_vendor') }}" data-i18n="proc.export.spend_vendor">Spend by vendor</a>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.export_csv', key='open_orders') }}" data-i18n="proc.export.open_orders">Open orders</a>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.export_csv', key='payments') }}" data-i18n="proc.export.payments">Payments register</a>
+    </div>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
 <script>
 (function () {

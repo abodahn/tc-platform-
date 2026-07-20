@@ -166,6 +166,19 @@ SLA_HOURS_PER_STAGE = 48       # a stage older than this is overdue
 SLA_WARN_HOURS = 24            # amber "due soon" threshold
 
 
+# --- Segregation of Duties (SoD) --------------------------------------------
+# Independence rules enforced by the approval engine (services.act_on_step):
+#   (a) self-approval block — the requester of a PR may never sign any of its
+#       approval stages (raising the request IS their signature);
+#   (b) dual-role block — one person may not sign two DIFFERENT stages of the
+#       same request, not even when a delegation makes them eligible.
+# SOD_ADMIN_EXEMPT: platform admins (super_admin, or any role holding the
+# proc_admin permission) bypass both rules so a small team can still walk a
+# request through the whole ladder. Set to False later for strict mode, where
+# admins are subject to SoD exactly like everyone else.
+SOD_ADMIN_EXEMPT = True
+
+
 # --- Permissions (added to platform RBAC) ----------------------------------
 PROC_PERMISSIONS = [
     "proc_view",       # see the module, lists, own requests
@@ -207,3 +220,12 @@ PROC_ROLE_LABELS = {
 
 def stage_label(stage):
     return STAGE_LABELS.get(stage, stage.replace("_", " ").title())
+
+
+# --- RFQ / competitive-quotation control (P3) -------------------------------
+# Orders at/above RFQ_VALUE_THRESHOLD (EGP-equivalent total) must carry at
+# least RFQ_QUOTE_MIN competing vendor quotes before the Purchasing stage can
+# sign off — unless Purchasing records a single-source justification on the PR
+# (pr_requests.single_source_reason). Enforced by services.rfq_gate_check.
+RFQ_QUOTE_MIN = 2            # competitive quotes required
+RFQ_VALUE_THRESHOLD = 25000  # EGP-equivalent total at/above which the rule applies
