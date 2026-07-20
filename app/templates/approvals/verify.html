@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Signature verification — TC Platform</title>
+<style>
+  :root{--bg:#f4f6f8;--card:#fff;--ink:#17202a;--muted:#5c6773;--line:#e3e8ee;
+        --brand:#14532d;--ok:#15803d;--ok-bg:#ecfdf3;--bad:#b91c1c;--bad-bg:#fef2f2}
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#11151a;--card:#1a2027;--ink:#e8edf2;--muted:#9aa6b2;--line:#2a333d;
+          --brand:#4ade80;--ok:#4ade80;--ok-bg:rgba(74,222,128,.1);--bad:#f87171;--bad-bg:rgba(248,113,113,.1)}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+       display:flex;min-height:100vh;align-items:center;justify-content:center;padding:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        max-width:520px;width:100%;padding:28px 30px}
+  .brand{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 18px}
+  .state{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:10px;margin:0 0 22px;
+         font-weight:650;font-size:20px;line-height:1.3;letter-spacing:-.01em}
+  .state.ok{background:var(--ok-bg);color:var(--ok)}
+  .state.bad{background:var(--bad-bg);color:var(--bad)}
+  .state .dot{width:10px;height:10px;border-radius:50%;background:currentColor;flex:none}
+  .sub{margin:-12px 0 20px;color:var(--muted);font-size:14px}
+  dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 18px;margin:0}
+  dt{color:var(--muted);font-size:13px}
+  dd{margin:0;font-weight:560}
+  .hash{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--muted);
+        word-break:break-all;margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
+  .foot{margin-top:16px;font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+  <main class="card">
+    <p class="brand">T&amp;C Garments · TC Platform · Procurement</p>
+
+    {% if ev %}
+      <div class="state ok"><span class="dot"></span>Signature verified</div>
+      <p class="sub">This approval is genuine. It matches the platform's signing record below.</p>
+      <dl>
+        <dt>Document</dt><dd>{{ pr.pr_no }}{% if pr.po_no %} · {{ pr.po_no }}{% endif %}</dd>
+        <dt>Title</dt><dd>{{ pr.title or "—" }}</dd>
+        <dt>Action</dt><dd>{{ "Approved" if ev.action == "approve" else "Rejected" }}</dd>
+        <dt>Signed by</dt><dd>{{ ev.signer_name or ev.signer }}</dd>
+        <dt>Stage</dt><dd>{{ ev.stage }} (step {{ ev.seq }})</dd>
+        <dt>Signed at</dt><dd>{{ ev.created_at }} UTC</dd>
+        <dt>Document status</dt><dd>{{ pr.status }}</dd>
+      </dl>
+      <div class="hash">Integrity hash (SHA-256)<br>{{ ev.doc_hash }}</div>
+      <p class="foot">This record was created at the moment of signing and cannot be
+      edited. If the details above do not match the paper in your hand, the paper
+      has been altered.</p>
+    {% else %}
+      <div class="state bad"><span class="dot"></span>
+        Unknown verification code.</div>
+      <p>No signature with this code exists in the TC Platform. The document you
+      are checking is <b>not</b> a verified TC approval. Treat it as unauthentic
+      and contact the Procurement team.</p>
+    {% endif %}
+  </main>
+</body>
+</html>

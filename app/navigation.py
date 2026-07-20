@@ -8,6 +8,7 @@ Menu visibility is enforced by `permission` against the user's role.
 NAV = [
     {"section": "nav.command", "items": [
         ("command_center", "nav.command_center", "grid", "main.dashboard", "view_dashboard"),
+        ("my_work", "nav.my_work", "check", "main.my_work", "open_module"),
         ("launcher", "nav.launcher", "apps", "main.launcher", "open_module"),
     ]},
     {"section": "nav.intelligence", "items": [

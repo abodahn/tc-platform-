@@ -510,6 +510,13 @@ def issue_parts(request_id, received_by, user, ip=None):
                "request", request_id, "info", f"/maintenance/requests")
         audit(conn, user, "parts_issue", "request", request_id, None, "issued", ip=ip)
         conn.commit()
+        # Stock just dropped: raise auto-reorder PRs for anything now at/below
+        # its reorder level (deduped, never blocks the issue).
+        try:
+            from app.maintenance.procure_bridge import auto_reorder_check
+            auto_reorder_check()
+        except Exception:
+            pass
         return True, ""
     except Exception as exc:  # pragma: no cover - safety rollback
         conn.rollback()
@@ -648,6 +655,11 @@ def adjust_stock(spare_id, new_qty, reason, user, ip=None):
         audit(conn, user, "stock_adjust", "spare", spare_id, sp["stock_qty"], new_qty,
               comment=reason, ip=ip)
         conn.commit()
+        try:
+            from app.maintenance.procure_bridge import auto_reorder_check
+            auto_reorder_check(spare_ids=[spare_id])
+        except Exception:
+            pass
         return True, ""
     finally:
         conn.close()
@@ -687,6 +699,13 @@ def sync_stock_alerts(conn=None):
                 if existing:  # restocked -> resolve
                     conn.execute("UPDATE mnt_notifications SET is_read=1 WHERE id=?", (existing["id"],))
         conn.commit()
+        # Close the replenishment loop: anything at/below reorder gets a deduped
+        # auto-PR to Procurement (also catches reservation-driven availability drops).
+        try:
+            from app.maintenance.procure_bridge import auto_reorder_check
+            auto_reorder_check(conn=conn)
+        except Exception:
+            pass
     finally:
         if own:
             conn.close()

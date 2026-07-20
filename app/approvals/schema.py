@@ -207,7 +207,32 @@ _PR_MIGRATIONS = [
     ("pricing_status", "ALTER TABLE pr_requests ADD COLUMN pricing_status TEXT DEFAULT 'priced'"),
     ("priced_at", "ALTER TABLE pr_requests ADD COLUMN priced_at TEXT"),
     ("priced_by", "ALTER TABLE pr_requests ADD COLUMN priced_by TEXT"),
+    # Cross-module bridge: where a PR was raised from (e.g. maintenance spare
+    # auto-reorder -> source_module='maintenance', source_ref='spare:<id>').
+    # Lets goods receipts post back into the source system's stock.
+    ("source_module", "ALTER TABLE pr_requests ADD COLUMN source_module TEXT"),
+    ("source_ref", "ALTER TABLE pr_requests ADD COLUMN source_ref TEXT"),
 ]
+
+# Verifiable signature events: one immutable row per approve/reject signature.
+# `code` is the public verification handle printed on the PR/PO PDF; `doc_hash`
+# anchors what was signed (PR no, stage, decision, signer, amount, timestamp).
+_SIGN_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS pr_sign_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE,
+    pr_id INTEGER,
+    seq INTEGER,
+    stage TEXT,
+    action TEXT,
+    signer TEXT,
+    signer_name TEXT,
+    doc_hash TEXT,
+    ip TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sign_events_pr ON pr_sign_events(pr_id);
+"""
 
 # Columns added to pr_items after first release (line-level receiving).
 _ITEM_MIGRATIONS = [
@@ -218,6 +243,7 @@ _ITEM_MIGRATIONS = [
 def create_and_seed(conn):
     """Create procurement tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
+    conn.executescript(_SIGN_EVENTS_DDL)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in _STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS:

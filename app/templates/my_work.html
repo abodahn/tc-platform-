@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}My Work{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="mywork.eyebrow">Action Centre</div>
+    <h1 data-i18n="mywork.title">My Work</h1>
+    <div class="sub">
+      {% if total_actions %}
+        <b>{{ total_actions }}</b> <span data-i18n="mywork.actions_waiting">actions are waiting for you</span>
+      {% else %}
+        <span data-i18n="mywork.all_clear">All clear — nothing is waiting on you right now.</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="grid cols-2">
+
+  {# ── Approvals waiting for my signature ── #}
+  {% if sign_queue %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.sign_queue">Requests waiting for my signature</h3>
+      <span class="badge-count">{{ sign_queue|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for pr in sign_queue %}
+      <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ pr.pr_no }}</b> · {{ pr.title or '' }}</span>
+        <span class="tag">{{ pr._stage_label }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Maintenance part-requests to decide ── #}
+  {% if maint_approvals %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.maint_approvals">Spare-part requests to decide</h3>
+      <span class="badge-count">{{ maint_approvals|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for a in maint_approvals %}
+      <a class="row-line" href="{{ url_for('maintenance.approvals') }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ a.request_no }}</b> · <span data-i18n="mywork.level">Level</span> {{ a.level }}</span>
+        <span class="tag">{{ a.approver_role }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Probation evaluations due ── #}
+  {% if prob_pending %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.prob_pending">Probation evaluations needing me</h3>
+      <span class="badge-count">{{ prob_pending|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for c in prob_pending %}
+      <a class="row-line" href="{{ url_for('probation.case_detail', case_id=c.id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ c.employee or c.case_no }}</b></span>
+        <span class="tag">{{ c.status }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Latest unread alerts ── #}
+  {% if alerts %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.alerts">Latest unread alerts</h3>
+      <span class="badge-count">{{ alerts|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for n in alerts %}
+      <div class="sev-{{ n.severity }}" style="display:flex;gap:10px;align-items:baseline;padding:7px 4px;border-bottom:1px solid var(--border)">
+        <span class="tag">{{ n.severity }}</span>
+        <span style="flex:1"><b>{{ n.title }}</b> <span class="muted">— {{ n.message }}</span></span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── My purchase requests ── #}
+  {% if my_prs %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.my_prs">My purchase requests</h3>
+      <span class="badge-count">{{ my_prs|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for pr in my_prs %}
+      <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ pr.pr_no }}</b> · {{ pr.title or '' }}</span>
+        <span class="tag">{{ pr.status }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── My maintenance tickets ── #}
+  {% if my_tickets %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.my_tickets">My maintenance tickets</h3>
+      <span class="badge-count">{{ my_tickets|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for t in my_tickets %}
+      <a class="row-line" href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ t.ticket_no }}</b> · {{ t.machine_code or '' }}</span>
+        <span class="tag">{{ t.status }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+{% if not (sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets) %}
+<div class="panel"><div class="panel-pad muted" data-i18n="mywork.empty">
+  Nothing to show yet — new approvals, tickets and alerts assigned to you will appear here.
+</div></div>
+{% endif %}
+
+{% endblock %}

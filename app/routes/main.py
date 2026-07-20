@@ -718,3 +718,75 @@ def search():
     finally:
         conn.close()
     return jsonify({"q": q, "results": results[:25]})
+
+
+# ---------------------------------------------------------------------------
+# My Work & Action Centre — one page with everything waiting on THIS user:
+# approvals to sign, maintenance part-requests to decide, probation evaluations
+# due, own PRs and maintenance tickets, and the latest unread alerts. Every
+# section is permission-gated and defensively wrapped so one module's failure
+# never blanks the page.
+# ---------------------------------------------------------------------------
+@bp.route("/my-work")
+@login_required
+def my_work():
+    user = current_user()
+    data = {"sign_queue": [], "maint_approvals": [], "prob_pending": [],
+            "my_prs": [], "my_tickets": [], "alerts": []}
+
+    if user_has_permission(user, "proc_view"):
+        try:
+            from app.approvals import services as proc
+            data["sign_queue"] = proc.my_queue(user)[:15]
+            data["my_prs"] = [p for p in proc.list_prs(requester=user["username"], limit=10)
+                              if p.get("status") not in ("closed", "cancelled")][:8]
+        except Exception:
+            pass
+
+    if user_has_permission(user, "maint_approve"):
+        try:
+            conn = get_db()
+            try:
+                data["maint_approvals"] = conn.execute(
+                    "SELECT a.id, a.level, a.approver_role, a.created_at, r.request_no, "
+                    "r.id AS request_id FROM mnt_approvals a "
+                    "JOIN mnt_requests r ON r.id = a.request_id "
+                    "WHERE a.status='pending' ORDER BY a.id DESC LIMIT 10").fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    if user_has_permission(user, "maint_view"):
+        try:
+            conn = get_db()
+            try:
+                data["my_tickets"] = conn.execute(
+                    "SELECT id, ticket_no, machine_code, status, priority, created_at "
+                    "FROM mnt_tickets WHERE requester=? AND is_active=1 "
+                    "AND status NOT IN ('closed','cancelled','rejected') "
+                    "ORDER BY id DESC LIMIT 8", (user["username"],)).fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    if user_has_permission(user, "prob_view"):
+        try:
+            from app.probation import services as prob
+            data["prob_pending"] = prob.my_pending(user)[:10]
+        except Exception:
+            pass
+
+    try:
+        notifs, _unread = _unread_notifications(user["username"])
+        scope = system_scope(user)
+        if scope is not None:
+            notifs = [n for n in notifs if (n["module"] or "") in scope or not n["module"]]
+        data["alerts"] = [n for n in notifs if not n["is_read"]][:8]
+    except Exception:
+        pass
+
+    total_actions = (len(data["sign_queue"]) + len(data["maint_approvals"])
+                     + len(data["prob_pending"]))
+    return render_template("my_work.html", user=user, total_actions=total_actions, **data)

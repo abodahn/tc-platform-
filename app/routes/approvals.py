@@ -817,3 +817,15 @@ def rename_settings():
               "empty": "Enter a new name."}.get(msg, "Could not rename.")
     flash(reason, "error")
     return redirect(url_for("approvals.settings", department=old))
+
+
+# ---------------------------------------------------------------------------
+# Public signature verification — no login on purpose: the code printed on a
+# PR/PO PDF must let anyone (an auditor, a vendor) confirm the document is
+# genuine. Codes are unguessable (secrets.token_urlsafe) and the page reveals
+# only what the PDF itself already shows.
+# ---------------------------------------------------------------------------
+@bp.route("/verify/<code>")
+def verify_signature(code):
+    ev, pr = svc.verify_sign_code(code)
+    return render_template("approvals/verify.html", ev=ev, pr=pr), (200 if ev else 404)

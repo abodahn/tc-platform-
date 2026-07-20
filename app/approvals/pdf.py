@@ -429,7 +429,8 @@ def _signature_grid(c, w, h, cm, y, pr, steps, pn):
     for s in steps:
         blocks.append({"role": s.get("approver_role") or s.get("stage"),
                        "name": s.get("approver_name"), "sig": s.get("sig_png"),
-                       "date": (s.get("acted_at") or "")[:10], "status": s.get("status")})
+                       "date": (s.get("acted_at") or "")[:10], "status": s.get("status"),
+                       "code": s.get("verify_code")})
 
     per_row, gap = 3, 0.3 * cm
     bw = (w - 3 * cm - (per_row - 1) * gap) / per_row
@@ -477,8 +478,24 @@ def _signature_grid(c, w, h, cm, y, pr, steps, pn):
         c.setFillColorRGB(0.35, 0.35, 0.35)
         meta = (b["name"] or "—") + (("  ·  " + b["date"]) if b["date"] else "")
         c.drawString(x + 0.2 * cm, y + 0.28 * cm, _clip(c, meta, "Helvetica", 7.2, bw - 0.4 * cm))
+        # signature-event verification handle (checked at /procurement/verify/<code>)
+        if b.get("code"):
+            c.setFont("Helvetica", 5.8)
+            c.setFillColorRGB(0.5, 0.5, 0.55)
+            c.drawString(x + 0.2 * cm, y + 0.08 * cm,
+                         _clip(c, "Verify: " + _verify_base() + "/procurement/verify/" + b["code"],
+                               "Helvetica", 5.8, bw - 0.4 * cm))
         c.setFillColorRGB(0, 0, 0)
     return y
+
+
+def _verify_base():
+    """Public base URL for the printed verification links (blank -> relative)."""
+    try:
+        from config import Config
+        return (Config.PUBLIC_URL or "").rstrip("/")
+    except Exception:
+        return ""
 
 
 # --------------------------------------------------------------------------

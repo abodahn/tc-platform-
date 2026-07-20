@@ -7,6 +7,8 @@ advancing/rejecting, and auto-generating the Purchase Order on final approval.
 Each mutating action writes an immutable audit event and surfaces the right
 platform-bell notification.
 """
+import hashlib
+import secrets
 from datetime import datetime, timezone
 
 from app.db import get_db
@@ -221,12 +223,21 @@ def get_pr(pr_id):
         payments = conn.execute(
             "SELECT id, pr_id, invoice_id, amount, currency, method, reference, paid_at, "
             "notes, created_at FROM pr_payments WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
+        try:
+            sig_evs = conn.execute(
+                "SELECT seq, stage, code FROM pr_sign_events WHERE pr_id=? ORDER BY id",
+                (pr_id,)).fetchall()
+        except Exception:
+            sig_evs = []
     finally:
         conn.close()
     pr_d = dict(pr)
+    # latest verification code per (seq, stage) — printed on the PDF signature grid
+    codes = {(e["seq"], e["stage"]): e["code"] for e in sig_evs}
     step_ds = []
     for r in steps:
         s = dict(r)
+        s["verify_code"] = codes.get((s.get("seq"), s.get("stage")))
         # aging only meaningful for the current pending step
         if s.get("status") == "pending" and s.get("seq") == pr_d.get("current_seq") \
            and pr_d.get("status") == "pending":
@@ -692,6 +703,52 @@ def price_pr(pr_id, prices, meta, user, ip=None):
 # --------------------------------------------------------------------------
 # approve / reject
 # --------------------------------------------------------------------------
+def _record_sign_event(conn, pr, step, decision, uname, signer_name, now, ip=None):
+    """Immutable, publicly-verifiable record of one signature. The doc_hash
+    anchors exactly what was signed; `code` is the handle printed on the PDF
+    (…/procurement/verify/<code>). Best-effort: never blocks the decision."""
+    try:
+        code = secrets.token_urlsafe(9)
+        payload = "|".join(str(x) for x in (
+            pr["pr_no"], step["seq"], step["stage"], decision, uname,
+            f"{float(pr['total'] or 0):.2f}", pr["currency"] or "", now))
+        doc_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        conn.execute(
+            """INSERT INTO pr_sign_events
+               (code, pr_id, seq, stage, action, signer, signer_name, doc_hash, ip, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (code, pr["id"], step["seq"], step["stage"], decision, uname,
+             signer_name, doc_hash, ip, now))
+        return code
+    except Exception:
+        return None
+
+
+def sign_events(pr_id):
+    conn = get_db()
+    try:
+        return conn.execute(
+            "SELECT * FROM pr_sign_events WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
+    finally:
+        conn.close()
+
+
+def verify_sign_code(code):
+    """Public verification: look a signature event up by its printed code.
+    Returns (event, pr) or (None, None)."""
+    if not code or len(str(code)) > 40:
+        return None, None
+    conn = get_db()
+    try:
+        ev = conn.execute("SELECT * FROM pr_sign_events WHERE code=?", (str(code),)).fetchone()
+        if not ev:
+            return None, None
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (ev["pr_id"],)).fetchone()
+        return ev, pr
+    finally:
+        conn.close()
+
+
 def act_on_step(pr_id, user, decision, comment=None, ip=None):
     """Approve or reject the PR's current pending step.
     decision in {'approve','reject'}. Returns (ok, msg)."""
@@ -730,6 +787,8 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
                 "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=?",
                 (uname, sig_name or user.get("full_name") or uname, user.get("role"),
                  comment, sig_png, now, step["id"]))
+            _record_sign_event(conn, pr, step, "reject", uname,
+                               sig_name or user.get("full_name") or uname, now, ip)
             conn.execute(
                 "UPDATE pr_requests SET status='rejected', rejection_reason=? WHERE id=?",
                 (comment or f"Rejected at {stage_label(step['stage'])}", pr_id))
@@ -747,6 +806,8 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=?",
             (uname, sig_name or user.get("full_name") or uname, user.get("role"),
              comment, sig_png, now, step["id"]))
+        _record_sign_event(conn, pr, step, "approve", uname,
+                           sig_name or user.get("full_name") or uname, now, ip)
         audit(conn, pr_id, uname, "approved",
               f"{stage_label(step['stage'])} approved" + (f": {comment}" if comment else ""), ip)
 
@@ -834,7 +895,17 @@ def receive_goods(pr_id, user, notes=None, ip=None):
               "Goods/services received" + (f": {notes}" if notes else ""), ip)
         notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
                      f"{pr['pr_no']} was received.", link=_pr_link(pr_id))
+        # Whole-PR receive: mark every line fully received so the maintenance
+        # bridge (and line reports) see the delivered quantities.
+        items = conn.execute("SELECT id, qty, received_qty FROM pr_items WHERE pr_id=?",
+                             (pr_id,)).fetchall()
+        remaining = {it["id"]: max(0.0, float(it["qty"] or 0) - float(it["received_qty"] or 0))
+                     for it in items}
+        for iid, qty in remaining.items():
+            if qty > 0:
+                conn.execute("UPDATE pr_items SET received_qty=qty WHERE id=?", (iid,))
         conn.commit()
+        _post_bridge_receipt(pr_id, remaining, user)
         return True, ""
     finally:
         conn.close()
@@ -885,9 +956,20 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
             notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
                          f"{pr['pr_no']} fully received.", link=_pr_link(pr_id))
         conn.commit()
+        _post_bridge_receipt(pr_id, receipts, user)
         return True, ("received" if fully else "partial")
     finally:
         conn.close()
+
+
+def _post_bridge_receipt(pr_id, receipts, user):
+    """Post a goods receipt back into the source system's stock (maintenance
+    spare auto-reorder PRs). Post-commit, best-effort: never blocks receiving."""
+    try:
+        from app.maintenance.procure_bridge import post_receipt_to_stock
+        post_receipt_to_stock(pr_id, receipts, user)
+    except Exception:
+        pass
 
 
 def _due_date(payment_condition, base_date):

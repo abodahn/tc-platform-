@@ -250,6 +250,14 @@ def create_and_seed(conn):
             conn.commit()
         except Exception:
             conn.rollback()
+    # Settings that must exist on ALREADY-DEPLOYED databases too (the seed body
+    # below is skipped once data exists). INSERT OR IGNORE keeps admin edits.
+    try:
+        conn.execute("INSERT OR IGNORE INTO mnt_settings (key,value) VALUES (?,?)",
+                     ("auto_reorder_pr", "1"))
+        conn.commit()
+    except Exception:
+        conn.rollback()
     if conn.execute("SELECT COUNT(*) c FROM mnt_machines").fetchone()["c"] > 0:
         return  # already seeded; never overwrite
 
@@ -343,7 +351,10 @@ def create_and_seed(conn):
 
     # --- Settings ---
     for k, v in [("reopen_window_days", "7"), ("response_sla_hours", "4"),
-                 ("resolution_sla_hours", "24"), ("currency", "TRY")]:
+                 ("resolution_sla_hours", "24"), ("currency", "TRY"),
+                 # Maintenance -> Procurement bridge: auto-raise a PR when a spare
+                 # falls to/below its reorder level ('1' on / '0' off).
+                 ("auto_reorder_pr", "1")]:
         conn.execute("INSERT OR IGNORE INTO mnt_settings (key,value) VALUES (?,?)", (k, v))
 
     # --- Tickets (3) ---
