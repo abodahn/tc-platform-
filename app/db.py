@@ -7,6 +7,7 @@ runtime by Config.DATABASE_URL. The rest of the codebase keeps using
 (placeholders, INSERT OR IGNORE, date()/datetime(), AUTOINCREMENT) and emulates
 sqlite3 behaviour (RETURNING-id lastrowid, hybrid index/key rows).
 """
+import os
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -143,9 +144,17 @@ class _PGCursor:
 
 
 class _PGConn:
-    """sqlite3-compatible wrapper around a psycopg2 connection."""
-    def __init__(self, conn):
+    """sqlite3-compatible wrapper around a psycopg2 connection.
+
+    When `pooled` is True, close() returns the underlying connection to the
+    process-wide pool (after a rollback, so state is discarded exactly like a
+    real close) instead of tearing down the TCP+TLS session. That handshake —
+    repeated for every get_db() call, dozens of times per page — was the main
+    production latency cost on Render."""
+    def __init__(self, conn, pooled=False):
         self._c = conn
+        self._pooled = pooled
+        self._closed = False
 
     def execute(self, sql, params=()):
         import psycopg2.extras
@@ -194,7 +203,20 @@ class _PGConn:
         self._c.rollback()
 
     def close(self):
-        self._c.close()
+        if self._closed:
+            return
+        self._closed = True
+        if not self._pooled:
+            self._c.close()
+            return
+        try:
+            self._c.rollback()          # discard uncommitted state, like a real close
+            _pg_pool_put(self._c)
+        except Exception:
+            try:
+                _pg_pool_put(self._c, broken=True)
+            except Exception:
+                pass
 
     def __enter__(self):
         return self
@@ -209,6 +231,61 @@ class _PGConn:
 
 _RESOLVED_PG_URL = None  # cached working URL once discovered (host probing is one-time)
 
+# ---------------------------------------------------------------------------
+# PostgreSQL connection pool (per worker process). Every get_db() used to open
+# a brand-new TCP+TLS session to the database — at tens of milliseconds each,
+# and dozens of calls per page, that dominated page latency in production.
+# The pool keeps warm connections; close() returns them (see _PGConn.close).
+# ---------------------------------------------------------------------------
+import threading as _threading
+
+_PG_POOL = None
+_PG_POOL_LOCK = _threading.Lock()
+
+
+def _pg_pool(url):
+    """Lazily create the process-wide pool for the resolved URL."""
+    global _PG_POOL
+    if _PG_POOL is None:
+        with _PG_POOL_LOCK:
+            if _PG_POOL is None:
+                from psycopg2.pool import ThreadedConnectionPool
+                maxconn = int(os.getenv("TC_PG_POOL_MAX", "10") or 10)
+                _PG_POOL = ThreadedConnectionPool(1, max(2, maxconn), url,
+                                                  connect_timeout=10)
+    return _PG_POOL
+
+
+def _pg_pool_put(raw, broken=False):
+    if _PG_POOL is not None:
+        _PG_POOL.putconn(raw, close=broken)
+    else:  # pool torn down (shouldn't happen) — just close
+        try:
+            raw.close()
+        except Exception:
+            pass
+
+
+def _pg_pool_conn(url):
+    """Checkout with liveness check; discard dead/idle-killed connections.
+    The SELECT 1 costs ~1ms on a warm connection versus ~50-200ms for a fresh
+    TLS handshake, and protects against the server reaping idle sessions."""
+    pool = _pg_pool(url)
+    for _ in range(3):
+        raw = pool.getconn()
+        if getattr(raw, "closed", 0):
+            pool.putconn(raw, close=True)
+            continue
+        try:
+            cur = raw.cursor()
+            cur.execute("SELECT 1")
+            cur.close()
+            raw.rollback()
+            return raw
+        except Exception:
+            pool.putconn(raw, close=True)
+    return None  # pool kept handing us corpses — caller falls back to direct
+
 
 def get_db():
     """Return a connection. PostgreSQL when DATABASE_URL is set, else SQLite.
@@ -217,14 +294,28 @@ def get_db():
     URL first, then — if that is an unreachable Render internal host — the
     external host for each region, caching whichever connects. This makes a
     cross-region deploy work without editing the DATABASE_URL env var."""
-    global _RESOLVED_PG_URL
+    global _RESOLVED_PG_URL, _PG_POOL
     if _is_pg():
         import psycopg2
         if _RESOLVED_PG_URL:
+            # fast path: warm pooled connection (no TLS handshake per call)
+            try:
+                raw = _pg_pool_conn(_RESOLVED_PG_URL)
+                if raw is not None:
+                    return _PGConn(raw, pooled=True)
+            except Exception:
+                pass  # pool exhausted/broken — fall through to a direct connect
             try:
                 return _PGConn(psycopg2.connect(_RESOLVED_PG_URL, connect_timeout=10))
             except psycopg2.OperationalError:
                 _RESOLVED_PG_URL = None  # previously-good host failed; re-probe
+                with _PG_POOL_LOCK:
+                    if _PG_POOL is not None:
+                        try:
+                            _PG_POOL.closeall()
+                        except Exception:
+                            pass
+                        _PG_POOL = None
         last_err = None
         for cand in _pg_candidates():
             try:

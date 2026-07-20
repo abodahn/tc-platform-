@@ -18,6 +18,7 @@ stock movement or a goods receipt. Toggle with mnt_settings key
 from __future__ import annotations
 
 import logging
+import time
 
 from app.db import get_db
 
@@ -27,6 +28,12 @@ log = logging.getLogger("tc.maint.bridge")
 # receiving (or dead) frees the spare for a fresh auto-PR.
 _CLOSED_STATUSES = ("rejected", "cancelled", "closed", "received")
 
+# Full sweeps run from page loads (sync_stock_alerts); throttle them so a busy
+# dashboard doesn't re-scan on every request. Targeted checks (spare_ids after
+# a stock movement) are never throttled.
+_SWEEP_INTERVAL = 180  # seconds
+_LAST_SWEEP = [0.0]
+
 
 def _enabled(conn) -> bool:
     row = conn.execute(
@@ -34,12 +41,14 @@ def _enabled(conn) -> bool:
     return (row["value"] if row else "1") != "0"
 
 
-def _open_bridge_pr(conn, spare_id):
+def _open_bridge_refs(conn) -> set:
+    """source_refs of ALL still-open bridge PRs, in one query (the previous
+    per-spare lookup multiplied round-trips by the number of low spares)."""
     ph = ",".join("?" for _ in _CLOSED_STATUSES)
-    return conn.execute(
-        f"SELECT id, pr_no, status FROM pr_requests WHERE source_module='maintenance' "
-        f"AND source_ref=? AND is_active=1 AND status NOT IN ({ph})",
-        (f"spare:{spare_id}",) + _CLOSED_STATUSES).fetchone()
+    rows = conn.execute(
+        f"SELECT source_ref FROM pr_requests WHERE source_module='maintenance' "
+        f"AND is_active=1 AND status NOT IN ({ph})", _CLOSED_STATUSES).fetchall()
+    return {r["source_ref"] for r in rows if r["source_ref"]}
 
 
 def _suggested_qty(spare) -> float:
@@ -53,7 +62,13 @@ def auto_reorder_check(spare_ids=None, conn=None) -> list:
     """Raise auto-PRs for spares at/below reorder level. Returns [(spare_id, pr_no)].
 
     `spare_ids` limits the sweep (call after a specific stock movement); None
-    sweeps every active spare (called from sync_stock_alerts). Idempotent."""
+    sweeps every active spare (called from sync_stock_alerts, throttled to one
+    scan per _SWEEP_INTERVAL per process). Idempotent."""
+    if spare_ids is None:
+        now = time.time()
+        if now - _LAST_SWEEP[0] < _SWEEP_INTERVAL:
+            return []
+        _LAST_SWEEP[0] = now
     own = conn is None
     if own:
         conn = get_db()
@@ -68,9 +83,12 @@ def auto_reorder_check(spare_ids=None, conn=None) -> list:
             q += " AND id IN (%s)" % ",".join("?" for _ in spare_ids)
             args = tuple(spare_ids)
         spares = conn.execute(q, args).fetchall()
+        if not spares:
+            return []
+        open_refs = _open_bridge_refs(conn)   # one dedup query for the whole batch
         for s in spares:
             try:
-                if _open_bridge_pr(conn, s["id"]):
+                if f"spare:{s['id']}" in open_refs:
                     continue  # one open replenishment PR per spare
                 created.append((s["id"], _raise_pr(conn, s)))
             except Exception:

@@ -148,10 +148,12 @@ def active_delegator_roles(username):
         conn.close()
 
 
-def can_act(user, stage):
+def can_act(user, stage, _deleg=None):
     """May this user approve/reject the given ladder stage? True for the stage's
     own roles, for super_admin / proc_admin, or for anyone actively delegated a
-    qualifying role by another user."""
+    qualifying role by another user. Pass `_deleg` (a prefetched set from
+    active_delegator_roles) when checking many stages in a loop so the
+    delegation lookup runs one query instead of one per stage."""
     if not user:
         return False
     role = user.get("role")
@@ -162,7 +164,9 @@ def can_act(user, stage):
     allowed = STAGE_ROLES.get(stage, set())
     if role in allowed:
         return True
-    return bool(allowed & active_delegator_roles(user.get("username")))
+    if _deleg is None:
+        _deleg = active_delegator_roles(user.get("username"))
+    return bool(allowed & _deleg)
 
 
 def _user_sig(username):
@@ -272,19 +276,34 @@ def list_prs(status=None, requester=None, limit=500):
 
 
 def my_queue(user):
-    """PRs currently waiting on a stage this user is allowed to act on."""
+    """PRs currently waiting on a stage this user is allowed to act on.
+
+    Batched: one query for the PRs, one for ALL their pending steps, and one
+    delegation lookup — regardless of how many PRs are pending. (The previous
+    per-PR connection loop multiplied database round-trips by the queue size,
+    which is what made procurement pages crawl once auto-reorder PRs landed.)"""
     if not user:
         return []
+    prs = list_prs(status="pending")
+    if not prs:
+        return []
+    ids = [pr["id"] for pr in prs]
+    conn = get_db()
+    try:
+        ph = ",".join("?" for _ in ids)
+        step_rows = conn.execute(
+            f"SELECT * FROM pr_steps WHERE status='pending' AND pr_id IN ({ph})",
+            tuple(ids)).fetchall()
+    finally:
+        conn.close()
+    by_pr = {}
+    for s in step_rows:
+        by_pr.setdefault(s["pr_id"], []).append(s)
+    deleg = active_delegator_roles(user.get("username"))
     out = []
-    for pr in list_prs(status="pending"):
-        conn = get_db()
-        try:
-            steps = conn.execute(
-                "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
-                (pr["id"], pr["current_seq"])).fetchall()
-        finally:
-            conn.close()
-        mine = next((s for s in steps if can_act(user, s["stage"])), None)
+    for pr in prs:
+        cur = [s for s in by_pr.get(pr["id"], []) if s["seq"] == pr["current_seq"]]
+        mine = next((s for s in cur if can_act(user, s["stage"], _deleg=deleg)), None)
         if mine:
             pr = dict(pr)
             pr["_stage"] = mine["stage"]

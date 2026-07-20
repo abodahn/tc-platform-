@@ -510,11 +510,11 @@ def issue_parts(request_id, received_by, user, ip=None):
                "request", request_id, "info", f"/maintenance/requests")
         audit(conn, user, "parts_issue", "request", request_id, None, "issued", ip=ip)
         conn.commit()
-        # Stock just dropped: raise auto-reorder PRs for anything now at/below
-        # its reorder level (deduped, never blocks the issue).
+        # Stock just dropped: raise auto-reorder PRs for the spares we issued
+        # (targeted — not a full sweep; deduped; never blocks the issue).
         try:
             from app.maintenance.procure_bridge import auto_reorder_check
-            auto_reorder_check()
+            auto_reorder_check(spare_ids=[it["spare_id"] for it in items])
         except Exception:
             pass
         return True, ""
