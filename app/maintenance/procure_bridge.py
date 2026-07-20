@@ -128,9 +128,11 @@ def _raise_pr(conn, spare) -> str:
     system_user = {"username": "auto-reorder", "full_name": "Auto Reorder (Maintenance)", "id": None}
     pr_id, pr_no = proc.create_pr(header, items, system_user, submit=True, priced=False)
 
-    # Tag the PR so the goods receipt can find its way back to this spare.
+    # Tag the PR so the goods receipt can find its way back to this spare —
+    # both at header level (dedup key) and on the line (line-level posting).
     conn.execute("UPDATE pr_requests SET source_module='maintenance', source_ref=? WHERE id=?",
                  (f"spare:{spare['id']}", pr_id))
+    conn.execute("UPDATE pr_items SET spare_id=? WHERE pr_id=?", (spare["id"], pr_id))
     # Tell the maintenance side (role inbox + platform bell via notify()).
     from app.maintenance.services import audit as mnt_audit, notify as mnt_notify
     mnt_notify(conn, "storekeeper", f"Auto reorder PR raised: {spare['name']}",
@@ -145,41 +147,91 @@ def _raise_pr(conn, spare) -> str:
 
 
 def post_receipt_to_stock(pr_id, receipts, user=None) -> float:
-    """Reverse leg: push a goods receipt on a bridge PR into maintenance stock.
+    """Reverse leg: push a goods receipt into maintenance spare stock.
 
-    `receipts` = {item_id: qty_received_now}. Uses the PR line's unit price so
-    receive_stock() keeps the weighted average cost honest. Returns qty posted
-    (0 when the PR is not a maintenance bridge PR). Never raises."""
+    `receipts` = {item_id: qty_received_now}. Generalised (cross-module mesh):
+      * ANY received line carrying pr_items.spare_id posts its quantity into
+        that spare at the line's unit price (weighted-average cost kept honest)
+        — manual PRs, ticket-raised PRs and bridge auto-PRs alike;
+      * legacy fallback: an older bridge PR (source_ref 'spare:<id>') whose
+        lines predate the spare_id column posts the summed receipt as before;
+      * a ticket-sourced PR (source_ref 'ticket:<id>') notifies the maintenance
+        team and drops a parts-arrived comment on the ticket.
+    Returns total qty posted. Never raises."""
     conn = get_db()
     try:
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
-        if not pr or pr["source_module"] != "maintenance" or \
-                not str(pr["source_ref"] or "").startswith("spare:"):
+        if not pr:
             return 0.0
-        spare_id = int(str(pr["source_ref"]).split(":", 1)[1])
         items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
-        total_qty = 0.0
-        unit_price = 0.0
-        for it in items:
+        src = str(pr["source_ref"] or "")
+        has_line_links = any(it["spare_id"] for it in items)
+        if not has_line_links and not (pr["source_module"] == "maintenance"):
+            return 0.0    # nothing here belongs to the spare-parts warehouse
+
+        def _qty(it):
             add = receipts.get(str(it["id"])) or receipts.get(it["id"]) or 0
             try:
-                add = float(add)
+                return max(0.0, float(add))
             except (TypeError, ValueError):
-                add = 0.0
-            if add > 0:
-                total_qty += add
-                unit_price = float(it["unit_price"] or 0) or unit_price
-        if total_qty <= 0:
-            return 0.0
-        from app.maintenance.services import receive_stock
-        ok, err = receive_stock(spare_id, total_qty, unit_price,
-                                user or {"username": "auto-reorder"})
-        if not ok:
-            log.warning("bridge receipt post failed for PR %s spare %s: %s",
-                        pr_id, spare_id, err)
-            return 0.0
-        log.info("bridge: PR %s receipt posted %g into spare %s", pr_id, total_qty, spare_id)
-        return total_qty
+                return 0.0
+
+        from app.maintenance.services import receive_stock, notify as mnt_notify, add_comment
+        posted = 0.0
+        actor = user or {"username": "auto-reorder"}
+        if has_line_links:
+            # line-level: each spare-linked line goes to ITS OWN spare part
+            for it in items:
+                add = _qty(it)
+                if add <= 0 or not it["spare_id"]:
+                    continue
+                ok, err = receive_stock(int(it["spare_id"]), add,
+                                        float(it["unit_price"] or 0), actor)
+                if ok:
+                    posted += add
+                else:
+                    log.warning("mesh receipt post failed PR %s line %s: %s",
+                                pr_id, it["id"], err)
+        elif src.startswith("spare:"):
+            # legacy whole-PR fallback (bridge PRs created before spare_id)
+            spare_id = int(src.split(":", 1)[1])
+            total_qty, unit_price = 0.0, 0.0
+            for it in items:
+                add = _qty(it)
+                if add > 0:
+                    total_qty += add
+                    unit_price = float(it["unit_price"] or 0) or unit_price
+            if total_qty > 0:
+                ok, err = receive_stock(spare_id, total_qty, unit_price, actor)
+                if ok:
+                    posted = total_qty
+                else:
+                    log.warning("bridge receipt post failed for PR %s spare %s: %s",
+                                pr_id, spare_id, err)
+
+        # Parts arrived for a maintenance ticket -> tell the team on the ticket.
+        if src.startswith("ticket:") and any(_qty(it) > 0 for it in items):
+            try:
+                tid = int(src.split(":", 1)[1])
+                c2 = get_db()
+                try:
+                    mnt_notify(c2, "maintenance_technician",
+                               f"Parts arrived: {pr['pr_no']}",
+                               f"Goods received on {pr['pr_no']} for ticket #{tid} — "
+                               f"collect from the warehouse.",
+                               "ticket", tid, "info", f"/maintenance/tickets/{tid}")
+                    c2.commit()
+                finally:
+                    c2.close()
+                add_comment(tid, {"username": "procurement"},
+                            f"\U0001F4E6 Parts arrived — goods received on {pr['pr_no']}"
+                            + (f" (PO {pr['po_no']})" if pr["po_no"] else "") + ".")
+            except Exception:
+                log.warning("parts-arrived notify failed for PR %s", pr_id, exc_info=True)
+
+        if posted:
+            log.info("mesh: PR %s receipt posted %g into spare stock", pr_id, posted)
+        return posted
     except Exception:
         log.warning("bridge receipt post crashed for PR %s", pr_id, exc_info=True)
         return 0.0

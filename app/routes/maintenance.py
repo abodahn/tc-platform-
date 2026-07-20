@@ -346,13 +346,21 @@ def ticket_detail(tid):
         tech_rec = ai_engine.recommend_technician(conn, t["issue_category"])
         mttr = ai_engine.estimate_repair_time(conn, t["machine_id"], t["issue_category"])
         sla_risk = ai_engine.ticket_sla_risk(conn, t)
+        # cross-module mesh: purchase requests raised from THIS ticket
+        try:
+            proc_prs = conn.execute(
+                "SELECT id, pr_no, status, total, currency, po_no FROM pr_requests "
+                "WHERE source_module='maintenance' AND source_ref=? AND is_active=1 "
+                "ORDER BY id DESC", (f"ticket:{tid}",)).fetchall()
+        except Exception:
+            proc_prs = []
     finally:
         conn.close()
     return render_template("maintenance/ticket_detail.html", t=t, diag=diag, comments=comments,
                            audit=audit, reqs=reqs, req_items=req_items, approvals=approvals,
                            machine=machine, spares=spares, attachments=attachments,
                            rc_suggest=rc_suggest, tech_rec=tech_rec, mttr=mttr, sla_risk=sla_risk,
-                           active="maint_tickets")
+                           proc_prs=proc_prs, active="maint_tickets")
 
 
 @bp.route("/tickets/<int:tid>/assign", methods=["POST"])
@@ -612,10 +620,23 @@ def spare_profile(sid):
             "SELECT m.* FROM mnt_machines m JOIN mnt_spare_compat sc ON sc.machine_id=m.id "
             "WHERE sc.spare_id=?", (sid,)).fetchall()
         alternatives = ai_engine.alternative_parts(conn, sid)
+        # cross-module mesh: open replenishment PRs for this spare (auto-reorder
+        # header link OR any PR line referencing it), still in flight.
+        try:
+            open_prs = conn.execute(
+                "SELECT DISTINCT p.id, p.pr_no, p.status, p.po_no FROM pr_requests p "
+                "LEFT JOIN pr_items i ON i.pr_id = p.id "
+                "WHERE p.is_active=1 AND p.status NOT IN "
+                "('rejected','cancelled','closed','received') "
+                "AND (p.source_ref=? OR i.spare_id=?) ORDER BY p.id DESC LIMIT 5",
+                (f"spare:{sid}", sid)).fetchall()
+        except Exception:
+            open_prs = []
     finally:
         conn.close()
     return render_template("maintenance/spare_profile.html", sp=sp, moves=moves,
-                           machines=machines_, alternatives=alternatives, active="maint_spares")
+                           machines=machines_, alternatives=alternatives,
+                           open_prs=open_prs, active="maint_spares")
 
 
 @bp.route("/spares/<int:sid>/adjust", methods=["POST"])

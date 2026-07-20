@@ -9,7 +9,8 @@
       <h1 style="margin:0">{{ pr.pr_no }}</h1>
       <span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span>
     </div>
-    <div class="sub">{{ pr.title }}{% if pr.request_for %} · {{ pr.request_for }}{% endif %}</div>
+    <div class="sub">{{ pr.title }}{% if pr.request_for %} · {{ pr.request_for }}{% endif %}
+      {% if source_link %} · <a href="{{ source_link.url }}" class="tag" style="text-decoration:none">🔗 {{ source_link.label }}</a>{% endif %}</div>
   </div>
   <div class="flex gap center wrap">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
@@ -526,7 +527,12 @@
           <tr>
             <td>{{ loop.index }}</td>
             <td><div style="font-weight:600">{{ it.item }}</div>
-                <div class="muted" style="font-size:12px">{{ it.description }}</div></td>
+                <div class="muted" style="font-size:12px">{{ it.description }}</div>
+                {% if it.spare_id and spare_live.get(it.spare_id) %}
+                <div style="font-size:12px;margin-top:2px">🏬 <span data-i18n="proc.live_stock">Warehouse now</span>:
+                  <b>{{ '%g'|format(spare_live[it.spare_id].available) }} {{ spare_live[it.spare_id].uom }}</b>
+                  <span class="muted" data-i18n="proc.live_stock_hint">available</span></div>
+                {% endif %}</td>
             <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}</td>
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(it.unit_price or 0) }}</td>

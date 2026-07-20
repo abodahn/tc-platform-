@@ -58,6 +58,24 @@
     </div>
     {% endif %}
 
+    {# Cross-module mesh: purchase requests raised from this ticket #}
+    {% if proc_prs %}
+    <div class="panel mt-4">
+      <div class="panel-head"><h3>🛒 <span data-i18n="m.linked_prs">Purchase requests for this ticket</span></h3>
+        <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.new', from_ticket=t.id) }}"
+           data-i18n="m.raise_pr">Raise another PR</a></div>
+      <div class="panel-pad">
+        {% for p in proc_prs %}
+        <a href="{{ url_for('approvals.detail', pr_id=p.id) }}"
+           style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:7px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+          <span><b>{{ p.pr_no }}</b>{% if p.po_no %} · {{ p.po_no }}{% endif %}</span>
+          <span class="tag">{{ p.status }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     {# Spare requests + approval timeline #}
     {% for r in reqs %}
     <div class="panel mt-4">

@@ -15,6 +15,19 @@
   <div class="kpi info"><div class="kval">{{ '%.2f'|format(sp.avg_cost or 0) }}</div><div class="klabel" data-i18n="m.cost">Avg cost</div></div>
 </div>
 
+{# Cross-module mesh: replenishment PRs still in flight for this spare #}
+{% if open_prs %}
+<div class="panel mt-3">
+  <div class="panel-pad" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <span>🛒 <b data-i18n="m.open_prs">On order</b>:</span>
+    {% for p in open_prs %}
+      <a class="tag" href="{{ url_for('approvals.detail', pr_id=p.id) }}" style="text-decoration:none">
+        {{ p.pr_no }}{% if p.po_no %} · {{ p.po_no }}{% endif %} — {{ p.status }}</a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <div class="grid cols-3 mt-6">
   <div class="panel span-2"><div class="panel-head"><h3 data-i18n="nav.maint_stock">Stock Movements</h3></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th data-i18n="m.movement">Type</th>

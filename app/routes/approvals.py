@@ -167,7 +167,7 @@ def _parse_items(f, can_price=False):
     names = f.getlist("item[]"); descs = f.getlist("description[]")
     units = f.getlist("unit[]"); qtys = f.getlist("qty[]")
     stocks = f.getlist("current_stock[]"); prices = f.getlist("unit_price[]")
-    notes = f.getlist("item_notes[]")
+    notes = f.getlist("item_notes[]"); spares = f.getlist("spare_id[]")
     for i in range(len(names)):
         if not (names[i] or "").strip():
             continue
@@ -181,8 +181,42 @@ def _parse_items(f, can_price=False):
             # matter what the form (or a hand-crafted request) sends.
             "unit_price": (prices[i] if i < len(prices) else 0) if can_price else 0,
             "notes": notes[i] if i < len(notes) else "",
+            # cross-module mesh: the picked spare part (mnt_spare_parts.id) —
+            # its goods receipt will post straight back into that spare's stock
+            "spare_id": spares[i] if i < len(spares) else "",
         })
     return items
+
+
+@bp.route("/api/spares")
+@login_required
+@permission_required("proc_view")
+def api_spares():
+    """Live spare-part search for the PR form: type-ahead over the maintenance
+    spare-parts warehouse. Returns code/name/unit and REAL current availability
+    so requesters stop typing stock numbers by hand. No costs are exposed."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"results": []})
+    from app.db import get_db
+    conn = get_db()
+    try:
+        like = f"%{q}%"
+        rows = conn.execute(
+            "SELECT id, code, name, uom, stock_qty, reserved_qty, reorder_level "
+            "FROM mnt_spare_parts WHERE is_active=1 AND (code LIKE ? OR name LIKE ?) "
+            "ORDER BY code LIMIT 10", (like, like)).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    return jsonify({"results": [{
+        "id": r["id"], "code": r["code"], "name": r["name"] or "",
+        "unit": r["uom"] or "Pcs",
+        "available": round(float(r["stock_qty"] or 0) - float(r["reserved_qty"] or 0), 2),
+        "low": (float(r["stock_qty"] or 0) - float(r["reserved_qty"] or 0))
+               <= float(r["reorder_level"] or 0),
+    } for r in rows]})
 
 
 @bp.route("/new", methods=["POST"])
@@ -200,6 +234,22 @@ def create():
     # request is 'unpriced' and routed to the pricing gate; a Purchasing-priced
     # one is 'priced'.
     pr_id, pr_no = svc.create_pr(header, items, _u(), ip=_ip(), submit=submit)
+    # Cross-module mesh: a PR raised from a maintenance ticket keeps a
+    # persistent two-way link (ticket page lists it; goods receipt notifies
+    # the ticket). The hidden from_ticket field is set by the prefill flow.
+    ft = (request.form.get("from_ticket") or "").strip()
+    if ft.isdigit():
+        from app.db import get_db
+        conn = get_db()
+        try:
+            trow = conn.execute("SELECT id, ticket_no FROM mnt_tickets WHERE id=?",
+                                (int(ft),)).fetchone()
+        except Exception:
+            trow = None
+        finally:
+            conn.close()
+        if trow:
+            svc.link_source(pr_id, "maintenance", f"ticket:{trow['id']}", _u(), ip=_ip())
     n = _save_attachments(pr_id, _u())
     flash(f"Purchase request {pr_no} created." + (f" {n} file(s) attached." if n else ""),
           "success")
@@ -297,6 +347,36 @@ def detail(pr_id):
     cur_label = " + ".join(C.stage_label(s) for s in current_stages) if current_stages else None
     can_purchasing = user_can("proc_purchasing")
     is_priced = (pr.get("pricing_status") or "priced") == "priced"
+    # Cross-module mesh: live warehouse availability for spare-linked lines and
+    # a clickable origin (the maintenance ticket / spare this PR came from).
+    spare_live = {}
+    sids = [it.get("spare_id") for it in bundle["items"] if it.get("spare_id")]
+    if sids:
+        from app.db import get_db
+        conn = get_db()
+        try:
+            ph = ",".join("?" for _ in sids)
+            for r in conn.execute(
+                    f"SELECT id, stock_qty, reserved_qty, uom FROM mnt_spare_parts "
+                    f"WHERE id IN ({ph})", tuple(sids)).fetchall():
+                spare_live[r["id"]] = {
+                    "available": round(float(r["stock_qty"] or 0) - float(r["reserved_qty"] or 0), 2),
+                    "uom": r["uom"] or ""}
+        except Exception:
+            spare_live = {}
+        finally:
+            conn.close()
+    source_link = None
+    src = str(pr.get("source_ref") or "")
+    if pr.get("source_module") == "maintenance" and ":" in src:
+        kind, _, sid = src.partition(":")
+        if sid.isdigit():
+            if kind == "ticket":
+                source_link = {"label": f"Maintenance ticket #{sid}",
+                               "url": url_for("maintenance.ticket_detail", tid=int(sid))}
+            elif kind == "spare":
+                source_link = {"label": f"Spare part #{sid} (auto-reorder)",
+                               "url": url_for("maintenance.spare_profile", sid=int(sid))}
     # Purchasing can enter pricing while the PR is still being decided.
     needs_pricing = (can_purchasing and not is_priced
                      and pr["status"] in ("draft", "rejected", "pending"))
@@ -316,6 +396,7 @@ def detail(pr_id):
                            rfq_required=(is_priced and float(pr.get("total") or 0) >= C.RFQ_VALUE_THRESHOLD),
                            rfq_locked=(pr["status"] in ("approved", "po_issued", "partially_received",
                                                         "received", "closed", "cancelled")),
+                           spare_live=spare_live, source_link=source_link,
                            is_owner=(pr["requester"] == (user or {}).get("username")))
 
 

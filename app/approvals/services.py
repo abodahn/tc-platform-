@@ -512,12 +512,13 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
             conn.execute(
                 """INSERT INTO pr_items
                    (pr_id, seq, item, description, unit, qty, current_stock, vendor,
-                    unit_price, est_cost, notes)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    unit_price, est_cost, notes, spare_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pr_id, i, it.get("item"), it.get("description"), it.get("unit") or "Pcs",
                  float(it.get("qty") or 0), float(it.get("current_stock") or 0),
                  it.get("vendor") or header.get("vendor"),
-                 float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes")))
+                 float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes"),
+                 int(it["spare_id"]) if str(it.get("spare_id") or "").strip().isdigit() else None))
         try:
             conn.execute("UPDATE pr_requests SET tax_rate=?, pricing_status=? WHERE id=?",
                          (float(header.get("tax_rate") or 0),
@@ -532,6 +533,25 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
     if submit:
         submit_pr(pr_id, user, ip)
     return pr_id, pr_no
+
+
+def link_source(pr_id, module, ref, user=None, ip=None):
+    """Persistently tag WHERE a PR came from (e.g. module='maintenance',
+    ref='ticket:12'). Powers two-way links (ticket page shows its PRs, the PR
+    shows its origin) and the parts-arrived notification on goods receipt."""
+    conn = get_db()
+    try:
+        conn.execute("UPDATE pr_requests SET source_module=?, source_ref=? WHERE id=?",
+                     (module, ref, pr_id))
+        audit(conn, pr_id, (user or {}).get("username") or "system", "linked",
+              f"Linked to {module} {ref}", ip)
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 
 def update_pr(pr_id, header, items, user, ip=None, can_price=True):
@@ -575,12 +595,13 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
         for i, it in enumerate(items, start=1):
             conn.execute(
                 """INSERT INTO pr_items (pr_id, seq, item, description, unit, qty,
-                   current_stock, vendor, unit_price, est_cost, notes)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                   current_stock, vendor, unit_price, est_cost, notes, spare_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pr_id, i, it.get("item"), it.get("description"), it.get("unit") or "Pcs",
                  float(it.get("qty") or 0), float(it.get("current_stock") or 0),
                  it.get("vendor") or header.get("vendor"),
-                 float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes")))
+                 float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes"),
+                 int(it["spare_id"]) if str(it.get("spare_id") or "").strip().isdigit() else None))
         audit(conn, pr_id, user.get("username") if user else "system", "edited",
               f"Draft updated (total {total})", ip)
         conn.commit()
@@ -2016,4 +2037,7 @@ def ticket_prefill(ticket_id):
         "notes": f"Raised from maintenance ticket {t.get('ticket_no') or ticket_id}.",
         "item": (t.get("issue_category") or "Repair").replace("_", " ").title(),
         "description": t.get("description") or "",
+        # mesh: carried as a hidden form field so create() persists the link
+        "ticket_id": t.get("id"),
+        "ticket_no": t.get("ticket_no"),
     }

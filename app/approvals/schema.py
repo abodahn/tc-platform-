@@ -265,6 +265,11 @@ CREATE INDEX IF NOT EXISTS ix_po_rev_pr ON pr_po_revisions(pr_id);
 # Columns added to pr_items after first release (line-level receiving).
 _ITEM_MIGRATIONS = [
     ("received_qty", "ALTER TABLE pr_items ADD COLUMN received_qty REAL DEFAULT 0"),
+    # Cross-module mesh: a PR line may reference a real maintenance spare part
+    # (mnt_spare_parts.id). Picking one auto-fills live stock on the form, and
+    # the goods receipt posts the received quantity straight into that spare's
+    # stock at the line's unit price — for ANY PR, not only bridge auto-PRs.
+    ("spare_id", "ALTER TABLE pr_items ADD COLUMN spare_id INTEGER"),
 ]
 
 
