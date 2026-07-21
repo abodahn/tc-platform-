@@ -1154,6 +1154,11 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
         items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
         now = _now()
         any_recv = False
+        # What actually entered the building, per line, AFTER capping at the
+        # ordered quantity. This — not the raw form input — is what may be
+        # posted onward into warehouse stock, otherwise typing "6" twice on a
+        # 10-piece order books 10 but would inflate the spare stock by 12.
+        effective = {}
         for it in items:
             add = receipts.get(str(it["id"])) or receipts.get(it["id"]) or 0
             try:
@@ -1167,6 +1172,8 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
                 continue    # never book receipts against a zero-quantity line
             already = float(it["received_qty"] or 0)
             new_total = min(ordered, already + add)
+            if new_total > already:
+                effective[it["id"]] = round(new_total - already, 6)
             conn.execute("UPDATE pr_items SET received_qty=? WHERE id=?", (new_total, it["id"]))
             any_recv = True
         if not any_recv:
@@ -1187,7 +1194,7 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
             notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
                          f"{pr['pr_no']} fully received.", link=_pr_link(pr_id))
         conn.commit()
-        _post_bridge_receipt(pr_id, receipts, user)
+        _post_bridge_receipt(pr_id, effective, user)
         return True, ("received" if fully else "partial")
     finally:
         conn.close()
