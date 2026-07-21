@@ -378,12 +378,24 @@ def create_request(ticket_id, items, reason, urgency, user, ip=None):
         conn.close()
 
 
-def decide_approval(approval_id, decision, comment, user, ip=None):
+def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=False):
     conn = get_db()
     try:
         ap = conn.execute("SELECT * FROM mnt_approvals WHERE id=?", (approval_id,)).fetchone()
         if not ap:
             return False, "not_found"
+        # Idempotency: a decided row can never be decided again. Re-approving an
+        # already-approved request used to re-run the reservation loop and
+        # inflate reserved_qty (double-click / refresh-repost = broken stock).
+        if ap["status"] != "pending":
+            return False, "already_decided"
+        # Level authority: only the role this rung belongs to may sign it
+        # (admins exempt). Without this, any approver could sign every level,
+        # collapsing the multi-level matrix into one signature.
+        is_admin = is_admin or (user or {}).get("role") == "super_admin"
+        if not is_admin and ap["approver_role"] and \
+                (user or {}).get("role") != ap["approver_role"]:
+            return False, "wrong_role"
         rid = ap["request_id"]
         if decision == "reject":
             if not (comment or "").strip():
@@ -426,19 +438,37 @@ def decide_approval(approval_id, decision, comment, user, ip=None):
             # fully approved -> set approved qty = requested, ready for storekeeper to issue
             conn.execute("UPDATE mnt_request_items SET qty_approved=qty_requested WHERE request_id=?",
                          (rid,))
-            # Reserve the approved quantity so it can't be handed to another
-            # request before this one is issued (released at issue time).
-            for it in conn.execute("SELECT spare_id, qty_approved FROM mnt_request_items "
-                                    "WHERE request_id=? AND spare_id IS NOT NULL", (rid,)).fetchall():
-                _reserve(conn, it["spare_id"], it["qty_approved"] or 0)
-            conn.execute("UPDATE mnt_requests SET status='approved',decided_at=? WHERE id=?",
-                         (_now(), rid))
+            # Availability may have MOVED since the request was written (another
+            # request issued meanwhile). Re-check before reserving: blindly
+            # reserving beyond what exists poisons available_qty for everyone
+            # and triggers phantom auto-reorder PRs.
+            req_items = conn.execute("SELECT spare_id, qty_approved FROM mnt_request_items "
+                                     "WHERE request_id=? AND spare_id IS NOT NULL", (rid,)).fetchall()
+            short = [it for it in req_items
+                     if (it["qty_approved"] or 0) > available_qty(conn, it["spare_id"])]
             req = conn.execute("SELECT ticket_id FROM mnt_requests WHERE id=?", (rid,)).fetchone()
-            if req:
-                set_ticket_status(conn, req["ticket_id"], "approved_issue", user, ip, force=True)
-            notify(conn, "storekeeper", "Spare request approved - ready to issue",
-                   f"Request {rid} approved", "request", rid, "warning",
-                   "/maintenance/requests")
+            if short:
+                conn.execute("UPDATE mnt_requests SET status='out_of_stock',decided_at=? WHERE id=?",
+                             (_now(), rid))
+                if req:
+                    set_ticket_status(conn, req["ticket_id"], "waiting_stock", user, ip, force=True)
+                notify(conn, "storekeeper", "Approved request is now out of stock",
+                       f"Request {rid} was approved but stock ran out meanwhile - replenish first",
+                       "request", rid, "warning", "/maintenance/requests")
+                notify(conn, "maintenance_manager", "Approved request needs purchase",
+                       f"Request {rid}: parts no longer available", "request", rid, "warning")
+            else:
+                # Reserve the approved quantity so it can't be handed to another
+                # request before this one is issued (released at issue time).
+                for it in req_items:
+                    _reserve(conn, it["spare_id"], it["qty_approved"] or 0)
+                conn.execute("UPDATE mnt_requests SET status='approved',decided_at=? WHERE id=?",
+                             (_now(), rid))
+                if req:
+                    set_ticket_status(conn, req["ticket_id"], "approved_issue", user, ip, force=True)
+                notify(conn, "storekeeper", "Spare request approved - ready to issue",
+                       f"Request {rid} approved", "request", rid, "warning",
+                       "/maintenance/requests")
         audit(conn, user, "approval_approve", "request", rid, None, "approved", comment=comment, ip=ip)
         conn.commit()
         return True, ""
@@ -584,12 +614,16 @@ def record_test(ticket_id, d, user, ip=None):
 def close_ticket(ticket_id, user, ip=None):
     conn = get_db()
     try:
-        t = conn.execute("SELECT status,machine_id,created_at,cost,production_stopped "
+        t = conn.execute("SELECT status,machine_id,created_at,cost,production_stopped,machine_rolled "
                          "FROM mnt_tickets WHERE id=?", (ticket_id,)).fetchone()
         if not t:
             return False, "not_found"
         if t["status"] != "resolved":
             return False, "must_be_resolved"
+        # Closing the work order cancels any approved-but-never-issued part
+        # requests: their reservations would otherwise strand stock as
+        # unavailable forever (the release used to happen only on reject).
+        _release_ticket_reservations(conn, ticket_id)
         # compute elapsed time from creation to now (minutes)
         created = _parse_dt(t["created_at"])
         downtime = int((datetime.now(timezone.utc).replace(tzinfo=None) - created).total_seconds() // 60) \
@@ -597,15 +631,21 @@ def close_ticket(ticket_id, user, ip=None):
         downtime = max(downtime, 0)
         conn.execute("UPDATE mnt_tickets SET status='closed', closed_at=?, total_downtime_min=? WHERE id=?",
                      (_now(), downtime, ticket_id))
-        if t["machine_id"]:
+        if t["machine_id"] and not (t["machine_rolled"] or 0):
             # Only charge the machine's downtime meter when production was actually
             # stopped -- otherwise administrative waiting time (approvals, parts)
             # would inflate machine downtime for a fault that never halted the line.
+            # machine_rolled guards the reopen->close-again path: without it every
+            # re-close added the SAME ticket's cost, downtime and breakdown to the
+            # machine a second time.
             machine_downtime = downtime if t["production_stopped"] else 0
             conn.execute(
                 "UPDATE mnt_machines SET status='running', breakdowns=breakdowns+1, "
                 "total_downtime_min=total_downtime_min+?, cost_to_date=cost_to_date+? WHERE id=?",
                 (machine_downtime, t["cost"] or 0, t["machine_id"]))
+            conn.execute("UPDATE mnt_tickets SET machine_rolled=1 WHERE id=?", (ticket_id,))
+        elif t["machine_id"]:
+            conn.execute("UPDATE mnt_machines SET status='running' WHERE id=?", (t["machine_id"],))
         audit(conn, user, "ticket_close", "ticket", ticket_id, t["status"], "closed", ip=ip)
         conn.commit()
         return True, ""
@@ -807,7 +847,14 @@ def save_attachments(files, entity_type, entity_id, kind, user, limit=5):
 def receive_stock(spare_id, qty, price, user, ip=None):
     conn = get_db()
     try:
-        qty = abs(float(qty))
+        try:
+            qty = float(qty)
+        except (TypeError, ValueError):
+            return False, "bad_qty"
+        if qty <= 0:
+            # A receipt adds stock, full stop. abs() used to silently turn a
+            # mistyped negative into a positive receive.
+            return False, "bad_qty"
         sp = conn.execute("SELECT stock_qty, avg_cost FROM mnt_spare_parts WHERE id=?",
                           (spare_id,)).fetchone()
         if not sp:

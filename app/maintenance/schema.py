@@ -238,6 +238,10 @@ CREATE TABLE IF NOT EXISTS mnt_settings (
 _MIGRATIONS = [
     ("mnt_spare_parts", "reserved_qty",
      "ALTER TABLE mnt_spare_parts ADD COLUMN reserved_qty REAL DEFAULT 0"),
+    # Guards the reopen->close-again path: the machine's cost/downtime/breakdown
+    # counters are rolled up from a ticket exactly once.
+    ("mnt_tickets", "machine_rolled",
+     "ALTER TABLE mnt_tickets ADD COLUMN machine_rolled INTEGER DEFAULT 0"),
 ]
 
 

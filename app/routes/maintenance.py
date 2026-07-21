@@ -738,7 +738,9 @@ def approvals():
 def approval_decide(aid):
     _require("maint_approve")
     decision = request.form.get("decision")
-    ok, msg = svc.decide_approval(aid, decision, request.form.get("comment"), _u(), request.remote_addr)
+    # admins may sign any level; everyone else only the level matching their role
+    ok, msg = svc.decide_approval(aid, decision, request.form.get("comment"), _u(),
+                                  request.remote_addr, is_admin=_can("maint_admin"))
     flash("m_saved" if ok else msg, "success" if ok else "error")
     return redirect(url_for("maintenance.approvals"))
 
