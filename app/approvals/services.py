@@ -725,6 +725,25 @@ def price_pr(pr_id, prices, meta, user, ip=None):
         if pr["status"] in ("approved", "po_issued", "partially_received",
                              "received", "closed", "cancelled"):
             return False, "locked"
+        # Foreign-currency guard (fail fast, before any write): a non-EGP PR must carry
+        # a REAL exchange rate at pricing time. Otherwise egp_total() falls back to 1:1
+        # and the entire value ladder (Finance/CFO/CEO) + the RFQ gate route on the raw
+        # foreign figure — a 20,000 USD (~1,000,000 EGP) order would clear a mid-level
+        # ladder. EGP requests are unaffected.
+        eff_cur = str(meta.get("currency") or pr["currency"] or "EGP").strip().upper()
+        if eff_cur != "EGP":
+            _mfx = meta.get("fx_rate")
+            try:
+                _mfx = float(_mfx) if (_mfx is not None and str(_mfx).strip() != "") else 0.0
+            except (TypeError, ValueError):
+                _mfx = 0.0
+            try:
+                _pfx = float(pr["fx_rate"] or 1)
+            except (TypeError, ValueError):
+                _pfx = 1.0
+            eff_fx = _mfx if _mfx > 0 else _pfx
+            if eff_fx <= 0 or abs(eff_fx - 1.0) < 1e-9:   # 1.0 == the unset default
+                return False, "fx_required"
         items = conn.execute(
             "SELECT id, qty, unit_price FROM pr_items WHERE pr_id=? ORDER BY seq",
             (pr_id,)).fetchall()
@@ -1237,9 +1256,12 @@ def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64
             return False, "not_invoicable"
         inv_no = (data.get("invoice_no") or "").strip()
         if inv_no:
+            # Dedup on (vendor, invoice_no) across ALL PRs — the same supplier invoice
+            # number must not be booked (and paid) twice, even against a different PR.
             dup = conn.execute(
-                "SELECT id FROM pr_invoices WHERE pr_id=? AND invoice_no=?",
-                (pr_id, inv_no)).fetchone()
+                "SELECT v.id FROM pr_invoices v JOIN pr_requests p ON p.id=v.pr_id "
+                "WHERE v.invoice_no=? AND COALESCE(TRIM(p.vendor),'')=COALESCE(TRIM(?),'')",
+                (inv_no, pr["vendor"])).fetchone()
             if dup:
                 return False, "duplicate_invoice"
         now = _now()
@@ -1364,6 +1386,13 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         already = float(pr["paid_amount"] or 0)
         if not force and grand > 0 and already + amount > grand + tol:
             return False, "over_payment"
+        # You cannot pay more than you have been BILLED: once invoices exist, cap
+        # cumulative payment at the invoiced (gross) total — not just the PO total.
+        # (No-invoice advance payments are unchanged, governed by the PO cap above.)
+        if match and match["has_invoice"] and not force:
+            billed = float(match.get("invoiced") or 0)
+            if billed > 0 and already + amount > billed + max(1.0, billed * 0.01):
+                return False, "exceeds_invoiced"
         now = _now()
         if force:
             audit(conn, pr_id, (user or {}).get("username"), "payment_override",
@@ -1641,8 +1670,14 @@ def rfq_gate_check(conn, pr):
         return True, ""          # below the competitive-quote threshold
     if str(_pr_field(pr, "single_source_reason") or "").strip():
         return True, ""          # justified single/sole-source purchase
-    n = conn.execute("SELECT COUNT(*) c FROM pr_quotes WHERE pr_id=?",
-                     (_pr_field(pr, "id"),)).fetchone()["c"]
+    # "Competitive" means distinct VENDORS, not just distinct quote rows — two quotes
+    # typed against the same supplier must not satisfy the rule.
+    try:
+        n = conn.execute("SELECT COUNT(DISTINCT NULLIF(TRIM(vendor),'')) c FROM pr_quotes "
+                         "WHERE pr_id=?", (_pr_field(pr, "id"),)).fetchone()["c"]
+    except Exception:
+        n = conn.execute("SELECT COUNT(*) c FROM pr_quotes WHERE pr_id=?",
+                         (_pr_field(pr, "id"),)).fetchone()["c"]
     if int(n or 0) < C.RFQ_QUOTE_MIN:
         return False, "needs_quotes"
     return True, ""

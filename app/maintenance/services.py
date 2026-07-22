@@ -444,10 +444,33 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             # and triggers phantom auto-reorder PRs.
             req_items = conn.execute("SELECT spare_id, qty_approved FROM mnt_request_items "
                                      "WHERE request_id=? AND spare_id IS NOT NULL", (rid,)).fetchall()
-            short = [it for it in req_items
-                     if (it["qty_approved"] or 0) > available_qty(conn, it["spare_id"])]
             req = conn.execute("SELECT ticket_id FROM mnt_requests WHERE id=?", (rid,)).fetchone()
+            # Reserve ATOMICALLY: one conditional UPDATE per line reserves only if the
+            # part is still available right now (stock - reserved >= need). This closes
+            # the check-then-act race where two approvals both read available>0 and each
+            # reserve the same physical unit (over-allocation). The single statement
+            # re-evaluates reserved_qty under its own lock, so it is safe on SQLite AND
+            # Postgres (the previous read-then-_reserve was only safe under SQLite's
+            # table lock). Any line that can't be fully reserved rolls the batch back to
+            # out-of-stock — same outcome as before, just race-free.
+            reserved_done = []
+            short = False
+            for it in req_items:
+                need = it["qty_approved"] or 0
+                if need <= 0:
+                    continue
+                cur = conn.execute(
+                    "UPDATE mnt_spare_parts SET reserved_qty=COALESCE(reserved_qty,0)+? "
+                    "WHERE id=? AND (COALESCE(stock_qty,0)-COALESCE(reserved_qty,0))>=?",
+                    (need, it["spare_id"], need))
+                if (cur.rowcount or 0) >= 1:
+                    reserved_done.append((it["spare_id"], need))
+                else:
+                    short = True
+                    break
             if short:
+                for sid, q in reserved_done:      # release anything reserved this pass
+                    _reserve(conn, sid, -q)
                 conn.execute("UPDATE mnt_requests SET status='out_of_stock',decided_at=? WHERE id=?",
                              (_now(), rid))
                 if req:
@@ -458,10 +481,6 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
                 notify(conn, "maintenance_manager", "Approved request needs purchase",
                        f"Request {rid}: parts no longer available", "request", rid, "warning")
             else:
-                # Reserve the approved quantity so it can't be handed to another
-                # request before this one is issued (released at issue time).
-                for it in req_items:
-                    _reserve(conn, it["spare_id"], it["qty_approved"] or 0)
                 conn.execute("UPDATE mnt_requests SET status='approved',decided_at=? WHERE id=?",
                              (_now(), rid))
                 if req:
@@ -855,6 +874,13 @@ def receive_stock(spare_id, qty, price, user, ip=None):
             # A receipt adds stock, full stop. abs() used to silently turn a
             # mistyped negative into a positive receive.
             return False, "bad_qty"
+        # Coerce price safely: the manual receive form sends a raw string. A blank
+        # means "no price update"; a literal "0" must NOT drag avg_cost to zero, and a
+        # non-numeric entry must not 500. (The bridge already passes a real float.)
+        try:
+            price = float(price) if str(price).strip() not in ("", "None") else 0.0
+        except (TypeError, ValueError):
+            price = 0.0
         sp = conn.execute("SELECT stock_qty, avg_cost FROM mnt_spare_parts WHERE id=?",
                           (spare_id,)).fetchone()
         if not sp:

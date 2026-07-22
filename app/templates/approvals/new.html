@@ -381,6 +381,11 @@
     r.querySelector('[name="current_stock[]"]').value = (it.current_stock != null ? it.current_stock : 0);
     var up = r.querySelector('[name="unit_price[]"]');   // absent in requester view
     if (up) up.value = (it.unit_price != null ? it.unit_price : 0);
+    // Preserve the warehouse spare link across edit / AI-draft re-render — without
+    // this the hidden spare_id was dropped, so goods receipt never posted the
+    // delivered quantity back into that spare's stock (silent inventory loss).
+    var sp = r.querySelector('[name="spare_id[]"]');
+    if (sp) sp.value = (it.spare_id != null ? it.spare_id : '');
   }
 
   // Editing an existing draft: render all its line items.

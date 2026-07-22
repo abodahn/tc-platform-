@@ -615,11 +615,15 @@ def price(pr_id):
     meta = {"tax_rate": f.get("tax_rate", "").strip(),
             "payment_condition": f.get("payment_condition", "").strip(),
             "vendor": f.get("vendor", "").strip(),
-            "currency": f.get("currency", "").strip()}
+            "currency": f.get("currency", "").strip(),
+            "fx_rate": f.get("fx_rate", "").strip()}   # EGP-equivalent rate for non-EGP PRs
     ok, msg = svc.price_pr(pr_id, prices, meta, _u(), ip=_ip())
     flash("Pricing saved — the request now carries its commercial value and any "
           "value-based approvals have joined the ladder." if ok
-          else {"locked": "This request can no longer be priced."}.get(
+          else {"locked": "This request can no longer be priced.",
+                "fx_required": "Foreign-currency request: enter the EGP exchange rate "
+                               "before pricing, so the value approvals route on the true "
+                               "EGP equivalent."}.get(
               msg, f"Could not save pricing ({msg})."),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))

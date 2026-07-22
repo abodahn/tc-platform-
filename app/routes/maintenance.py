@@ -1042,12 +1042,17 @@ def import_run(kind):
                          float(d.get("max_level") or 0), float(d.get("avg_cost") or 0),
                          (d.get("criticality") or "medium"), "PQR" + code.replace("-", "")))
                     if qty:
-                        n = conn.execute("SELECT COUNT(*) c FROM mnt_stock_movements").fetchone()["c"] + 1
-                        conn.execute(
-                            "INSERT INTO mnt_stock_movements (movement_no,type,spare_id,qty,before_qty,"
-                            "after_qty,performed_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?,datetime('now'))",
-                            (svc.doc_no("STK", n), "opening", cur.lastrowid, qty, 0, qty,
+                        # Number the movement from its OWN row id (collision-free), like
+                        # _move_stock. The old COUNT(*)+1 scheme repeats a number after any
+                        # id gap (a rolled-back insert advances the sequence on Postgres) and
+                        # violates the UNIQUE(movement_no) constraint -> failed import.
+                        mv = conn.execute(
+                            "INSERT INTO mnt_stock_movements (type,spare_id,qty,before_qty,"
+                            "after_qty,performed_by,notes,created_at) VALUES (?,?,?,?,?,?,?,datetime('now'))",
+                            ("opening", cur.lastrowid, qty, 0, qty,
                              _u()["username"], "Imported opening balance"))
+                        conn.execute("UPDATE mnt_stock_movements SET movement_no=? WHERE id=?",
+                                     (svc.doc_no("STK", mv.lastrowid), mv.lastrowid))
                 added += 1
             except (ValueError, TypeError) as exc:
                 errors.append(f"Row {i}: {type(exc).__name__}")

@@ -42,13 +42,26 @@ def _enabled(conn) -> bool:
 
 
 def _open_bridge_refs(conn) -> set:
-    """source_refs of ALL still-open bridge PRs, in one query (the previous
-    per-spare lookup multiplied round-trips by the number of low spares)."""
+    """The set of spares that ALREADY have an open replenishment order, keyed
+    'spare:<id>'. Covers BOTH bridge-tagged PRs (header source_ref) AND any other
+    open PR — manual or ticket-raised — whose lines carry that spare_id. Using only
+    the header ref let a manual/ticket PR restocking spare X slip past the dedup, so
+    the bridge raised a duplicate auto-PR (double order + double receipt into stock).
+    Mirrors the spare_profile 'on order' query. One query per side."""
     ph = ",".join("?" for _ in _CLOSED_STATUSES)
-    rows = conn.execute(
-        f"SELECT source_ref FROM pr_requests WHERE source_module='maintenance' "
-        f"AND is_active=1 AND status NOT IN ({ph})", _CLOSED_STATUSES).fetchall()
-    return {r["source_ref"] for r in rows if r["source_ref"]}
+    refs = set()
+    for r in conn.execute(
+            f"SELECT source_ref FROM pr_requests WHERE source_module='maintenance' "
+            f"AND is_active=1 AND status NOT IN ({ph})", _CLOSED_STATUSES).fetchall():
+        if r["source_ref"]:
+            refs.add(r["source_ref"])
+    for r in conn.execute(
+            f"SELECT DISTINCT i.spare_id FROM pr_items i JOIN pr_requests p ON p.id=i.pr_id "
+            f"WHERE i.spare_id IS NOT NULL AND p.is_active=1 AND p.status NOT IN ({ph})",
+            _CLOSED_STATUSES).fetchall():
+        if r["spare_id"]:
+            refs.add(f"spare:{r['spare_id']}")
+    return refs
 
 
 def _suggested_qty(spare) -> float:
@@ -121,6 +134,10 @@ def _raise_pr(conn, spare) -> str:
         "qty": qty,
         "current_stock": float(spare["stock_qty"] or 0),
         "vendor": spare["vendor"] or None,
+        # Link the line to the spare INSIDE create_pr (atomic with the insert), so the
+        # dedup sees it the instant the PR commits — this closes the create-then-tag
+        # race where a second sweep raised a duplicate PR in the untagged window.
+        "spare_id": spare["id"],
         # No price on purpose: pricing_status='unpriced' routes the PR through
         # Purchasing's pricing gate (requester price lockout stays intact).
         "unit_price": 0,
