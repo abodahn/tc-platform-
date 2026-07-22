@@ -61,12 +61,14 @@
   --panel-2:  #f8fafc;
   --panel-soft: #fbfbfd;
   --topbar-bg: rgba(255, 255, 255, .82);
-  --sidebar-bg: linear-gradient(180deg, #0a0c12 0%, #07080b 100%);
-  --sidebar-ink: #c7ccd6;
-  --sidebar-ink-soft: #7e8694;
-  --sidebar-active: rgba(237, 28, 36, .15);
-  --sidebar-hover: rgba(255, 255, 255, .055);
-  --sidebar-glow: rgba(237, 28, 36, .16);
+  --sidebar-bg: linear-gradient(185deg, #0e1119 0%, #0a0c12 46%, #070809 100%);
+  --sidebar-ink: #d4d9e3;          /* nav item text — brightened for legibility on the rail */
+  --sidebar-ink-soft: #838c9c;     /* section labels + meta */
+  --sidebar-line: rgba(255, 255, 255, .07);   /* hairlines / dividers on the rail */
+  --sidebar-active: rgba(237, 28, 36, .14);
+  --sidebar-active-line: #ED1C24;  /* the "you are here" leading rail */
+  --sidebar-hover: rgba(255, 255, 255, .048);
+  --sidebar-glow: rgba(237, 28, 36, .13);
   --on-red: #ffffff;
   --glass: rgba(255, 255, 255, .65);
 }
@@ -91,12 +93,14 @@
   --panel-2:  #121726;
   --panel-soft:#0c101b;
   --topbar-bg: rgba(10, 13, 20, .78);
-  --sidebar-bg: linear-gradient(180deg, #0a0c12 0%, #05060a 100%);
-  --sidebar-ink: #c7ccd6;
-  --sidebar-ink-soft: #6b7280;
-  --sidebar-active: rgba(237, 28, 36, .2);
-  --sidebar-hover: rgba(255, 255, 255, .06);
-  --sidebar-glow: rgba(237, 28, 36, .2);
+  --sidebar-bg: linear-gradient(185deg, #0c0f16 0%, #08090e 46%, #050609 100%);
+  --sidebar-ink: #d4d9e3;
+  --sidebar-ink-soft: #7c8494;
+  --sidebar-line: rgba(255, 255, 255, .065);
+  --sidebar-active: rgba(237, 28, 36, .18);
+  --sidebar-active-line: #FF3154;
+  --sidebar-hover: rgba(255, 255, 255, .055);
+  --sidebar-glow: rgba(237, 28, 36, .18);
   --glass: rgba(15, 19, 32, .6);
   --shadow-card: 0 14px 40px rgba(0, 0, 0, .35);
   --shadow-strong: 0 28px 70px rgba(0, 0, 0, .5);

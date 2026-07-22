@@ -24,9 +24,10 @@ a { color: inherit; text-decoration: none; }
 .app { display: flex; min-height: 100vh; }
 
 /* ---------- Sidebar ---------- *
-   "Calm command rail": ambient brand-depth, one wayfinding rail (neutral on hover,
-   brand-red when current), quiet section headers, elegant scroll-edge fades.
-   Deep navy in both themes — instrumentation, not decoration. RTL-correct throughout. */
+   "Calm command rail" v2 — a deep-navy instrument panel in both themes. One wayfinding
+   signal per state: a soft neutral pill on hover; a single brand-red leading rail + a
+   quiet red-tinted pill when current (no stacked glow/border). Hushed section headers,
+   a refined brand lockup and user footer, and a steady vertical rhythm. RTL-correct. */
 .sidebar {
   width: var(--sidebar-w);
   flex: 0 0 var(--sidebar-w);
@@ -37,13 +38,13 @@ a { color: inherit; text-decoration: none; }
   transition: width .24s cubic-bezier(.22,1,.36,1), flex-basis .24s cubic-bezier(.22,1,.36,1);
   overflow: hidden; isolation: isolate;
   z-index: 40;
-  border-inline-end: 1px solid rgba(255,255,255,.06);
+  border-inline-end: 1px solid var(--sidebar-line);
 }
 /* Ambient brand glow — depth without glassmorphism. Decorative, never interactive. */
 .sidebar::before {
-  content: ""; position: absolute; inset: 0 0 auto 0; height: 280px; z-index: 0;
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 240px; z-index: 0;
   pointer-events: none;
-  background: radial-gradient(115% 70% at 24% 0%, var(--sidebar-glow), transparent 60%);
+  background: radial-gradient(120% 60% at 22% -8%, var(--sidebar-glow), transparent 62%);
 }
 .sidebar > * { position: relative; z-index: 1; }
 .app.collapsed .sidebar { width: var(--sidebar-collapsed); flex-basis: var(--sidebar-collapsed); }
@@ -51,20 +52,31 @@ a { color: inherit; text-decoration: none; }
 /* ---- Brand ---- */
 .brand {
   display: flex; align-items: center; gap: 12px;
-  padding: 16px 18px; min-height: var(--topbar-h);
-  border-bottom: 1px solid rgba(255,255,255,.06);
+  padding: 15px 16px; min-height: var(--topbar-h);
+  border-bottom: 1px solid var(--sidebar-line);
+  transition: background .16s ease;
 }
+.brand:hover { background: rgba(255,255,255,.028); }
 .brand-logo {
+  position: relative;
   width: 40px; height: 40px; border-radius: 11px; flex: 0 0 40px;
-  background: #ffffff; display: grid; place-items: center; overflow: hidden;
-  box-shadow: 0 4px 14px rgba(0,0,0,.36), inset 0 0 0 1px rgba(255,255,255,.55);
+  background: #ffffff; display: grid; place-items: center; overflow: visible;
+  box-shadow: 0 4px 14px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.5);
 }
-.brand-logo img { width: 68%; height: 68%; object-fit: contain; display: block; }
-.brand-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.brand-logo img { width: 66%; height: 66%; object-fit: contain; display: block; }
+/* Live status dot on the mark — a quiet "workspace online" signal. Ring matches the
+   rail's near-black so the dot reads as inset into the panel. */
+.brand-dot {
+  position: absolute; inset-block-end: -2px; inset-inline-end: -2px;
+  width: 11px; height: 11px; border-radius: 50%; background: #22c55e;
+  box-shadow: 0 0 0 2.5px #0a0c12, 0 0 8px rgba(34,197,94,.5);
+}
+.brand-text { display: flex; flex-direction: column; gap: 1px; line-height: 1.14; min-width: 0; }
 .brand-text b { color: #fff; font-size: 15px; font-weight: 700; letter-spacing: .2px; }
-.brand-text span { color: var(--sidebar-ink-soft); font-size: 11px; letter-spacing: .3px;
+.brand-text span { color: var(--sidebar-ink-soft); font-size: 10px; font-weight: 600;
+  letter-spacing: .6px; text-transform: uppercase;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app.collapsed .brand { padding: 16px 0; justify-content: center; }
+.app.collapsed .brand { padding: 15px 0; justify-content: center; }
 .app.collapsed .brand-text { display: none; }
 
 /* ---- Nav (scroll region) with faded scroll edges ---- */
@@ -80,40 +92,45 @@ a { color: inherit; text-decoration: none; }
   border: 2px solid transparent; background-clip: padding-box;
 }
 .nav::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.22); background-clip: padding-box; border: 2px solid transparent; }
-.nav-section + .nav-section { margin-top: 6px; }
+.nav-section + .nav-section { margin-top: 5px; }
 
 /* Section header = collapse toggle. Icon + label on the lead, count + chevron on the
-   trail. Quiet by default; brightens on hover and when it holds the current page. */
+   trail. Deliberately hushed — a wayfinding label, not a control that competes with the
+   items below it. Brightens on hover and when it holds the current page. */
 .nav-label {
   width: 100%; display: flex; align-items: center; gap: 10px;
   background: transparent; border: 0; cursor: pointer; text-align: start;
   color: var(--sidebar-ink-soft); font-family: inherit;
-  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
-  padding: 9px 10px 7px; border-radius: 9px; transition: color .15s, background .15s;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
+  padding: 10px 10px 6px; border-radius: 9px; transition: color .15s;
 }
-.nav-label:hover { color: #fff; }
+.nav-label:hover { color: #eef1f6; }
 .nav-label:hover .nl-ico { color: var(--sidebar-ink); opacity: .95; }
 .nl-ico { flex: 0 0 auto; display: grid; place-items: center; color: var(--sidebar-ink-soft);
-  opacity: .55; transition: color .15s, opacity .15s; }
+  opacity: .5; transition: color .15s, opacity .15s; }
 .nl-ico .ico { width: 15px; height: 15px; }
 .nl-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nl-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.nl-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; }
+/* Count: a quiet numeral, not a filled chip. Earns a faint tinted chip only when its
+   section holds the current page — so the badge means "here", not just "how many". */
 .nav-count {
   font: 700 10px/1 var(--font); letter-spacing: 0; font-variant-numeric: tabular-nums;
-  min-width: 18px; padding: 3px 5px; border-radius: 6px; text-align: center;
-  background: rgba(255,255,255,.06); color: var(--sidebar-ink-soft);
-  transition: background .15s, color .15s;
+  min-width: 16px; padding: 2px 0; border-radius: 6px; text-align: center;
+  color: var(--sidebar-ink-soft); opacity: .65;
+  transition: background .15s, color .15s, opacity .15s, padding .15s;
 }
-.nav-label:hover .nav-count { background: rgba(255,255,255,.1); color: #fff; }
-.nav-label .chev { width: 13px; height: 13px; opacity: .35; transition: transform .22s cubic-bezier(.22,1,.36,1), opacity .15s; }
-.nav-label:hover .chev { opacity: .7; }
+.nav-label:hover .nav-count { opacity: 1; color: var(--sidebar-ink); }
+.nav-label .chev { width: 13px; height: 13px; opacity: .3; transition: transform .22s cubic-bezier(.22,1,.36,1), opacity .15s; }
+.nav-label:hover .chev { opacity: .65; }
 /* Collapsed section: chevron rotates to signal "expandable". */
 .nav-section.sec-collapsed .nav-label .chev { transform: rotate(-90deg); }
 [dir="rtl"] .nav-section.sec-collapsed .nav-label .chev { transform: rotate(90deg); }
 /* The section that holds the current page — legible even while collapsed. */
 .nav-section.has-current > .nav-label { color: #fff; }
 .nav-section.has-current > .nav-label .nl-ico { color: var(--tc-red-2); opacity: 1; }
-.nav-section.has-current > .nav-label .nav-count { background: var(--sidebar-active); color: #fff; }
+.nav-section.has-current > .nav-label .nav-count {
+  background: var(--sidebar-active); color: #fff; opacity: 1; padding: 2px 6px;
+}
 
 /* Accordion via grid-template-rows (1fr↔0fr) — animates to the true content height,
    no magic max-height, no layout thrash. .nav-sub clips content during the collapse. */
@@ -128,29 +145,29 @@ a { color: inherit; text-decoration: none; }
 /* ---- Nav item ---- */
 .nav-item {
   display: flex; align-items: center; gap: 11px;
-  padding: 8px 11px; margin: 2px 0; border-radius: 10px;
-  color: var(--sidebar-ink); font-size: 13.5px; font-weight: 500;
+  padding: 8px 11px; margin: 1px 0; border-radius: 10px;
+  color: var(--sidebar-ink); font-size: 13px; font-weight: 500;
   position: relative; white-space: nowrap;
-  transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+  transition: background .16s ease, color .16s ease;
 }
-/* wayfinding rail — brand-red "you are here", scales from center (GPU-composited).
-   Active only: hover uses a soft pill so the rail unambiguously marks the current page. */
+/* wayfinding rail — a single brand-red "you are here" marker; scales from center
+   (GPU-composited, no layout thrash). Active only: hover uses a soft neutral pill so the
+   rail stays the one unambiguous current-page signal — no glow, no stacked border. */
 .nav-item::before {
-  content: ""; position: absolute; inset-inline-start: -11px; top: 20%;
-  width: 3px; height: 60%; border-radius: 0 3px 3px 0; background: var(--tc-red);
+  content: ""; position: absolute; inset-inline-start: -10px; top: 20%;
+  width: 3px; height: 60%; border-radius: 0 3px 3px 0; background: var(--sidebar-active-line);
   transform: scaleY(0); transform-origin: center; opacity: 0;
   transition: transform .2s cubic-bezier(.22,1,.36,1), opacity .18s ease;
 }
 [dir="rtl"] .nav-item::before { border-radius: 3px 0 0 3px; }
-.nav-item .ico { flex: 0 0 20px; width: 20px; height: 20px; opacity: .78; transition: opacity .16s, color .16s, filter .16s; }
+.nav-item .ico { flex: 0 0 19px; width: 19px; height: 19px; opacity: .72; transition: opacity .16s, color .16s; }
 .nav-item .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .nav-item:hover { background: var(--sidebar-hover); color: #fff; }
 .nav-item:hover .ico { opacity: 1; }
 .nav-item.active {
   background: var(--sidebar-active); color: #fff; font-weight: 600;
-  box-shadow: inset 0 0 0 1px rgba(237,28,36,.22);
 }
-.nav-item.active .ico { opacity: 1; color: var(--tc-red-2); filter: drop-shadow(0 0 8px rgba(237,28,36,.4)); }
+.nav-item.active .ico { opacity: 1; color: var(--tc-red-2); }
 .nav-item.active::before { transform: scaleY(1); opacity: 1; }
 
 /* "soon" tag on in-progress modules (admins only) */
@@ -164,12 +181,12 @@ a { color: inherit; text-decoration: none; }
 /* ---- Sidebar footer ---- */
 .sidebar-foot {
   flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-  padding: 10px 12px; border-top: 1px solid rgba(255,255,255,.07);
-  background: rgba(0,0,0,.22);
+  padding: 10px 12px; border-top: 1px solid var(--sidebar-line);
+  background: rgba(0,0,0,.16);
 }
 .sf-user {
   display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;
-  padding: 5px 6px; border-radius: 10px; transition: background .16s;
+  padding: 6px; border-radius: 11px; transition: background .16s;
 }
 .sf-user:hover { background: rgba(255,255,255,.05); }
 /* Footer avatar is fixed brand-red so the white initial stays legible on the dark
@@ -179,16 +196,16 @@ a { color: inherit; text-decoration: none; }
   background: linear-gradient(135deg, var(--tc-red-2), var(--tc-red-deep)); color: #fff;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.14);
 }
-.sf-meta { line-height: 1.2; min-width: 0; }
-.sf-meta b { color: #fff; font-size: 12.5px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sf-meta span { color: var(--sidebar-ink-soft); font-size: 11px; }
+.sf-meta { line-height: 1.25; min-width: 0; }
+.sf-meta b { color: #fff; font-size: 12.5px; font-weight: 600; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-meta span { color: var(--sidebar-ink-soft); font-size: 10.5px; }
 .sf-collapse {
   width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; cursor: pointer;
-  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.05); border: 1px solid var(--sidebar-line);
   color: var(--sidebar-ink); display: grid; place-items: center;
   transition: background .16s, color .16s, border-color .16s;
 }
-.sf-collapse:hover { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.16); }
+.sf-collapse:hover { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.18); }
 .sf-collapse .ico { transition: transform .24s cubic-bezier(.22,1,.36,1); }
 .app.collapsed .sf-collapse .ico { transform: rotate(180deg); }
 
@@ -204,7 +221,10 @@ a { color: inherit; text-decoration: none; }
 .app.collapsed .nav-item { justify-content: center; padding: 11px 0; margin: 3px auto; width: 46px; border-radius: 12px; }
 .app.collapsed .nav-item::before { display: none; }
 .app.collapsed .nav-item .lbl { display: none; }
-.app.collapsed .nav-item.active .ico { filter: drop-shadow(0 0 8px rgba(237,28,36,.45)); }
+/* Rail mode has no room for the leading bar, so the current item reads through a clean
+   tinted square + a crisp inset ring (no glow) — the same calm "here" language, compacted. */
+.app.collapsed .nav-item.active { box-shadow: inset 0 0 0 1px rgba(237,28,36,.32); }
+.app.collapsed .nav-item.active .ico { color: var(--tc-red-2); }
 .app.collapsed .sf-user { justify-content: center; flex: 0 0 auto; }
 .app.collapsed .sf-user .sf-meta { display: none; }
 .app.collapsed .sidebar-foot { flex-direction: column; gap: 8px; padding: 12px 8px; }
@@ -231,10 +251,11 @@ a { color: inherit; text-decoration: none; }
   width: 15px; height: 15px; color: var(--sidebar-ink-soft); pointer-events: none; }
 .nav-filter input {
   width: 100%; padding: 9px 34px; border-radius: 10px;
-  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.04); border: 1px solid var(--sidebar-line);
   color: #fff; font-family: inherit; font-size: 12.5px;
   transition: border-color .15s, background .15s, box-shadow .15s;
 }
+.nav-filter input:hover { background: rgba(255,255,255,.06); }
 .nav-filter input::placeholder { color: var(--sidebar-ink-soft); }
 .nav-filter input:focus { outline: none; border-color: rgba(237,28,36,.55);
   background: rgba(255,255,255,.09); box-shadow: 0 0 0 3px rgba(237,28,36,.14); }
