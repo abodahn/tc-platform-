@@ -621,6 +621,44 @@ table.tbl tr:last-child td { border-bottom: 0; }
 /* ---------- Empty / loading ---------- */
 .empty { text-align: center; padding: 48px 24px; color: var(--muted); }
 .empty .ico { width: 46px; height: 46px; opacity: .4; margin-bottom: 12px; }
+
+/* ============================================================
+   UX excellence pack — platform-wide, template-free. Upgrades every existing
+   table + form + page at once (Ramp/Linear-class polish, keyboard focus, touch).
+   ============================================================ */
+/* Tables: tabular figures so numbers line up, a header that sticks while the body
+   scrolls, and quiet zebra striping — no markup change on any of the ~40 tables. */
+table.tbl { font-variant-numeric: tabular-nums; }
+table.tbl th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--panel); background-clip: padding-box;
+}
+table.tbl tbody tr:nth-child(even) td { background: rgba(127, 127, 127, .035); }
+table.tbl tbody tr:hover td { background: var(--panel-2); }   /* hover wins over zebra */
+
+/* Keyboard focus ring — visible for keyboard users, invisible on mouse click. An
+   accessibility baseline the platform was missing. */
+a:focus-visible, button:focus-visible, .btn:focus-visible, .icon-btn:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+[tabindex]:focus-visible, .nav-item:focus-visible, .seg button:focus-visible {
+  outline: 2px solid var(--tc-red); outline-offset: 2px; border-radius: 6px;
+}
+
+/* Shop-floor / tablet touch mode — larger targets and no hover reliance, applied
+   ONLY on coarse-pointer devices so desktop density is untouched. */
+@media (pointer: coarse) {
+  .btn, .icon-btn, .seg button, .field input, .field select { min-height: 46px; }
+  .btn { padding-block: 12px; }
+  table.tbl td, table.tbl th { padding-block: 15px; }
+  .nav-item { padding-block: 11px; }
+  .nav-star { opacity: .85; }            /* pin star reachable without hover */
+}
+
+/* Skeleton row utility for future loading states (shimmer keyframe already exists). */
+.sk-row { height: 14px; border-radius: 7px; margin: 8px 0;
+  background: linear-gradient(90deg, var(--line-2), var(--panel-2), var(--line-2));
+  background-size: 200% 100%; animation: sk 1.3s infinite; }
+@media (prefers-reduced-motion: reduce) { .sk-row { animation: none; } }
 .skeleton { background: linear-gradient(90deg, var(--line-2), var(--panel-2), var(--line-2)); background-size: 200% 100%; animation: sk 1.3s infinite; border-radius: 8px; }
 @keyframes sk { to { background-position: -200% 0; } }
 
