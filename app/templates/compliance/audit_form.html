@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Record audit{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cmp.eyebrow">Governance · Compliance & Social Audit</div>
+    <h1 data-i18n="cmp.action.new_audit">Record audit</h1>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('compliance.audits') }}" data-i18n="cmp.action.back">Back</a>
+</div>
+
+<form class="panel" method="post" action="{{ url_for('compliance.audit_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field"><label data-i18n="cmp.field.scheme">Scheme *</label>
+        <select name="scheme" required>{% for s in schemes %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="cmp.field.type">Audit type</label>
+        <input name="audit_type" placeholder="periodic / follow-up / unannounced"></div>
+      <div class="field"><label data-i18n="cmp.field.site">Site / unit</label><input name="site"></div>
+      <div class="field"><label data-i18n="cmp.field.auditor">Audit body</label><input name="auditor" placeholder="SGS, Intertek, Bureau Veritas…"></div>
+      <div class="field"><label data-i18n="cmp.field.buyer">Requesting buyer</label><input name="buyer"></div>
+      <div class="field"><label data-i18n="cmp.field.status">Status</label>
+        <select name="status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="cmp.field.scheduled">Scheduled date</label><input type="date" name="scheduled_date"></div>
+      <div class="field"><label data-i18n="cmp.field.conducted">Conducted date</label><input type="date" name="conducted_date"></div>
+      <div class="field"><label data-i18n="cmp.field.valid_until">Valid until (expiry)</label><input type="date" name="valid_until"></div>
+      <div class="field"><label data-i18n="cmp.field.grade">Grade / result</label><input name="grade" placeholder="A–E / Pass / Fail"></div>
+      <div class="field span-2"><label data-i18n="cmp.field.notes">Notes / report reference</label><input name="notes"></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="cmp.action.save">Save audit</button>
+      <a class="btn btn-ghost" href="{{ url_for('compliance.audits') }}" data-i18n="cmp.action.cancel">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endblock %}

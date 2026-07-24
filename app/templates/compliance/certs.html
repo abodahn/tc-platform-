@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Certificates{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cmp.eyebrow">Governance · Compliance & Social Audit</div>
+    <h1 data-i18n="cmp.nav.certs">Certificates & licences</h1>
+    <div class="sub" data-i18n="cmp.certs.sub">Every certificate and licence with an expiry — watched so none lapses unnoticed.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('compliance.index') }}" data-i18n="cmp.nav.home">Compliance</a>
+</div>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="cmp.field.name">Certificate</th><th data-i18n="cmp.field.type">Type</th>
+      <th data-i18n="cmp.field.issuer">Issuer</th><th data-i18n="cmp.field.expiry">Expiry</th>
+      <th style="text-align:right" data-i18n="cmp.field.days">Days</th>
+      {% if can('cmp_manage') %}<th data-i18n="cmp.field.renew">Renew</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for c in rows %}
+      {% set dl = days_left(c.expiry_date) %}
+      <tr>
+        <td>{{ c.name }}{% if c.cert_no %}<div class="muted" style="font-size:11px">{{ c.cert_no }}{% if c.scope %} · {{ c.scope }}{% endif %}</div>{% endif %}</td>
+        <td class="muted">{{ c.cert_type or '—' }}</td><td class="muted">{{ c.issuer or '—' }}</td>
+        <td style="font-variant-numeric:tabular-nums">{{ c.expiry_date or '—' }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">
+          {% if dl is not none and dl < 0 %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="cmp.badge.expired">Expired</span>
+          {% elif dl is not none and dl <= 60 %}<span class="tag" style="background:#b4530918;color:#b45309">{{ dl }}</span>
+          {% elif dl is not none %}{{ dl }}{% else %}—{% endif %}</td>
+        {% if can('cmp_manage') %}
+        <td><form method="post" action="{{ url_for('compliance.cert_renew', cert_id=c.id) }}" style="display:flex;gap:4px">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="date" name="expiry_date" value="{{ c.expiry_date or '' }}">
+          <button class="btn btn-ghost btn-sm" data-i18n="cmp.field.renew">Renew</button></form></td>
+        {% endif %}
+      </tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:18px" data-i18n="cmp.empty.certs">No certificates tracked yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+
+{% if can('cmp_manage') %}
+<form class="panel mt-4" method="post" action="{{ url_for('compliance.cert_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="cmp.action.add_cert">Add certificate</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field"><label data-i18n="cmp.field.name">Name *</label><input name="name" required></div>
+      <div class="field"><label data-i18n="cmp.field.type">Type</label>
+        <select name="cert_type">{% for t in cert_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="cmp.field.issuer">Issuer</label><input name="issuer"></div>
+      <div class="field"><label data-i18n="cmp.field.certno">Certificate no.</label><input name="cert_no"></div>
+      <div class="field"><label data-i18n="cmp.field.issue">Issue date</label><input type="date" name="issue_date"></div>
+      <div class="field"><label data-i18n="cmp.field.expiry">Expiry date</label><input type="date" name="expiry_date"></div>
+      <div class="field span-2"><label data-i18n="cmp.field.scope">Scope</label><input name="scope"></div>
+    </div>
+    <button class="btn btn-primary btn-sm mt-2" data-i18n="cmp.action.add_cert">Add certificate</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

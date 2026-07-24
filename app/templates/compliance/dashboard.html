@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Compliance{% endblock %}
+{% macro sev(s) %}{% set c={'critical':'#be123c','zero_tolerance':'#7f1d1d','major':'#b45309','minor':'#1d4ed8','observation':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s|replace('_',' ') }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cmp.eyebrow">Governance · Compliance & Social Audit</div>
+    <h1 data-i18n="cmp.nav.home">Compliance</h1>
+    <div class="sub" data-i18n="cmp.dash.sub">Buyer & social audits, corrective actions and certificate expiry — one place, before anything lapses.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('cmp_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('compliance.audit_new') }}" data-i18n="cmp.action.new_audit">Record audit</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('compliance.certs') }}" data-i18n="cmp.nav.certs">Certificates</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.audits_total }}</div><div class="l" data-i18n="cmp.kpi.audits">Audits</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.audits_expiring }}</div><div class="l" data-i18n="cmp.kpi.aud_expiring">Audits expiring</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.audits_expired }}</div><div class="l" data-i18n="cmp.kpi.aud_expired">Audits expired</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.caps_open }}</div><div class="l" data-i18n="cmp.kpi.caps_open">Open CAPs</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.caps_overdue }}</div><div class="l" data-i18n="cmp.kpi.caps_overdue">CAPs overdue</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.caps_critical }}</div><div class="l" data-i18n="cmp.kpi.caps_crit">Critical CAPs</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.certs_valid }}</div><div class="l" data-i18n="cmp.kpi.certs_valid">Certificates valid</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.certs_expiring }}</div><div class="l" data-i18n="cmp.kpi.certs_expiring">Expiring soon</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.certs_expired }}</div><div class="l" data-i18n="cmp.kpi.certs_expired">Expired</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.audits_upcoming }}</div><div class="l" data-i18n="cmp.kpi.upcoming">Upcoming audits</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cmp.dash.watch">Expiry watchlist</h3>
+      <a class="tag" href="{{ url_for('compliance.audits') }}" data-i18n="cmp.action.all_audits">All audits</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="cmp.field.item">Item</th><th data-i18n="cmp.field.type">Type</th>
+          <th data-i18n="cmp.field.expiry">Expiry</th><th style="text-align:right" data-i18n="cmp.field.days">Days</th></tr></thead>
+        <tbody>
+        {% for w in d.watch %}
+          <tr><td>{{ w.label }}</td><td class="muted">{{ w.kind }}</td><td style="font-variant-numeric:tabular-nums">{{ w.exp }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">
+              {% if w.days is not none and w.days < 0 %}<span class="tag" style="background:#be123c18;color:#be123c">{{ w.days }}</span>
+              {% elif w.days is not none %}<span class="tag" style="background:#b4530918;color:#b45309">{{ w.days }}</span>{% else %}—{% endif %}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="cmp.empty.watch">Nothing expiring soon. 👍</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cmp.dash.open_caps">Open corrective actions</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="cmp.field.finding">Finding</th><th data-i18n="cmp.field.severity">Severity</th>
+          <th data-i18n="cmp.field.owner">Owner</th><th data-i18n="cmp.field.due">Due</th></tr></thead>
+        <tbody>
+        {% for f in d.open_caps %}
+          <tr><td><a href="{{ url_for('compliance.audit_detail', audit_id=f.audit_id) }}">{{ (f.finding or '')[:60] }}</a>
+              <div class="muted" style="font-size:11px">{{ f.scheme }} · {{ f.audit_ref }}</div></td>
+            <td>{{ sev(f.severity) }}</td><td class="muted">{{ f.owner or '—' }}</td>
+            <td style="font-variant-numeric:tabular-nums">{% if f.due_date and days_left(f.due_date) is not none and days_left(f.due_date) < 0 %}<span class="tag" style="background:#be123c18;color:#be123c">{{ f.due_date }}</span>{% else %}{{ f.due_date or '—' }}{% endif %}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="cmp.empty.caps">No open corrective actions.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

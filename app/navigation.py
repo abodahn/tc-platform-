@@ -91,8 +91,11 @@ NAV = [
         ("kb", "nav.kb", "book", "main.module", "open_module"),
     ]},
     {"section": "nav.govern", "items": [
+        ("compliance", "nav.compliance", "shield", "compliance.index", "cmp_view"),
+        ("cmp_audits", "nav.cmp_audits", "check", "compliance.audits", "cmp_view"),
+        ("cmp_certs", "nav.cmp_certs", "book", "compliance.certs", "cmp_view"),
         ("reports", "nav.reports", "report", "main.reports", "view_reports"),
-        ("governance", "nav.governance", "shield", "main.module", "open_module"),
+        ("governance", "nav.governance", "map", "main.module", "open_module"),
         ("health", "nav.health", "pulse", "main.health", "view_system_health"),
         ("roadmap", "nav.roadmap", "map", "main.roadmap", "view_dashboard"),
     ]},

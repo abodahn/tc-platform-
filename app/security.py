@@ -31,7 +31,7 @@ ROLES = {
         "label": "IT Director",
         "perms": ["view_dashboard", "open_module", "view_reports", "export_reports",
                   "view_system_health", "manage_integrations", "access_admin",
-                  "manage_production"],
+                  "manage_production", "cmp_view", "cmp_manage"],
     },
     "it_manager": {
         "label": "IT Manager",
@@ -61,6 +61,10 @@ ROLES = {
     "hr_user": {
         "label": "HR User",
         "perms": ["view_dashboard", "open_module", "view_reports"],
+    },
+    "compliance_officer": {
+        "label": "Compliance Officer",
+        "perms": ["view_dashboard", "open_module", "view_reports", "cmp_view", "cmp_manage"],
     },
     "production_manager": {
         "label": "Production Manager",
@@ -282,6 +286,8 @@ PERMISSION_LABELS = {
     "prob_reports": "Probation: reports & export",
     "prob_import": "Probation: import data",
     "prob_admin": "Probation: admin (config, templates, reopen)",
+    "cmp_view": "Compliance: view audits, findings & certificates",
+    "cmp_manage": "Compliance: manage audits, CAPs & certificates",
     "users_view": "Accounts: view registrations",
     "users_create": "Accounts: create users",
     "users_approve": "Accounts: approve registrations",

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Audits{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cmp.eyebrow">Governance · Compliance & Social Audit</div>
+    <h1 data-i18n="cmp.nav.audits">Audits</h1>
+    <div class="sub" data-i18n="cmp.audits.sub">Every buyer, social, quality and sustainability audit — with its validity and result.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('cmp_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('compliance.audit_new') }}" data-i18n="cmp.action.new_audit">Record audit</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('compliance.index') }}" data-i18n="cmp.nav.home">Compliance</a>
+  </div>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px">
+  <div class="panel-pad flex gap center wrap">
+    <select name="scheme" onchange="this.form.submit()">
+      <option value="" data-i18n="cmp.filter.all_schemes">All schemes</option>
+      {% for s in schemes %}<option value="{{ s }}" {{ 'selected' if f_scheme==s }}>{{ s }}</option>{% endfor %}
+    </select>
+    <select name="status" onchange="this.form.submit()">
+      <option value="" data-i18n="cmp.filter.all_status">All statuses</option>
+      {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f_status==s }}>{{ s }}</option>{% endfor %}
+    </select>
+    {% if f_scheme or f_status %}<a class="tag" href="{{ url_for('compliance.audits') }}" data-i18n="cmp.filter.clear">Clear</a>{% endif %}
+  </div>
+</form>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="cmp.field.ref">Ref</th><th data-i18n="cmp.field.scheme">Scheme</th>
+      <th data-i18n="cmp.field.site">Site</th><th data-i18n="cmp.field.grade">Grade</th>
+      <th data-i18n="cmp.field.status">Status</th><th data-i18n="cmp.field.valid_until">Valid until</th>
+      <th style="text-align:right" data-i18n="cmp.field.days">Days</th></tr></thead>
+    <tbody>
+    {% for a in rows %}
+      {% set dl = days_left(a.valid_until) %}
+      <tr>
+        <td><a href="{{ url_for('compliance.audit_detail', audit_id=a.id) }}">{{ a.ref }}</a></td>
+        <td>{{ a.scheme }}</td><td class="muted">{{ a.site or '—' }}</td>
+        <td>{{ a.grade or '—' }}</td>
+        <td><span class="tag">{{ a.status }}</span></td>
+        <td style="font-variant-numeric:tabular-nums">{{ a.valid_until or '—' }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">
+          {% if dl is not none and dl < 0 %}<span class="tag" style="background:#be123c18;color:#be123c">{{ dl }}</span>
+          {% elif dl is not none and dl <= 60 %}<span class="tag" style="background:#b4530918;color:#b45309">{{ dl }}</span>
+          {% elif dl is not none %}{{ dl }}{% else %}—{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="cmp.empty.audits">No audits recorded yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

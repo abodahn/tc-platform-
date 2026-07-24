@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ audit.ref }} · {{ audit.scheme }}{% endblock %}
+{% macro sev(s) %}{% set c={'critical':'#be123c','zero_tolerance':'#7f1d1d','major':'#b45309','minor':'#1d4ed8','observation':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s|replace('_',' ') }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ audit.scheme }} · {{ audit.ref }}</div>
+    <h1>{{ audit.site or audit.scheme }}</h1>
+    <div class="sub">{{ audit.audit_type or '—' }}{% if audit.auditor %} · {{ audit.auditor }}{% endif %}{% if audit.buyer %} · {{ audit.buyer }}{% endif %}</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('compliance.audits') }}" data-i18n="cmp.action.back">Back</a>
+</div>
+
+<div class="grid cols-2">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cmp.detail.record">Audit record</h3>
+      {% set dl = days_left(audit.valid_until) %}
+      {% if dl is not none and dl < 0 %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="cmp.badge.expired">Expired</span>
+      {% elif dl is not none and dl <= 60 %}<span class="tag" style="background:#b4530918;color:#b45309">{{ dl }} <span data-i18n="cmp.badge.days_left">days left</span></span>
+      {% elif dl is not none %}<span class="tag" style="background:#0f7a4d18;color:#0f7a4d" data-i18n="cmp.badge.valid">Valid</span>{% endif %}</div>
+    <div class="panel-pad">
+      {% if can('cmp_manage') %}
+      <form method="post" action="{{ url_for('compliance.audit_update', audit_id=audit.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="cmp.field.status">Status</label>
+            <select name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if audit.status==s }}>{{ s }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="cmp.field.grade">Grade / result</label><input name="grade" value="{{ audit.grade or '' }}"></div>
+          <div class="field"><label data-i18n="cmp.field.conducted">Conducted date</label><input type="date" name="conducted_date" value="{{ audit.conducted_date or '' }}"></div>
+          <div class="field"><label data-i18n="cmp.field.valid_until">Valid until</label><input type="date" name="valid_until" value="{{ audit.valid_until or '' }}"></div>
+          <div class="field span-2"><label data-i18n="cmp.field.notes">Notes</label><input name="notes" value="{{ audit.notes or '' }}"></div>
+        </div>
+        <button class="btn btn-primary btn-sm mt-2" data-i18n="cmp.action.update">Update</button>
+      </form>
+      {% else %}
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="cmp.field.status">Status</td><td>{{ audit.status }}</td></tr>
+        <tr><td class="muted" data-i18n="cmp.field.grade">Grade</td><td>{{ audit.grade or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="cmp.field.valid_until">Valid until</td><td>{{ audit.valid_until or '—' }}</td></tr>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cmp.detail.caps">Corrective actions (CAP)</h3>
+      <span class="tag">{{ findings|selectattr('status','in',['open','in_progress'])|list|length }} <span data-i18n="cmp.badge.open">open</span></span></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="cmp.field.finding">Finding</th><th data-i18n="cmp.field.severity">Severity</th>
+          <th data-i18n="cmp.field.due">Due</th><th data-i18n="cmp.field.status">Status</th></tr></thead>
+        <tbody>
+        {% for f in findings %}
+          <tr>
+            <td>{{ f.finding }}{% if f.clause %}<div class="muted" style="font-size:11px">{{ f.clause }}{% if f.owner %} · {{ f.owner }}{% endif %}</div>{% endif %}</td>
+            <td>{{ sev(f.severity) }}</td>
+            <td style="font-variant-numeric:tabular-nums">{% if f.due_date and days_left(f.due_date) is not none and days_left(f.due_date) < 0 and f.status in ['open','in_progress'] %}<span class="tag" style="background:#be123c18;color:#be123c">{{ f.due_date }}</span>{% else %}{{ f.due_date or '—' }}{% endif %}</td>
+            <td>
+              {% if can('cmp_manage') and f.status not in ['closed','verified'] %}
+              <form method="post" action="{{ url_for('compliance.finding_status', finding_id=f.id) }}" style="display:flex;gap:4px">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <select name="status" onchange="this.form.submit()">
+                  {% for s in finding_statuses %}<option value="{{ s }}" {{ 'selected' if f.status==s }}>{{ s }}</option>{% endfor %}
+                </select>
+              </form>
+              {% else %}<span class="tag">{{ f.status }}</span>{% endif %}
+            </td>
+          </tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:14px" data-i18n="cmp.empty.caps">No corrective actions.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+
+      {% if can('cmp_manage') %}
+      <form method="post" action="{{ url_for('compliance.finding_add', audit_id=audit.id) }}" class="mt-4" style="border-top:1px solid var(--line-2);padding-top:12px">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field span-2"><label data-i18n="cmp.field.finding">New finding *</label><input name="finding" required></div>
+          <div class="field"><label data-i18n="cmp.field.severity">Severity</label>
+            <select name="severity">{% for s in severities %}<option value="{{ s }}" {{ 'selected' if s=='minor' }}>{{ s|replace('_',' ') }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="cmp.field.owner">Owner</label><input name="owner"></div>
+          <div class="field"><label data-i18n="cmp.field.clause">Clause / area</label><input name="clause"></div>
+          <div class="field"><label data-i18n="cmp.field.due">Due date</label><input type="date" name="due_date"></div>
+        </div>
+        <button class="btn btn-primary btn-sm mt-2" data-i18n="cmp.action.add_cap">Add corrective action</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
