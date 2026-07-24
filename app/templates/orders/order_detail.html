@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ order.order_no }} · {{ order.buyer }}{% endblock %}
+{% macro mst(s) %}{% set c={'late':'#be123c','at_risk':'#b45309','done':'#0f7a4d','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s|replace('_',' ') }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ order.order_no }}{% if order.po_no %} · PO {{ order.po_no }}{% endif %}</div>
+    <h1>{{ order.buyer }} — {{ order.style_name or order.style_ref or 'Order' }}</h1>
+    <div class="sub">{{ '{:,.0f}'.format(order.qty or 0) }} {% if order.unit_price %}· {{ order.currency }} {{ '%.2f'|format(order.unit_price) }}{% endif %}
+      {% set c={'late':'#be123c','at_risk':'#b45309','on_track':'#0f7a4d'} %}
+      · <span class="tag" style="background:{{ c.get(order.health,'#6b7280') }}18;color:{{ c.get(order.health,'#6b7280') }}">{{ order.health|replace('_',' ') }}</span>
+      {% if order.days_to_ship is not none %}· <span data-i18n="ord.badge.ship_in">ships in</span> {{ order.days_to_ship }}d{% endif %}</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.listing') }}" data-i18n="ord.action.back">Back</a>
+</div>
+
+<div class="grid cols-2">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="ord.detail.order">Order</h3>
+      <span class="tag" style="font-variant-numeric:tabular-nums">{{ order.progress }}% <span data-i18n="ord.detail.progress">complete</span></span></div>
+    <div class="panel-pad">
+      <div class="pb-meter" style="margin-bottom:12px"><span style="width:{{ order.progress }}%"></span></div>
+      {% if can('manage_production') %}
+      <form method="post" action="{{ url_for('orders.update', order_id=order.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="ord.field.status">Status</label>
+            <select name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if order.status==s }}>{{ s|replace('_',' ') }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="ord.field.ship">Ship date</label><input type="date" name="ship_date" value="{{ order.ship_date or '' }}"></div>
+          <div class="field"><label data-i18n="ord.field.line">Line</label><input name="line_no" value="{{ order.line_no or '' }}"></div>
+          <div class="field"><label data-i18n="ord.field.qty">Quantity</label><input type="number" name="qty" step="any" value="{{ order.qty or 0 }}"></div>
+        </div>
+        <div class="muted" style="font-size:11.5px;margin:6px 0" data-i18n="ord.detail.reflow">Changing the ship date reflows all pending milestones.</div>
+        <button class="btn btn-primary btn-sm" data-i18n="ord.action.update">Update</button>
+      </form>
+      {% else %}
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="ord.field.status">Status</td><td>{{ order.status|replace('_',' ') }}</td></tr>
+        <tr><td class="muted" data-i18n="ord.field.ship">Ship date</td><td>{{ order.ship_date or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="ord.field.style">Style</td><td>{{ order.style_name or order.style_ref or '—' }}</td></tr>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="ord.detail.tna">Time & Action — critical path</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="ord.field.milestone">Milestone</th><th data-i18n="ord.field.planned">Planned</th>
+          <th data-i18n="ord.field.actual">Actual</th><th data-i18n="ord.field.status">Status</th>
+          {% if can('manage_production') %}<th></th>{% endif %}</tr></thead>
+        <tbody>
+        {% for m in milestones %}
+          <tr>
+            <td>{{ m.name }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ m.planned_date or '—' }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ m.actual_date or '—' }}</td>
+            <td>{{ mst(m.view_status) }}</td>
+            {% if can('manage_production') %}
+            <td><form method="post" action="{{ url_for('orders.milestone', milestone_id=m.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              {% if m.view_status == 'done' %}
+                <input type="hidden" name="action" value="undo"><button class="btn btn-ghost btn-sm" data-i18n="ord.action.undo">Undo</button>
+              {% else %}
+                <input type="hidden" name="action" value="done"><button class="btn btn-ghost btn-sm" data-i18n="ord.action.done">Mark done</button>
+              {% endif %}
+            </form></td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

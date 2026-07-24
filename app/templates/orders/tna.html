@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Time & Action board{% endblock %}
+{% macro mst(s) %}{% set c={'late':'#be123c','at_risk':'#b45309','done':'#0f7a4d','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s|replace('_',' ') }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="ord.eyebrow">Planning · Orders & Time-Action</div>
+    <h1 data-i18n="ord.nav.tna">Time & Action board</h1>
+    <div class="sub" data-i18n="ord.tna.sub">Every upcoming and overdue milestone across all live orders — soonest first.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.index') }}" data-i18n="ord.nav.home">Dashboard</a>
+</div>
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="ord.field.planned">Planned</th><th style="text-align:right" data-i18n="ord.field.days">Days</th>
+      <th data-i18n="ord.field.milestone">Milestone</th><th data-i18n="ord.field.order">Order</th>
+      <th data-i18n="ord.field.buyer">Buyer</th><th data-i18n="ord.field.status">Status</th>
+      {% if can('manage_production') %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for m in rows %}
+      <tr>
+        <td style="font-variant-numeric:tabular-nums">{{ m.planned_date or '—' }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{% if m.days is not none and m.days < 0 %}<span class="tag" style="background:#be123c18;color:#be123c">{{ m.days }}</span>{% elif m.days is not none and m.days <= 3 %}<span class="tag" style="background:#b4530918;color:#b45309">{{ m.days }}</span>{% else %}{{ m.days if m.days is not none else '—' }}{% endif %}</td>
+        <td>{{ m.name }}</td>
+        <td><a href="{{ url_for('orders.detail', order_id=m.order_id) }}">{{ m.order_no }}</a></td>
+        <td class="muted">{{ m.buyer }}</td>
+        <td>{{ mst(m.view_status) }}</td>
+        {% if can('manage_production') %}
+        <td><form method="post" action="{{ url_for('orders.milestone', milestone_id=m.id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="done">
+          <button class="btn btn-ghost btn-sm" data-i18n="ord.action.done">Mark done</button></form></td>
+        {% endif %}
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="ord.empty.tna">Nothing outstanding. 👍</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

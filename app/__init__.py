@@ -101,6 +101,7 @@ def create_app():
     from app.routes.probation import bp as probation_bp
     from app.routes.accounts import bp as accounts_bp
     from app.routes.compliance import bp as compliance_bp
+    from app.routes.orders import bp as orders_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -117,6 +118,7 @@ def create_app():
     app.register_blueprint(probation_bp)
     app.register_blueprint(accounts_bp)
     app.register_blueprint(compliance_bp)
+    app.register_blueprint(orders_bp)
 
     # --- Error handlers ---
     from flask import render_template

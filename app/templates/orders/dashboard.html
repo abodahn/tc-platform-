@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Orders & Time-Action{% endblock %}
+{% macro health(h) %}{% set c={'late':'#be123c','at_risk':'#b45309','on_track':'#0f7a4d'} %}<span class="tag" style="background:{{ c.get(h,'#6b7280') }}18;color:{{ c.get(h,'#6b7280') }}">{{ h|replace('_',' ') }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="ord.eyebrow">Planning · Orders & Time-Action</div>
+    <h1 data-i18n="ord.nav.home">Orders & Time-Action</h1>
+    <div class="sub" data-i18n="ord.dash.sub">Every customer order on one critical path — milestones, progress and slippage before the ship date is missed.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('manage_production') %}<a class="btn btn-primary btn-sm" href="{{ url_for('orders.new') }}" data-i18n="ord.action.new">New order</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.tna') }}" data-i18n="ord.nav.tna">Time & Action board</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.listing') }}" data-i18n="ord.nav.all">All orders</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.orders_total }}</div><div class="l" data-i18n="ord.kpi.active">Active orders</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.in_production }}</div><div class="l" data-i18n="ord.kpi.in_prod">In production</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.shipping_soon }}</div><div class="l" data-i18n="ord.kpi.ship_soon">Shipping ≤14d</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.late_milestones }}</div><div class="l" data-i18n="ord.kpi.late_ms">Late milestones</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.at_risk_orders|length }}</div><div class="l" data-i18n="ord.kpi.at_risk">Orders at risk</div></div>
+</div>
+
+{% if d.at_risk_orders %}
+<div class="panel mt-4" style="border:1px solid var(--tc-red)">
+  <div class="panel-head"><h3 data-i18n="ord.dash.at_risk">Orders needing attention</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ord.field.order">Order</th><th data-i18n="ord.field.buyer">Buyer</th>
+        <th data-i18n="ord.field.style">Style</th><th data-i18n="ord.field.ship">Ship</th>
+        <th style="text-align:right" data-i18n="ord.field.days">Days</th><th data-i18n="ord.field.health">Health</th></tr></thead>
+      <tbody>
+      {% for o in d.at_risk_orders %}
+        <tr><td><a href="{{ url_for('orders.detail', order_id=o.id) }}">{{ o.order_no }}</a></td>
+          <td>{{ o.buyer }}</td><td class="muted">{{ o.style_name or o.style_ref or '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ o.ship_date or '—' }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">{% if o.days_to_ship is not none and o.days_to_ship < 7 %}<span class="tag" style="background:#be123c18;color:#be123c">{{ o.days_to_ship }}</span>{% else %}{{ o.days_to_ship if o.days_to_ship is not none else '—' }}{% endif %}</td>
+          <td>{{ health(o.health) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="ord.dash.all">All active orders</h3>
+    <a class="tag" href="{{ url_for('orders.listing') }}" data-i18n="ord.nav.all">All orders</a></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ord.field.order">Order</th><th data-i18n="ord.field.buyer">Buyer</th>
+        <th data-i18n="ord.field.style">Style</th><th style="text-align:right" data-i18n="ord.field.qty">Qty</th>
+        <th data-i18n="ord.field.ship">Ship</th><th data-i18n="ord.field.status">Status</th><th data-i18n="ord.field.health">Health</th></tr></thead>
+      <tbody>
+      {% for o in d.orders %}
+        <tr><td><a href="{{ url_for('orders.detail', order_id=o.id) }}">{{ o.order_no }}</a></td>
+          <td>{{ o.buyer }}</td><td class="muted">{{ o.style_name or o.style_ref or '—' }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(o.qty or 0) }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ o.ship_date or '—' }}</td>
+          <td><span class="tag">{{ o.status|replace('_',' ') }}</span></td><td>{{ health(o.health) }}</td></tr>
+      {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="ord.empty.orders">No orders yet — create the first one.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

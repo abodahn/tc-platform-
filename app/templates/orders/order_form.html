@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}New order{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="ord.eyebrow">Planning · Orders & Time-Action</div>
+    <h1 data-i18n="ord.action.new">New order</h1>
+    <div class="sub" data-i18n="ord.form.sub">The critical-path milestones are generated automatically from the ship date.</div></div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.listing') }}" data-i18n="ord.action.back">Back</a>
+</div>
+<form class="panel" method="post" action="{{ url_for('orders.create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field"><label data-i18n="ord.field.buyer">Buyer *</label><input name="buyer" required></div>
+      <div class="field"><label data-i18n="ord.field.po">Buyer PO</label><input name="po_no"></div>
+      <div class="field"><label data-i18n="ord.field.style_ref">Style ref</label><input name="style_ref"></div>
+      <div class="field"><label data-i18n="ord.field.style">Style name</label><input name="style_name"></div>
+      <div class="field"><label data-i18n="ord.field.qty">Quantity</label><input type="number" name="qty" min="0" step="any"></div>
+      <div class="field"><label data-i18n="ord.field.price">Unit price</label><input type="number" name="unit_price" min="0" step="any"></div>
+      <div class="field"><label data-i18n="ord.field.order_date">Order date</label><input type="date" name="order_date"></div>
+      <div class="field"><label data-i18n="ord.field.ship">Ship date (target)</label><input type="date" name="ship_date"></div>
+      <div class="field"><label data-i18n="ord.field.status">Status</label>
+        <select name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if s=='confirmed' }}>{{ s|replace('_',' ') }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="ord.field.line">Line</label><input name="line_no"></div>
+      <div class="field span-2"><label data-i18n="ord.field.notes">Notes</label><input name="notes"></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="ord.action.create">Create order</button>
+      <a class="btn btn-ghost" href="{{ url_for('orders.listing') }}" data-i18n="ord.action.cancel">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endblock %}

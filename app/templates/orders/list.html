@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Orders{% endblock %}
+{% macro health(h) %}{% set c={'late':'#be123c','at_risk':'#b45309','on_track':'#0f7a4d'} %}<span class="tag" style="background:{{ c.get(h,'#6b7280') }}18;color:{{ c.get(h,'#6b7280') }}">{{ h|replace('_',' ') }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="ord.eyebrow">Planning · Orders & Time-Action</div>
+    <h1 data-i18n="ord.nav.all">All orders</h1>
+  </div>
+  <div class="flex gap center">
+    {% if can('manage_production') %}<a class="btn btn-primary btn-sm" href="{{ url_for('orders.new') }}" data-i18n="ord.action.new">New order</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.index') }}" data-i18n="ord.nav.home">Dashboard</a>
+  </div>
+</div>
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <select name="status" onchange="this.form.submit()">
+    <option value="" data-i18n="ord.filter.all">All statuses</option>
+    {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f_status==s }}>{{ s|replace('_',' ') }}</option>{% endfor %}
+  </select>
+  {% if f_status %}<a class="tag" href="{{ url_for('orders.listing') }}" data-i18n="ord.filter.clear">Clear</a>{% endif %}
+</div></form>
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="ord.field.order">Order</th><th data-i18n="ord.field.buyer">Buyer</th>
+      <th data-i18n="ord.field.style">Style</th><th data-i18n="ord.field.po">PO</th>
+      <th style="text-align:right" data-i18n="ord.field.qty">Qty</th><th data-i18n="ord.field.ship">Ship</th>
+      <th data-i18n="ord.field.status">Status</th><th data-i18n="ord.field.health">Health</th></tr></thead>
+    <tbody>
+    {% for o in rows %}
+      <tr><td><a href="{{ url_for('orders.detail', order_id=o.id) }}">{{ o.order_no }}</a></td>
+        <td>{{ o.buyer }}</td><td class="muted">{{ o.style_name or o.style_ref or '—' }}</td>
+        <td class="muted">{{ o.po_no or '—' }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(o.qty or 0) }}</td>
+        <td style="font-variant-numeric:tabular-nums">{{ o.ship_date or '—' }}</td>
+        <td><span class="tag">{{ o.status|replace('_',' ') }}</span></td><td>{{ health(o.health) }}</td></tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:18px" data-i18n="ord.empty.orders">No orders yet — create the first one.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

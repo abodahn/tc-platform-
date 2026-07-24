@@ -951,6 +951,12 @@ def init_db():
             _cmp_create_and_seed(conn)
         except Exception:
             conn.rollback()
+        # Orders + Time & Action — ord_* tables + demo orders/critical-path
+        try:
+            from app.orders.schema import create_and_seed as _ord_create_and_seed
+            _ord_create_and_seed(conn)
+        except Exception:
+            conn.rollback()
         # Auto-provision a signature for every user who doesn't have one yet, so it
         # can be stamped on any paper without each person drawing one manually.
         try:

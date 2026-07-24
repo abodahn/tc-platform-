@@ -43,6 +43,8 @@ NAV = [
         ("maint_settings", "nav.maint_settings", "settings", "maintenance.settings", "maint_admin"),
     ]},
     {"section": "nav.smart_factory", "items": [
+        ("orders", "nav.orders", "boxes", "orders.index", "view_dashboard"),
+        ("orders_tna", "nav.orders_tna", "clock", "orders.tna", "view_dashboard"),
         ("sf_cc", "nav.sf_cc", "grid", "smartfactory.command_center", "view_dashboard"),
         ("sf_floor", "nav.sf_floor", "target", "smartfactory.floor", "view_dashboard"),
         ("sf_production", "nav.sf_production", "report", "smartfactory.production", "view_dashboard"),
