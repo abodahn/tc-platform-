@@ -715,6 +715,37 @@ def search():
                 if fuzzy(f"{p['name']} {p['area']}"):
                     results.append({"type": "production", "name": p["name"], "sub": "Production line",
                                     "url": url_for("production.index")})
+
+        # --- records from the newer modules -------------------------------
+        # Each block is guarded: a deployment whose migrations have not created a
+        # module's tables yet must never break the platform search box.
+        def _scan(sql, hay, make):
+            try:
+                rows = conn.execute(sql).fetchall()
+            except Exception:
+                return
+            for r in rows:
+                try:
+                    if fuzzy(hay(r)):
+                        results.append(make(r))
+                except Exception:
+                    continue
+
+        if user_has_permission(user, "view_dashboard"):
+            _scan("SELECT id,order_no,buyer,style_name,style_ref FROM ord_orders "
+                  "ORDER BY id DESC LIMIT 300",
+                  lambda r: f"{r['order_no']} {r['buyer']} {r['style_name'] or ''} {r['style_ref'] or ''}",
+                  lambda r: {"type": "order",
+                             "name": f"{r['order_no']} · {r['buyer'] or ''}",
+                             "sub": r["style_name"] or "Order",
+                             "url": url_for("orders.detail", order_id=r["id"])})
+        if user_has_permission(user, "cmp_view"):
+            _scan("SELECT id,ref,scheme,site FROM cmp_audits ORDER BY id DESC LIMIT 200",
+                  lambda r: f"{r['ref']} {r['scheme']} {r['site'] or ''}",
+                  lambda r: {"type": "audit",
+                             "name": f"{r['ref']} · {r['scheme']}",
+                             "sub": "Compliance audit",
+                             "url": url_for("compliance.audit_detail", audit_id=r["id"])})
     finally:
         conn.close()
     return jsonify({"q": q, "results": results[:25]})
