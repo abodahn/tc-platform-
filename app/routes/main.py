@@ -8,6 +8,7 @@ import csv
 import io
 import sys
 import platform as pyplatform
+from datetime import date as _date, timedelta as _timedelta
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
                    session, jsonify, abort, g, Response, flash, send_file)
@@ -763,7 +764,8 @@ def search():
 def my_work():
     user = current_user()
     data = {"sign_queue": [], "maint_approvals": [], "prob_pending": [],
-            "my_prs": [], "my_tickets": [], "alerts": []}
+            "my_prs": [], "my_tickets": [], "alerts": [],
+            "cmp_caps": [], "cmp_expiring": [], "late_milestones": []}
 
     if user_has_permission(user, "proc_view"):
         try:
@@ -809,6 +811,47 @@ def my_work():
         except Exception:
             pass
 
+    # Compliance: corrective actions that are open past their due date, and
+    # certificates about to lapse — both are "act now or a shipment is at risk".
+    if user_has_permission(user, "cmp_view"):
+        try:
+            conn = get_db()
+            try:
+                today = _date.today().isoformat()
+                soon = (_date.today() + _timedelta(days=30)).isoformat()
+                data["cmp_caps"] = conn.execute(
+                    "SELECT f.id, f.finding, f.severity, f.due_date, f.audit_id, a.ref, a.scheme "
+                    "FROM cmp_findings f JOIN cmp_audits a ON a.id = f.audit_id "
+                    "WHERE f.status IN ('open','in_progress') AND f.due_date IS NOT NULL "
+                    "AND f.due_date <= ? ORDER BY f.due_date ASC LIMIT 8", (soon,)).fetchall()
+                data["cmp_expiring"] = conn.execute(
+                    "SELECT id, name, expiry_date FROM cmp_certs "
+                    "WHERE expiry_date IS NOT NULL AND expiry_date <= ? AND status != 'revoked' "
+                    "ORDER BY expiry_date ASC LIMIT 6", (soon,)).fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    # Orders: Time & Action milestones whose planned date has passed with no
+    # actual — the earliest signal that a ship date is about to slip.
+    if user_has_permission(user, "view_dashboard"):
+        try:
+            conn = get_db()
+            try:
+                data["late_milestones"] = conn.execute(
+                    "SELECT m.id, m.name, m.planned_date, o.id AS order_id, o.order_no, o.buyer "
+                    "FROM ord_milestones m JOIN ord_orders o ON o.id = m.order_id "
+                    "WHERE m.actual_date IS NULL AND m.planned_date IS NOT NULL "
+                    "AND m.planned_date < ? "
+                    "AND o.status NOT IN ('shipped','closed','cancelled') "
+                    "ORDER BY m.planned_date ASC LIMIT 8",
+                    (_date.today().isoformat(),)).fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
     try:
         notifs, _unread = _unread_notifications(user["username"])
         scope = system_scope(user)
@@ -819,5 +862,6 @@ def my_work():
         pass
 
     total_actions = (len(data["sign_queue"]) + len(data["maint_approvals"])
-                     + len(data["prob_pending"]))
+                     + len(data["prob_pending"]) + len(data["late_milestones"])
+                     + len(data["cmp_caps"]) + len(data["cmp_expiring"]))
     return render_template("my_work.html", user=user, total_actions=total_actions, **data)

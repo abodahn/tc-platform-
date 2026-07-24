@@ -1696,5 +1696,7 @@
   "ord.filter.all": "Tüm durumlar",
   "ord.filter.clear": "Temizle",
   "ord.empty.orders": "Henüz sipariş yok — ilkini oluşturun.",
-  "ord.empty.tna": "Bekleyen bir şey yok. 👍"
+  "ord.empty.tna": "Bekleyen bir şey yok. 👍",
+  "mywork.late_milestones": "Geciken sipariş kilometre taşları",
+  "mywork.cmp_actions": "Uyum aksiyonları"
 }

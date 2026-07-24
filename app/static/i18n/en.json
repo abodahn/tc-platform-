@@ -1696,5 +1696,7 @@
   "ord.filter.all": "All statuses",
   "ord.filter.clear": "Clear",
   "ord.empty.orders": "No orders yet — create the first one.",
-  "ord.empty.tna": "Nothing outstanding. 👍"
+  "ord.empty.tna": "Nothing outstanding. 👍",
+  "mywork.late_milestones": "Late order milestones",
+  "mywork.cmp_actions": "Compliance actions"
 }

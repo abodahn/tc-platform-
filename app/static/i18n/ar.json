@@ -1696,5 +1696,7 @@
   "ord.filter.all": "كل الحالات",
   "ord.filter.clear": "مسح",
   "ord.empty.orders": "لا توجد طلبات بعد — أنشئ الأول.",
-  "ord.empty.tna": "لا شيء معلّق. 👍"
+  "ord.empty.tna": "لا شيء معلّق. 👍",
+  "mywork.late_milestones": "مراحل طلبات متأخرة",
+  "mywork.cmp_actions": "إجراءات الامتثال"
 }

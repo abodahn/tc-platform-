@@ -56,6 +56,51 @@
   </div>
   {% endif %}
 
+  {# ── Time & Action slippage: the earliest warning a ship date will move ── #}
+  {% if late_milestones %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.late_milestones">Late order milestones</h3>
+      <span class="badge-count">{{ late_milestones|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for m in late_milestones %}
+      <a class="row-line" href="{{ url_for('orders.detail', order_id=m.order_id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ m.order_no }}</b> · {{ m.name }}</span>
+        <span class="tag" style="background:#be123c18;color:#be123c;font-variant-numeric:tabular-nums">{{ m.planned_date }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Compliance: overdue corrective actions + certificates about to lapse ── #}
+  {% if cmp_caps or cmp_expiring %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.cmp_actions">Compliance actions</h3>
+      <span class="badge-count">{{ (cmp_caps|length) + (cmp_expiring|length) }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for f in cmp_caps %}
+      <a class="row-line" href="{{ url_for('compliance.audit_detail', audit_id=f.audit_id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ f.ref }}</b> · {{ (f.finding or '')[:48] }}</span>
+        <span class="tag" style="background:#b4530918;color:#b45309;font-variant-numeric:tabular-nums">{{ f.due_date }}</span>
+      </a>
+      {% endfor %}
+      {% for c in cmp_expiring %}
+      <a class="row-line" href="{{ url_for('compliance.certs') }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span>{{ c.name }}</span>
+        <span class="tag" style="background:#b4530918;color:#b45309;font-variant-numeric:tabular-nums">{{ c.expiry_date }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   {# ── Probation evaluations due ── #}
   {% if prob_pending %}
   <div class="panel">
@@ -133,7 +178,8 @@
 
 </div>
 
-{% if not (sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets) %}
+{% if not (sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets
+           or late_milestones or cmp_caps or cmp_expiring) %}
 <div class="panel"><div class="panel-pad muted" data-i18n="mywork.empty">
   Nothing to show yet — new approvals, tickets and alerts assigned to you will appear here.
 </div></div>
