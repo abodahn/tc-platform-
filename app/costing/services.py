@@ -226,13 +226,23 @@ def _material_actual(issued, proc, manual):
       3. manual 'material' entries — cash/subcontract buys the platform never saw
     The basis is returned with the number so it is never anonymous on screen.
     """
-    if issued is not None and issued > 0:
-        return round(issued, 2), "issued"
-    if proc > 0:
-        return round(proc, 2), "procured"
-    if manual > 0:
-        return round(manual, 2), "manual"
-    return 0.0, "none"
+    # Take the HIGHEST single source, never the first non-zero one. Warehouse issues
+    # are INCREMENTAL (they grow metre by metre as the order is cut) while procurement
+    # receipts and manual entries are COMPLETE figures. Preferring "issued" the moment
+    # it is non-zero therefore let the first metre issued replace the entire material
+    # actual: on the demo data the actual dropped 19,180.00 -> 3.20 and the margin
+    # "improved" from 24% to 65%, so a real overrun would be erased and the variance
+    # alert would never fire. max() keeps the one-source rule (no double-counting)
+    # while making it impossible to UNDER-report.
+    cands = {"issued": round(issued or 0, 2), "procured": round(proc or 0, 2),
+             "manual": round(manual or 0, 2)}
+    basis = max(cands, key=lambda k: cands[k])
+    if cands[basis] <= 0:
+        return 0.0, "none"
+    # Name it honestly when issues are still catching up with a bigger known figure.
+    if basis != "issued" and cands["issued"] > 0:
+        basis += " (issues partial)"
+    return cands[max(cands, key=lambda k: cands[k])], basis
 
 
 # --- reads ----------------------------------------------------------------

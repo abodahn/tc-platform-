@@ -65,6 +65,18 @@ ROLES = {
         "perms": ["view_dashboard", "open_module", "view_reports",
                   "ppl_view", "ppl_manage", "ppl_approve"],
     },
+    # Quality is deliberately its OWN role, not a production grant — an inspector
+    # must be independent of the line being inspected (see production_manager above).
+    "quality_inspector": {
+        "label": "Quality Inspector",
+        "perms": ["view_dashboard", "open_module", "view_reports",
+                  "qc_view", "qc_inspect", "cut_view", "mes_view", "wsh_view"],
+    },
+    "storekeeper": {
+        "label": "Storekeeper",
+        "perms": ["view_dashboard", "open_module", "view_reports",
+                  "wh_view", "wh_manage", "maint_view", "maint_store", "shp_view"],
+    },
     "compliance_officer": {
         "label": "Compliance Officer",
         "perms": ["view_dashboard", "open_module", "view_reports", "cmp_view", "cmp_manage",
@@ -74,10 +86,13 @@ ROLES = {
     "production_manager": {
         "label": "Production Manager",
         "perms": ["view_dashboard", "open_module", "view_reports", "manage_production",
-                  # the shop-floor set: plan the lines, run them, cut, inspect,
-                  # and see material + cost without being able to change money.
+                  # the shop-floor set: plan the lines, run them, cut, and see
+                  # material + cost without being able to change money.
+                  # NOTE deliberately NO qc_inspect — segregation of duties: production
+                  # reads the quality numbers, it does not sign off its own lots.
+                  # qc_inspect belongs to a quality/QC role (create one in Admin > Roles).
                   "pln_view", "pln_plan", "mes_view", "mes_entry",
-                  "cut_view", "cut_manage", "qc_view", "qc_inspect",
+                  "cut_view", "cut_manage", "qc_view",
                   "wh_view", "cost_view", "plm_view", "wsh_view", "shp_view"],
     },
     "executive_viewer": {

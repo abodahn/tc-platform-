@@ -70,6 +70,20 @@ def _bell(conn, severity, title, message, link="/warehouse"):
         "VALUES (?,?,?,?,?,?)", (severity, "warehouse", title, message, link, _now()))
 
 
+def _order_exists(order_id):
+    """A reservation, issue or FG pack against an order id that does not exist strands
+    the cost forever: costing only iterates real ord_orders rows, so it would never be
+    reported anywhere. Own connection so it is safe to call before opening a write conn."""
+    conn = get_db()
+    try:
+        return conn.execute("SELECT id FROM ord_orders WHERE id=?",
+                            (order_id,)).fetchone() is not None
+    except Exception:
+        return False          # orders module absent -> do not block the warehouse
+    finally:
+        conn.close()
+
+
 # --- THE single writer -----------------------------------------------------
 def _roll_status(current, remaining, length):
     """Derived here and nowhere else. A route that could set 'consumed' while metres
@@ -442,6 +456,11 @@ def reserve_for_order(order_id, material_id, required, user, shade_lot=None,
         return False, "bad_qty", None
     if not order_id:
         return False, "order_required", None   # wh_allocations.order_id is NOT NULL
+    # The order must actually EXIST. Reserving/issuing against a bogus id silently
+    # strands the cost: costing iterates real ord_orders rows so it would never see it,
+    # and no order page would ever show it. Siblings (costing, quality) already check.
+    if not _order_exists(order_id):
+        return False, "order_not_found", None
     mat = get_material(material_id)
     if not mat:
         return False, "material_not_found", None
@@ -823,6 +842,8 @@ def fg_move(order_id, style_code, color, size, qty, action, user, notes=None):
     # never found it again — the cartons were in the store and unshippable.
     if not order_id:
         return False, "order_required"
+    if not _order_exists(order_id):
+        return False, "order_not_found"   # unshippable finished goods against a ghost order
     conn = get_db()
     try:
         row = conn.execute("SELECT id FROM wh_fg WHERE order_id=? AND style_code=? AND color=? "

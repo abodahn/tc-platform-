@@ -8,6 +8,7 @@ Each mutating action writes an immutable audit event and surfaces the right
 platform-bell notification.
 """
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timezone
 
@@ -18,6 +19,8 @@ from app.approvals.constants import (
     build_ladder, ladder_rungs, rungs_from_stages, stage_label, STAGE_ROLES,
     PR_STATUSES, LADDER, APPROVAL_MATRIX, DEPARTMENTS,
     VALUE_STAGES, DEMAND_STAGES, PRICING_GATE_STAGE)
+
+log = logging.getLogger("tc.procurement")
 
 
 def _now():
@@ -1220,13 +1223,27 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
 
 
 def _post_bridge_receipt(pr_id, receipts, user):
-    """Post a goods receipt back into the source system's stock (maintenance
-    spare auto-reorder PRs). Post-commit, best-effort: never blocks receiving."""
+    """Post a goods receipt back into whichever store owns the goods. Post-commit,
+    best-effort: never blocks receiving.
+
+    TWO independent stores, so TWO independent try blocks — nesting them would let a
+    maintenance-side failure skip the material store entirely:
+      * maintenance spare parts (spare auto-reorder PRs), and
+      * the raw-material store (fabric rolls / trims). Without this second call every
+        fabric and trim receipt booked in procurement was invisible to /warehouse —
+        procurement said 'received' while material stock never moved.
+    Each callee already swallows its own errors, so anything reaching us here is
+    unexpected and is logged rather than silently dropped."""
     try:
         from app.maintenance.procure_bridge import post_receipt_to_stock
         post_receipt_to_stock(pr_id, receipts, user)
     except Exception:
-        pass
+        log.warning("maintenance receipt bridge failed for PR %s", pr_id, exc_info=True)
+    try:
+        from app.warehouse.services import post_receipt_to_material
+        post_receipt_to_material(pr_id, receipts, user)
+    except Exception:
+        log.warning("material receipt bridge failed for PR %s", pr_id, exc_info=True)
 
 
 def _due_date(payment_condition, base_date):
