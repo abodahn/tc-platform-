@@ -78,7 +78,91 @@ def detail(order_id):
     bundle = svc.get_order(order_id)
     if not bundle:
         abort(404)
-    return render_template("orders/order_detail.html", active="orders", **bundle, statuses=ORDER_STATUS)
+    return render_template("orders/order_detail.html", active="orders", **bundle,
+                           statuses=ORDER_STATUS, x=_order_360(order_id, bundle["order"]))
+
+
+def _order_360(order_id, order):
+    """One cross-module snapshot of an order: margin, material, cut, quality, WIP,
+    shipment, traceability.
+
+    The order page used to show only its own milestones, so a planner had to open six
+    modules to answer "how is this order actually doing". Every block is imported
+    defensively and independently — a module that is absent, or whose query fails,
+    simply drops out of the panel instead of 500-ing the order page."""
+    x = {}
+
+    def block(name, fn):
+        try:
+            v = fn()
+            if v:
+                x[name] = v
+        except Exception:
+            pass          # module absent or its query failed — omit the block, never break
+
+    def _cost():
+        from app.costing import services as cs
+        s = cs.cost_sheet(order_id) or {}
+        m, est, act = s.get("margin") or {}, s.get("estimate") or {}, s.get("actual") or {}
+        # Report the ESTIMATED margin: until actuals land, act_pct reads 100% because
+        # actual cost is still 0, which would look like a triumph instead of "no data".
+        return {"margin_pct": m.get("est_pct"), "margin_value": m.get("est_value"),
+                "est_total": est.get("total"), "act_total": act.get("total"),
+                "has_actual": bool(s.get("has_actual")),
+                "variance": (round(act.get("total", 0) - est.get("total", 0), 2)
+                             if s.get("has_actual") else None)}
+    block("costing", _cost)
+
+    def _cut():
+        from app.cutroom import services as cu
+        k = cu.order_summary(order_id) or {}
+        # scalars only — order_summary also carries the whole order row and every lay
+        return {f: k.get(f) for f in ("pieces_cut", "cut_pct", "marker_eff_pct",
+                                      "utilisation_pct", "waste_pct", "variance_pct",
+                                      "fabric_used_m", "lay_count", "balance")}
+    block("cut", _cut)
+
+    def _qc():
+        from app.quality import services as q
+        rows = q.list_inspections(order_id=order_id) or []
+        return {"total": len(rows),
+                "failed": sum(1 for r in rows if str(r.get("verdict")) == "fail"),
+                "passed": sum(1 for r in rows if str(r.get("verdict")) == "pass")}
+    block("qc", _qc)
+
+    def _mat():
+        from app.warehouse import services as wh
+        return wh.issued_for_order(order_id)
+    block("material", _mat)
+
+    def _plan():
+        from app.planning import services as pl
+        allocs = pl.list_allocations(order_id=order_id) or []
+        return {"allocations": len(allocs), "rows": allocs[:4]} if allocs else None
+    block("planning", _plan)
+
+    def _ship():
+        from app.shipping import services as sh
+        rows = sh.reconciliation(order_id=order_id) or []      # a LIST, one row per order
+        if not rows:
+            return None
+        r = rows[0]
+        return {f: r[f] for f in ("packed", "shipped", "balance", "fulfil_pct",
+                                  "short", "over", "shipments") if f in r.keys()}
+    block("shipping", _ship)
+
+    def _trace():
+        from app.trace import services as tr
+        p = tr.passport(order_id) or {}
+        comp = p.get("completeness") or {}          # {'pct','present','total','points'}
+        pct = comp.get("pct") if isinstance(comp, dict) else comp
+        if pct is None:
+            return None
+        return {"completeness": pct, "present": comp.get("present") if isinstance(comp, dict) else None,
+                "total": comp.get("total") if isinstance(comp, dict) else None}
+    block("trace", _trace)
+
+    return x
 
 
 @bp.route("/<int:order_id>/update", methods=["POST"])

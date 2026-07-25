@@ -2955,5 +2955,16 @@
   "wsh.recipes.sub": "Her reçete ailesi için bir satır. Adımlar ve kimyasallar aileye değil, sürüme aittir.",
   "wh.action.hold": "Karantinaya al",
   "wh.action.release_hold": "Karantinadan çıkar",
-  "sf.size": "Beden"
+  "sf.size": "Beden",
+  "ord.x.title": "Fabrika genelinde",
+  "ord.x.sub": "Maliyet, kesim, kalite, depo, planlama, sevkiyat ve izlenebilirlikten canlı",
+  "ord.x.margin": "Marj",
+  "ord.x.variance": "Maliyet farkı",
+  "ord.x.cut": "Kesilen adet",
+  "ord.x.marker": "Pastal verimi",
+  "ord.x.qc": "Geçen denetimler",
+  "ord.x.material": "Çıkan malzeme",
+  "ord.x.planned": "Hat tahsisleri",
+  "ord.x.shipped": "Sevk edilen adet",
+  "ord.x.dpp": "Pasaport tamamlanma"
 }

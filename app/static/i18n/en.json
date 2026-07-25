@@ -2955,5 +2955,16 @@
   "wsh.recipes.sub": "One row per recipe family. Steps and chemicals live on a version, never on the family.",
   "wh.action.hold": "Quarantine",
   "wh.action.release_hold": "Release",
-  "sf.size": "Size"
+  "sf.size": "Size",
+  "ord.x.title": "Across the factory",
+  "ord.x.sub": "Live from costing, cut room, quality, warehouse, planning, shipping and traceability",
+  "ord.x.margin": "Margin",
+  "ord.x.variance": "Cost variance",
+  "ord.x.cut": "Pieces cut",
+  "ord.x.marker": "Marker eff.",
+  "ord.x.qc": "Inspections passed",
+  "ord.x.material": "Material issued",
+  "ord.x.planned": "Line allocations",
+  "ord.x.shipped": "Pieces shipped",
+  "ord.x.dpp": "Passport complete"
 }
