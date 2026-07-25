@@ -10,6 +10,8 @@
   </div>
   <div class="flex gap center">
     {% if can('pln_plan') %}<a class="btn btn-primary btn-sm" href="{{ url_for('planning.allocate') }}" data-i18n="pln.action.allocate">Load an order</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.export_csv', key='daily-load') }}" data-i18n="pln.action.export_board">Export load board</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.export_csv', key='order-feasibility') }}" data-i18n="pln.action.export_orders">Export order book</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.lines') }}" data-i18n="pln.nav.lines">Line capacity</a>
   </div>
 </div>

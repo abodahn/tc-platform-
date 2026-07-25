@@ -64,7 +64,18 @@ def _empty(conn, t):
     try:
         return conn.execute(f"SELECT COUNT(*) AS c FROM {t}").fetchone()["c"] == 0
     except Exception:
+        _unpoison(conn)
         return False
+
+
+def _unpoison(conn):
+    """PostgreSQL aborts the whole transaction on a failed statement. Swallowing
+    the error without rolling back leaves the connection unusable, so this
+    module's boot would take the NEXT module's seed down with it on Render."""
+    try:
+        conn.rollback()
+    except Exception:
+        pass
 
 
 # DEMO lays keyed by the seeded orders' style_ref. Figures are realistic
@@ -101,6 +112,7 @@ def _seed_rolls(conn, lay_id, shade_lot, meters, now):
             "SELECT id, roll_no, length_m FROM wh_rolls WHERE shade_lot=? ORDER BY id",
             (shade_lot,)).fetchall()
     except Exception:
+        _unpoison(conn)          # the seed keeps inserting lays after this read fails
         return
     left = meters
     for r in rolls:
@@ -129,6 +141,7 @@ def create_and_seed(conn):
         orders = conn.execute(
             "SELECT id, style_ref FROM ord_orders WHERE style_ref IS NOT NULL").fetchall()
     except Exception:
+        _unpoison(conn)
         return  # orders module not present yet -- the cut room simply starts empty
 
     today = date.today()
@@ -151,6 +164,11 @@ def create_and_seed(conn):
             # the UNIQUE constraint on lay_no.
             conn.execute("UPDATE cut_lays SET lay_no=? WHERE id=?",
                          (f"CUT-{today.year}-{lid:05d}", lid))
+            # Bank the lay BEFORE probing wh_rolls. That read fails when the
+            # warehouse module is absent, and the rollback PostgreSQL then needs
+            # would otherwise throw away every lay seeded so far -- the traceability
+            # links are optional, the lays are not.
+            conn.commit()
             if actual:
                 _seed_rolls(conn, lid, shade, actual, now)
     conn.commit()

@@ -366,6 +366,84 @@ def dashboard():
         conn.close()
 
 
+# --- export ---------------------------------------------------------------
+def _q(v):
+    """A counted quantity as a plain 3dp number. The qc_* columns are REAL and
+    SQLite is dynamically typed, so a hand-edited cell must not 500 a whole export."""
+    try:
+        return round(float(v or 0), 3)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def export_dataset(key):
+    """key -> (headers, rows) for the shared CSV/JSON export; (None, None) if unknown.
+
+    Keys: inspections | defects | defect-pareto | dhu-by-section | dhu-by-order.
+    Every roll-up goes through the module's own read functions, so a downloaded
+    number can never disagree with the screen it was downloaded from (same
+    denominator discipline, same AQL verdict).
+    """
+    if key == "inspections":
+        # Generous cap instead of none: this is the register a buyer asks for
+        # COMPLETE, and 20k inspections is years of a factory's AQL history.
+        return (["Ref", "Date", "Order", "Buyer", "Stage", "Lot Size", "AQL",
+                 "Code Letter", "Sample Size", "Accept (Ac)", "Reject (Re)",
+                 "Units Inspected", "Defective Units", "Defects Found", "DHU",
+                 "Defective Rate %", "RFT %", "Verdict", "Inspector", "Notes"],
+                [[r["ref"] or "", r["inspection_date"] or "", r["order_no"] or "",
+                  r["buyer"] or "", r["stage"] or "", _q(r["lot_size"]), _q(r["aql"]),
+                  r["code_letter"] or "", _q(r["sample_size"]), _q(r["accept_no"]),
+                  _q(r["reject_no"]), _q(r["units"]), _q(r["defective_units"]),
+                  _q(r["defects"]), r["dhu"], r["defect_rate"], r["rft"],
+                  r["verdict"] or "", r["inspector"] or "", r["notes"] or ""]
+                 for r in list_inspections(limit=20000)])
+
+    if key == "defect-pareto":
+        # Bounded by the picklist: the Pareto groups on defect_type, of which there
+        # are 17, so this is the whole ranking and not a top-N.
+        return (["Rank", "Defect Type", "Qty", "% of Defects", "Cumulative %"],
+                [[p["rank"], p["defect_type"], _q(p["qty"]), p["pct"], p["cum_pct"]]
+                 for p in top_defects(len(DEFECT_TYPES) + 1)])
+
+    if key == "dhu-by-section":
+        return (["Section", "Inspections", "Units Inspected", "Defects Found", "DHU",
+                 "Defective Rate %", "RFT %", "Failed Lots"],
+                [[(s["section"] or ""), s["inspections"], _q(s["units"]), _q(s["defects"]),
+                  s["dhu"], s["defect_rate"], s["rft"], s["failed"] or 0]
+                 for s in by_section()])
+
+    if key == "dhu-by-order":
+        return (["Order", "Buyer", "Inspections", "Units Inspected", "Defects Found",
+                 "DHU", "Defective Rate %", "RFT %", "Failed Lots"],
+                [[o["order_no"] or "", o["buyer"] or "", o["inspections"], _q(o["units"]),
+                  _q(o["defects"]), o["dhu"], o["defect_rate"], o["rft"], o["failed"] or 0]
+                 for o in by_order()])
+
+    if key == "defects":
+        conn = get_db()
+        try:
+            # The defect lines behind the Pareto, with the inspection they were found
+            # on. Capped high: one lot can carry dozens of lines.
+            rows = conn.execute(
+                "SELECT i.ref, i.inspection_date, i.stage, o.order_no, o.buyer, "
+                "d.defect_type, d.section, d.qty, d.severity, d.notes "
+                "FROM qc_defects d JOIN qc_inspections i ON i.id=d.inspection_id "
+                "LEFT JOIN ord_orders o ON o.id=i.order_id "
+                "ORDER BY i.inspection_date DESC, d.inspection_id DESC, d.qty DESC, d.id "
+                "LIMIT 50000").fetchall()
+            return (["Ref", "Date", "Stage", "Order", "Buyer", "Defect Type",
+                     "Section", "Qty", "Severity", "Notes"],
+                    [[r["ref"] or "", r["inspection_date"] or "", r["stage"] or "",
+                      r["order_no"] or "", r["buyer"] or "", r["defect_type"] or "",
+                      r["section"] or "", _q(r["qty"]), r["severity"] or "",
+                      r["notes"] or ""] for r in rows])
+        finally:
+            conn.close()
+
+    return (None, None)
+
+
 # --- the sweep ------------------------------------------------------------
 def dhu_sweep():
     """Bell a warning for every section running above the DHU action limit.

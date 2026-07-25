@@ -10,6 +10,7 @@
   </div>
   <div class="flex gap center">
     {% if can('mes_entry') %}<a class="btn btn-primary btn-sm" href="{{ url_for('mes.entry', date=b.work_date) }}" data-i18n="mes.action.entry">Record hour</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.export_csv', key='hourly') }}" data-i18n="mes.action.export">Export CSV</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.index', date=b.work_date) }}" data-i18n="mes.action.dashboard">Dashboard</a>
   </div>
 </div>

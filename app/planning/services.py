@@ -659,3 +659,123 @@ def dashboard(days=BOARD_DAYS):
                     "overloaded": b["overloaded_cells"],
                     "idle_hours": round(b["idle_minutes"] / 60.0),
                     "late": len(late), "at_risk": len(at_risk), "unplanned": len(unplanned)}}
+
+
+# --- exports --------------------------------------------------------------
+# Generous, because these are the sheets a planner rebuilds by hand today. Only
+# the operation bulletin is capped: it is the one table that grows per order
+# without a status to close it (~20 rows per style, so this is hundreds of styles).
+_OPS_LIMIT = 20000
+
+
+def _order_labels():
+    """order_id -> row(order_no, buyer, ship_date) for labelling export rows.
+
+    Not _orders(): an allocation or a bulletin can belong to a CLOSED order, which
+    the planning screens deliberately hide — in an export that must still carry its
+    order number rather than a bare id. Degrades to {} if ord_orders is absent."""
+    conn = get_db()
+    try:
+        return {r["id"]: dict(r) for r in conn.execute(
+            "SELECT id,order_no,buyer,ship_date FROM ord_orders").fetchall()}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def export_dataset(key):
+    """key -> (headers, rows), or (None, None) for an unknown key.
+
+    Keys: line-capacity | order-feasibility | allocations | daily-load |
+    operation-bulletin. Each one is built from the very function the matching page
+    renders, so a download can never disagree with the screen it came from."""
+    if key == "line-capacity":
+        return (["Code", "Name", "Section", "Operators", "Minutes / Day",
+                 "Efficiency %", "Capacity / Day (min)", "Status", "Notes"],
+                [[r.get("code") or "", r.get("name") or "", r.get("section") or "",
+                  _i(r.get("operators")), _i(r.get("working_minutes")),
+                  round(_f(r.get("efficiency_pct")), 2), round(_f(r.get("capacity")), 2),
+                  "active" if r.get("active") else "inactive", r.get("notes") or ""]
+                 for r in list_lines()])
+
+    if key == "order-feasibility":
+        # dashboard() merges _order_feasibility over each order, so `status` here is
+        # the FEASIBILITY verdict (on_time/at_risk/late/unplanned), not the order status.
+        return (["Order No", "Buyer", "Style", "Order Qty", "SMV", "Planned Qty",
+                 "Unplanned Qty", "Over-planned Qty", "Projected Finish", "Ship Date",
+                 "Days Late", "Feasibility"],
+                [[o.get("order_no") or "", o.get("buyer") or "",
+                  o.get("style_name") or o.get("style_ref") or "",
+                  round(_f(o.get("qty")), 3), round(_f(o.get("smv")), 3),
+                  round(_f(o.get("planned_qty")), 3), round(_f(o.get("unplanned_qty")), 3),
+                  round(_f(o.get("over_qty")), 3), o.get("finish") or "",
+                  o.get("ship_date") or "",
+                  o["days_late"] if o.get("days_late") is not None else "",
+                  o.get("status") or ""]
+                 for o in dashboard()["orders"]])
+
+    if key == "allocations":
+        # The whole open plan, uncapped on purpose: cancelled rows are already
+        # excluded, so this is exactly the work currently promised to the lines.
+        labels = _order_labels()
+        rows = []
+        for a in list_allocations():
+            o = labels.get(a["order_id"]) or {}
+            rows.append([o.get("order_no") or a["order_id"], o.get("buyer") or "",
+                         a.get("line_code") or a.get("line_name") or "",
+                         a.get("line_name") or "", round(_f(a.get("qty")), 3),
+                         round(_f(a.get("smv")), 3), round(_f(a.get("minutes")), 2),
+                         round(_f(a.get("capacity")), 2),
+                         a["days"] if a.get("days") is not None else "",
+                         a.get("start_date") or "", a.get("end_date") or "",
+                         o.get("ship_date") or "", a.get("status") or "",
+                         a.get("created_by") or ""])
+        return (["Order No", "Buyer", "Line", "Line Name", "Qty", "SMV",
+                 "Minutes", "Capacity / Day (min)", "Days", "Start Date",
+                 "Projected Finish", "Ship Date", "Status", "Planned By"], rows)
+
+    if key == "daily-load":
+        # The load board, one row per line-day — the grid people screenshot. Same
+        # horizon as the page (board() caps it), so the numbers tie back exactly.
+        b = board()
+        rows = []
+        for g in b["grid"]:
+            ln = g["line"]
+            for c in g["cells"]:
+                rows.append([ln.get("code") or "", ln.get("name") or "",
+                             ln.get("section") or "", c["date"],
+                             round(_f(g.get("capacity")), 2), round(_f(c.get("minutes")), 2),
+                             "" if c["no_cap"] else c["pct"],
+                             "yes" if c["over"] else ""])
+        return (["Code", "Line", "Section", "Date", "Capacity / Day (min)",
+                 "Loaded (min)", "Load %", "Overloaded"], rows)
+
+    if key == "operation-bulletin":
+        labels = _order_labels()
+        conn = get_db()
+        try:
+            ops = [dict(r) for r in conn.execute(
+                "SELECT * FROM pln_ops ORDER BY order_id, seq, id LIMIT ?",
+                (_OPS_LIMIT,)).fetchall()]
+        finally:
+            conn.close()
+        by_order = {}
+        for o in ops:
+            by_order.setdefault(o["order_id"], []).append(o)
+        rows = []
+        for oid, group in by_order.items():
+            # balance_metrics, not a hand-rolled pitch: the bottleneck flag and the
+            # balancing efficiency must be the same numbers /balance/<id> shows.
+            m = balance_metrics(group)
+            label = (labels.get(oid) or {}).get("order_no") or oid
+            for r in m["rows"]:
+                rows.append([label, _i(r.get("seq")), r.get("name") or "",
+                             r.get("machine") or "", round(_f(r.get("smv")), 3),
+                             _i(r.get("operators")), round(_f(r.get("pitch")), 4),
+                             "yes" if r.get("is_bottleneck") else "",
+                             m["line_efficiency"]])
+        return (["Order No", "Seq", "Operation", "Machine", "SMV", "Operators",
+                 "Min / Piece", "Bottleneck", "Line Efficiency %"], rows)
+
+    return (None, None)

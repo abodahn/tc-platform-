@@ -682,7 +682,8 @@ def main():
            and any(x in p[0] for x in ("plm_view", "plm_manage", "plm_approve")),
            f"{fn.name}: {'@login_required' if 'login_required' in decs else 'NO @login_required'} "
            f"+ {p[0] if p else 'NO @permission_required'}")
-    ok(n_routes == 14, f"every route audited ({n_routes})")
+    # 14 module routes + the 2 shared-contract export routes (export_csv / api_json)
+    ok(n_routes == 16, f"every route audited ({n_routes})")
 
     print("\n[P] create_and_seed is still idempotent AFTER all of the above writes")
     from app.plm.schema import create_and_seed as _cs

@@ -117,6 +117,28 @@ def result(inspection_id):
     return redirect(url_for("quality.detail", inspection_id=inspection_id))
 
 
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("qc_view")
+def export_csv(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "quality", "csv")
+    if resp is None:
+        abort(404)
+    return resp
+
+
+@bp.route("/api/<key>.json")
+@login_required
+@permission_required("qc_view")
+def api_json(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "quality", "json")
+    if resp is None:
+        abort(404)
+    return resp
+
+
 @bp.route("/inspections/<int:inspection_id>/defect", methods=["POST"])
 @login_required
 @permission_required("qc_inspect")

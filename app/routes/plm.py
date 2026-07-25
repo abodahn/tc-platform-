@@ -169,6 +169,28 @@ def sample_add(style_id):
     return _back(style_id)
 
 
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("plm_view")
+def export_csv(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "plm", "csv")
+    if resp is None:
+        abort(404)
+    return resp
+
+
+@bp.route("/api/<key>.json")
+@login_required
+@permission_required("plm_view")
+def api_json(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "plm", "json")
+    if resp is None:
+        abort(404)
+    return resp
+
+
 @bp.route("/samples/<int:sample_id>/verdict", methods=["POST"])
 @login_required
 @permission_required("plm_manage")

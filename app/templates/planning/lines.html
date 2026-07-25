@@ -7,7 +7,10 @@
     <h1 data-i18n="pln.nav.lines">Line capacity</h1>
     <div class="sub" data-i18n="pln.lines.sub">Daily capacity = operators × working minutes × efficiency %. A line never delivers 100% of its theoretical minutes.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.index') }}" data-i18n="pln.nav.board">Load board</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.export_csv', key='line-capacity') }}" data-i18n="pln.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.index') }}" data-i18n="pln.nav.board">Load board</a>
+  </div>
 </div>
 
 <div class="panel">

@@ -7,7 +7,10 @@
     <h1 data-i18n="trc.nav.certs">Material certificates</h1>
     <div class="sub" data-i18n="trc.certs.sub">GOTS, OEKO-TEX, GRS, RCS, ZDHC and bluesign on the MATERIAL. Factory certificates (WRAP, BSCI, licences) live in Compliance.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+  <div class="flex gap">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.export_csv', key='certificates') }}" data-i18n="trc.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+  </div>
 </div>
 
 <form class="panel" method="get" style="margin-bottom:14px">

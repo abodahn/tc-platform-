@@ -4,6 +4,11 @@ pln.action.allocate
 pln.action.back
 pln.action.cancel
 pln.action.commit
+pln.action.export
+pln.action.export_allocs
+pln.action.export_board
+pln.action.export_ops
+pln.action.export_orders
 pln.action.open_order
 pln.action.remove
 pln.action.save

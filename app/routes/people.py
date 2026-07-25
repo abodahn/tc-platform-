@@ -6,7 +6,7 @@ existing platform employee master (prob_employees); this module never forks it.
 import time
 from datetime import date, timedelta
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 
 from app.auth import login_required, permission_required, current_user
 from app.people import services as svc
@@ -193,3 +193,26 @@ def incentive_add():
     ok, msg = svc.add_piece_rate(request.form, _u())
     flash("Production recorded." if ok else _MSG.get(msg, msg), "success" if ok else "error")
     return redirect(url_for("people.incentive"))
+
+
+# --- exports (same wire format as every other module) ---------------------
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("ppl_view")
+def export_csv(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "people", "csv")
+    if resp is None:
+        abort(404)
+    return resp
+
+
+@bp.route("/api/<key>.json")
+@login_required
+@permission_required("ppl_view")
+def api_json(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "people", "json")
+    if resp is None:
+        abort(404)
+    return resp

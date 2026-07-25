@@ -593,5 +593,20 @@
     "en": "No batch has run this version.",
     "ar": "لم تُشغَّل أي دفعة على هذا الإصدار.",
     "tr": "Bu versiyonla çalışan parti yok."
+  },
+  "wsh.action.export": {
+    "en": "Export CSV",
+    "ar": "تصدير CSV",
+    "tr": "CSV dışa aktar"
+  },
+  "wsh.action.export_steps": {
+    "en": "Export step sheets",
+    "ar": "تصدير أوراق الخطوات",
+    "tr": "Adım çizelgelerini dışa aktar"
+  },
+  "wsh.action.export_impact": {
+    "en": "Export impact roll-up",
+    "ar": "تصدير ملخص الأثر",
+    "tr": "Etki özetini dışa aktar"
   }
 }

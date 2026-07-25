@@ -7,7 +7,10 @@
     <h1 data-i18n="wh.issue.title">Issue material to an order</h1>
     <div class="sub" data-i18n="wh.issue.sub">Oldest rolls first, kept to one dye lot where the requirement allows — mixed shade in one lay is a rejected shipment.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.rolls') }}" data-i18n="wh.nav.rolls">Fabric rolls</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.rolls') }}" data-i18n="wh.nav.rolls">Fabric rolls</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.export_csv', key='issues-by-order') }}" data-i18n="wh.action.export_issues">Export issues CSV</a>
+  </div>
 </div>
 
 <form class="panel" method="get"><div class="panel-pad">

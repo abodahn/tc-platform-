@@ -219,3 +219,28 @@ def esg_create():
     else:
         flash("That order no longer exists — the ESG record was not saved.", "error")
     return redirect(url_for("trace.esg"))
+
+
+# --- dataset export -------------------------------------------------------
+# Read-only views of what the pages already show, so trc_view is the right gate:
+# anyone who may read the register may download it.
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("trc_view")
+def export_csv(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "trace", "csv")
+    if resp is None:
+        abort(404)
+    return resp
+
+
+@bp.route("/api/<key>.json")
+@login_required
+@permission_required("trc_view")
+def api_json(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "trace", "json")
+    if resp is None:
+        abort(404)
+    return resp

@@ -10,6 +10,7 @@
   </div>
   <div class="flex gap center">
     {% if can('cut_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('cutroom.lay_new') }}" data-i18n="cut.action.new_lay">Record lay</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('cutroom.export_csv', key='order-summary') }}" data-i18n="cut.action.export">Export CSV</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('cutroom.lays') }}" data-i18n="cut.nav.lays">Lays</a>
   </div>
 </div>
@@ -53,7 +54,10 @@
       <tbody>
       {% for r in d.rows %}
         <tr>
-          <td><a href="{{ url_for('cutroom.order', order_id=r.order_id) }}">{{ r.order.order_no or r.order_id }}</a>
+          {# A lay whose order_id is NULL still belongs in the totals, but url_for
+             cannot build /orders/None — it raises and takes the whole page down. #}
+          <td>{% if r.order_id %}<a href="{{ url_for('cutroom.order', order_id=r.order_id) }}">{{ r.order.order_no or r.order_id }}</a>
+            {% else %}<span class="muted">—</span>{% endif %}
             <div class="muted" style="font-size:11px">{{ r.order.style_ref or '' }} · {{ r.lay_count }}<span data-i18n="cut.field.lays_suffix"> lays</span></div></td>
           <td class="muted">{{ r.order.buyer or '—' }}</td>
           <td style="text-align:right">{{ m.n(r.order_qty, 0) }}</td>

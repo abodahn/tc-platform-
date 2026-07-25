@@ -756,6 +756,103 @@ def set_bundle_status(bundle_id, status, user):
 
 
 # ==========================================================================
+# Exports — the platform-wide (headers, rows) contract, served as CSV or JSON
+# ==========================================================================
+# Caps are generous on purpose: nobody may open "the hourly register" and get a
+# silently truncated month. A busy factory books ~8 lines x 8 hours x 30 days =
+# ~2k hourly rows and a few thousand scans a month, so 20k rows is years of
+# production and the day cap is a quarter of daily roll-ups.
+_EX_ROWS = 20000
+_EX_DAYS = 90
+
+
+def export_dataset(key):
+    """key -> (headers, rows), or (None, None) for an unknown key.
+
+    Keys: hourly | downtime | oee-by-line | bundles | bundle-moves | order-recon.
+    Percentages and minutes carry the same rounding the screens show, so an
+    exported figure can be pasted next to a screenshot and still agree.
+    """
+    # These three are exactly what a service already returns, and each opens its
+    # own connection — so no conn here, or a PostgreSQL pool slot is held twice.
+    if key == "bundles":
+        return (["Bundle No", "Order No", "Buyer", "Size", "Colour", "Pieces",
+                 "Origin Section", "At Section", "Status", "Created By", "Created At"],
+                [[b["bundle_no"] or "", b["order_no"] or b["order_id"] or "", b["buyer"] or "",
+                  b["size"] or "", b["color"] or "", _i(b["qty"]), b["origin_section"] or "",
+                  b["section"] or "", b["status"] or "", b["created_by"] or "",
+                  b["created_at"] or ""] for b in list_bundles(limit=_EX_ROWS)])
+
+    if key == "bundle-moves":
+        return (["Moved At", "Bundle No", "From Section", "To Section", "Pieces", "Operator"],
+                [[m["moved_at"] or "", m["bundle_no"] or "", m["from_section"] or "",
+                  m["to_section"] or "", _i(m["qty"]), m["operator"] or ""]
+                 for m in recent_moves(limit=_EX_ROWS)])
+
+    if key == "order-recon":
+        return (["Order No", "Buyer", "Order ID", "Cut Pcs", "Sewn Pcs", "Balance Pcs"],
+                [[r["order_no"] or "", r["buyer"] or "", r["order_id"] or "",
+                  _i(r["cut"]), _i(r["sewn"]), _i(r["balance"])]
+                 for r in order_reconciliation()])
+
+    conn = get_db()
+    try:
+        if key == "hourly":
+            rows = [dict(r) for r in conn.execute(
+                "SELECT h.work_date, h.line_id, l.name AS line_name, h.order_id, h.hour_slot, "
+                "h.target_qty, h.actual_qty, h.reject_qty, h.operators, h.smv, h.notes "
+                "FROM mes_hourly h LEFT JOIN production_lines l ON l.id = h.line_id "
+                "ORDER BY h.work_date DESC, l.name, h.hour_slot LIMIT ?", (_EX_ROWS,)).fetchall()]
+            _decorate_orders(conn, rows)
+            return (["Date", "Line", "Order No", "Hour", "Target Pcs", "Actual Pcs",
+                     "Reject Pcs", "Good Pcs", "Achievement %", "Status", "Operators",
+                     "SMV", "Notes"],
+                    [[r["work_date"], r["line_name"] or "Line %s" % r["line_id"],
+                      r["order_no"] or r["order_id"] or "", r["hour_slot"],
+                      _i(r["target_qty"]), _i(r["actual_qty"]), _i(r["reject_qty"]),
+                      _i(r["actual_qty"]) - _i(r["reject_qty"]),
+                      achievement(r["actual_qty"], r["target_qty"]),
+                      rag_for(r["actual_qty"], r["target_qty"]),
+                      _i(r["operators"]), round(_f(r["smv"]), 2), r["notes"] or ""]
+                     for r in rows])
+
+        if key == "downtime":
+            rows = conn.execute(
+                "SELECT d.work_date, d.line_id, l.name AS line_name, d.reason, d.minutes, "
+                "d.created_by, d.created_at FROM mes_downtime d "
+                "LEFT JOIN production_lines l ON l.id = d.line_id "
+                "ORDER BY d.work_date DESC, l.name, d.minutes DESC LIMIT ?",
+                (_EX_ROWS,)).fetchall()
+            return (["Date", "Line", "Reason", "Lost Minutes", "Recorded By", "Recorded At"],
+                    [[r["work_date"], r["line_name"] or "Line %s" % r["line_id"],
+                      r["reason"] or "", round(_f(r["minutes"]), 1),
+                      r["created_by"] or "", r["created_at"] or ""] for r in rows])
+
+        if key == "oee-by-line":
+            # Reuses the dashboard's own roll-up per day rather than re-deriving OEE in
+            # SQL: two implementations of Availability would eventually disagree, and the
+            # screen is the one the factory argues about. Downtime-only days are included
+            # (the UNION), because a line down all day has no hourly row.
+            days = [r["d"] for r in conn.execute(
+                "SELECT DISTINCT work_date AS d FROM mes_hourly "
+                "UNION SELECT DISTINCT work_date AS d FROM mes_downtime "
+                "ORDER BY d DESC LIMIT ?", (_EX_DAYS,)).fetchall()]
+            out = []
+            for day in days:
+                for a in _rollup(conn, day)[0]:
+                    out.append([day, a["line_name"], a["hours"], a["target"], a["actual"],
+                                a["reject"], a["achievement"], a["rag"], a["red_hours"],
+                                a["efficiency"], a["availability"], a["performance"],
+                                a["quality"], a["oee"], a["downtime_min"], a["planned_min"]])
+            return (["Date", "Line", "Hours Recorded", "Target Pcs", "Actual Pcs", "Reject Pcs",
+                     "Achievement %", "Status", "Red Hours", "Efficiency %", "Availability %",
+                     "Performance %", "Quality %", "OEE %", "Downtime Min", "Planned Min"], out)
+    finally:
+        conn.close()
+    return (None, None)
+
+
+# ==========================================================================
 # Alert sweep — RED hours and bleeding lines reach the bell. Never raises.
 # ==========================================================================
 def alert_sweep(work_date=None):

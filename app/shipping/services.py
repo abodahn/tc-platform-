@@ -632,3 +632,124 @@ def dashboard():
     d["recon"] = [r for r in rec if r["short"] or r["over"]][:8]
     d["recent"] = list_shipments()[:8]
     return d
+
+
+# --- dataset export -------------------------------------------------------
+# The line-level datasets are the only unbounded reads in the module — a season of
+# packing lines is tens of thousands of rows. The register and the reconciliation are
+# deliberately NOT capped: they are the two lists the pages already render in full, and
+# an export that shows less than the screen is the kind of quiet truncation nobody
+# notices until customs counts the cartons.
+_LINE_LIMIT = 20000
+
+
+def _order_nos():
+    """order_id -> order_no. A shipment register that prints an internal row id instead
+    of the order number is exactly the sheet people retype by hand. Empty dict when the
+    orders module is not installed (a shipment can stand alone — see _order_row)."""
+    conn = get_db()
+    try:
+        return {r["id"]: r["order_no"] for r in
+                conn.execute("SELECT id,order_no FROM ord_orders").fetchall()}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def export_dataset(key):
+    """key -> (headers, rows), or (None, None) for an unknown key.
+
+    Keys: shipments | packing-lines | invoice-lines | reconciliation.
+    Rows reuse the module's own read functions and arithmetic, so an export always
+    foots against the document on screen. Money 2dp, quantities 3dp, dates as stored,
+    never None — "" for empty, so the CSV and the JSON are both clean.
+    """
+    if key == "shipments":
+        onos = _order_nos()
+        return (["Shipment No", "Order No", "Buyer", "Destination", "Port of Loading",
+                 "Incoterm", "Mode", "Carrier", "Container / AWB", "ETD", "ETA", "Status",
+                 "Dispatched At", "Invoice No", "Invoice Date", "Currency", "Unit Price",
+                 "LC / Payment Ref", "Cartons", "Pieces", "CBM"],
+                [[s["shipment_no"] or "", onos.get(s["order_id"]) or "", s["buyer"] or "",
+                  s["destination"] or "", s["port_loading"] or "", s["incoterm"] or "",
+                  s["mode"] or "", s["carrier"] or "", s["container_no"] or "",
+                  s["etd"] or "", s["eta"] or "", s["status"] or "",
+                  s["dispatched_at"] or "", s["invoice_no"] or "", s["invoice_date"] or "",
+                  s["currency"] or "", round(_f(s["unit_price"]), 2), s["lc_ref"] or "",
+                  _i(s["cartons"]), round(_f(s["pieces"]), 3), round(_f(s["cbm"]), 3)]
+                 for s in list_shipments()])
+
+    if key == "reconciliation":
+        return (["Order No", "Buyer", "Style Ref", "Style", "Order Status", "Ship Date",
+                 "Ordered", "Packed", "Shipped", "Balance", "Fulfilment %", "Shipments",
+                 "Flag"],
+                [[r["order_no"] or "", r["buyer"] or "", r["style_ref"] or "",
+                  r["style_name"] or "", r["status"] or "", r["ship_date"] or "",
+                  round(_f(r["qty"]), 3), r["packed"], r["shipped"], r["balance"],
+                  # None, not 0, when the order quantity is missing — see reconciliation()
+                  "" if r["fulfil_pct"] is None else r["fulfil_pct"], r["shipments"],
+                  "Short" if r["short"] else ("Over" if r["over"] else "In tolerance")]
+                 for r in reconciliation()])
+
+    conn = get_db()
+    try:
+        if key == "packing-lines":
+            rows = conn.execute(
+                "SELECT s.shipment_no, s.buyer, s.destination, s.status, s.etd, "
+                "c.carton_no, c.style, c.colour, c.size, c.qty_per_carton, c.cartons, "
+                "c.net_weight, c.gross_weight, c.length_cm, c.width_cm, c.height_cm "
+                "FROM shp_cartons c JOIN shp_shipments s ON s.id=c.shipment_id "
+                "ORDER BY s.id, c.id LIMIT ?", (_LINE_LIMIT,)).fetchall()
+            out = []
+            for r in rows:
+                # line_math, not fresh arithmetic: weights and dimensions are stored PER
+                # CARTON and the totals multiply by the carton count.
+                m = line_math(dict(r))
+                out.append([r["shipment_no"] or "", r["buyer"] or "", r["destination"] or "",
+                            r["status"] or "", r["etd"] or "", r["carton_no"] or "",
+                            r["style"] or "", r["colour"] or "", r["size"] or "",
+                            round(_f(r["qty_per_carton"]), 3), _i(r["cartons"]), m["pieces"],
+                            round(_f(r["net_weight"]), 3), round(_f(r["gross_weight"]), 3),
+                            m["net_total"], m["gross_total"], round(_f(r["length_cm"]), 3),
+                            round(_f(r["width_cm"]), 3), round(_f(r["height_cm"]), 3),
+                            m["cbm"]])
+            return (["Shipment No", "Buyer", "Destination", "Status", "ETD", "Carton No",
+                     "Style", "Colour", "Size", "Pcs per Carton", "Cartons", "Pieces",
+                     "Net kg per Carton", "Gross kg per Carton", "Net kg Total",
+                     "Gross kg Total", "Length cm", "Width cm", "Height cm", "CBM"], out)
+
+        if key == "invoice-lines":
+            # Grouped exactly as packing_summary() groups the invoice on screen: by
+            # style/colour/size within one shipment, COALESCEd so a NULL style and an
+            # empty one are the same line here and there. A cancelled shipment is left
+            # out — its invoice is void and summing it would overstate declared value.
+            rows = conn.execute(
+                "SELECT s.invoice_no, s.shipment_no, s.invoice_date, s.etd, s.buyer, "
+                "s.destination, s.incoterm, s.currency, s.unit_price, s.status, "
+                "COALESCE(c.style,'') AS style, COALESCE(c.colour,'') AS colour, "
+                "COALESCE(c.size,'') AS size, "
+                "COALESCE(SUM(c.qty_per_carton*c.cartons),0) AS pieces "
+                "FROM shp_shipments s JOIN shp_cartons c ON c.shipment_id=s.id "
+                "WHERE s.status<>'cancelled' "
+                "GROUP BY s.id, s.invoice_no, s.shipment_no, s.invoice_date, s.etd, s.buyer, "
+                "s.destination, s.incoterm, s.currency, s.unit_price, s.status, "
+                "COALESCE(c.style,''), COALESCE(c.colour,''), COALESCE(c.size,'') "
+                "ORDER BY s.id, COALESCE(c.style,''), COALESCE(c.colour,''), "
+                "COALESCE(c.size,'') LIMIT ?", (_LINE_LIMIT,)).fetchall()
+            return (["Invoice No", "Invoice Date", "Shipment No", "ETD", "Buyer",
+                     "Destination", "Incoterm", "Status", "Style", "Colour", "Size",
+                     "Pieces", "Currency", "Unit Price", "Amount"],
+                    # Amount comes from _money() on the STORED price, like the invoice
+                    # page — the export must foot against the issued document, not
+                    # against the 2dp price the document prints.
+                    [[r["invoice_no"] or "", r["invoice_date"] or "", r["shipment_no"] or "",
+                      r["etd"] or "", r["buyer"] or "", r["destination"] or "",
+                      r["incoterm"] or "", r["status"] or "", r["style"] or "",
+                      r["colour"] or "", r["size"] or "", round(_f(r["pieces"]), 3),
+                      r["currency"] or "", round(_f(r["unit_price"]), 2),
+                      _money(round(_f(r["pieces"]), 3), _f(r["unit_price"]))]
+                     for r in rows])
+    finally:
+        conn.close()
+    return (None, None)

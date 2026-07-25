@@ -9,6 +9,8 @@
   </div>
   <div class="flex gap center">
     {% if can('qc_inspect') %}<a class="btn btn-primary btn-sm" href="{{ url_for('quality.new') }}" data-i18n="qc.action.new">New inspection</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('quality.export_csv', key='inspections') }}" data-i18n="qc.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('quality.export_csv', key='defects') }}" data-i18n="qc.action.export_defects">Export defect lines</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('quality.index') }}" data-i18n="qc.nav.home">Quality</a>
   </div>
 </div>

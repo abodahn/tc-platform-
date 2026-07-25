@@ -21,6 +21,8 @@ I18N = {
     "qc.action.create": ("Create inspection", "إنشاء فحص", "Denetim oluştur"),
     "qc.action.save_result": ("Save result", "حفظ النتيجة", "Sonucu kaydet"),
     "qc.action.add_defect": ("Add defect", "إضافة عيب", "Hata ekle"),
+    "qc.action.export": ("Export CSV", "تصدير CSV", "CSV indir"),
+    "qc.action.export_defects": ("Export defect lines", "تصدير سطور العيوب", "Hata satırlarını indir"),
 
     "qc.badge.std": ("ANSI/ASQ Z1.4 · level II · single · normal",
                      "ANSI/ASQ Z1.4 · المستوى الثاني · عينة واحدة · عادي",

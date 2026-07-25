@@ -7,7 +7,10 @@
     <h1 data-i18n="wh.nav.fg">Finished goods</h1>
     <div class="sub" data-i18n="wh.fg.sub">Packed and shipped by style, colour and size — the matrix a garment order actually ships in.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.export_csv', key='finished-goods') }}" data-i18n="wh.action.export">Export CSV</a>
+  </div>
 </div>
 
 <form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">

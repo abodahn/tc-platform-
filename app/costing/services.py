@@ -21,6 +21,11 @@ from datetime import datetime
 from app.db import get_db
 from .constants import CATEGORIES, VARIANCE_ALERT_PCT
 
+# Generous ceiling on the line-level exports. A BOM is ~8 lines per order, so this
+# is thousands of orders — big enough that nobody meets it in practice, small
+# enough that a runaway table cannot build a 200 MB CSV in memory.
+_EXPORT_LIMIT = 20000
+
 
 def _now():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -581,6 +586,113 @@ def link_pr_to_order(order_id, pr_ref, user=None):
         return False, "no_procurement"
     return (True, "linked") if link_source(row["id"], "costing", order_ref(order_id), user) \
         else (False, "link_failed")
+
+
+# --- exports --------------------------------------------------------------
+def _s(v):
+    """Any DB/derived value -> a clean cell. Never None, never an object."""
+    return "" if v is None else v
+
+
+def _money(v, dp=2):
+    """Money/quantity cell. Blank stays blank so a missing price never exports as
+    0.00 — an unpriced BOM line must look unpriced in Excel too, exactly as it
+    does on screen."""
+    n = _num(v)
+    return "" if n is None else round(n, dp)
+
+
+def export_dataset(key):
+    """Rows for a named export: returns (headers, rows) or (None, None).
+
+    Keys: order-margin | cost-breakdown | bom-lines | actuals.
+
+    Per-unit money keeps 4 dp on purpose (see the module docstring): a trim at
+    $0.0122/pc rounded to 2 dp makes the exported BOM stop adding up to the
+    exported total. Totals are 2 dp, quantities 3 dp.
+    """
+    if key == "order-margin":
+        # The register everyone screenshots. Reuses list_costed() so the CSV and
+        # the /costing/orders table can never disagree.
+        rows = []
+        for o in list_costed():
+            v = o["variance"]["total"]
+            rows.append([
+                _s(o["order_no"]), _s(o["buyer"]),
+                _s(o["style_name"] or o["style_ref"]), _s(o["ship_date"]),
+                _s(o["currency"]), _money(o["qty"], 3), _money(o["unit_price"], 4),
+                _money(o["margin"]["revenue"]), _money(o["estimate"]["per_unit"], 4),
+                _money(o["estimate"]["total"]),
+                _money(o["actual"]["total"]) if o["has_actual"] else "",
+                _s(o["material"]["actual_basis"]),
+                _money(v["value"]) if o["has_actual"] else "",
+                _money(v["pct"]) if o["has_actual"] else "",
+                v["flag"] if o["has_actual"] else "",
+                _money(o["margin"]["est_value"]), _money(o["margin"]["est_pct"]),
+                _money(o["margin"]["act_value"]) if o["has_actual"] else "",
+                _money(o["margin"]["act_pct"]) if o["has_actual"] else "",
+                o["material"]["unpriced"], "yes" if o["costed"] else "no",
+            ])
+        return (["Order No", "Buyer", "Style", "Ship Date", "Currency", "Qty",
+                 "Price/Unit", "Revenue", "Est Cost/Unit", "Estimate", "Actual",
+                 "Actual Basis", "Variance", "Variance %", "Variance Flag",
+                 "Margin Est", "Margin Est %", "Margin Act", "Margin Act %",
+                 "Unpriced BOM Lines", "Costed"], rows)
+
+    if key == "cost-breakdown":
+        # Long format (one row per order x category) — the shape a pivot table
+        # wants, and the breakdown the cost sheet shows category by category.
+        rows = []
+        for o in list_costed(only_costed=True):
+            for c in CATEGORIES:
+                v = o["variance"][c]
+                rows.append([_s(o["order_no"]), _s(o["buyer"]), _s(o["currency"]), c,
+                             _money(o["estimate"][c]), _money(o["actual"][c]),
+                             _money(v["value"]), _money(v["pct"]), v["flag"]])
+        return (["Order No", "Buyer", "Currency", "Category", "Estimate",
+                 "Actual", "Variance", "Variance %", "Flag"], rows)
+
+    conn = get_db()
+    try:
+        if key == "bom-lines":
+            rows = conn.execute(
+                "SELECT b.*, o.order_no, o.buyer, o.currency, o.style_name, o.style_ref, "
+                "o.qty AS order_qty FROM cst_bom_lines b JOIN ord_orders o ON o.id=b.order_id "
+                "ORDER BY o.order_no, b.seq, b.id LIMIT ?", (_EXPORT_LIMIT,)).fetchall()
+            out = []
+            for r in rows:
+                # _line_view() is what the cost-sheet page renders, so the exported
+                # required qty and line cost cannot drift from the screen.
+                v = _line_view(r, r["order_qty"])
+                out.append([
+                    _s(v["order_no"]), _s(v["buyer"]),
+                    _s(v["style_name"] or v["style_ref"]), _s(v["seq"]), _s(v["item"]),
+                    _s(v["kind"]), _s(v["colour"]), _money(v["consumption"], 4),
+                    _s(v["uom"]), _money(v["allowance_pct"], 2),
+                    _money(v["required_qty"], 3), _money(v["unit_price"], 4),
+                    "" if v["unpriced"] else _money(v["line_cost"]),
+                    "no" if v["unpriced"] else "yes", _s(v["currency"]),
+                    _s(v["supplier"]), _s(v["notes"]),
+                ])
+            return (["Order No", "Buyer", "Style", "Seq", "Item", "Kind", "Colour",
+                     "Consumption/Unit", "UOM", "Allowance %", "Required Qty",
+                     "Unit Price", "Line Cost", "Priced", "Currency", "Supplier",
+                     "Notes"], out)
+
+        if key == "actuals":
+            rows = conn.execute(
+                "SELECT a.*, o.order_no, o.buyer, o.currency FROM cst_actuals a "
+                "JOIN ord_orders o ON o.id=a.order_id ORDER BY a.id LIMIT ?",
+                (_EXPORT_LIMIT,)).fetchall()
+            return (["Order No", "Buyer", "Category", "Amount", "Currency",
+                     "Source", "Booked By", "Booked At", "Notes"],
+                    [[_s(r["order_no"]), _s(r["buyer"]), _s(r["category"]),
+                      _money(r["amount"]), _s(r["currency"]), _s(r["source"]),
+                      _s(r["created_by"]), _s(r["created_at"]), _s(r["notes"])]
+                     for r in rows])
+    finally:
+        conn.close()
+    return (None, None)
 
 
 # --- the sweep: ring the bell when an order eats its own margin -----------

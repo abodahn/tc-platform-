@@ -8,7 +8,10 @@
     <h1 data-i18n="mes.nav.bundles">Bundles &amp; WIP</h1>
     <div class="sub" data-i18n="mes.bundles.sub">Every bundle scanned section to section. A bundle can never pass more pieces than were cut into it.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.index') }}" data-i18n="mes.action.dashboard">Dashboard</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.export_csv', key='bundles') }}" data-i18n="mes.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.index') }}" data-i18n="mes.action.dashboard">Dashboard</a>
+  </div>
 </div>
 
 <div class="sf-kpis">

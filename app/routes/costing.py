@@ -134,6 +134,28 @@ def actual_delete(actual_id):
     return _back(res)
 
 
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("cost_view")
+def export_csv(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "costing", "csv")
+    if resp is None:
+        abort(404)
+    return resp
+
+
+@bp.route("/api/<key>.json")
+@login_required
+@permission_required("cost_view")
+def api_json(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "costing", "json")
+    if resp is None:
+        abort(404)
+    return resp
+
+
 @bp.route("/order/<int:order_id>/link-pr", methods=["POST"])
 @login_required
 @permission_required("cost_manage")

@@ -547,7 +547,7 @@ for node in ast.walk(tree):
         if kw.arg == "methods":
             methods = [e.value for e in kw.value.elts]
     routes.append((node.name, rt.args[0].value, methods))
-check("route count", len(routes), 13)
+check("route count", len(routes), 15)   # 13 planning pages + the 2 export routes
 for fname, path, methods in routes:
     yes(f"{fname}: @login_required", "login_required" in src.split(f"def {fname}(")[0]
         .rsplit("@bp.route", 1)[1])

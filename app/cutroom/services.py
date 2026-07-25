@@ -19,13 +19,26 @@ def _now():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
+# No lay involves a trillion metres, plies or pieces. Anything past this is a
+# typo or an attack, never a spread, and multiplying two of them overflows to inf.
+_MAX_INPUT = 1e12
+
+
 def _f(v, default=0.0):
     """Form fields arrive as raw strings: '', None and 'abc' must all degrade to
-    the default instead of raising inside a money/quantity formula."""
+    the default instead of raising inside a money/quantity formula.
+
+    float() also happily parses 'nan', 'inf' and '1e400', and every quantity here
+    is a physical measurement that cannot be negative. Left unfiltered, one
+    crafted POST puts inf in a REAL column, and from then on every sum, KPI and
+    JSON export of the whole module reads inf/NaN (NaN is not even valid JSON) —
+    and int(inf)/int(nan) raises, so the pages 500. The comparison rejects nan
+    for free, because every comparison against nan is False."""
     try:
-        return float(v)
+        f = float(v)
     except (TypeError, ValueError):
         return default
+    return f if 0.0 <= f <= _MAX_INPUT else default
 
 
 def _i(v, default=0):
@@ -35,6 +48,13 @@ def _i(v, default=0):
 def _pct(num, den, nd=2):
     """num/den as a percentage, or None when the denominator is unusable."""
     return round(num / den * 100.0, nd) if den else None
+
+
+def _cell(v):
+    """Export cell: None -> "" so the CSV cell is blank and the JSON field a plain
+    string. Half the metrics here are legitimately undefined (every denominator is
+    guarded) and a null in a spreadsheet reads as a bug."""
+    return "" if v is None else v
 
 
 def _bell(conn, severity, title, message, link="/cutroom"):
@@ -164,6 +184,13 @@ def _planned_cpg_map(conn, order_ids):
         rows = conn.execute("SELECT order_id, consumption, allowance_pct FROM cst_bom_lines "
                             "WHERE kind='fabric' AND LOWER(uom)='m'").fetchall()
     except Exception:
+        # PostgreSQL: a failed statement poisons the whole transaction, so without
+        # this the caller's later writes (variance_sweep's bell + dedup UPDATE) all
+        # fail silently on any deployment where costing is not installed.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return out
     for r in rows:
         oid = r["order_id"]
@@ -236,8 +263,11 @@ def order_summary(order_id):
         o = conn.execute("SELECT * FROM ord_orders WHERE id=?", (order_id,)).fetchone()
         if not o:
             return None
+        # COALESCE, not a bare !=: in SQL, NULL!='cancelled' is NULL, i.e. FALSE, so a
+        # lay with no status would drop out of the reconciliation entirely while still
+        # showing in the register -- its fabric silently uncounted.
         lays = [_view(r) for r in conn.execute(
-            "SELECT * FROM cut_lays WHERE order_id=? AND status!='cancelled' "
+            "SELECT * FROM cut_lays WHERE order_id=? AND COALESCE(status,'')!='cancelled' "
             "ORDER BY COALESCE(cut_date,''), id", (order_id,)).fetchall()]
         return _summarise(dict(o), lays, _planned_cpg_map(conn, {order_id}).get(order_id))
     finally:
@@ -255,7 +285,7 @@ def order_rollup():
 
 def _rollup(conn):
     lays = [_view(r) for r in conn.execute(
-        "SELECT * FROM cut_lays WHERE status!='cancelled'").fetchall()]
+        "SELECT * FROM cut_lays WHERE COALESCE(status,'')!='cancelled'").fetchall()]
     by_order = {}
     for l in lays:
         by_order.setdefault(l["order_id"], []).append(l)
@@ -316,20 +346,26 @@ def create_lay(data, user):
 
 
 def update_lay(lay_id, data):
-    """Partial: only fields present in `data` are written."""
+    """Partial: only fields present in `data` are written.
+    False = no such lay, so the caller can 404 instead of confirming a write that
+    never touched a row."""
     conn = get_db()
     try:
+        row = conn.execute("SELECT order_id FROM cut_lays WHERE id=?", (lay_id,)).fetchone()
+        if not row:
+            return False
         sets, args = [], []
         for f in _EDITABLE:
             if f in data:
                 sets.append(f"{f}=?"); args.append(_clean(f, data.get(f)))
         if not sets:
-            return False
+            return True                     # nothing sent: a no-op, not a missing lay
         sets.append("updated_at=?"); args.append(_now())
         args.append(lay_id)
         conn.execute("UPDATE cut_lays SET " + ", ".join(sets) + " WHERE id=?", args)
-        row = conn.execute("SELECT order_id FROM cut_lays WHERE id=?", (lay_id,)).fetchone()
-        _rearm(conn, row["order_id"] if row else None)
+        _rearm(conn, row["order_id"])
+        if "order_id" in data:              # moved: BOTH orders' numbers changed
+            _rearm(conn, _i(data.get("order_id")))
         conn.commit()
         return True
     finally:
@@ -430,6 +466,77 @@ def dashboard():
         }
     finally:
         conn.close()
+
+
+def export_dataset(key):
+    """Rows for a named export: returns (headers, rows) or (None, None).
+
+    Keys: lay-register | lay-rolls | order-summary.
+
+    Numbers are emitted exactly as lay_metrics/_summarise already rounded them, so a
+    CSV and the screen it was taken from can never disagree — a cut room arguing with
+    finance over a 4th decimal is the whole reason this export exists.
+    """
+    if key == "lay-register":
+        # No LIMIT: this is the register people currently screenshot, and the /lays
+        # page already renders every row, so the export is never the heavier read.
+        return (["Lay No", "Cut Date", "Order No", "Buyer", "Style Ref", "Marker Ref",
+                 "Size Ratio", "Plies", "Pieces/Ply", "Pieces Cut", "Marker Length (m)",
+                 "Marker Width (cm)", "Fabric Width (cm)", "End Allowance (m)",
+                 "Theoretical (m)", "Planned (m)", "Fabric Used (m)", "Measured",
+                 "m/garment", "Marker Eff %", "Utilisation %", "End Loss %",
+                 "Fabric Ref", "Colour", "Shade Lot", "Cutter", "Status"],
+                [[_cell(l["lay_no"]), _cell(l["cut_date"]), _cell(l["order_no"]),
+                  _cell(l["buyer"]), _cell(l["style_ref"]), _cell(l["marker_ref"]),
+                  _cell(l["size_ratio"]), l["plies"], l["pieces_per_ply"], l["pieces_cut"],
+                  _cell(l["marker_length_m"]), _cell(l["marker_width_cm"]),
+                  _cell(l["fabric_width_cm"]), _cell(l["end_allow_m"]),
+                  l["theoretical_m"], l["planned_m"], l["fabric_used_m"],
+                  "yes" if l["measured"] else "no",
+                  _cell(l["cons_per_gmt"]), _cell(l["marker_eff_pct"]),
+                  _cell(l["utilisation_pct"]), _cell(l["waste_pct"]),
+                  _cell(l["fabric_ref"]), _cell(l["colour"]), _cell(l["shade_lot"]),
+                  _cell(l["cutter"]), _cell(l["status"])]
+                 for l in list_lays()])
+
+    if key == "order-summary":
+        return (["Order No", "Buyer", "Style Ref", "Lays", "Order Qty", "Pieces Cut",
+                 "Cut %", "Balance", "Plan m/garment", "Actual m/garment", "Variance %",
+                 "Variance (m)", "Flag", "Fabric Used (m)", "Theoretical (m)",
+                 "Utilisation %", "End Loss %", "Marker Eff %"],
+                [[_cell((r["order"] or {}).get("order_no")),
+                  _cell((r["order"] or {}).get("buyer")),
+                  _cell((r["order"] or {}).get("style_ref")),
+                  r["lay_count"], _cell(r["order_qty"]), r["pieces_cut"],
+                  _cell(r["cut_pct"]), _cell(r["balance"]), _cell(r["planned_cpg"]),
+                  _cell(r["actual_cpg"]), _cell(r["variance_pct"]), _cell(r["variance_m"]),
+                  _cell(r["flag"]), r["fabric_used_m"], r["theoretical_m"],
+                  _cell(r["utilisation_pct"]), _cell(r["waste_pct"]),
+                  _cell(r["marker_eff_pct"])]
+                 for r in order_rollup()])
+
+    if key == "lay-rolls":
+        conn = get_db()
+        try:
+            # Generous cap: roll lines are the one table that grows per physical roll,
+            # and 50k rows is already several years of spreading.
+            rows = conn.execute(
+                "SELECT r.roll_no, r.shade_lot, r.meters, r.created_at, r.roll_id, "
+                "l.lay_no, l.fabric_ref, l.colour, l.cut_date, o.order_no "
+                "FROM cut_lay_rolls r JOIN cut_lays l ON l.id=r.lay_id "
+                "LEFT JOIN ord_orders o ON o.id=l.order_id "
+                "ORDER BY l.id, r.id LIMIT 50000").fetchall()
+            return (["Lay No", "Cut Date", "Order No", "Fabric Ref", "Colour",
+                     "Roll No", "Warehouse Roll ID", "Shade Lot", "Meters", "Booked At"],
+                    [[_cell(r["lay_no"]), _cell(r["cut_date"]), _cell(r["order_no"]),
+                      _cell(r["fabric_ref"]), _cell(r["colour"]), _cell(r["roll_no"]),
+                      _cell(r["roll_id"]), _cell(r["shade_lot"]),
+                      round(_f(r["meters"]), 3), _cell(r["created_at"])]
+                     for r in rows])
+        finally:
+            conn.close()
+
+    return (None, None)
 
 
 def order_options():

@@ -469,11 +469,11 @@ def _esg_for_order(conn, order_id):
     return tot
 
 
-def list_esg():
+def list_esg(limit=100):
     conn = get_db()
     try:
-        q = "SELECT e.* FROM trc_esg e ORDER BY e.id DESC LIMIT 100"
-        rows = [dict(r) for r in conn.execute(q).fetchall()]
+        q = "SELECT e.* FROM trc_esg e ORDER BY e.id DESC LIMIT ?"
+        rows = [dict(r) for r in conn.execute(q, (limit,)).fetchall()]
         if _has_orders(conn):
             for r in rows:
                 if r.get("order_id"):
@@ -811,3 +811,93 @@ def dashboard():
     finally:
         if conn is not None:
             conn.close()
+
+
+# --- dataset export (shared CSV/JSON contract) -----------------------------
+def _txt(v):
+    """Text cell. Never None: the CSV writer would print an empty cell but the
+    JSON would carry null, and the two views of one dataset must agree."""
+    return "" if v is None else str(v)
+
+
+def _num(v):
+    """Numeric cell to 3dp (this module carries quantities and consumption, never
+    money). Blank stays blank — but 0 is a real reading (a month of 0 waste) and
+    must stay a 0, not become an empty cell."""
+    if v is None or v == "":
+        return ""
+    return round(_f(v), 3)
+
+
+def export_dataset(key):
+    """key -> (headers, rows) for the shared exporter, or (None, None).
+
+    Keys: partners | lots | certificates | passports | esg.
+
+    Every dataset is built from the module's own read functions, so a download
+    can never disagree with the page it came from — the certificate status here
+    is the same DERIVED status the badge shows, not the stored column.
+
+    partners / lots / certificates are exported COMPLETE and uncapped: these hold
+    one row per real supplier, physical material batch and certificate, and a
+    truncated chain of custody is not a weaker audit document, it is a wrong one.
+    The two order-driven datasets are capped (see below) because each row costs an
+    ancestry walk.
+    """
+    if key == "partners":
+        return (["Partner", "Tier", "Country", "Role", "Certifications Held",
+                 "Contact", "Contact Email", "Status", "Notes"],
+                [[_txt(p.get("name")), p.get("tier") or "", _txt(p.get("country")),
+                  _txt(p.get("role")), _txt(p.get("certifications")),
+                  _txt(p.get("contact")), _txt(p.get("contact_email")),
+                  _txt(p.get("status")), _txt(p.get("notes"))]
+                 for p in list_partners()])
+
+    if key == "lots":
+        lots = list_lots()
+        # The parent's REFERENCE, not its id: the export is read by people and by
+        # brand auditors, and "LOT-YRN-0101" is the chain link they can follow.
+        ref = {l["id"]: (l.get("lot_ref") or l["id"]) for l in lots}
+        return (["Lot Ref", "Material", "Fibre Composition", "Supplier", "Tier",
+                 "Qty", "Unit", "Country of Origin", "Received", "Made From Lot"],
+                [[_txt(l.get("lot_ref") or l["id"]), _txt(l.get("material")),
+                  _txt(l.get("fibre_composition")), _txt(l.get("partner_name")),
+                  l.get("tier") or "", _num(l.get("qty")), _txt(l.get("uom")),
+                  _txt(l.get("country_of_origin")), _txt(l.get("received_date")),
+                  _txt(ref.get(l.get("parent_lot_id"), ""))]
+                 for l in lots])
+
+    if key == "certificates":
+        return (["Standard", "Certificate No", "Issuer", "Scope", "Partner",
+                 "Lot Ref", "Valid From", "Valid Until", "Status", "Days Left",
+                 "Document Ref"],
+                [[_txt(c.get("standard")), _txt(c.get("cert_no")), _txt(c.get("issuer")),
+                  _txt(c.get("scope")), _txt(c.get("partner_name")), _txt(c.get("lot_ref")),
+                  _txt(c.get("valid_from")), _txt(c.get("valid_until")),
+                  _txt(c.get("derived_status")),
+                  "" if c.get("days") is None else c["days"], _txt(c.get("doc_ref"))]
+                 for c in list_certs()])
+
+    if key == "passports":
+        # 500, not the register page's 60: this is the compliance roll-up someone
+        # takes into a buyer meeting, so it must cover the whole live order book.
+        return (["Order No", "Buyer", "Style", "Ship Date", "Chain Nodes",
+                 "Deepest Tier", "Completeness %", "Missing Data Points", "Below Target"],
+                [[_txt(r["order"].get("order_no")), _txt(r["order"].get("buyer")),
+                  _txt(r["order"].get("style_name")), _txt(r["order"].get("ship_date")),
+                  r["lots"], r["deepest_tier"] or "", r["pct"], r["missing"],
+                  "yes" if r["pct"] < DPP_MIN_PCT else "no"]
+                 for r in passport_list(limit=500)])
+
+    if key == "esg":
+        return (["Scope", "Order No", "Period", "Energy kWh", "Water m3", "Waste kg",
+                 "Garments", "kWh per Garment", "Water L per Garment",
+                 "Waste g per Garment", "Source"],
+                [[_txt(r.get("label") or r.get("period")), _txt(r.get("order_no")),
+                  _txt(r.get("period")), _num(r.get("energy_kwh")), _num(r.get("water_m3")),
+                  _num(r.get("waste_kg")), _num(r.get("garments")),
+                  _num(r.get("energy_per_pc")), _num(r.get("water_l_per_pc")),
+                  _num(r.get("waste_g_per_pc")), _txt(r.get("source"))]
+                 for r in list_esg(limit=2000)])
+
+    return (None, None)

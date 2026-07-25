@@ -8,7 +8,11 @@
     <h1 data-i18n="wsh.nav.recipes">Recipes</h1>
     <div class="sub" data-i18n="wsh.recipes.sub">One row per recipe family. Steps and chemicals live on a version, never on the family.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.index') }}" data-i18n="wsh.nav.home">Dashboard</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.export_csv', key='recipes') }}" data-i18n="wsh.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.export_csv', key='recipe-steps') }}" data-i18n="wsh.action.export_steps">Export step sheets</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.index') }}" data-i18n="wsh.nav.home">Dashboard</a>
+  </div>
 </div>
 
 <form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">

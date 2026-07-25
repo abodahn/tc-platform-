@@ -115,6 +115,28 @@ def bundles():
                            statuses=BUNDLE_STATUS, f_status=status)
 
 
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("mes_view")
+def export_csv(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "mes", "csv")
+    if resp is None:
+        abort(404)
+    return resp
+
+
+@bp.route("/api/<key>.json")
+@login_required
+@permission_required("mes_view")
+def api_json(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "mes", "json")
+    if resp is None:
+        abort(404)
+    return resp
+
+
 @bp.route("/bundles", methods=["POST"])
 @login_required
 @permission_required("mes_entry")

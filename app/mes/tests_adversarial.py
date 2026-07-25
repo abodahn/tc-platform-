@@ -523,10 +523,13 @@ for m in re.finditer(r'@bp\.route\((.*?)\)\n((?:@[\w_]+\([^\n]*\)\n|@[\w_]+\n)*)
     if writes and "POST" not in route:
         get_writes.append(name)
 ok("every mes route is @login_required + @permission_required", not missing and len(
-    re.findall(r"@bp\.route", src_rt)) == 10, missing or "10 routes")
+    re.findall(r"@bp\.route", src_rt)) == 12, missing or "12 routes")
 ok("every state-changing route is POST-only", not get_writes, get_writes)
+# <key> is the only untyped path param allowed: export_dataset() compares it against a
+# fixed set of dataset names and returns (None, None) -> 404 for anything else, so it
+# never reaches SQL. Every id must still be <int:>.
 ok("id routes are typed <int:> so a hostile id can never reach SQL as text",
-   not re.search(r"<(?!int:)[^>]+>", src_rt))
+   not re.search(r"<(?!int:)(?!key>)[^>]+>", src_rt))
 
 # i18n: every data-i18n key the templates can emit must exist in the map
 keys, dynamic = set(), set()

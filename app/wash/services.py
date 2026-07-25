@@ -272,7 +272,7 @@ def list_batches(limit=200):
         conn.close()
 
 
-def list_labdips(verdict=None):
+def list_labdips(verdict=None, limit=200):
     conn = get_db()
     try:
         q = ("SELECT d.*, r.code, r.name, v.version, v.recipe_id, b.batch_no FROM wsh_labdips d "
@@ -283,7 +283,8 @@ def list_labdips(verdict=None):
         if verdict:
             q += " AND d.verdict=?"; args.append(verdict)
         q += (" ORDER BY CASE d.verdict WHEN 'pending' THEN 0 WHEN 'resubmit' THEN 1 "
-              "ELSE 2 END, d.id DESC LIMIT 200")
+              "ELSE 2 END, d.id DESC LIMIT ?")
+        args.append(limit)
         return [dict(r) for r in conn.execute(q, args).fetchall()]
     finally:
         conn.close()
@@ -652,5 +653,120 @@ def dashboard():
             "WHERE d.verdict IN ('pending','resubmit','rejected') ORDER BY d.id DESC LIMIT 8"
         ).fetchall()]
         return d
+    finally:
+        conn.close()
+
+
+# --- exports --------------------------------------------------------------
+def _c(v):
+    """A cell is text or a number, never None. Blank must read as blank in Excel,
+    and as "" in JSON where a null looks like a broken column."""
+    return "" if v is None else v
+
+
+def export_dataset(key):
+    """key -> (headers, rows) for the shared CSV/JSON exporters, else (None, None).
+
+    Keys: recipes | recipe-steps | batches | lab-dips | version-impact.
+    Built on this module's own read functions and on totals()/impact() wherever they
+    already return what the export needs — a downloaded file that disagrees with the
+    page it came from is worse than no export at all.
+    Figures keep the module's own rounding (2dp totals, 1dp doses) for the same reason.
+    """
+    if key == "recipes":
+        return (["Code", "Name", "Wash Type", "Style Ref", "Versions", "Bulk Standard",
+                 "Latest Version", "Latest Status", "Notes", "Created By", "Created At"],
+                [[_c(r["code"]), _c(r["name"]), _c(r["wash_type"]), _c(r["style_ref"]),
+                  r["versions"], _c(r["approved_version"]), r["latest"], r["latest_status"],
+                  _c(r["notes"]), _c(r["created_by"]), _c(r["created_at"])]
+                 for r in list_recipes()])
+
+    if key == "batches":
+        # 5000, not the page's 200: this is the traceability register, and a silently
+        # truncated one answers the wrong question in an audit or a claim.
+        return (["Batch No", "Recipe Code", "Recipe", "Version", "Machine", "Operator",
+                 "Load kg", "Started At", "Ended At", "Actual Minutes", "Actual Temp C",
+                 "Actual Water L", "Shade", "Status", "Deviation", "Recorded By"],
+                [[_c(b["batch_no"]), _c(b["code"]), _c(b["name"]), _c(b["version"]),
+                  _c(b["machine"]), _c(b["operator"]), _c(b["load_kg"]),
+                  _c(b["started_at"]), _c(b["ended_at"]), _c(b["act_minutes"]),
+                  _c(b["act_temp_c"]), _c(b["act_water_l"]), _c(b["shade"]),
+                  _c(b["status"]), _c(b["deviation"]), _c(b["created_by"])]
+                 for b in list_batches(5000)])
+
+    if key == "lab-dips":
+        return (["Reference", "Recipe Code", "Recipe", "Version", "Batch No", "Verdict",
+                 "Approver", "Verdict Date", "Notes", "Logged By", "Logged At"],
+                [[_c(d["reference"]), _c(d["code"]), _c(d["name"]), _c(d["version"]),
+                  _c(d["batch_no"]), _c(d["verdict"]), _c(d["approver"]),
+                  _c(d["verdict_date"]), _c(d["notes"]), _c(d["created_by"]),
+                  _c(d["created_at"])]
+                 for d in list_labdips(None, 5000)])
+
+    if key not in ("recipe-steps", "version-impact"):
+        return None, None
+
+    conn = get_db()
+    try:
+        if key == "recipe-steps":
+            # One flat row per dosing line — that is the sheet the floor reads. LEFT
+            # JOIN so a dry step with no chemicals still appears in its cycle order.
+            # Flat SQL rather than _steps_of() per version: this walks the whole
+            # library, and the per-version reader would be a query per step.
+            rows = conn.execute(
+                "SELECT r.code, r.name, v.version, v.status, s.step_no, s.operation, "
+                "s.temp_c, s.minutes, s.liquor_ratio, s.load_kg, s.notes, "
+                "c.name AS chem, c.gpl, c.owg_pct FROM wsh_steps s "
+                "JOIN wsh_versions v ON v.id=s.version_id "
+                "JOIN wsh_recipes r ON r.id=v.recipe_id "
+                "LEFT JOIN wsh_chemicals c ON c.step_id=s.id "
+                "ORDER BY r.code, v.version, s.step_no, s.id, c.id LIMIT 20000").fetchall()
+            out = []
+            for s in rows:
+                # _nn and the same rounding as _steps_of(): the export has to add up to
+                # the printed sheet, not to an unfloored re-derivation of it.
+                bath = round(_nn(s["load_kg"]) * _nn(s["liquor_ratio"]), 2)
+                dose = round(_nn(s["gpl"]) * bath
+                             + _nn(s["owg_pct"]) / 100.0 * _nn(s["load_kg"]) * 1000.0,
+                             1) if s["chem"] else ""
+                out.append([_c(s["code"]), _c(s["name"]), _c(s["version"]), _c(s["status"]),
+                            _c(s["step_no"]), _c(s["operation"]), _c(s["temp_c"]),
+                            _c(s["minutes"]), _c(s["liquor_ratio"]), _c(s["load_kg"]),
+                            bath, _c(s["chem"]), _c(s["gpl"]), _c(s["owg_pct"]), dose,
+                            _c(s["notes"])])
+            return (["Code", "Recipe", "Version", "Version Status", "Step No", "Operation",
+                     "Temp C", "Minutes", "Liquor Ratio", "Load kg", "Bath L", "Chemical",
+                     "g/L", "% OWG", "Dose g", "Step Notes"], out)
+
+        # version-impact: the per-version cycle + intensity roll-up the recipe sheet already
+        # shows, one row per version so the library can be ranked in a spreadsheet.
+        vers = conn.execute(
+            "SELECT v.id, v.version, v.status, v.approved_by, v.approved_at, r.code, r.name "
+            "FROM wsh_versions v JOIN wsh_recipes r ON r.id=v.recipe_id "
+            "ORDER BY r.code, v.version LIMIT 2000").fetchall()
+        nb = {r["version_id"]: r["c"] for r in conn.execute(
+            "SELECT version_id, COUNT(*) AS c FROM wsh_batches GROUP BY version_id").fetchall()}
+        nd = {r["version_id"]: r["c"] for r in conn.execute(
+            "SELECT version_id, COUNT(*) AS c FROM wsh_labdips WHERE verdict='approved' "
+            "GROUP BY version_id").fetchall()}
+        out = []
+        for v in vers:
+            # ponytail: _steps_of() per version (a query per step for its chemicals) —
+            # same shape list_recipes() already accepts, and totals()/impact() are the
+            # only place this maths is allowed to live. Fold into two flat queries if
+            # the library ever passes a few hundred versions.
+            t = totals(_steps_of(conn, v["id"]))
+            im = impact(t)
+            out.append([_c(v["code"]), _c(v["name"]), v["version"], _c(v["status"]),
+                        t["steps"], t["baths"], t["cycle_min"], t["water_l"], t["chem_g"],
+                        t["heat_lk"], t["load_kg"], t["max_temp_c"],
+                        im["water"], im["energy"], im["chem"], _c(im["score"]), im["band"],
+                        nb.get(v["id"], 0), nd.get(v["id"], 0),
+                        _c(v["approved_by"]), _c(v["approved_at"])])
+        return (["Code", "Recipe", "Version", "Status", "Steps", "Baths", "Cycle Minutes",
+                 "Water L", "Chemical g", "Heat LK", "Load kg", "Peak Bath Temp C",
+                 "Water Index", "Energy Index", "Chemical Index", "Impact Score",
+                 "Impact Band", "Batches", "Approved Lab Dips", "Approved By",
+                 "Approved At"], out)
     finally:
         conn.close()

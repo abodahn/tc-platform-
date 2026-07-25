@@ -7,7 +7,11 @@
     <h1 data-i18n="pln.nav.balance">Line balancing</h1>
     <div class="sub">{{ b.order.order_no }} · {{ b.order.style_name or b.order.style_ref or '' }} · {{ b.order.buyer or '—' }}</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.order_detail', order_id=b.order.id) }}" data-i18n="pln.action.back">Back</a>
+  <div class="flex gap center">
+    {# every order's bulletin, not only this one — the label says so #}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.export_csv', key='operation-bulletin') }}" data-i18n="pln.action.export_ops">Export all bulletins</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.order_detail', order_id=b.order.id) }}" data-i18n="pln.action.back">Back</a>
+  </div>
 </div>
 
 <div class="sf-kpis">

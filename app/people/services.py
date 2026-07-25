@@ -849,3 +849,100 @@ def dashboard():
         return d
     finally:
         conn.close()
+
+
+# ==========================================================================
+# Exports (shared contract — see app/services/export.py)
+# ==========================================================================
+# Generous caps, not the on-screen ones: an export is what somebody takes to
+# payroll or an auditor, so a silently short file is worse than a slow one.
+# 20k attendance rows ~ 500 operators x 40 days, which covers a payroll month.
+_EXPORT_LIMIT = 20000
+
+
+def _n(v, dp=2):
+    """Numeric cell: never None, never inf/nan — both formats must stay clean."""
+    return round(_f(v), dp)
+
+
+def _t(v):
+    """Text cell: never None (CSV would print 'None', JSON would emit null)."""
+    return "" if v is None else v
+
+
+def export_dataset(key):
+    """key -> (headers, rows), or (None, None) for an unknown key.
+
+    Keys: attendance | leave-requests | leave-balances | skill-matrix |
+          incentive | incentive-summary.
+    The two roll-ups cover the last 30 days — the same window the dashboard and
+    the incentive page default to, so the CSV agrees with what was on screen.
+    """
+    if key == "attendance":
+        return (["Date", "Code", "Employee", "Department", "Section", "Status",
+                 "Check In", "Check Out", "Worked Hours", "OT Hours"],
+                [[_t(r["work_date"]), _t(r["employee_code"]), _t(r["employee_name"]),
+                  _t(r["department"]), _t(r["section"]), _t(r["status"]),
+                  _t(r["check_in"]), _t(r["check_out"]),
+                  _n(r["worked_hours"]), _n(r["ot_hours"])]
+                 for r in list_attendance(limit=_EXPORT_LIMIT)])
+
+    if key == "leave-requests":
+        return (["Code", "Employee", "Department", "Type", "From", "To", "Days",
+                 "Reason", "Status", "Approver", "Decided At", "Requested By",
+                 "Requested At"],
+                [[_t(r["employee_code"]), _t(r["employee_name"]), _t(r["department"]),
+                  _t(r["leave_type"]), _t(r["from_date"]), _t(r["to_date"]),
+                  _n(r["days"], 3), _t(r["reason"]), _t(r["status"]), _t(r["approver"]),
+                  _t(r["decided_at"]), _t(r["created_by"]), _t(r["created_at"])]
+                 for r in list_leave(limit=_EXPORT_LIMIT)])
+
+    if key == "leave-balances":
+        # bounded by roster x leave types — no limit needed
+        return (["Year", "Code", "Employee", "Department", "Type", "Entitled",
+                 "Taken", "Remaining"],
+                [[_i(b["year"]), _t(b["employee_code"]), _t(b["employee_name"]),
+                  _t(b["department"]), _t(b["leave_type"]), _n(b["entitled"], 3),
+                  _n(b["taken"], 3), _n(b["remaining"], 3)]
+                 for b in list_balances()])
+
+    if key == "skill-matrix":
+        # long form (one row per rating) — pivots in Excel, and unlike the on-screen
+        # grid it does not grow a column per operation.
+        m = skill_matrix()
+        rows = []
+        for e in m["rows"]:
+            for op, c in sorted(e["cells"].items()):
+                rows.append([_t(e["employee_code"]), _t(e["employee_name"]),
+                             _t(e["department"]), _t(e["section"]), _t(op),
+                             _i(c["level"]), _n(c["eff"], 1),
+                             _i(e["ops_count"]), _n(e["avg_level"], 1)])
+        return (["Code", "Employee", "Department", "Section", "Operation", "Level",
+                 "Efficiency %", "Operations Rated", "Avg Level"], rows)
+
+    if key == "incentive":
+        return (["Date", "Code", "Employee", "Department", "Operation", "Order",
+                 "Pieces", "SMV", "Minutes Worked", "Earned Minutes", "Efficiency %",
+                 "Threshold %", "Rate Per Minute", "Incentive"],
+                [[_t(r["work_date"]), _t(r["employee_code"]), _t(r["employee_name"]),
+                  _t(r["department"]), _t(r["operation"]), _t(r["order_no"]),
+                  _n(r["pieces"], 3), _n(r["smv"], 3), _n(r["minutes_worked"], 3),
+                  _n(r["earned_minutes"], 3), _n(r["efficiency_pct"], 1),
+                  _n(r["threshold_pct"], 1), _n(r["rate_per_minute"], 2),
+                  _n(r["incentive"], 2)]
+                 for r in list_piece_rate(limit=_EXPORT_LIMIT)])
+
+    if key == "incentive-summary":
+        to_d = date.today()
+        from_d = to_d - timedelta(days=29)
+        s = incentive_summary(str(from_d), str(to_d))
+        period = f"{from_d}..{to_d}"
+        return (["Period", "Code", "Employee", "Department", "Days", "Pieces",
+                 "Earned Minutes", "Minutes Worked", "Efficiency %", "Incentive"],
+                [[period, _t(r["employee_code"]), _t(r["employee_name"]),
+                  _t(r["department"]), _i(r["days"]), _n(r["pieces"], 3),
+                  _n(r["earned_minutes"], 3), _n(r["minutes_worked"], 3),
+                  _n(r["efficiency_pct"], 1), _n(r["incentive"], 2)]
+                 for r in s["rows"]])
+
+    return (None, None)

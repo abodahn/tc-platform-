@@ -7,7 +7,11 @@
     <h1 data-i18n="ppl.nav.incentive">Incentive & productivity</h1>
     <div class="sub" data-i18n="ppl.inc.sub">Earned-minute model: only minutes produced above the qualifying efficiency are paid.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('people.index') }}" data-i18n="ppl.nav.home">HR Core</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.export_csv', key='incentive') }}"
+       data-i18n="ppl.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.index') }}" data-i18n="ppl.nav.home">HR Core</a>
+  </div>
 </div>
 
 <form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
@@ -52,7 +56,9 @@
 {% endif %}
 
 <div class="panel mt-4">
-  <div class="panel-head"><h3 data-i18n="ppl.inc.summary">Operator ranking</h3></div>
+  <div class="panel-head"><h3 data-i18n="ppl.inc.summary">Operator ranking</h3>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.export_csv', key='incentive-summary') }}"
+       data-i18n="ppl.action.export">Export CSV</a></div>
   <div class="panel-pad">
     <table class="tbl">
       <thead><tr><th data-i18n="ppl.field.employee">Employee</th><th data-i18n="ppl.field.department">Department</th>

@@ -126,6 +126,7 @@ I18N = {
     "mes.action.create": ("Create bundle", "إنشاء حزمة", "Demet oluştur"),
     "mes.action.move": ("Scan", "مسح", "Okut"),
     "mes.action.reject": ("Reject", "رفض", "Reddet"),
+    "mes.action.export": ("Export CSV", "تصدير CSV", "CSV indir"),
 
     # empty states
     "mes.empty.lines": ("No hourly production recorded for this day yet.",

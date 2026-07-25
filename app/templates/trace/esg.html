@@ -7,7 +7,10 @@
     <h1 data-i18n="trc.nav.esg">ESG footprint register</h1>
     <div class="sub" data-i18n="trc.esg.sub">Energy, water and waste as recorded per order or per month, divided by pieces produced.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+  <div class="flex gap">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.export_csv', key='esg') }}" data-i18n="trc.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+  </div>
 </div>
 
 <div class="panel"><div class="panel-pad">

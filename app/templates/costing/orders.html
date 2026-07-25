@@ -9,7 +9,13 @@
     <h1 data-i18n="cst.nav.orders">All orders</h1>
     <div class="sub" data-i18n="cst.orders.sub">Quoted margin against delivered margin, order by order.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.index') }}" data-i18n="cst.nav.home">Dashboard</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.export_csv', key='order-margin') }}"
+       data-i18n="cst.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.export_csv', key='bom-lines') }}"
+       data-i18n="cst.action.export_bom">BOM lines CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.index') }}" data-i18n="cst.nav.home">Dashboard</a>
+  </div>
 </div>
 
 <form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">

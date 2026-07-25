@@ -7,7 +7,10 @@
     <h1 data-i18n="shp.recon.h1">Shipped vs ordered</h1>
     <div class="sub" data-i18n="shp.recon.sub">Ordered against packed and shipped. Short and over shipments are both buyer chargebacks — they are flagged here and on the bell.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.nav.list">All shipments</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.nav.list">All shipments</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.export_csv', key='reconciliation') }}" data-i18n="shp.action.export">Export CSV</a>
+  </div>
 </div>
 
 <div class="panel">

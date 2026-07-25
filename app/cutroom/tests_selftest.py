@@ -95,6 +95,15 @@ print("\n[2] phase A — orders only (no costing BOM, no warehouse rolls)")
 app = create_app()
 with app.app_context():
     conn = get_db()
+    # create_app() -> init_db() now seeds warehouse, costing AND cutroom itself, so
+    # the degraded path has to be re-created deliberately: take the sibling tables
+    # away and start the cut room empty again. Without this the phase silently
+    # tested the LINKED path and its "no BOM" assertions were false.
+    conn.execute("DELETE FROM cut_lays")
+    conn.execute("DELETE FROM cut_lay_rolls")
+    for _t in ("cst_bom_lines", "wh_rolls"):
+        conn.execute(f"DROP TABLE IF EXISTS {_t}")
+    conn.commit()
     create_and_seed(conn)
     create_and_seed(conn)                       # idempotent: must not duplicate or destroy
     n = conn.execute("SELECT COUNT(*) AS c FROM cut_lays").fetchone()["c"]
@@ -205,10 +214,10 @@ with app.app_context():
     check("all-zero lay: no crash, cpg None", lay["cons_per_gmt"] is None)
     check("lay_no generated from the row id", (lay["lay_no"] or "").startswith("CUT-"))
 
-    check("update with nothing to set returns False",
-          svc.update_lay(lid, {}) is False)
-    check("update of a missing lay does not raise",
-          svc.update_lay(999999, {"notes": "x"}) is True)
+    check("update with nothing to set is a no-op on an existing lay",
+          svc.update_lay(lid, {}) is True)
+    check("update of a missing lay returns False so the route can 404",
+          svc.update_lay(999999, {"notes": "x"}) is False)
 
     check("roll with 0 metres refused", svc.add_lay_roll(lid, {"meters": 0}) == (False, "bad_meters"))
     check("roll with negative metres refused", svc.add_lay_roll(lid, {"meters": -5})[0] is False)

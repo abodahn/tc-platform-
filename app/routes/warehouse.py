@@ -6,7 +6,7 @@ CSRF, i18n, base template and the notification bell.
 """
 import time
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 
 from app.auth import login_required, permission_required, current_user
 from app.warehouse import services as svc
@@ -221,3 +221,26 @@ def fg_post():
     flash("Finished goods updated." if ok else f"Rejected ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("warehouse.fg", order_id=oid))
+
+
+# --- exports (same wire format as every other module: see app/services/export.py) ---
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("wh_view")
+def export_csv(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "warehouse", "csv")
+    if resp is None:
+        abort(404)
+    return resp
+
+
+@bp.route("/api/<key>.json")
+@login_required
+@permission_required("wh_view")
+def api_json(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "warehouse", "json")
+    if resp is None:
+        abort(404)
+    return resp

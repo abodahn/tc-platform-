@@ -87,7 +87,8 @@ def lay_detail(lay_id):
 @login_required
 @permission_required("cut_manage")
 def lay_update(lay_id):
-    svc.update_lay(lay_id, request.form)
+    if not svc.update_lay(lay_id, request.form):
+        abort(404)                      # never confirm a write that hit no row
     flash("Lay updated.", "success")
     return redirect(url_for("cutroom.lay_detail", lay_id=lay_id))
 
@@ -97,9 +98,33 @@ def lay_update(lay_id):
 @permission_required("cut_manage")
 def lay_roll_add(lay_id):
     ok, msg = svc.add_lay_roll(lay_id, request.form)
+    if msg == "lay_not_found":
+        abort(404)                      # blaming the metres for a missing lay is a lie
     flash("Roll booked to the lay." if ok else "Enter the metres taken from the roll.",
           "success" if ok else "error")
     return redirect(url_for("cutroom.lay_detail", lay_id=lay_id))
+
+
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("cut_view")
+def export_csv(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "cutroom", "csv")
+    if resp is None:
+        abort(404)
+    return resp
+
+
+@bp.route("/api/<key>.json")
+@login_required
+@permission_required("cut_view")
+def api_json(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "cutroom", "json")
+    if resp is None:
+        abort(404)
+    return resp
 
 
 @bp.route("/orders/<int:order_id>")

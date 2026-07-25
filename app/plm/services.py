@@ -633,3 +633,123 @@ def dashboard():
         return d
     finally:
         conn.close()
+
+
+# --- dataset export -------------------------------------------------------
+def _t(v):
+    """CSV/JSON cell for a text column: never None, never a Python object."""
+    return "" if v is None else str(v)
+
+
+def _q(v, dp=3):
+    """Quantity cell — a number, never a string, so a report can sum and sort it.
+
+    dp=6 for consumption: a trim at 0.00012 kg/unit disappears entirely at 3dp,
+    which is why the screens and bom_for_order() also carry 6 (see get_style)."""
+    return round(_num(v), dp)
+
+
+# 20000 rows: line-level tables grow with styles x lines, and a CSV a merchandiser
+# opens in Excel is not the place to stream a whole database. A factory's style
+# master is far below this; the cap only exists so a runaway export cannot happen.
+_ROW_CAP = 20000
+
+
+def export_dataset(key):
+    """key -> (headers, rows) for CSV/JSON export. (None, None) if unknown.
+
+    Keys: styles | techpack-versions | measurement-specs | bom | samples | summary.
+    """
+    if key == "styles":
+        # Reuses the styles page's own query — the register, unfiltered, in the
+        # same order the screen shows. One row per style, so no cap is needed.
+        return (["Style Ref", "Name", "Buyer", "Season", "Category", "Fabric",
+                 "Description", "Status", "Designer", "Merchandiser",
+                 "Created By", "Created At", "Updated At"],
+                [[_t(s["style_ref"]), _t(s["name"]), _t(s["buyer"]), _t(s["season"]),
+                  _t(s["category"]), _t(s["fabric"]), _t(s["description"]),
+                  _t(s["status"]), _t(s["designer"]), _t(s["merchandiser"]),
+                  _t(s["created_by"]), _t(s["created_at"]), _t(s["updated_at"])]
+                 for s in list_styles()])
+
+    if key == "summary":
+        d = dashboard()
+        rows = [["Styles total", d["styles_total"]]]
+        rows += [[s.replace("_", " ").capitalize(), d["by_status"].get(s, 0)]
+                 for s in STYLE_STATUS]
+        rows += [["Approved for bulk", d["styles_approved"]],
+                 ["Samples pending", d["samples_pending"]],
+                 ["Samples rejected or to revise", d["samples_rejected"]],
+                 ["Awaiting PP approval", d["awaiting_pp"]],
+                 ["Tech-pack versions", d["techpack_versions"]]]
+        return (["Metric", "Value"], rows)
+
+    conn = get_db()
+    try:
+        if key == "techpack-versions":
+            rows = conn.execute(
+                "SELECT s.style_ref, s.name, t.version, t.change_note, t.published_by, "
+                "t.published_at, "
+                "(SELECT COUNT(*) FROM plm_techpack_sections x WHERE x.techpack_id=t.id) secs, "
+                "(SELECT COUNT(*) FROM plm_techpack_specs x WHERE x.techpack_id=t.id) specs, "
+                "(SELECT MAX(version) FROM plm_techpacks m WHERE m.style_id=t.style_id) top "
+                "FROM plm_techpacks t JOIN plm_styles s ON s.id=t.style_id "
+                "ORDER BY s.style_ref, t.version LIMIT ?", (_ROW_CAP,)).fetchall()
+            return (["Style Ref", "Style Name", "Version", "Change Note", "Published By",
+                     "Published At", "Sections", "Measurements", "Is Latest"],
+                    [[_t(r["style_ref"]), _t(r["name"]), r["version"], _t(r["change_note"]),
+                      _t(r["published_by"]), _t(r["published_at"]), r["secs"], r["specs"],
+                      "yes" if r["version"] == r["top"] else "no"] for r in rows])
+
+        if key == "measurement-specs":
+            # The LATEST version only: an older version's numbers are history, and a
+            # QC table holding two targets for one point of measure is unusable.
+            # tech-pack-versions above shows what history exists.
+            rows = conn.execute(
+                "SELECT s.style_ref, s.name, t.version, p.pom, p.size, p.spec_value, p.tolerance "
+                "FROM plm_techpack_specs p JOIN plm_techpacks t ON t.id=p.techpack_id "
+                "JOIN plm_styles s ON s.id=t.style_id "
+                "WHERE t.version=(SELECT MAX(version) FROM plm_techpacks m "
+                "                 WHERE m.style_id=t.style_id) "
+                "ORDER BY s.style_ref, p.seq, p.id LIMIT ?", (_ROW_CAP,)).fetchall()
+            return (["Style Ref", "Style Name", "Version", "Point of Measure", "Size",
+                     "Spec (cm)", "Tolerance +/- (cm)"],
+                    [[_t(r["style_ref"]), _t(r["name"]), r["version"], _t(r["pom"]),
+                      _t(r["size"]), _q(r["spec_value"]), _q(r["tolerance"])] for r in rows])
+
+        if key == "bom":
+            rows = conn.execute(
+                "SELECT s.style_ref, s.name, b.kind, b.material, b.placement, b.colour, "
+                "b.supplier, b.consumption, b.unit, b.wastage_pct FROM plm_bom b "
+                "JOIN plm_styles s ON s.id=b.style_id ORDER BY s.style_ref, "
+                "CASE b.kind WHEN 'fabric' THEN 0 WHEN 'trim' THEN 1 ELSE 2 END, b.id "
+                "LIMIT ?", (_ROW_CAP,)).fetchall()
+            # Gross, not net — buying net is how a cut room runs short (see
+            # gross_consumption). Both figures ship so the wastage is auditable.
+            return (["Style Ref", "Style Name", "Kind", "Material", "Placement", "Colour",
+                     "Supplier", "Net per Unit", "Unit", "Wastage %", "Gross per Unit"],
+                    [[_t(r["style_ref"]), _t(r["name"]), _t(r["kind"]), _t(r["material"]),
+                      _t(r["placement"]), _t(r["colour"]), _t(r["supplier"]),
+                      _q(r["consumption"], 6), _t(r["unit"]), _q(r["wastage_pct"]),
+                      _q(gross_consumption(r["consumption"], r["wastage_pct"]), 6)]
+                     for r in rows])
+
+        if key == "samples":
+            rows = conn.execute(
+                # COALESCE on the counts: both columns are nullable, and a round
+                # number must stay a NUMBER in the JSON so a report can sort on it.
+                "SELECT s.style_ref, s.name, s.buyer, sp.stage, COALESCE(sp.round_no,0) rnd, "
+                "COALESCE(sp.revision_no,0) rev, "
+                "sp.sent_date, sp.verdict, sp.decided_at, sp.comments, sp.created_by "
+                "FROM plm_samples sp JOIN plm_styles s ON s.id=sp.style_id "
+                "ORDER BY s.style_ref, sp.stage, COALESCE(sp.round_no,0), sp.id "
+                "LIMIT ?", (_ROW_CAP,)).fetchall()
+            return (["Style Ref", "Style Name", "Buyer", "Stage", "Round", "Revisions",
+                     "Sent Date", "Verdict", "Decided At", "Buyer Comments", "Recorded By"],
+                    [[_t(r["style_ref"]), _t(r["name"]), _t(r["buyer"]), _t(r["stage"]),
+                      r["rnd"], r["rev"], _t(r["sent_date"]),
+                      _t(r["verdict"]), _t(r["decided_at"]), _t(r["comments"]),
+                      _t(r["created_by"])] for r in rows])
+    finally:
+        conn.close()
+    return (None, None)

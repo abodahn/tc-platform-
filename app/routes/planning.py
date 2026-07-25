@@ -152,6 +152,28 @@ def allocation_delete(alloc_id):
     return redirect(_referrer_or(url_for("planning.index")))
 
 
+@bp.route("/export/<key>.csv")
+@login_required
+@permission_required("pln_view")
+def export_csv(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "planning", "csv")
+    if resp is None:
+        abort(404)
+    return resp
+
+
+@bp.route("/api/<key>.json")
+@login_required
+@permission_required("pln_view")
+def api_json(key):
+    from app.services.export import dispatch
+    resp = dispatch(svc.export_dataset, key, "planning", "json")
+    if resp is None:
+        abort(404)
+    return resp
+
+
 @bp.route("/balance/<int:order_id>")
 @login_required
 @permission_required("pln_view")

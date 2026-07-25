@@ -8,7 +8,11 @@
     <h1 data-i18n="ppl.nav.leave">Leave</h1>
     <div class="sub" data-i18n="ppl.leave.sub">A request can never exceed the remaining balance, and approving deducts it exactly once.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('people.index') }}" data-i18n="ppl.nav.home">HR Core</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.export_csv', key='leave-requests') }}"
+       data-i18n="ppl.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.index') }}" data-i18n="ppl.nav.home">HR Core</a>
+  </div>
 </div>
 
 {% if can('ppl_manage') %}
@@ -81,7 +85,9 @@
 </div>
 
 <div class="panel mt-4">
-  <div class="panel-head"><h3 data-i18n="ppl.leave.balances">Leave balances</h3></div>
+  <div class="panel-head"><h3 data-i18n="ppl.leave.balances">Leave balances</h3>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.export_csv', key='leave-balances') }}"
+       data-i18n="ppl.action.export">Export CSV</a></div>
   <div class="panel-pad">
     <table class="tbl">
       <thead><tr><th data-i18n="ppl.field.employee">Employee</th><th data-i18n="ppl.field.type">Type</th>

@@ -11,6 +11,9 @@
   <div class="flex gap center">
     {% if can('shp_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('shipping.shipment_new') }}" data-i18n="shp.action.new">New shipment</a>{% endif %}
     <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.reconciliation') }}" data-i18n="shp.nav.recon">Reconciliation</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.export_csv', key='shipments') }}" data-i18n="shp.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.export_csv', key='packing-lines') }}" data-i18n="shp.action.export_packing">Packing lines CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.export_csv', key='invoice-lines') }}" data-i18n="shp.action.export_invoice">Invoice lines CSV</a>
   </div>
 </div>
 

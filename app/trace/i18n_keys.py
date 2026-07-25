@@ -171,6 +171,7 @@ I18N = {
     "trc.action.edit_passport": ("Passport declaration", "بيان الجواز", "Pasaport beyanı"),
     "trc.action.all_certs": ("All certificates", "كل الشهادات", "Tüm sertifikalar"),
     "trc.action.all_passports": ("All passports", "كل الجوازات", "Tüm pasaportlar"),
+    "trc.action.export": ("Export CSV", "تصدير CSV", "CSV olarak indir"),
 
     # --- filters / options --------------------------------------------------
     "trc.filter.all_tiers": ("All tiers", "كل المستويات", "Tüm kademeler"),

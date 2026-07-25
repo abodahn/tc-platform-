@@ -11,6 +11,7 @@
   <div class="flex gap center">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.issue') }}" data-i18n="wh.nav.issue">Issue to order</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.export_csv', key='rolls') }}" data-i18n="wh.action.export">Export CSV</a>
     {% if can('wh_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('warehouse.receive') }}" data-i18n="wh.action.receive">Receive material</a>{% endif %}
   </div>
 </div>

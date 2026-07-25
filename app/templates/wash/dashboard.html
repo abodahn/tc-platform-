@@ -9,6 +9,7 @@
     <div class="sub" data-i18n="wsh.dash.sub">Versioned wash recipes, chemical dosing and batch traceability — so a shade can be reproduced months later.</div>
   </div>
   <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.export_csv', key='version-impact') }}" data-i18n="wsh.action.export_impact">Export impact roll-up</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.recipes') }}" data-i18n="wsh.nav.recipes">Recipes</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.batches') }}" data-i18n="wsh.nav.batches">Batches</a>
     <a class="btn btn-primary btn-sm" href="{{ url_for('wash.labdips') }}" data-i18n="wsh.nav.labdips">Lab dips</a>

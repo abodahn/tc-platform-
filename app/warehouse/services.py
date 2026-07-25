@@ -1054,3 +1054,129 @@ def post_receipt_to_material(pr_id, receipts, user=None):
         return 0.0
     finally:
         conn.close()
+
+
+# --- exports ---------------------------------------------------------------
+_MOVEMENT_EXPORT_LIMIT = 5000   # newest first; a stock ledger grows forever, and a
+                                # store keeper reconciling this month never scrolls past
+                                # a few hundred rows. Raise it here if a full-year audit
+                                # ever needs the whole ledger in one file.
+
+
+def _txt(v):
+    """Empty cell, never the string 'None' — the CSV goes straight into Excel."""
+    return "" if v is None else v
+
+
+def _order_labels():
+    """{order_id: order_no} for labelling exports. Own connection, and tolerant of the
+    orders module being absent, exactly like _order_exists — a failed statement on
+    PostgreSQL poisons the transaction it runs in, so this must not share the caller's."""
+    conn = get_db()
+    try:
+        return {r["id"]: r["order_no"] for r in
+                conn.execute("SELECT id, order_no FROM ord_orders").fetchall()}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def export_dataset(key):
+    """Rows for a named export: returns (headers, rows) or (None, None).
+
+    Keys: materials | rolls | movements | finished-goods | issues-by-order.
+    Availability is exported alongside raw stock because availability is the number
+    this module makes decisions on, and a CSV that only showed on-hand would have
+    people committing reserved fabric all over again in Excel."""
+    if key == "materials":
+        rows = list_materials()
+        return (["Code", "Name", "Kind", "Colour", "Composition", "Width (cm)", "Supplier",
+                 "UoM", "On Hand", "Reserved", "Available", "Reorder Level", "Min Level",
+                 "Avg Cost", "Stock Value", "Roll Tracked", "Short", "Warehouse", "Bin"],
+                [[_txt(r["code"]), _txt(r["name"]), _txt(r["kind"]), _txt(r["color"]),
+                  _txt(r["composition"]), round(_f(r["width_cm"]), 3), _txt(r["supplier"]),
+                  _txt(r["uom"]), round(_f(r["stock_qty"]), 3), round(_f(r["reserved_qty"]), 3),
+                  round(_f(r["available"]), 3), round(_f(r["reorder_level"]), 3),
+                  round(_f(r["min_level"]), 3), round(_f(r["avg_cost"]), 2),
+                  round(_f(r["stock_qty"]) * _f(r["avg_cost"]), 2),
+                  "yes" if r["roll_tracked"] else "no", "yes" if r["short"] else "no",
+                  _txt(r["warehouse"]), _txt(r["bin"])]
+                 for r in rows])
+
+    if key == "rolls":
+        rows = list_rolls()
+        return (["Roll No", "Material Code", "Material", "Material Colour", "Shade Lot",
+                 "Supplier Lot", "Grade", "Width (cm)", "Length (m)", "Remaining (m)",
+                 "Reserved (m)", "Free (m)", "Status", "Unit Cost", "Remaining Value",
+                 "GRN Ref", "Warehouse", "Bin", "Received On"],
+                [[_txt(r["roll_no"]), _txt(r["mat_code"]), _txt(r["mat_name"]),
+                  _txt(r["mat_color"]), _txt(r["shade_lot"]), _txt(r["supplier_lot"]),
+                  _txt(r["grade"]), round(_f(r["width_cm"]), 3), round(_f(r["length_m"]), 3),
+                  round(_f(r["remaining_m"]), 3), round(_f(r["reserved_m"]), 3),
+                  round(_f(r["free_m"]), 3), _txt(r["status"]), round(_f(r["unit_cost"]), 2),
+                  round(_f(r["remaining_m"]) * _f(r["unit_cost"]), 2), _txt(r["grn_ref"]),
+                  _txt(r["warehouse"]), _txt(r["bin"]), _txt(r["received_at"])]
+                 for r in rows])
+
+    if key == "movements":
+        labels = _order_labels()
+        rows = list_movements(limit=_MOVEMENT_EXPORT_LIMIT)
+        return (["Movement No", "Date", "Type", "Material Code", "Roll No", "Order",
+                 "Quantity", "Balance Before", "Balance After", "UoM", "Unit Cost",
+                 "Value", "Reference", "Performed By", "Notes"],
+                [[_txt(r["movement_no"]), _txt(r["created_at"]), _txt(r["type"]),
+                  _txt(r["mat_code"]), _txt(r["roll_no"]),
+                  _txt(labels.get(r["order_id"]) or r["order_id"]),
+                  round(_f(r["qty"]), 3), round(_f(r["before_qty"]), 3),
+                  round(_f(r["after_qty"]), 3), _txt(r["uom"]),
+                  round(_f(r["unit_cost"]), 2),
+                  round(_f(r["qty"]) * _f(r["unit_cost"]), 2),
+                  _txt(r["ref"]), _txt(r["performed_by"]), _txt(r["notes"])]
+                 for r in rows])
+
+    if key == "finished-goods":
+        labels = _order_labels()
+        conn = get_db()
+        try:
+            # Flat one-row-per-SKU, not the screen's pivot: a size range differs per buyer,
+            # so dynamic columns would give every order a different CSV shape.
+            rows = conn.execute(
+                "SELECT order_id, style_code, color, size, packed_qty, shipped_qty, uom, "
+                "warehouse, bin, updated_at FROM wh_fg "
+                "ORDER BY order_id, style_code, color, size").fetchall()
+        finally:
+            conn.close()
+        return (["Order", "Order ID", "Style", "Colour", "Size", "Packed", "Shipped",
+                 "In Store", "UoM", "Warehouse", "Bin", "Updated At"],
+                [[_txt(labels.get(r["order_id"]) or r["order_id"]), _txt(r["order_id"]),
+                  _txt(r["style_code"]), _txt(r["color"]), _txt(r["size"]),
+                  round(_f(r["packed_qty"]), 3), round(_f(r["shipped_qty"]), 3),
+                  round(_f(r["packed_qty"]) - _f(r["shipped_qty"]), 3), _txt(r["uom"]),
+                  _txt(r["warehouse"]), _txt(r["bin"]), _txt(r["updated_at"])]
+                 for r in rows])
+
+    if key == "issues-by-order":
+        labels = _order_labels()
+        conn = get_db()
+        try:
+            # Same shape and same pricing rule as issued_for_order() — the cost recorded
+            # ON THE MOVEMENT, so a later receipt cannot rewrite what an order consumed —
+            # only across every order at once, which is what costing gets asked for.
+            rows = conn.execute(
+                "SELECT v.order_id, m.code, m.name, m.uom, "
+                "  SUM(-v.qty) AS qty, SUM(-v.qty * COALESCE(v.unit_cost,0)) AS value "
+                "FROM wh_movements v JOIN wh_materials m ON m.id=v.material_id "
+                "WHERE v.order_id IS NOT NULL AND v.qty<0 AND v.type IN ('issue','transfer') "
+                "GROUP BY v.order_id, m.code, m.name, m.uom "
+                "ORDER BY v.order_id, value DESC").fetchall()
+        finally:
+            conn.close()
+        return (["Order", "Order ID", "Material Code", "Material", "UoM",
+                 "Quantity Issued", "Value Issued"],
+                [[_txt(labels.get(r["order_id"]) or r["order_id"]), _txt(r["order_id"]),
+                  _txt(r["code"]), _txt(r["name"]), _txt(r["uom"]),
+                  round(_f(r["qty"]), 3), round(_f(r["value"]), 2)]
+                 for r in rows])
+
+    return (None, None)

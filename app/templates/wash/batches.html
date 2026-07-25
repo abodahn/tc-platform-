@@ -7,7 +7,10 @@
     <h1 data-i18n="wsh.batches.title">Wash batches</h1>
     <div class="sub" data-i18n="wsh.batches.sub">Every lot records the exact recipe version it ran — that is what makes the shade reproducible later.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.index') }}" data-i18n="wsh.nav.home">Dashboard</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.export_csv', key='batches') }}" data-i18n="wsh.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.index') }}" data-i18n="wsh.nav.home">Dashboard</a>
+  </div>
 </div>
 
 {% if can('wsh_manage') %}

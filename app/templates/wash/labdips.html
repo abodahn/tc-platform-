@@ -8,7 +8,10 @@
     <h1 data-i18n="wsh.dips.title">Lab dips & shade approval</h1>
     <div class="sub" data-i18n="wsh.dips.sub">A recipe version cannot go to bulk until one of its own lab dips is approved.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.index') }}" data-i18n="wsh.nav.home">Dashboard</a>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.export_csv', key='lab-dips') }}" data-i18n="wsh.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.index') }}" data-i18n="wsh.nav.home">Dashboard</a>
+  </div>
 </div>
 
 <form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">

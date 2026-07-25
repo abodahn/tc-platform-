@@ -49,6 +49,7 @@ I18N = {
     "plm.action.save": ("Save", "حفظ", "Kaydet"),
     "plm.action.apply": ("Apply", "تطبيق", "Uygula"),
     "plm.action.all_styles": ("All styles", "كل الموديلات", "Tüm modeller"),
+    "plm.action.export": ("Export CSV", "تصدير CSV", "CSV indir"),
     "plm.action.open": ("Open full version", "فتح الإصدار كاملًا", "Sürümü tam aç"),
     "plm.action.publish": ("Publish new version", "نشر إصدار جديد", "Yeni sürüm yayınla"),
     "plm.action.add_section": ("Add section", "إضافة قسم", "Bölüm ekle"),

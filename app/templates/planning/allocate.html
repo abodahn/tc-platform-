@@ -9,7 +9,11 @@
     <h1 data-i18n="pln.action.allocate">Load an order</h1>
     <div class="sub" data-i18n="pln.alloc.sub">Preview first — the what-if shows the resulting load, finish date and feasibility without saving anything.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.index') }}" data-i18n="pln.nav.board">Load board</a>
+  <div class="flex gap center">
+    {# the whole open plan, not just this form's order — labelled so nobody reads it as filtered #}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.export_csv', key='allocations') }}" data-i18n="pln.action.export_allocs">Export all allocations</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.index') }}" data-i18n="pln.nav.board">Load board</a>
+  </div>
 </div>
 
 <form class="panel" method="post" action="{{ url_for('planning.whatif') }}">

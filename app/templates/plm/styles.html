@@ -9,6 +9,7 @@
   </div>
   <div class="flex gap center">
     {% if can('plm_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('plm.style_new') }}" data-i18n="plm.action.new_style">New style</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('plm.export_csv', key='styles') }}" data-i18n="plm.action.export">Export CSV</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('plm.index') }}" data-i18n="plm.nav.home">PLM</a>
   </div>
 </div>

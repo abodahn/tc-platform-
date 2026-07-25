@@ -7,7 +7,10 @@
     <h1 data-i18n="trc.nav.passports">Digital Product Passports</h1>
     <div class="sub" data-i18n="trc.passports.sub">One passport per order. The completeness score is the to-do list before the EU ESPR passport can be filed.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+  <div class="flex gap">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.export_csv', key='passports') }}" data-i18n="trc.action.export">Export CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+  </div>
 </div>
 
 <div class="panel"><div class="panel-pad">
