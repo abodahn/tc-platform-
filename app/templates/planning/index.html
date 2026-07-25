@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Production planning{% endblock %}
+{% macro feas(s, n) %}{% set c={'on_time':'#15803d','at_risk':'#b45309','late':'#be123c','unplanned':'#6b7280','no_capacity':'#7f1d1d','no_ship_date':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}"><span data-i18n="pln.status.{{ s }}">{{ s|replace('_',' ') }}</span>{% if n %} {{ n }}d{% endif %}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="pln.eyebrow">Planning · Finite capacity</div>
+    <h1 data-i18n="pln.title">Production planning</h1>
+    <div class="sub" data-i18n="pln.dash.sub">Line capacity against the order book — can we actually make it by the ship date, and what breaks if we move it?</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('pln_plan') %}<a class="btn btn-primary btn-sm" href="{{ url_for('planning.allocate') }}" data-i18n="pln.action.allocate">Load an order</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.lines') }}" data-i18n="pln.nav.lines">Line capacity</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.kpi.lines }}</div><div class="l" data-i18n="pln.kpi.lines">Lines planned</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.kpi.utilisation }}%</div><div class="l" data-i18n="pln.kpi.util">Capacity used</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.kpi.overloaded }}</div><div class="l" data-i18n="pln.kpi.overloaded">Overloaded line-days</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.kpi.idle_hours }}</div><div class="l" data-i18n="pln.kpi.idle">Idle capacity (h)</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.kpi.late }}</div><div class="l" data-i18n="pln.kpi.late">Orders late</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.kpi.at_risk }}</div><div class="l" data-i18n="pln.kpi.at_risk">Orders at risk</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.kpi.unplanned }}</div><div class="l" data-i18n="pln.kpi.unplanned">Orders unplanned</div></div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="pln.board.title">Load board — lines × days</h3>
+    <span class="muted" style="font-size:11px" data-i18n="pln.board.hint">Loaded minutes ÷ available minutes. Over 100% = the line is promised more than it has.</span></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="pln.field.line">Line</th>
+          <th style="text-align:right" data-i18n="pln.field.capacity">Capacity / day</th>
+          {% for dt in d.board.dates %}<th style="text-align:right">{{ dt[5:] }}</th>{% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for g in d.board.grid %}
+          <tr>
+            <td><a href="{{ url_for('planning.lines') }}">{{ g.line.code or g.line.name }}</a>
+              {% if not g.line.active %} <span class="tag" data-i18n="pln.status.inactive">Inactive</span>{% endif %}
+              <div class="muted" style="font-size:11px">{{ g.line.name }} · {{ g.line.section or '—' }}</div></td>
+            <td style="text-align:right">{{ g.capacity|round(0)|int }}</td>
+            {% for c in g.cells %}
+              <td style="text-align:right;{% if c.over %}background:#be123c1f;color:#be123c;font-weight:700{% elif c.pct >= 85 %}background:#15803d14;color:#15803d{% elif c.pct > 0 %}color:#6b7280{% endif %}">
+                {% if c.no_cap %}<span class="muted">—</span>{% else %}{{ c.pct|round(0)|int }}%{% endif %}</td>
+            {% endfor %}
+          </tr>
+        {% else %}
+          <tr><td colspan="{{ 2 + d.board.days }}" class="muted" style="text-align:center;padding:16px" data-i18n="pln.empty.lines">No active lines. Add line capacity first.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="pln.dash.orders">Order book — feasibility</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="pln.field.order">Order</th>
+        <th data-i18n="pln.field.style">Style</th>
+        <th style="text-align:right" data-i18n="pln.field.qty">Qty</th>
+        <th style="text-align:right" data-i18n="pln.field.smv">SMV</th>
+        <th style="text-align:right" data-i18n="pln.field.planned">Planned</th>
+        <th data-i18n="pln.field.finish">Projected finish</th>
+        <th data-i18n="pln.field.ship">Ship date</th>
+        <th data-i18n="pln.field.feasibility">Feasibility</th>
+      </tr></thead>
+      <tbody>
+      {% for o in d.orders %}
+        <tr>
+          <td><a href="{{ url_for('planning.order_detail', order_id=o.id) }}">{{ o.order_no }}</a>
+            <div class="muted" style="font-size:11px">{{ o.buyer or '—' }}</div></td>
+          <td>{{ o.style_name or o.style_ref or '—' }}</td>
+          <td style="text-align:right">{{ (o.qty or 0)|round(0)|int }}</td>
+          <td style="text-align:right">{% if o.smv %}{{ o.smv }}{% else %}<span class="muted" data-i18n="pln.empty.smv">not set</span>{% endif %}</td>
+          <td style="text-align:right">{{ (o.planned_qty or 0)|round(0)|int }}</td>
+          <td>{{ o.finish or '—' }}</td>
+          <td>{{ o.ship_date or '—' }}</td>
+          <td>{{ feas(o.status, o.days_late if o.days_late and o.days_late > 0 else 0) }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8" class="muted" style="text-align:center;padding:16px" data-i18n="pln.empty.orders">No open orders to plan.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

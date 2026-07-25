@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% import "cutroom/_macros.html" as m %}
+{% block title %}Cut summary{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cut.eyebrow">Production · Cut Room & Fabric Utilisation</div>
+    <h1>{{ s.order.order_no or s.order_id }}</h1>
+    <div class="sub">{{ s.order.buyer or '' }} · {{ s.order.style_ref or '' }} {{ s.order.style_name or '' }}
+      — <span data-i18n="cut.order.sub">cut quantity and fabric variance against plan</span></div>
+  </div>
+  <div class="flex gap center">
+    {% if can('cut_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('cutroom.lay_new', order_id=s.order_id) }}" data-i18n="cut.action.new_lay">Record lay</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.detail', order_id=s.order_id) }}" data-i18n="cut.action.open_order">Open order</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('cutroom.index') }}" data-i18n="cut.nav.home">Cut room</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ m.n(s.order_qty, 0) }}</div><div class="l" data-i18n="cut.field.qty">Ordered</div></div>
+  <div class="sf-kpi"><div class="v">{{ s.pieces_cut }}</div><div class="l" data-i18n="cut.field.pieces">Pieces cut</div></div>
+  <div class="sf-kpi"><div class="v">{{ m.pct(s.cut_pct) }}</div><div class="l" data-i18n="cut.field.cut_pct">Cut completion</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-r' if s.balance is not none and s.balance < 0 else 'pb-kpi-a' }}">
+    <div class="v">{{ m.n(s.balance, 0) }}</div><div class="l" data-i18n="cut.field.balance">Balance to cut</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-r' if s.variance_pct is not none and s.variance_pct > var_alert else 'pb-kpi-g' }}">
+    <div class="v">{{ m.pct(s.variance_pct, 2) }}</div><div class="l" data-i18n="cut.field.variance">Fabric variance</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ m.n(s.variance_m, 1) }}</div><div class="l" data-i18n="cut.kpi.variance_m">Extra metres burnt</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cut.order.fabric">Fabric account</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <tbody>
+          <tr><td data-i18n="cut.field.planned_cpg">Plan m/garment (BOM)</td><td style="text-align:right">{{ m.n(s.planned_cpg, 4) }}</td></tr>
+          <tr><td data-i18n="cut.field.actual_cpg">Actual m/garment</td><td style="text-align:right">{{ m.n(s.actual_cpg, 4) }}</td></tr>
+          <tr><td data-i18n="cut.field.variance">Fabric variance</td><td style="text-align:right">{{ m.variance(s.variance_pct, var_alert) }}</td></tr>
+          <tr><td data-i18n="cut.field.fabric_used">Fabric used (m)</td><td style="text-align:right">{{ m.n(s.fabric_used_m) }}</td></tr>
+          <tr><td data-i18n="cut.field.theoretical">Theoretical (marker × plies)</td><td style="text-align:right">{{ m.n(s.theoretical_m) }}</td></tr>
+          <tr><td data-i18n="cut.field.util">Utilisation</td><td style="text-align:right">{{ m.pct(s.utilisation_pct) }}</td></tr>
+          <tr><td data-i18n="cut.field.waste">End loss</td><td style="text-align:right">{{ m.pct(s.waste_pct, 2) }}</td></tr>
+          <tr><td data-i18n="cut.field.marker_eff">Marker efficiency</td><td style="text-align:right">{{ m.eff(s.marker_eff_pct, eff_good) }}</td></tr>
+        </tbody>
+      </table>
+      {% if s.planned_cpg is none %}<div class="muted mt-2" data-i18n="cut.hint.no_plan">No metre-denominated fabric line on this order's BOM, so no planned consumption to compare against.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cut.order.recon">Cut vs ordered</h3></div>
+    <div class="panel-pad">
+      <div class="pb-meter"><span style="width:{{ [s.cut_pct or 0, 100]|min }}%"></span></div>
+      <table class="tbl mt-4">
+        <tbody>
+          <tr><td data-i18n="cut.field.qty">Ordered</td><td style="text-align:right">{{ m.n(s.order_qty, 0) }}</td></tr>
+          <tr><td data-i18n="cut.field.pieces">Pieces cut</td><td style="text-align:right">{{ s.pieces_cut }}</td></tr>
+          <tr><td data-i18n="cut.field.balance">Balance to cut</td><td style="text-align:right">{{ m.balance(s.balance) }}</td></tr>
+          <tr><td data-i18n="cut.field.lays">Lays</td><td style="text-align:right">{{ s.lay_count }}</td></tr>
+        </tbody>
+      </table>
+      {% if s.balance is not none and s.balance < 0 %}
+        <div class="muted mt-2" data-i18n="cut.hint.overcut">More pieces cut than ordered — over-cut fabric is paid for and rarely shipped.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="cut.order.lays">Lays on this order</h3></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="cut.field.lay">Lay</th>
+        <th data-i18n="cut.field.marker_ref">Marker</th>
+        <th data-i18n="cut.field.shade_lot">Shade lot</th>
+        <th style="text-align:right" data-i18n="cut.field.plies">Plies</th>
+        <th style="text-align:right" data-i18n="cut.field.pieces">Pieces</th>
+        <th style="text-align:right" data-i18n="cut.field.fabric_used">Used (m)</th>
+        <th style="text-align:right" data-i18n="cut.field.cpg">m/garment</th>
+        <th style="text-align:right" data-i18n="cut.field.marker_eff">Marker eff.</th>
+        <th style="text-align:right" data-i18n="cut.field.waste">End loss</th>
+        <th data-i18n="cut.field.status">Status</th>
+      </tr></thead>
+      <tbody>
+      {% for l in s.lays %}
+        <tr>
+          <td><a href="{{ url_for('cutroom.lay_detail', lay_id=l.id) }}">{{ l.lay_no or l.id }}</a>
+            <div class="muted" style="font-size:11px">{{ l.cut_date or '' }}</div></td>
+          <td class="muted">{{ l.marker_ref or '—' }}</td>
+          <td class="muted">{{ l.shade_lot or '—' }}</td>
+          <td style="text-align:right">{{ l.plies }}</td>
+          <td style="text-align:right">{{ l.pieces_cut }}</td>
+          <td style="text-align:right">{{ m.n(l.fabric_used_m) }}{% if not l.measured %} <span class="tag" data-i18n="cut.tag.planned">plan</span>{% endif %}</td>
+          <td style="text-align:right">{{ m.n(l.cons_per_gmt, 4) }}</td>
+          <td style="text-align:right">{{ m.eff(l.marker_eff_pct, eff_good) }}</td>
+          <td style="text-align:right">{{ m.variance(l.waste_pct, 3) }}</td>
+          <td><span class="tag">{{ l.status }}</span></td>
+        </tr>
+      {% else %}<tr><td colspan="10" class="muted" style="text-align:center;padding:18px" data-i18n="cut.empty.lays">No lays recorded yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

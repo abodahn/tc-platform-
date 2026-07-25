@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Lab dips{% endblock %}
+{% macro vd(v) %}{% set c={'approved':'#0f7a4d','rejected':'#be123c','resubmit':'#b45309','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v,'#6b7280') }}18;color:{{ c.get(v,'#6b7280') }}">{{ v }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="wsh.eyebrow">Wet processing · Wash & finishing</div>
+    <h1 data-i18n="wsh.dips.title">Lab dips & shade approval</h1>
+    <div class="sub" data-i18n="wsh.dips.sub">A recipe version cannot go to bulk until one of its own lab dips is approved.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.index') }}" data-i18n="wsh.nav.home">Dashboard</a>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <select name="verdict" onchange="this.form.submit()">
+    <option value="" data-i18n="wsh.filter.all_verdicts">All verdicts</option>
+    {% for v in verdicts %}<option value="{{ v }}" {{ 'selected' if f_verdict==v }}>{{ v }}</option>{% endfor %}
+  </select>
+  {% if f_verdict %}<a class="tag" href="{{ url_for('wash.labdips') }}" data-i18n="wsh.filter.clear">Clear</a>{% endif %}
+</div></form>
+
+{% if can('wsh_manage') %}
+<form class="panel" method="post" action="{{ url_for('wash.labdip_create') }}" style="margin-bottom:14px">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="wsh.action.new_dip">Log a lab dip</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field span-2"><label data-i18n="wsh.field.version">Recipe version *</label>
+        <select name="version_id" required>
+          {% for v in versions %}<option value="{{ v.id }}">{{ v.code }} v{{ v.version }} · {{ v.status }} — {{ v.name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="wsh.field.reference">Reference</label><input name="reference" placeholder="LD-…"></div>
+      <div class="field"><label data-i18n="wsh.field.batch">Batch</label>
+        <select name="batch_id"><option value="" data-i18n="wsh.field.no_batch">Recipe-level (no batch)</option>
+          {% for b in batches %}<option value="{{ b.id }}">{{ b.batch_no }} · {{ b.code }} v{{ b.version }}</option>{% endfor %}</select></div>
+      <div class="field span-2"><label data-i18n="wsh.field.notes">Notes</label><input name="notes"></div>
+    </div>
+    <button class="btn btn-primary btn-sm mt-2" data-i18n="wsh.action.log_dip">Log lab dip</button>
+  </div>
+</form>
+{% endif %}
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="wsh.field.reference">Reference</th><th data-i18n="wsh.field.recipe">Recipe</th>
+      <th data-i18n="wsh.field.verdict">Verdict</th><th data-i18n="wsh.field.approver">Approver</th>
+      <th data-i18n="wsh.field.date">Date</th><th data-i18n="wsh.field.notes">Notes</th>
+      {% if can('wsh_approve') %}<th data-i18n="wsh.field.decision">Decision</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr><td>{{ r.reference or '—' }}</td>
+        <td>{% if r.recipe_id %}<a href="{{ url_for('wash.recipe_detail', recipe_id=r.recipe_id, v=r.version_id) }}">{{ r.code or '—' }}</a>{% else %}{{ r.code or '—' }}{% endif %}
+          <span class="muted">v{{ r.version or '?' }}</span></td>
+        <td>{{ vd(r.verdict) }}{% if r.batch_no %}<div class="muted" style="font-size:11px">{{ r.batch_no }}</div>{% endif %}</td>
+        <td class="muted">{{ r.approver or '—' }}</td>
+        <td style="font-variant-numeric:tabular-nums">{{ r.verdict_date or '—' }}</td>
+        <td class="muted">{{ (r.notes or '')[:60] }}</td>
+        {% if can('wsh_approve') %}
+        <td><form method="post" action="{{ url_for('wash.labdip_verdict', dip_id=r.id) }}" class="flex gap center">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <select name="verdict">{% for v in verdicts %}<option value="{{ v }}" {{ 'selected' if r.verdict==v }}>{{ v }}</option>{% endfor %}</select>
+          <button class="btn btn-ghost btn-sm" data-i18n="wsh.action.save_verdict">Save</button>
+        </form></td>
+        {% endif %}
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="wsh.empty.dips">No lab dips waiting.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

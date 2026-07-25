@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Inspections{% endblock %}
+{% macro vb(v) %}{% set c={'pass':'#0f7a4d','fail':'#be123c','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v,'#6b7280') }}18;color:{{ c.get(v,'#6b7280') }}">{{ v }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="qc.eyebrow">Quality · Digital QMS</div>
+    <h1 data-i18n="qc.nav.inspections">Inspections</h1>
+  </div>
+  <div class="flex gap center">
+    {% if can('qc_inspect') %}<a class="btn btn-primary btn-sm" href="{{ url_for('quality.new') }}" data-i18n="qc.action.new">New inspection</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('quality.index') }}" data-i18n="qc.nav.home">Quality</a>
+  </div>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <select name="order_id" onchange="this.form.submit()">
+    <option value="" data-i18n="qc.filter.all_orders">All orders</option>
+    {% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if f_order == o.id|string }}>{{ o.order_no }} — {{ o.buyer }}</option>{% endfor %}
+  </select>
+  <select name="stage" onchange="this.form.submit()">
+    <option value="" data-i18n="qc.filter.all_stages">All stages</option>
+    {% for s in stages %}<option value="{{ s }}" {{ 'selected' if f_stage == s }}>{{ s|replace('_',' ') }}</option>{% endfor %}
+  </select>
+  <select name="verdict" onchange="this.form.submit()">
+    <option value="" data-i18n="qc.filter.all_verdicts">All verdicts</option>
+    {% for v in verdicts %}<option value="{{ v }}" {{ 'selected' if f_verdict == v }}>{{ v }}</option>{% endfor %}
+  </select>
+  {% if f_order or f_stage or f_verdict %}<a class="tag" href="{{ url_for('quality.inspections') }}" data-i18n="qc.filter.clear">Clear</a>{% endif %}
+</div></form>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="qc.field.ref">Ref</th><th data-i18n="qc.field.date">Date</th>
+      <th data-i18n="qc.field.order">Order</th><th data-i18n="qc.field.stage">Stage</th>
+      <th style="text-align:right" data-i18n="qc.field.lot">Lot size</th>
+      <th style="text-align:right" data-i18n="qc.field.aql">AQL</th>
+      <th data-i18n="qc.field.code">Code</th>
+      <th style="text-align:right" data-i18n="qc.field.sample">Sample size</th>
+      <th style="text-align:right" data-i18n="qc.field.acre">Ac / Re</th>
+      <th style="text-align:right" data-i18n="qc.field.defectives">Defective units</th>
+      <th style="text-align:right" data-i18n="qc.field.dhu">DHU</th>
+      <th data-i18n="qc.field.verdict">Verdict</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="{{ url_for('quality.detail', inspection_id=r.id) }}">{{ r.ref }}</a></td>
+        <td>{{ r.inspection_date or '—' }}</td>
+        <td>{% if r.order_id %}<a href="{{ url_for('orders.detail', order_id=r.order_id) }}">{{ r.order_no }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="muted">{{ (r.stage or '—')|replace('_',' ') }}</td>
+        <td style="text-align:right">{{ '{:,.0f}'.format(r.lot_size or 0) }}</td>
+        <td style="text-align:right">{{ '%g'|format(r.aql or 0) }}</td>
+        <td>{{ r.code_letter }}</td>
+        <td style="text-align:right">{{ '%g'|format(r.sample_size or 0) }}</td>
+        <td style="text-align:right">{{ '%g'|format(r.accept_no or 0) }} / {{ '%g'|format(r.reject_no or 0) }}</td>
+        <td style="text-align:right">{{ '%g'|format(r.defective_units or 0) }}</td>
+        <td style="text-align:right">{{ '%.2f'|format(r.dhu) }}</td>
+        <td>{{ vb(r.verdict) }}</td>
+      </tr>
+    {% else %}<tr><td colspan="12" class="muted" style="text-align:center;padding:18px" data-i18n="qc.empty.inspections">No inspections yet — record the first one.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

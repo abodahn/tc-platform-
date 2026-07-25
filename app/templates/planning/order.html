@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}{{ f.order.order_no }} · plan{% endblock %}
+{% macro feas(s, n) %}{% set c={'on_time':'#15803d','at_risk':'#b45309','late':'#be123c','unplanned':'#6b7280','no_capacity':'#7f1d1d','no_ship_date':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}"><span data-i18n="pln.status.{{ s }}">{{ s|replace('_',' ') }}</span>{% if n %} {{ n }}d{% endif %}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="pln.eyebrow">Planning · Finite capacity</div>
+    <h1>{{ f.order.order_no }} — {{ f.order.style_name or f.order.style_ref or '' }}</h1>
+    <div class="sub">{{ f.order.buyer or '—' }} · <span data-i18n="pln.field.qty">Qty</span> {{ (f.order.qty or 0)|round(0)|int }} · <span data-i18n="pln.field.ship">Ship date</span> {{ f.order.ship_date or '—' }}</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.balance', order_id=f.order.id) }}" data-i18n="pln.nav.balance">Line balancing</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.detail', order_id=f.order.id) }}" data-i18n="pln.action.open_order">Open order</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ f.order.smv or '—' }}</div><div class="l" data-i18n="pln.field.smv">SMV</div></div>
+  <div class="sf-kpi"><div class="v">{{ f.required_minutes|round(0)|int }}</div><div class="l" data-i18n="pln.kpi.req_minutes">Minutes required</div></div>
+  <div class="sf-kpi"><div class="v">{{ f.planned_qty|round(0)|int }}</div><div class="l" data-i18n="pln.kpi.planned_qty">Quantity planned</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-a' if f.unplanned_qty else 'pb-kpi-g' }}"><div class="v">{{ f.unplanned_qty|round(0)|int }}</div><div class="l" data-i18n="pln.kpi.unplanned_qty">Quantity unplanned</div></div>
+  {% if f.over_qty %}<div class="sf-kpi pb-kpi-r"><div class="v">{{ f.over_qty|round(0)|int }}</div><div class="l" data-i18n="pln.kpi.over_qty">Over-planned quantity</div></div>{% endif %}
+</div>
+{% if f.over_qty %}
+<div class="panel mt-4"><div class="panel-pad muted" data-i18n="pln.feas.over_hint">More quantity is loaded onto lines than this order actually needs — those minutes are really taken from the lines. Un-plan the surplus.</div></div>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="pln.feas.title">Feasibility vs ship date</h3></div>
+  <div class="panel-pad">
+    <div class="flex gap center wrap">
+      <div><span class="muted" data-i18n="pln.field.finish">Projected finish</span>: <strong>{{ f.finish or '—' }}</strong></div>
+      <div><span class="muted" data-i18n="pln.field.ship">Ship date</span>: <strong>{{ f.order.ship_date or '—' }}</strong></div>
+      <div>{{ feas(f.status, f.days_late if f.days_late and f.days_late > 0 else 0) }}</div>
+      {% if f.days_late is not none and f.days_late > 0 %}
+      <div class="muted" data-i18n="pln.feas.late_hint">The plan finishes after the ship date — split the quantity across lines, start earlier, or move the ship date.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="pln.alloc.list">Line allocations</h3>
+    {% if can('pln_plan') %}<a class="tag" href="{{ url_for('planning.allocate') }}" data-i18n="pln.action.allocate">Load an order</a>{% endif %}</div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="pln.field.line">Line</th>
+          <th style="text-align:right" data-i18n="pln.field.qty">Qty</th>
+          <th style="text-align:right" data-i18n="pln.field.smv">SMV</th>
+          <th style="text-align:right" data-i18n="pln.field.minutes">Minutes</th>
+          <th style="text-align:right" data-i18n="pln.field.capacity">Capacity / day</th>
+          <th style="text-align:right" data-i18n="pln.field.days">Days</th>
+          <th data-i18n="pln.field.start">Start date</th>
+          <th data-i18n="pln.field.finish">Projected finish</th>
+          {% if can('pln_plan') %}<th data-i18n="pln.field.actions">Actions</th>{% endif %}
+        </tr></thead>
+        <tbody>
+        {% for a in f.allocations %}
+          <tr>
+            <td>{{ a.line_code or a.line_name }}<div class="muted" style="font-size:11px">{{ a.line_name }}</div></td>
+            <td style="text-align:right">{{ (a.qty or 0)|round(0)|int }}</td>
+            <td style="text-align:right">{{ a.smv }}</td>
+            <td style="text-align:right">{{ a.minutes|round(0)|int }}</td>
+            <td style="text-align:right">{{ a.capacity|round(0)|int }}</td>
+            <td style="text-align:right">{{ a.days if a.days is not none else '—' }}</td>
+            <td>{{ a.start_date or '—' }}</td>
+            <td>{{ a.end_date or '—' }}</td>
+            {% if can('pln_plan') %}
+            <td><form method="post" action="{{ url_for('planning.allocation_delete', alloc_id=a.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button class="btn btn-sm btn-ghost" data-i18n="pln.action.unplan">Un-plan</button></form></td>
+            {% endif %}
+          </tr>
+        {% else %}
+          <tr><td colspan="9" class="muted" style="text-align:center;padding:16px" data-i18n="pln.empty.allocs">Not loaded onto any line yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if can('pln_plan') %}
+<div class="grid cols-2 mt-4">
+  <form class="panel" method="post" action="{{ url_for('planning.smv_set', order_id=f.order.id) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-head"><h3 data-i18n="pln.smv.title">Standard minute value</h3></div>
+    <div class="panel-pad">
+      <div class="field"><label data-i18n="pln.field.smv">SMV</label>
+        <input name="smv" type="number" min="0" step="any" value="{{ f.order.smv or '' }}"></div>
+      <div class="muted mt-2" data-i18n="pln.smv.hint">Minutes of standard work in one garment. Required minutes = quantity × SMV.</div>
+      <div class="flex gap center mt-4"><button class="btn btn-primary" data-i18n="pln.action.save">Save</button></div>
+    </div>
+  </form>
+
+  <form class="panel" method="post" action="{{ url_for('planning.allocation_create') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="order_id" value="{{ f.order.id }}">
+    <div class="panel-head"><h3 data-i18n="pln.alloc.quick">Load onto a line</h3></div>
+    <div class="panel-pad">
+      <div class="grid cols-2">
+        <div class="field"><label data-i18n="pln.field.line">Line</label>
+          <select name="pline_id" required>{% for l in lines %}<option value="{{ l.id }}">{{ l.code or l.name }} ({{ l.capacity|round(0)|int }} min/d)</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="pln.field.qty_load">Quantity to load</label>
+          <input name="qty" type="number" min="1" step="any" value="{{ f.unplanned_qty|round(0)|int if f.unplanned_qty else '' }}" required></div>
+        <div class="field span-2"><label data-i18n="pln.field.start">Start date</label>
+          <input name="start_date" type="date"></div>
+      </div>
+      <div class="flex gap center mt-4">
+        <button class="btn btn-primary" data-i18n="pln.action.commit">Commit this allocation</button>
+        <a class="btn btn-ghost" href="{{ url_for('planning.allocate') }}" data-i18n="pln.action.whatif">Preview (what-if)</a>
+      </div>
+    </div>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

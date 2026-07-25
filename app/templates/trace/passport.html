@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Passport {{ order.order_no }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="trc.eyebrow">Sustainability · Traceability & Product Passport</div>
+    <h1>{{ order.order_no }} — <span data-i18n="trc.passport.title">Digital Product Passport</span></h1>
+    <div class="sub">{{ order.buyer or '' }}{% if order.style_name %} · {{ order.style_name }}{% endif %}{% if order.ship_date %} · <span data-i18n="trc.field.ship">Ship date</span> {{ order.ship_date }}{% endif %}</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.detail', order_id=order.id) }}" data-i18n="trc.action.open_order">Open order</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.passports') }}" data-i18n="trc.nav.passports">Product passports</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi {{ 'pb-kpi-g' if completeness.pct >= min_pct else 'pb-kpi-r' }}">
+    <div class="v">{{ completeness.pct }}%</div><div class="l" data-i18n="trc.kpi.completeness">Passport completeness</div></div>
+  <div class="sf-kpi"><div class="v">{{ completeness.present }}/{{ completeness.total }}</div><div class="l" data-i18n="trc.kpi.points">Data points present</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-g' if deepest_tier and deepest_tier >= 4 else 'pb-kpi-a' }}">
+    <div class="v">{{ deepest_tier or '—' }}</div><div class="l" data-i18n="trc.kpi.deepest">Deepest tier reached</div></div>
+  <div class="sf-kpi"><div class="v">{{ nodes|length }}</div><div class="l" data-i18n="trc.kpi.chain_nodes">Chain nodes</div></div>
+  <div class="sf-kpi"><div class="v">{{ certs|length }}</div><div class="l" data-i18n="trc.kpi.chain_certs">Certificates on the chain</div></div>
+  <div class="sf-kpi"><div class="v">{{ esg.water_l_per_pc if esg.water_l_per_pc is not none else '—' }}</div><div class="l" data-i18n="trc.kpi.water_pc">Water L / garment</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="trc.passport.checklist">Required data points</h3></div>
+    <div class="panel-pad">
+      <div class="pb-meter"><span style="width:{{ completeness.pct }}%"></span></div>
+      <table class="tbl mt-2">
+        <tbody>
+        {% for p in completeness.points %}
+          <tr><td>{% if p.ok %}<span class="tag" style="background:#04785718;color:#047857">✓</span>
+            {% else %}<span class="tag" style="background:#be123c18;color:#be123c">✗</span>{% endif %}</td>
+            <td data-i18n="{{ p.i18n }}">{{ p.key }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="trc.passport.product">Product declaration</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <tbody>
+          <tr><td data-i18n="trc.field.composition">Fibre composition</td>
+            <td>{% for c in composition %}<span class="tag">{{ c }}</span> {% else %}<span class="muted">—</span>{% endfor %}</td></tr>
+          <tr><td data-i18n="trc.field.origin">Country of origin</td>
+            <td>{{ header.country_of_origin or '—' }}</td></tr>
+          <tr><td data-i18n="trc.field.material_origin">Material origins</td>
+            <td class="muted">{{ material_origins|join(', ') or '—' }}</td></tr>
+          <tr><td data-i18n="trc.field.recycled">Recycled content</td>
+            <td>{{ header.recycled_content_pct or 0 }}%</td></tr>
+          <tr><td data-i18n="trc.field.care">Care instructions</td>
+            <td class="muted">{{ header.care_instructions or '—' }}</td></tr>
+          <tr><td data-i18n="trc.field.recycling">End-of-life / recycling</td>
+            <td class="muted">{{ header.recycling_info or '—' }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if truncated %}
+<div class="panel mt-4"><div class="panel-pad muted" data-i18n="trc.warn.truncated">The upstream walk was stopped early — this chain loops back on itself or is longer than the safety limit. Fix the parent lot links.</div></div>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="trc.passport.chain">Chain of custody</h3></div>
+  <div class="panel-pad">
+    {% for ch in chains %}
+      <table class="tbl {{ 'mt-4' if not loop.first }}">
+        <thead><tr><th data-i18n="trc.field.step">Step</th><th data-i18n="trc.field.lot">Lot</th>
+          <th data-i18n="trc.field.partner">Supplier</th><th data-i18n="trc.field.tier">Tier</th>
+          <th data-i18n="trc.field.country">Country</th>
+          {% if can('trc_manage') %}<th></th>{% endif %}</tr></thead>
+        <tbody>
+        {% for n in ch.rows %}
+          <tr><td class="muted">{{ n.depth + 1 }}</td>
+            <td><a href="{{ url_for('trace.lot_detail', lot_id=n.id) }}">{{ n.lot_ref or n.id }}</a>
+              <div class="muted" style="font-size:11px">{{ n.material or '—' }}{% if n.fibre_composition %} · {{ n.fibre_composition }}{% endif %}</div></td>
+            <td class="muted">{{ n.partner_name or '—' }}</td>
+            <td>{% if n.tier in tiers %}<span class="tag" data-i18n="trc.tier.{{ n.tier }}">{{ tiers[n.tier] }}</span>
+              {% elif n.tier %}<span class="tag">{{ n.tier }}</span>
+              {% else %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="trc.badge.no_supplier">no supplier</span>{% endif %}</td>
+            <td class="muted">{{ n.country_of_origin or n.partner_country or '—' }}</td>
+            {% if can('trc_manage') %}<td style="text-align:right">
+              {% if loop.first %}<form method="post" action="{{ url_for('trace.passport_unlink_lot', order_id=order.id, link_id=ch.link_id) }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button class="btn btn-ghost btn-sm" data-i18n="trc.action.unlink">Unlink</button></form>{% endif %}</td>{% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted" style="text-align:center;padding:16px" data-i18n="trc.empty.chain">No material lot is linked to this order yet — the passport cannot be traced.</div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="trc.passport.certs">Material certificates on this chain</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="trc.field.standard">Standard</th><th data-i18n="trc.field.partner">Partner</th>
+        <th data-i18n="trc.field.scope">Scope</th><th data-i18n="trc.field.valid_until">Valid until</th>
+        <th data-i18n="trc.field.status">Status</th></tr></thead>
+      <tbody>
+      {% for c in certs %}
+        <tr><td>{{ c.standard }}{% if c.cert_no %}<div class="muted" style="font-size:11px">{{ c.cert_no }}</div>{% endif %}</td>
+          <td class="muted">{{ c.partner_name or '—' }}</td>
+          <td class="muted" style="font-size:11.5px">{{ c.scope or '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ c.valid_until or '—' }}</td>
+          <td>{% if c.derived_status == 'valid' %}<span class="tag" style="background:#04785718;color:#047857" data-i18n="trc.status.valid">valid</span>
+            {% elif c.derived_status == 'expiring' %}<span class="tag" style="background:#b4530918;color:#b45309">{{ c.days }}d</span>
+            {% elif c.derived_status == 'expired' %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="trc.status.expired">expired</span>
+            {% elif c.derived_status == 'revoked' %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="trc.status.revoked">revoked</span>
+            {% elif c.derived_status == 'pending' %}<span class="tag" style="background:#b4530918;color:#b45309" data-i18n="trc.status.pending">not yet in force</span>
+            {% else %}<span class="tag" data-i18n="trc.status.unknown">unknown</span>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="trc.empty.chain_certs">No material certificate covers this chain.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="trc.passport.esg">Recorded ESG footprint</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="sf-kpi"><div class="v">{{ esg.energy_kwh or 0 }}</div><div class="l" data-i18n="trc.field.energy">Energy kWh</div></div>
+      <div class="sf-kpi"><div class="v">{{ esg.water_m3 or 0 }}</div><div class="l" data-i18n="trc.field.water">Water m³</div></div>
+      <div class="sf-kpi"><div class="v">{{ esg.waste_kg or 0 }}</div><div class="l" data-i18n="trc.field.waste">Waste kg</div></div>
+      <div class="sf-kpi"><div class="v">{{ esg.garments or 0 }}</div><div class="l" data-i18n="trc.field.garments">Garments</div></div>
+    </div>
+    <div class="grid cols-4 mt-2">
+      <div class="sf-kpi"><div class="v">{{ esg.energy_per_pc if esg.energy_per_pc is not none else '—' }}</div><div class="l" data-i18n="trc.kpi.energy_pc">kWh / garment</div></div>
+      <div class="sf-kpi"><div class="v">{{ esg.water_l_per_pc if esg.water_l_per_pc is not none else '—' }}</div><div class="l" data-i18n="trc.kpi.water_pc">Water L / garment</div></div>
+      <div class="sf-kpi"><div class="v">{{ esg.waste_g_per_pc if esg.waste_g_per_pc is not none else '—' }}</div><div class="l" data-i18n="trc.kpi.waste_pc">Waste g / garment</div></div>
+      <div class="sf-kpi"><div class="v">{{ esg.rows|length }}</div><div class="l" data-i18n="trc.kpi.esg_records">Records</div></div>
+    </div>
+    <div class="muted mt-2" style="font-size:11.5px" data-i18n="trc.esg.disclaimer">Recorded metered/invoiced data divided by pieces produced. This is not a certified LCA or a verified carbon footprint.</div>
+  </div>
+</div>
+
+{% if can('trc_manage') %}
+<div class="grid cols-2 mt-4">
+  <form class="panel" method="post" action="{{ url_for('trace.passport_save', order_id=order.id) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-head"><h3 data-i18n="trc.action.edit_passport">Passport declaration</h3></div>
+    <div class="panel-pad">
+      <div class="field"><label data-i18n="trc.field.origin">Country of origin</label>
+        <input name="country_of_origin" value="{{ header.country_of_origin or '' }}"></div>
+      <div class="field"><label data-i18n="trc.field.recycled">Recycled content %</label>
+        <input type="number" name="recycled_content_pct" min="0" max="100" step="any" value="{{ header.recycled_content_pct or 0 }}"></div>
+      <div class="field"><label data-i18n="trc.field.care">Care instructions</label>
+        <textarea name="care_instructions" style="width:100%;min-height:64px">{{ header.care_instructions or '' }}</textarea></div>
+      <div class="field"><label data-i18n="trc.field.recycling">End-of-life / recycling</label>
+        <textarea name="recycling_info" style="width:100%;min-height:64px">{{ header.recycling_info or '' }}</textarea></div>
+      <button class="btn btn-primary btn-sm mt-2" data-i18n="trc.action.save">Save</button>
+    </div>
+  </form>
+
+  <div>
+    <form class="panel" method="post" action="{{ url_for('trace.passport_link_lot', order_id=order.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="panel-head"><h3 data-i18n="trc.action.link_lot">Link a material lot</h3></div>
+      <div class="panel-pad">
+        <div class="field"><label data-i18n="trc.field.lot">Material lot</label>
+          <select name="lot_id">{% for l in all_lots %}<option value="{{ l.id }}">{{ l.lot_ref }} · {{ l.material }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="trc.field.qty_used">Qty used</label>
+          <input type="number" name="qty_used" min="0" step="any"></div>
+        <button class="btn btn-primary btn-sm mt-2" data-i18n="trc.action.link_lot">Link a material lot</button>
+      </div>
+    </form>
+
+    <form class="panel mt-4" method="post" action="{{ url_for('trace.passport_esg', order_id=order.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="panel-head"><h3 data-i18n="trc.action.add_esg">Record ESG consumption</h3></div>
+      <div class="panel-pad">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="trc.field.energy">Energy kWh</label><input type="number" name="energy_kwh" min="0" step="any"></div>
+          <div class="field"><label data-i18n="trc.field.water">Water m³</label><input type="number" name="water_m3" min="0" step="any"></div>
+          <div class="field"><label data-i18n="trc.field.waste">Waste kg</label><input type="number" name="waste_kg" min="0" step="any"></div>
+          <div class="field"><label data-i18n="trc.field.garments">Garments</label><input type="number" name="garments" min="0" step="any"></div>
+          <div class="field span-2"><label data-i18n="trc.field.source">Source of the figures</label>
+            <input name="source" data-i18n-ph="trc.ph.source" placeholder="Sub-meter reading / utility invoice"></div>
+        </div>
+        <button class="btn btn-primary btn-sm mt-2" data-i18n="trc.action.add_esg">Record ESG consumption</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

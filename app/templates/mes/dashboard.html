@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}MES{% endblock %}
+{% macro ragtag(r, txt) %}{% set c={'green':'#15803d','amber':'#b45309','red':'#be123c'} %}<span class="tag" style="background:{{ c.get(r,'#6b7280') }}18;color:{{ c.get(r,'#6b7280') }}">{{ txt }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="mes.eyebrow">Smart Factory · Shop-floor MES</div>
+    <h1 data-i18n="mes.nav.home">Shop-floor MES</h1>
+    <div class="sub" data-i18n="mes.dash.sub">Hourly output against plan, coded losses, OEE and live WIP — caught this hour, not next week.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('mes_entry') %}<a class="btn btn-primary btn-sm" href="{{ url_for('mes.entry') }}" data-i18n="mes.action.entry">Record hour</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.board') }}" data-i18n="mes.action.board">Hourly board</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.bundles') }}" data-i18n="mes.action.bundles">Bundles &amp; WIP</a>
+  </div>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px">
+  <div class="panel-pad flex gap center wrap">
+    <div class="field" style="margin:0"><label data-i18n="mes.filter.date">Production day</label>
+      <input type="date" name="date" value="{{ d.work_date }}" onchange="this.form.submit()"></div>
+    <span class="muted" data-i18n="mes.filter.hint">Defaults to the latest day with production.</span>
+  </div>
+</form>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.t.actual }}</div><div class="l" data-i18n="mes.kpi.output">Output today (pcs)</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.t.target }}</div><div class="l" data-i18n="mes.kpi.target">Target (pcs)</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-g' if d.t.rag=='green' else ('pb-kpi-a' if d.t.rag=='amber' else ('pb-kpi-r' if d.t.rag=='red' else '')) }}"><div class="v">{{ d.t.achievement }}%</div><div class="l" data-i18n="mes.kpi.achievement">Achievement</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.t.efficiency }}%</div><div class="l" data-i18n="mes.kpi.efficiency">Line efficiency</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.t.oee }}%</div><div class="l" data-i18n="mes.kpi.oee">OEE</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.downtime_day }}</div><div class="l" data-i18n="mes.kpi.downtime">Downtime (min)</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi"><div class="v">{{ d.wip_units }}</div><div class="l" data-i18n="mes.kpi.wip">WIP (pcs)</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.lines_running }}</div><div class="l" data-i18n="mes.kpi.lines_running">Lines running</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.t.red_hours }}</div><div class="l" data-i18n="mes.kpi.red_hours">Red hours</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.t.hours }}</div><div class="l" data-i18n="mes.kpi.hours">Hours recorded</div></div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mes.dash.lines">Output &amp; OEE by line</h3>
+    <a class="tag" href="{{ url_for('mes.board', date=d.work_date) }}" data-i18n="mes.action.board">Hourly board</a></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th data-i18n="mes.field.line">Line</th>
+        <th style="text-align:right" data-i18n="mes.field.target">Target</th>
+        <th style="text-align:right" data-i18n="mes.field.actual">Actual</th>
+        <th style="text-align:right" data-i18n="mes.field.ach">Ach. %</th>
+        <th style="text-align:right" data-i18n="mes.field.eff">Eff. %</th>
+        <th style="text-align:right" data-i18n="mes.field.a">A %</th>
+        <th style="text-align:right" data-i18n="mes.field.p">P %</th>
+        <th style="text-align:right" data-i18n="mes.field.q">Q %</th>
+        <th style="text-align:right" data-i18n="mes.field.oee">OEE %</th>
+        <th style="text-align:right" data-i18n="mes.field.downtime">Down (min)</th></tr></thead>
+      <tbody>
+      {% for l in d.lines %}
+        <tr><td><a href="{{ url_for('mes.line', line_id=l.line_id, date=d.work_date) }}">{{ l.line_name }}</a></td>
+          <td style="text-align:right">{{ l.target }}</td>
+          <td style="text-align:right">{{ l.actual }}</td>
+          <td style="text-align:right">{{ ragtag(l.rag, l.achievement ~ '%') }}</td>
+          <td style="text-align:right">{{ l.efficiency }}</td>
+          <td style="text-align:right">{{ l.availability }}</td>
+          <td style="text-align:right">{{ l.performance }}</td>
+          <td style="text-align:right">{{ l.quality }}</td>
+          <td style="text-align:right"><strong>{{ l.oee }}</strong></td>
+          <td style="text-align:right">{{ l.downtime_min }}</td></tr>
+      {% else %}<tr><td colspan="10" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.lines">No hourly production recorded for this day yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="mes.dash.losses">Top downtime reasons</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="mes.field.reason">Reason</th><th style="text-align:right" data-i18n="mes.field.minutes">Minutes</th></tr></thead>
+        <tbody>
+        {% for r in d.downtime_top %}
+          <tr><td data-i18n="mes.reason.{{ r.reason }}">{{ r.reason|replace('_',' ') }}</td>
+            <td style="text-align:right">{{ r.minutes }}</td></tr>
+        {% else %}<tr><td colspan="2" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.losses">No downtime recorded — good day.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="mes.dash.wip">WIP by section</h3>
+      <a class="tag" href="{{ url_for('mes.bundles') }}" data-i18n="mes.action.bundles">Bundles &amp; WIP</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="mes.field.section">Section</th><th style="text-align:right" data-i18n="mes.field.qty">Pieces</th></tr></thead>
+        <tbody>
+        {% for w in d.wip %}
+          <tr><td data-i18n="mes.section.{{ w.section }}">{{ w.section }}</td>
+            <td style="text-align:right">{{ w.qty }}</td></tr>
+        {% else %}<tr><td colspan="2" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.wip">No bundles cut yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mes.dash.recon">Cut vs sewn by order</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="mes.field.order">Order</th>
+        <th style="text-align:right" data-i18n="mes.field.cut">Cut</th>
+        <th style="text-align:right" data-i18n="mes.field.sewn">Sewn</th>
+        <th style="text-align:right" data-i18n="mes.field.balance">Balance</th></tr></thead>
+      <tbody>
+      {% for r in d.recon %}
+        <tr><td>{% if r.order_id %}<a href="{{ url_for('orders.detail', order_id=r.order_id) }}">{{ r.order_no or r.order_id }}</a>
+              <span class="muted">{{ r.buyer or '' }}</span>{% else %}<span class="muted" data-i18n="mes.field.unassigned">Unassigned</span>{% endif %}</td>
+          <td style="text-align:right">{{ r.cut }}</td>
+          <td style="text-align:right">{{ r.sewn }}</td>
+          <td style="text-align:right"><strong>{{ r.balance }}</strong></td></tr>
+      {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.recon">Nothing to reconcile yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

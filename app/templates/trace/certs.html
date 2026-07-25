@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Material certificates{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="trc.eyebrow">Sustainability · Traceability & Product Passport</div>
+    <h1 data-i18n="trc.nav.certs">Material certificates</h1>
+    <div class="sub" data-i18n="trc.certs.sub">GOTS, OEKO-TEX, GRS, RCS, ZDHC and bluesign on the MATERIAL. Factory certificates (WRAP, BSCI, licences) live in Compliance.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px">
+  <div class="panel-pad flex gap center wrap">
+    <select name="standard" onchange="this.form.submit()">
+      <option value="" data-i18n="trc.filter.all_standards">All standards</option>
+      {% for s in standards %}<option value="{{ s }}" {{ 'selected' if f_standard == s }}>{{ s }}</option>{% endfor %}
+    </select>
+    {% if f_standard %}<a class="tag" href="{{ url_for('trace.certs') }}" data-i18n="trc.filter.clear">Clear</a>{% endif %}
+  </div>
+</form>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="trc.field.standard">Standard</th><th data-i18n="trc.field.covers">Covers</th>
+      <th data-i18n="trc.field.issuer">Issuer</th><th data-i18n="trc.field.valid_until">Valid until</th>
+      <th data-i18n="trc.field.status">Status</th>
+      {% if can('trc_manage') %}<th data-i18n="trc.action.renew">Renew</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for c in rows %}
+      <tr>
+        <td>{{ c.standard }}{% if c.cert_no %}<div class="muted" style="font-size:11px">{{ c.cert_no }}</div>{% endif %}</td>
+        <td>{{ c.partner_name or '—' }}{% if c.lot_ref %}<div class="muted" style="font-size:11px">{{ c.lot_ref }}</div>{% endif %}
+          {% if c.scope %}<div class="muted" style="font-size:11px">{{ c.scope }}</div>{% endif %}</td>
+        <td class="muted">{{ c.issuer or '—' }}</td>
+        <td style="font-variant-numeric:tabular-nums">{{ c.valid_until or '—' }}</td>
+        <td>{% if c.derived_status == 'valid' %}<span class="tag" style="background:#04785718;color:#047857" data-i18n="trc.status.valid">valid</span>
+          {% elif c.derived_status == 'expiring' %}<span class="tag" style="background:#b4530918;color:#b45309">{{ c.days }}d</span>
+          {% elif c.derived_status == 'expired' %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="trc.status.expired">expired</span>
+          {% elif c.derived_status == 'revoked' %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="trc.status.revoked">revoked</span>
+          {% elif c.derived_status == 'pending' %}<span class="tag" style="background:#b4530918;color:#b45309" data-i18n="trc.status.pending">not yet in force</span>
+          {% else %}<span class="tag" data-i18n="trc.status.unknown">unknown</span>{% endif %}</td>
+        {% if can('trc_manage') %}
+        <td><form method="post" action="{{ url_for('trace.cert_renew', cert_id=c.id) }}" style="display:flex;gap:4px">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="date" name="valid_until" value="{{ c.valid_until or '' }}">
+          <button class="btn btn-ghost btn-sm" data-i18n="trc.action.renew">Renew</button></form></td>
+        {% endif %}
+      </tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:18px" data-i18n="trc.empty.certs">No material certificates recorded yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+
+{% if can('trc_manage') %}
+<form class="panel mt-4" method="post" action="{{ url_for('trace.cert_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="trc.action.add_cert">Add material certificate</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field"><label data-i18n="trc.field.standard">Standard *</label>
+        <select name="standard">{% for s in standards %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="trc.field.certno">Certificate no.</label><input name="cert_no"></div>
+      <div class="field"><label data-i18n="trc.field.issuer">Issuer / certification body</label><input name="issuer"></div>
+      <div class="field"><label data-i18n="trc.field.scope">Scope</label><input name="scope"></div>
+      <div class="field"><label data-i18n="trc.field.partner">Partner</label>
+        <select name="partner_id"><option value="" data-i18n="trc.opt.none">— none —</option>
+          {% for p in partners %}<option value="{{ p.id }}">{{ p.name }} (T{{ p.tier }})</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="trc.field.lot">Material lot</label>
+        <select name="lot_id"><option value="" data-i18n="trc.opt.none">— none —</option>
+          {% for l in lots %}<option value="{{ l.id }}">{{ l.lot_ref }} · {{ l.material }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="trc.field.valid_from">Valid from</label><input type="date" name="valid_from"></div>
+      <div class="field"><label data-i18n="trc.field.valid_until">Valid until</label><input type="date" name="valid_until"></div>
+    </div>
+    <button class="btn btn-primary btn-sm mt-2" data-i18n="trc.action.add_cert">Add material certificate</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

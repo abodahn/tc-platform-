@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}{{ line.name }}{% endblock %}
+{% set C = {'green':'#15803d','amber':'#b45309','red':'#be123c','none':'#6b7280'} %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="mes.eyebrow">Smart Factory · Shop-floor MES</div>
+    <h1>{{ line.name }}</h1>
+    <div class="sub" data-i18n="mes.line.sub">OEE breakdown for the selected production day — availability, performance and quality, and the coded losses behind them.</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.board', date=work_date) }}" data-i18n="mes.action.board">Hourly board</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.index', date=work_date) }}" data-i18n="mes.action.back">Back</a>
+  </div>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px">
+  <div class="panel-pad flex gap center wrap">
+    <div class="field" style="margin:0"><label data-i18n="mes.filter.date">Production day</label>
+      <input type="date" name="date" value="{{ work_date }}" onchange="this.form.submit()"></div>
+    <span class="muted">{{ line.area or '' }}</span>
+  </div>
+</form>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ stat.availability }}%</div><div class="l" data-i18n="mes.kpi.availability">Availability</div></div>
+  <div class="sf-kpi"><div class="v">{{ stat.performance }}%</div><div class="l" data-i18n="mes.kpi.performance">Performance</div></div>
+  <div class="sf-kpi"><div class="v">{{ stat.quality }}%</div><div class="l" data-i18n="mes.kpi.quality">Quality</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-g' if stat.oee >= 75 else ('pb-kpi-a' if stat.oee >= 60 else 'pb-kpi-r') }}"><div class="v">{{ stat.oee }}%</div><div class="l" data-i18n="mes.kpi.oee">OEE</div></div>
+  <div class="sf-kpi"><div class="v">{{ stat.efficiency }}%</div><div class="l" data-i18n="mes.kpi.efficiency">Line efficiency</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi"><div class="v">{{ stat.planned_min }}</div><div class="l" data-i18n="mes.kpi.planned_min">Planned minutes</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ stat.downtime_min }}</div><div class="l" data-i18n="mes.kpi.downtime">Downtime (min)</div></div>
+  <div class="sf-kpi"><div class="v">{{ stat.operating_min }}</div><div class="l" data-i18n="mes.kpi.operating_min">Operating minutes</div></div>
+  <div class="sf-kpi"><div class="v">{{ stat.earned_min }}</div><div class="l" data-i18n="mes.kpi.earned_min">Earned minutes</div></div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mes.line.hours">Hour by hour</h3>
+    <span class="muted">{{ work_date }}</span></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th data-i18n="mes.field.hour">Hour slot</th>
+        <th style="text-align:right" data-i18n="mes.field.target">Target</th>
+        <th style="text-align:right" data-i18n="mes.field.actual">Actual</th>
+        <th style="text-align:right" data-i18n="mes.field.reject">Rejects</th>
+        <th style="text-align:right" data-i18n="mes.field.operators">Operators</th>
+        <th style="text-align:right" data-i18n="mes.field.smv">SMV</th>
+        <th style="text-align:right" data-i18n="mes.field.ach">Ach. %</th>
+        <th data-i18n="mes.field.notes">Notes</th></tr></thead>
+      <tbody>
+      {% for h in hours %}
+        <tr><td>{{ h.hour_slot }}</td>
+          <td style="text-align:right">{{ h.target_qty }}</td>
+          <td style="text-align:right">{{ h.actual_qty }}</td>
+          <td style="text-align:right">{{ h.reject_qty }}</td>
+          <td style="text-align:right">{{ h.operators }}</td>
+          <td style="text-align:right">{{ h.smv }}</td>
+          <td style="text-align:right"><span class="tag" style="background:{{ C.get(h.rag) }}18;color:{{ C.get(h.rag) }}">{{ h.achievement }}%</span></td>
+          <td class="muted">{{ h.notes or '—' }}</td></tr>
+      {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.hours">No hours recorded for this line on this day.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mes.line.losses">Coded losses</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="mes.field.reason">Reason</th>
+        <th style="text-align:right" data-i18n="mes.field.events">Events</th>
+        <th style="text-align:right" data-i18n="mes.field.minutes">Minutes</th></tr></thead>
+      <tbody>
+      {% for l in losses %}
+        <tr><td data-i18n="mes.reason.{{ l.reason }}">{{ l.reason|replace('_',' ') }}</td>
+          <td style="text-align:right">{{ l.events }}</td>
+          <td style="text-align:right">{{ l.minutes }}</td></tr>
+      {% else %}<tr><td colspan="3" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.losses">No downtime recorded — good day.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

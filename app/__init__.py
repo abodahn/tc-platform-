@@ -102,6 +102,17 @@ def create_app():
     from app.routes.accounts import bp as accounts_bp
     from app.routes.compliance import bp as compliance_bp
     from app.routes.orders import bp as orders_bp
+    from app.routes.plm import bp as plm_bp
+    from app.routes.warehouse import bp as warehouse_bp
+    from app.routes.costing import bp as costing_bp
+    from app.routes.planning import bp as planning_bp
+    from app.routes.cutroom import bp as cutroom_bp
+    from app.routes.mes import bp as mes_bp
+    from app.routes.quality import bp as quality_bp
+    from app.routes.wash import bp as wash_bp
+    from app.routes.trace import bp as trace_bp
+    from app.routes.shipping import bp as shipping_bp
+    from app.routes.people import bp as people_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -119,6 +130,17 @@ def create_app():
     app.register_blueprint(accounts_bp)
     app.register_blueprint(compliance_bp)
     app.register_blueprint(orders_bp)
+    app.register_blueprint(plm_bp)
+    app.register_blueprint(warehouse_bp)
+    app.register_blueprint(costing_bp)
+    app.register_blueprint(planning_bp)
+    app.register_blueprint(cutroom_bp)
+    app.register_blueprint(mes_bp)
+    app.register_blueprint(quality_bp)
+    app.register_blueprint(wash_bp)
+    app.register_blueprint(trace_bp)
+    app.register_blueprint(shipping_bp)
+    app.register_blueprint(people_bp)
 
     # --- Error handlers ---
     from flask import render_template

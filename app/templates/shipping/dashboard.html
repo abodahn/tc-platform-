@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Shipping{% endblock %}
+{% macro st(s) %}{% set c={'planned':'#6b7280','packed':'#1d4ed8','dispatched':'#b45309','delivered':'#0f7a4d','cancelled':'#be123c'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s|replace('_',' ') }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="shp.eyebrow">Logistics · Shipments & Export Documents</div>
+    <h1 data-i18n="shp.nav.home">Shipping</h1>
+    <div class="sub" data-i18n="shp.dash.sub">What actually left the factory — cartons, packing lists, commercial invoices and ordered-vs-shipped.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('shp_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('shipping.shipment_new') }}" data-i18n="shp.action.new">New shipment</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.nav.list">All shipments</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.planned }}</div><div class="l" data-i18n="shp.kpi.planned">Planned / packed</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.dispatched }}</div><div class="l" data-i18n="shp.kpi.dispatched">Dispatched</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.delivered }}</div><div class="l" data-i18n="shp.kpi.delivered">Delivered</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(d.cartons or 0) }}</div><div class="l" data-i18n="shp.kpi.cartons">Cartons</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%.2f'|format(d.cbm or 0) }}</div><div class="l" data-i18n="shp.kpi.cbm">Total CBM</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.orders_short }}</div><div class="l" data-i18n="shp.kpi.short">Orders short shipped</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(d.pieces or 0) }}</div><div class="l" data-i18n="shp.kpi.pieces">Pieces packed</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.orders_over }}</div><div class="l" data-i18n="shp.kpi.over">Orders over shipped</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.upcoming|length }}</div><div class="l" data-i18n="shp.kpi.etd">Leaving soon</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.recent|length }}</div><div class="l" data-i18n="shp.kpi.recent">Recent shipments</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="shp.dash.etd">Leaving soon (ETD)</h3>
+      <a class="tag" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.nav.list">All shipments</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="shp.field.shipment">Shipment</th><th data-i18n="shp.field.destination">Destination</th>
+          <th data-i18n="shp.field.mode">Mode</th><th data-i18n="shp.field.etd">ETD</th><th data-i18n="shp.field.status">Status</th></tr></thead>
+        <tbody>
+        {% for s in d.upcoming %}
+          <tr><td><a href="{{ url_for('shipping.detail', shipment_id=s.id) }}">{{ s.shipment_no }}</a>
+              <div class="muted" style="font-size:11px">{{ s.buyer or '—' }}</div></td>
+            <td>{{ s.destination or '—' }}</td><td class="muted">{{ s.mode }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ s.etd or '—' }}</td><td>{{ st(s.status) }}</td></tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="shp.empty.etd">Nothing leaving in the next two weeks.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="shp.dash.recon">Shipped vs ordered — flagged</h3>
+      <a class="tag" href="{{ url_for('shipping.reconciliation') }}" data-i18n="shp.nav.recon">Reconciliation</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="shp.field.order">Order</th><th style="text-align:right" data-i18n="shp.field.ordered">Ordered</th>
+          <th style="text-align:right" data-i18n="shp.field.shipped">Shipped</th><th data-i18n="shp.field.flag">Flag</th></tr></thead>
+        <tbody>
+        {% for r in d.recon %}
+          <tr><td><a href="{{ url_for('orders.detail', order_id=r.id) }}">{{ r.order_no }}</a>
+              <div class="muted" style="font-size:11px">{{ r.buyer or '—' }}</div></td>
+            <td style="text-align:right">{{ '{:,.0f}'.format(r.qty or 0) }}</td>
+            <td style="text-align:right">{{ '{:,.0f}'.format(r.shipped or 0) }}</td>
+            <td>{% if r.short %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="shp.flag.short">Short</span>{% endif %}
+                {% if r.over %}<span class="tag" style="background:#b4530918;color:#b45309" data-i18n="shp.flag.over">Over</span>{% endif %}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="shp.empty.recon">Every order is shipping within tolerance.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="shp.dash.recent">Recent shipments</h3></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th data-i18n="shp.field.shipment">Shipment</th><th data-i18n="shp.field.buyer">Buyer</th>
+        <th data-i18n="shp.field.destination">Destination</th><th data-i18n="shp.field.incoterm">Incoterm</th>
+        <th style="text-align:right" data-i18n="shp.field.cartons">Cartons</th>
+        <th style="text-align:right" data-i18n="shp.field.pieces">Pieces</th>
+        <th style="text-align:right" data-i18n="shp.field.cbm">CBM</th><th data-i18n="shp.field.status">Status</th></tr></thead>
+      <tbody>
+      {% for s in d.recent %}
+        <tr><td><a href="{{ url_for('shipping.detail', shipment_id=s.id) }}">{{ s.shipment_no }}</a></td>
+          <td>{{ s.buyer or '—' }}</td><td>{{ s.destination or '—' }}</td><td class="muted">{{ s.incoterm }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(s.cartons or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(s.pieces or 0) }}</td>
+          <td style="text-align:right">{{ '%.3f'|format(s.cbm or 0) }}</td>
+          <td>{{ st(s.status) }}</td></tr>
+      {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:16px" data-i18n="shp.empty.shipments">No shipments yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

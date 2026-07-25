@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}ESG footprint{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="trc.eyebrow">Sustainability · Traceability & Product Passport</div>
+    <h1 data-i18n="trc.nav.esg">ESG footprint register</h1>
+    <div class="sub" data-i18n="trc.esg.sub">Energy, water and waste as recorded per order or per month, divided by pieces produced.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+</div>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="trc.field.scope_label">Scope</th>
+      <th style="text-align:right" data-i18n="trc.field.energy">Energy kWh</th>
+      <th style="text-align:right" data-i18n="trc.field.water">Water m³</th>
+      <th style="text-align:right" data-i18n="trc.field.waste">Waste kg</th>
+      <th style="text-align:right" data-i18n="trc.field.garments">Garments</th>
+      <th style="text-align:right" data-i18n="trc.kpi.energy_pc">kWh / garment</th>
+      <th style="text-align:right" data-i18n="trc.kpi.water_pc">Water L / garment</th>
+      <th style="text-align:right" data-i18n="trc.kpi.waste_pc">Waste g / garment</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.label or r.period or '—' }}
+          {% if r.order_no %}<div class="muted" style="font-size:11px">{{ r.order_no }}</div>
+          {% elif r.period %}<div class="muted" style="font-size:11px">{{ r.period }}</div>{% endif %}
+          {% if r.source %}<div class="muted" style="font-size:11px">{{ r.source }}</div>{% endif %}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.energy_kwh or 0 }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.water_m3 or 0 }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.waste_kg or 0 }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.garments or 0 }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.energy_per_pc if r.energy_per_pc is not none else '—' }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.water_l_per_pc if r.water_l_per_pc is not none else '—' }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.waste_g_per_pc if r.waste_g_per_pc is not none else '—' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:18px" data-i18n="trc.empty.esg">No ESG records yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <div class="muted mt-2" style="font-size:11.5px" data-i18n="trc.esg.disclaimer">Recorded metered/invoiced data divided by pieces produced. This is not a certified LCA or a verified carbon footprint.</div>
+</div></div>
+
+{% if can('trc_manage') %}
+<form class="panel mt-4" method="post" action="{{ url_for('trace.esg_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="trc.action.add_esg">Record ESG consumption</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field span-2"><label data-i18n="trc.field.scope_label">Scope label</label>
+        <input name="label" data-i18n-ph="trc.ph.esg_label" placeholder="Site total — current month"></div>
+      <div class="field"><label data-i18n="trc.field.period">Period (YYYY-MM)</label><input name="period"></div>
+      <div class="field"><label data-i18n="trc.field.garments">Garments</label><input type="number" name="garments" min="0" step="any"></div>
+      <div class="field"><label data-i18n="trc.field.energy">Energy kWh</label><input type="number" name="energy_kwh" min="0" step="any"></div>
+      <div class="field"><label data-i18n="trc.field.water">Water m³</label><input type="number" name="water_m3" min="0" step="any"></div>
+      <div class="field"><label data-i18n="trc.field.waste">Waste kg</label><input type="number" name="waste_kg" min="0" step="any"></div>
+      <div class="field"><label data-i18n="trc.field.source">Source of the figures</label>
+        <input name="source" data-i18n-ph="trc.ph.source" placeholder="Sub-meter reading / utility invoice"></div>
+    </div>
+    <button class="btn btn-primary btn-sm mt-2" data-i18n="trc.action.add_esg">Record ESG consumption</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}{{ order.order_no }} · Cost sheet{% endblock %}
+{% set catlabel = {'material':'Material','cm':'CM / labour','overhead':'Overhead','freight':'Freight & logistics','duty':'Duty','other':'Finance / other'} %}
+{% macro vtag(v) %}{% set c={'unfavourable':'#be123c','favourable':'#0f7a4d','on_plan':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v.flag,'#6b7280') }}18;color:{{ c.get(v.flag,'#6b7280') }}">{{ '{:+,.2f}'.format(v.value) }}{% if v.pct is not none %} · {{ '{:+.1f}'.format(v.pct) }}%{% endif %}</span>{% endmacro %}
+{% macro mtag(p) %}{% if p is none %}<span class="muted">—</span>{% else %}<span class="tag" style="background:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}18;color:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}">{{ '{:.1f}'.format(p) }}%</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ order.order_no }} · {{ order.buyer or '—' }}</div>
+    <h1>{{ order.style_name or order.style_ref or order.order_no }}</h1>
+    <div class="sub">{{ '{:,.0f}'.format(order.qty or 0) }} <span data-i18n="cst.field.pcs">pcs</span> · {{ order.currency }} {{ '{:,.4f}'.format(order.unit_price or 0) }}/<span data-i18n="cst.field.unit">unit</span>{% if order.ship_date %} · <span data-i18n="cst.field.ship">Ship</span> {{ order.ship_date }}{% endif %}</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('orders.detail', order_id=order.id) }}" data-i18n="cst.action.open_order">Open order</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.orders') }}" data-i18n="cst.action.back">Back</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(margin.revenue) }}</div><div class="l" data-i18n="cst.kpi.revenue">Selling value</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(estimate.total) }}</div><div class="l" data-i18n="cst.kpi.estimate">Estimated cost</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-r' if variance.total.flag == 'unfavourable' else 'pb-kpi-g' }}"><div class="v">{{ '{:,.0f}'.format(actual.total) }}</div><div class="l" data-i18n="cst.kpi.actual">Actual cost</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{% if margin.est_pct is not none %}{{ '{:.1f}'.format(margin.est_pct) }}%{% else %}—{% endif %}</div><div class="l" data-i18n="cst.kpi.margin_est">Quoted margin</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-r' if (margin.act_pct is not none and margin.est_pct is not none and margin.act_pct < margin.est_pct) else 'pb-kpi-g' }}"><div class="v">{% if has_actual and margin.act_pct is not none %}{{ '{:.1f}'.format(margin.act_pct) }}%{% else %}—{% endif %}</div><div class="l" data-i18n="cst.kpi.margin_act">Delivered margin</div></div>
+</div>
+
+{% if has_actual and variance.total.pct is not none and variance.total.pct > alert_pct %}
+<div class="panel mt-4" style="border:1px solid var(--tc-red)">
+  <div class="panel-pad flex gap center wrap">
+    <span class="tag" style="background:#be123c18;color:#be123c">{{ '{:+.1f}'.format(variance.total.pct) }}%</span>
+    <span data-i18n="cst.warn.overrun">This order is running over its estimate — the quoted margin is not what will be delivered.</span>
+  </div>
+</div>
+{% endif %}
+
+<div class="grid cols-2 mt-4">
+  <!-- estimate vs actual by category -->
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cst.panel.compare">Estimate vs actual</h3>
+      {{ vtag(variance.total) }}</div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="cst.field.category">Category</th>
+          <th style="text-align:right" data-i18n="cst.field.estimate">Estimate</th>
+          <th style="text-align:right" data-i18n="cst.field.actual">Actual</th>
+          <th style="text-align:right" data-i18n="cst.field.variance">Variance</th></tr></thead>
+        <tbody>
+        {% for c in categories %}
+          <tr>
+            {# data-i18n must sit on a leaf: app.js sets textContent, which would
+               otherwise wipe the 'actual basis' line off the material row. #}
+            <td><span data-i18n="cst.cat.{{ c }}">{{ catlabel[c] }}</span>{% if c == 'material' %}<div class="muted" style="font-size:11px"><span data-i18n="cst.field.basis">Actual basis</span>: <span data-i18n="cst.basis.{{ material.actual_basis }}">{{ material.actual_basis }}</span></div>{% endif %}</td>
+            <td style="text-align:right">{{ '{:,.2f}'.format(estimate[c]) }}</td>
+            <td style="text-align:right">{{ '{:,.2f}'.format(actual[c]) }}</td>
+            <td style="text-align:right">{{ vtag(variance[c]) }}</td>
+          </tr>
+        {% endfor %}
+          <tr><td><strong data-i18n="cst.field.total_cost">Total cost</strong></td>
+            <td style="text-align:right"><strong>{{ '{:,.2f}'.format(estimate.total) }}</strong></td>
+            <td style="text-align:right"><strong>{{ '{:,.2f}'.format(actual.total) }}</strong></td>
+            <td style="text-align:right">{{ vtag(variance.total) }}</td></tr>
+          <tr><td data-i18n="cst.field.cost_unit">Cost/unit</td>
+            <td style="text-align:right">{% if estimate.per_unit is not none %}{{ '{:,.4f}'.format(estimate.per_unit) }}{% else %}—{% endif %}</td>
+            <td style="text-align:right">{% if actual.per_unit is not none %}{{ '{:,.4f}'.format(actual.per_unit) }}{% else %}—{% endif %}</td>
+            <td style="text-align:right" class="muted">—</td></tr>
+          <tr><td data-i18n="cst.field.margin">Margin</td>
+            <td style="text-align:right">{{ mtag(margin.est_pct) }}<div class="muted" style="font-size:11px">{{ '{:,.2f}'.format(margin.est_value) }}</div></td>
+            <td style="text-align:right">{% if has_actual %}{{ mtag(margin.act_pct) }}<div class="muted" style="font-size:11px">{{ '{:,.2f}'.format(margin.act_value) }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td style="text-align:right" class="muted">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- the cost sheet figures -->
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cst.panel.sheet">Cost sheet (per unit)</h3>
+      <span class="tag">{{ order.currency }}</span></div>
+    <div class="panel-pad">
+      {% if can('cost_manage') %}
+      <form method="post" action="{{ url_for('costing.sheet_save', order_id=order.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="cst.field.smv">SMV (minutes)</label>
+            <input type="number" step="any" min="0" name="smv" value="{{ sheet.smv or '' }}"></div>
+          <div class="field"><label data-i18n="cst.field.cm_rate">Cost per minute</label>
+            <input type="number" step="any" min="0" name="cm_rate" value="{{ sheet.cm_rate or '' }}"></div>
+          <div class="field span-2"><label data-i18n="cst.field.cm_flat">Flat CM per unit (used when SMV × rate is not set)</label>
+            <input type="number" step="any" min="0" name="cm_per_unit" value="{{ sheet.cm_per_unit or '' }}"></div>
+          <div class="field"><label data-i18n="cst.cat.overhead">Overhead</label>
+            <input type="number" step="any" min="0" name="overhead_per_unit" value="{{ sheet.overhead_per_unit or '' }}"></div>
+          <div class="field"><label data-i18n="cst.cat.freight">Freight &amp; logistics</label>
+            <input type="number" step="any" min="0" name="freight_per_unit" value="{{ sheet.freight_per_unit or '' }}"></div>
+          <div class="field"><label data-i18n="cst.cat.duty">Duty</label>
+            <input type="number" step="any" min="0" name="duty_per_unit" value="{{ sheet.duty_per_unit or '' }}"></div>
+          <div class="field"><label data-i18n="cst.cat.other">Finance / other</label>
+            <input type="number" step="any" min="0" name="other_per_unit" value="{{ sheet.other_per_unit or '' }}"></div>
+          <div class="field span-2"><label data-i18n="cst.field.notes">Notes</label>
+            <input name="notes" value="{{ sheet.notes or '' }}"></div>
+        </div>
+        <div class="flex gap center wrap mt-2">
+          <button class="btn btn-primary btn-sm" data-i18n="cst.action.save_sheet">Save cost sheet</button>
+          <span class="muted"><span data-i18n="cst.field.cm_effective">CM applied</span>: {{ '{:,.4f}'.format(cm_per_unit) }}</span>
+          <span class="muted"><span data-i18n="cst.field.material_unit">Material/unit</span>: {% if material.per_unit is not none %}{{ '{:,.4f}'.format(material.per_unit) }}{% else %}—{% endif %}</span>
+        </div>
+      </form>
+      {% else %}
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="cst.field.cm_effective">CM applied</td><td style="text-align:right">{{ '{:,.4f}'.format(cm_per_unit) }}</td></tr>
+        <tr><td class="muted" data-i18n="cst.cat.overhead">Overhead</td><td style="text-align:right">{{ '{:,.4f}'.format(sheet.overhead_per_unit or 0) }}</td></tr>
+        <tr><td class="muted" data-i18n="cst.cat.freight">Freight &amp; logistics</td><td style="text-align:right">{{ '{:,.4f}'.format(sheet.freight_per_unit or 0) }}</td></tr>
+        <tr><td class="muted" data-i18n="cst.cat.duty">Duty</td><td style="text-align:right">{{ '{:,.4f}'.format(sheet.duty_per_unit or 0) }}</td></tr>
+        <tr><td class="muted" data-i18n="cst.cat.other">Finance / other</td><td style="text-align:right">{{ '{:,.4f}'.format(sheet.other_per_unit or 0) }}</td></tr>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- BOM -->
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="cst.panel.bom">Bill of materials</h3>
+    <div class="flex gap center wrap">
+      {% if material.unpriced %}<span class="tag" style="background:#b4530918;color:#b45309">{{ material.unpriced }} <span data-i18n="cst.badge.unpriced">unpriced</span></span>{% endif %}
+      <span class="tag">{{ '{:,.2f}'.format(material.total) }} {{ order.currency }}</span></div></div>
+  <div class="panel-pad">
+    <div class="muted mt-0" data-i18n="cst.bom.formula">Required qty = order qty × consumption per unit × (1 + allowance %). The allowance is cutting and process wastage, so it increases the buy.</div>
+    <table class="tbl mt-2">
+      <thead><tr><th data-i18n="cst.field.item">Material / item</th><th data-i18n="cst.field.kind">Type</th>
+        <th style="text-align:right" data-i18n="cst.field.consumption">Cons./unit</th>
+        <th data-i18n="cst.field.uom">Unit</th>
+        <th style="text-align:right" data-i18n="cst.field.allowance">Allow. %</th>
+        <th style="text-align:right" data-i18n="cst.field.required">Required qty</th>
+        <th style="text-align:right" data-i18n="cst.field.unit_price">Unit price</th>
+        <th style="text-align:right" data-i18n="cst.field.line_cost">Line cost</th>
+        {% if can('cost_manage') %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for l in bom %}
+        <tr>
+          <td>{{ l.item }}{% if l.colour or l.supplier %}<div class="muted" style="font-size:11px">{{ l.colour or '' }}{% if l.colour and l.supplier %} · {% endif %}{{ l.supplier or '' }}</div>{% endif %}</td>
+          <td><span class="tag" data-i18n="cst.kind.{{ l.kind }}">{{ l.kind }}</span></td>
+          <td style="text-align:right">{% if can('cost_manage') %}<input form="bl{{ l.id }}" type="number" step="any" min="0" name="consumption" value="{{ l.consumption }}" style="width:90px;text-align:right">{% else %}{{ '{:,.4f}'.format(l.consumption or 0) }}{% endif %}</td>
+          <td>{{ l.uom }}</td>
+          <td style="text-align:right">{% if can('cost_manage') %}<input form="bl{{ l.id }}" type="number" step="any" min="0" name="allowance_pct" value="{{ l.allowance_pct }}" style="width:70px;text-align:right">{% else %}{{ '{:,.2f}'.format(l.allowance_pct or 0) }}{% endif %}</td>
+          <td style="text-align:right">{{ '{:,.4f}'.format(l.required_qty) }}</td>
+          <td style="text-align:right">{% if can('cost_manage') %}<input form="bl{{ l.id }}" type="number" step="any" min="0" name="unit_price" value="{{ l.unit_price if l.unit_price is not none else '' }}" style="width:90px;text-align:right">{% else %}{{ '{:,.4f}'.format(l.unit_price or 0) if not l.unpriced else '—' }}{% endif %}</td>
+          <td style="text-align:right">{% if l.unpriced %}<span class="tag" style="background:#b4530918;color:#b45309" data-i18n="cst.badge.unpriced">unpriced</span>{% else %}{{ '{:,.2f}'.format(l.line_cost) }}{% endif %}</td>
+          {% if can('cost_manage') %}
+          <td>
+            <form id="bl{{ l.id }}" method="post" action="{{ url_for('costing.bom_update', line_id=l.id) }}" class="flex gap center">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="item" value="{{ l.item }}">
+              <input type="hidden" name="kind" value="{{ l.kind }}">
+              <input type="hidden" name="colour" value="{{ l.colour or '' }}">
+              <input type="hidden" name="uom" value="{{ l.uom }}">
+              <input type="hidden" name="supplier" value="{{ l.supplier or '' }}">
+              <button class="btn btn-ghost btn-sm" data-i18n="cst.action.save">Save</button>
+              <button class="btn btn-ghost btn-sm" name="action" value="delete" data-i18n="cst.action.remove">Remove</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+      {% else %}<tr><td colspan="{{ 9 if can('cost_manage') else 8 }}" class="muted" style="text-align:center;padding:18px" data-i18n="cst.empty.bom">No BOM yet — add the fabric and trims that go into one garment.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+
+    {% if can('cost_manage') %}
+    <form method="post" action="{{ url_for('costing.bom_add', order_id=order.id) }}" class="mt-4" style="border-top:1px solid var(--line-2);padding-top:12px">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="grid cols-4">
+        <div class="field span-2"><label data-i18n="cst.field.item">Material / item *</label><input name="item" required></div>
+        <div class="field"><label data-i18n="cst.field.kind">Type</label>
+          <select name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="cst.field.colour">Colour</label><input name="colour"></div>
+        <div class="field"><label data-i18n="cst.field.consumption">Consumption / unit *</label>
+          <input type="number" step="any" min="0" name="consumption" required></div>
+        <div class="field"><label data-i18n="cst.field.uom">Unit</label>
+          <select name="uom">{% for u in uoms %}<option value="{{ u }}">{{ u }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="cst.field.allowance">Allowance %</label>
+          <input type="number" step="any" min="0" name="allowance_pct" value="0"></div>
+        <div class="field"><label data-i18n="cst.field.unit_price">Unit price</label>
+          <input type="number" step="any" min="0" name="unit_price"></div>
+        <div class="field span-2"><label data-i18n="cst.field.supplier">Supplier</label><input name="supplier"></div>
+      </div>
+      <button class="btn btn-primary btn-sm mt-2" data-i18n="cst.action.add_bom">Add BOM line</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <!-- where the actual material number comes from -->
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cst.panel.sources">Actual material sources</h3>
+      <span class="tag" data-i18n="cst.basis.{{ material.actual_basis }}">{{ material.actual_basis }}</span></div>
+    <div class="panel-pad">
+      <div class="muted" data-i18n="cst.sources.note">Material bought on a linked purchase requisition and then issued from the warehouse is one cost, not two. The actual is taken from a single source: warehouse issues first, then procurement receipts, then manual entries.</div>
+      <table class="tbl mt-2">
+        <tr><td data-i18n="cst.sources.issued">Issued from warehouse</td>
+          <td style="text-align:right">{% if issued is not none %}{{ '{:,.2f}'.format(issued) }}{% else %}<span class="muted" data-i18n="cst.sources.na">not available</span>{% endif %}</td></tr>
+        <tr><td data-i18n="cst.sources.received">Received on linked PRs</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(proc.received) }}</td></tr>
+        <tr><td data-i18n="cst.sources.invoiced">Invoiced</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(proc.invoiced) }}</td></tr>
+        <tr><td data-i18n="cst.sources.paid">Paid</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(proc.paid) }}</td></tr>
+      </table>
+      {% if proc.mixed_ccy %}
+      <div class="mt-2"><span class="tag" style="background:#b4530918;color:#b45309">{{ proc.mixed_ccy|join(', ') }}</span>
+        <span class="muted" data-i18n="cst.sources.mixed">Linked PRs in another currency are shown below but not added — there is no order-currency rate to convert them.</span></div>
+      {% endif %}
+
+      <table class="tbl mt-2">
+        <thead><tr><th data-i18n="cst.field.pr">PR</th><th data-i18n="cst.field.vendor">Vendor</th>
+          <th data-i18n="cst.field.status">Status</th>
+          <th style="text-align:right" data-i18n="cst.sources.received">Received</th></tr></thead>
+        <tbody>
+        {% for p in proc.prs %}
+          <tr><td><a href="/procurement/pr/{{ p.id }}">{{ p.pr_no or p.id }}</a>{% if not p.same_ccy %} <span class="tag" style="background:#b4530918;color:#b45309">{{ p.currency }}</span>{% endif %}</td>
+            <td class="muted">{{ p.vendor or '—' }}</td>
+            <td><span class="tag">{{ p.status|replace('_',' ') }}</span></td>
+            <td style="text-align:right">{{ '{:,.2f}'.format(p.received) }}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:14px" data-i18n="cst.empty.prs">No purchase requisition linked to this order yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+
+      {% if can('cost_manage') %}
+      <form method="post" action="{{ url_for('costing.link_pr', order_id=order.id) }}" class="mt-4" style="border-top:1px solid var(--line-2);padding-top:12px">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="flex gap center wrap">
+          <div class="field" style="margin:0"><label data-i18n="cst.field.pr_ref">PR number</label><input name="pr_ref" placeholder="PR-2026-000123"></div>
+          <button class="btn btn-ghost btn-sm" data-i18n="cst.action.link_pr">Link to this order</button>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- booked actuals -->
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cst.panel.actuals">Booked actual costs</h3>
+      <span class="tag">{{ '{:,.2f}'.format(actual.total) }} {{ order.currency }}</span></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="cst.field.category">Category</th><th data-i18n="cst.field.source">Source</th>
+          <th style="text-align:right" data-i18n="cst.field.amount">Amount</th>
+          {% if can('cost_manage') %}<th></th>{% endif %}</tr></thead>
+        <tbody>
+        {% for e in entries %}
+          {# a manual material entry is a FALLBACK: it is not counted while warehouse
+             issues or PR receipts exist, so say so on the row rather than listing a
+             number that is silently absent from the total. #}
+          {% set dropped = e.category == 'material' and material.actual_basis != 'manual' %}
+          <tr><td><span data-i18n="cst.cat.{{ e.category }}">{{ catlabel.get(e.category, e.category) }}</span>{% if dropped %} <span class="tag" style="background:#b4530918;color:#b45309" data-i18n="cst.badge.not_counted">not counted</span>{% endif %}</td>
+            <td class="muted">{{ e.source or '—' }}</td>
+            <td style="text-align:right" {% if dropped %}class="muted"{% endif %}>{{ '{:,.2f}'.format(e.amount or 0) }}</td>
+            {% if can('cost_manage') %}
+            <td><form method="post" action="{{ url_for('costing.actual_delete', actual_id=e.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button class="btn btn-ghost btn-sm" data-i18n="cst.action.remove">Remove</button></form></td>
+            {% endif %}</tr>
+        {% else %}<tr><td colspan="{{ 4 if can('cost_manage') else 3 }}" class="muted" style="text-align:center;padding:14px" data-i18n="cst.empty.actuals">Nothing booked yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+
+      {% if can('cost_manage') %}
+      <form method="post" action="{{ url_for('costing.actual_add', order_id=order.id) }}" class="mt-4" style="border-top:1px solid var(--line-2);padding-top:12px">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="cst.field.category">Category</label>
+            <select name="category">{% for c in categories %}<option value="{{ c }}" {{ 'selected' if c=='cm' }}>{{ catlabel[c] }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="cst.field.amount_total">Amount (total) *</label>
+            <input type="number" step="any" min="0" name="amount" required></div>
+          <div class="field span-2"><label data-i18n="cst.field.source">Source / reference</label><input name="source"></div>
+        </div>
+        <button class="btn btn-primary btn-sm mt-2" data-i18n="cst.action.add_actual">Book actual cost</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

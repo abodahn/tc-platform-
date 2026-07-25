@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}New lay{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cut.eyebrow">Production · Cut Room & Fabric Utilisation</div>
+    <h1 data-i18n="cut.action.new_lay">Record lay</h1>
+    <div class="sub" data-i18n="cut.form.sub">Enter the marker and the spread — pieces, consumption, marker efficiency and utilisation are calculated as you type.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('cutroom.lays') }}" data-i18n="cut.action.back">Back</a>
+</div>
+
+<form class="panel" id="layform" method="post" action="{{ url_for('cutroom.lay_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field"><label data-i18n="cut.field.order">Order *</label>
+        <select name="order_id" required>
+          <option value="" data-i18n="cut.filter.pick_order">Pick an order…</option>
+          {% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if f_order==o.id }}>{{ o.order_no }} · {{ o.style_ref or '' }} · {{ o.buyer or '' }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="cut.field.marker_ref">Marker ref</label><input name="marker_ref" placeholder="MK-…" data-i18n-ph="cut.ph.marker_ref"></div>
+    </div>
+
+    <div class="grid cols-4 mt-2">
+      <div class="field"><label data-i18n="cut.field.marker_len">Marker length (m)</label><input type="number" name="marker_length_m" min="0" step="any"></div>
+      <div class="field"><label data-i18n="cut.field.marker_width">Marker width (cm)</label><input type="number" name="marker_width_cm" min="0" step="any"></div>
+      <div class="field"><label data-i18n="cut.field.fabric_width">Fabric width (cm)</label><input type="number" name="fabric_width_cm" min="0" step="any"></div>
+      <div class="field"><label data-i18n="cut.field.marker_area">Pattern area in marker (m²)</label><input type="number" name="marker_area_m2" min="0" step="any"></div>
+      <div class="field"><label data-i18n="cut.field.marker_eff_in">Marker efficiency % (if area unknown)</label><input type="number" name="marker_eff_pct" min="0" max="100" step="any"></div>
+      <div class="field"><label data-i18n="cut.field.plies">Plies</label><input type="number" name="plies" min="0" step="1"></div>
+      <div class="field"><label data-i18n="cut.field.ppp">Pieces per ply</label><input type="number" name="pieces_per_ply" min="0" step="1"></div>
+      <div class="field"><label data-i18n="cut.field.ratio">Size ratio</label><input name="size_ratio" placeholder="S2:M3:L2:XL1" data-i18n-ph="cut.ph.ratio"></div>
+      <div class="field"><label data-i18n="cut.field.end_allow">End allowance per ply (m)</label><input type="number" name="end_allow_m" min="0" step="any" value="{{ end_allow }}"></div>
+      <div class="field"><label data-i18n="cut.field.actual_fabric">Actual fabric used (m)</label><input type="number" name="actual_fabric_m" min="0" step="any"></div>
+      <div class="field"><label data-i18n="cut.field.cut_date">Cut date</label><input type="date" name="cut_date"></div>
+      <div class="field"><label data-i18n="cut.field.status">Status</label>
+        <select name="status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+    </div>
+
+    <div class="grid cols-4 mt-2">
+      <div class="field"><label data-i18n="cut.field.fabric_ref">Fabric / material code</label><input name="fabric_ref"></div>
+      <div class="field"><label data-i18n="cut.field.colour">Colour</label><input name="colour"></div>
+      <div class="field"><label data-i18n="cut.field.shade_lot">Shade lot</label><input name="shade_lot"></div>
+      <div class="field"><label data-i18n="cut.field.cutter">Cutter</label><input name="cutter"></div>
+      <div class="field span-2"><label data-i18n="cut.field.notes">Notes</label><input name="notes"></div>
+    </div>
+
+    <div class="panel mt-4"><div class="panel-head"><h3 data-i18n="cut.form.live">Calculated live</h3>
+      <span class="tag" data-i18n="cut.bench">Good marker efficiency is 85–92%</span></div>
+      <div class="panel-pad">
+        <div class="sf-kpis">
+          <div class="sf-kpi"><div class="v" id="c_pieces">0</div><div class="l" data-i18n="cut.field.pieces">Pieces</div></div>
+          <div class="sf-kpi"><div class="v" id="c_planned">0.00</div><div class="l" data-i18n="cut.field.planned_fabric">Planned fabric (m)</div></div>
+          <div class="sf-kpi"><div class="v" id="c_used">0.00</div><div class="l" data-i18n="cut.field.fabric_used">Fabric used (m)</div></div>
+          <div class="sf-kpi"><div class="v" id="c_cpg">—</div><div class="l" data-i18n="cut.field.cpg">m/garment</div></div>
+          <div class="sf-kpi"><div class="v" id="c_eff">—</div><div class="l" data-i18n="cut.field.marker_eff">Marker eff. %</div></div>
+          <div class="sf-kpi"><div class="v" id="c_util">—</div><div class="l" data-i18n="cut.field.util">Utilisation %</div></div>
+          <div class="sf-kpi"><div class="v" id="c_waste">—</div><div class="l" data-i18n="cut.field.waste">End loss %</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="cut.action.save">Save lay</button>
+      <a class="btn btn-ghost" href="{{ url_for('cutroom.lays') }}" data-i18n="cut.action.cancel">Cancel</a>
+    </div>
+  </div>
+</form>
+
+<script>
+(function () {
+  var f = document.getElementById('layform');
+  if (!f) return;
+  function v(n) { var e = f.elements[n]; return e ? (parseFloat(e.value) || 0) : 0; }
+  function put(id, val, dp) {
+    var e = document.getElementById(id);
+    if (e) e.textContent = (val === null ? '—' : val.toFixed(dp));
+  }
+  // Same formulas as services.lay_metrics — every denominator guarded.
+  function calc() {
+    var plies = Math.floor(v('plies')), ppp = Math.floor(v('pieces_per_ply'));
+    var ml = v('marker_length_m'), mw = v('marker_width_cm') / 100, end = v('end_allow_m');
+    var pieces = plies * ppp, theo = ml * plies, planned = (ml + end) * plies;
+    var act = v('actual_fabric_m'), used = act > 0 ? act : planned;
+    var area = v('marker_area_m2'), rect = ml * mw, entered = v('marker_eff_pct');
+    var eff = (area > 0 && rect > 0) ? area / rect * 100 : (entered > 0 ? entered : null);
+    var util = used > 0 ? theo / used * 100 : null;
+    put('c_pieces', pieces, 0); put('c_planned', planned, 2); put('c_used', used, 2);
+    put('c_cpg', pieces ? used / pieces : null, 4);
+    put('c_eff', eff, 1); put('c_util', util, 1);
+    put('c_waste', util === null ? null : 100 - util, 2);
+  }
+  f.addEventListener('input', calc);
+  calc();
+})();
+</script>
+{% endblock %}

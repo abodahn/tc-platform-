@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}PLM{% endblock %}
+{% macro vd(v) %}{% set c={'approved':'#0f7a4d','rejected':'#be123c','revise':'#b45309','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v,'#6b7280') }}18;color:{{ c.get(v,'#6b7280') }}">{{ v }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="plm.eyebrow">Product · Style, Tech Pack & BOM</div>
+    <h1 data-i18n="plm.nav.home">PLM</h1>
+    <div class="sub" data-i18n="plm.dash.sub">One source of style truth: versioned tech packs, the style BOM every order copies, and the buyer sample progression.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('plm_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('plm.style_new') }}" data-i18n="plm.action.new_style">New style</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('plm.styles') }}" data-i18n="plm.nav.styles">Styles</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.styles_total }}</div><div class="l" data-i18n="plm.kpi.styles">Styles</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.by_status.development }}</div><div class="l" data-i18n="plm.kpi.development">In development</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.by_status.sampling }}</div><div class="l" data-i18n="plm.kpi.sampling">In sampling</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.styles_approved }}</div><div class="l" data-i18n="plm.kpi.approved">Approved for bulk</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.samples_pending }}</div><div class="l" data-i18n="plm.kpi.samples_pending">Samples pending</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.samples_rejected }}</div><div class="l" data-i18n="plm.kpi.samples_rejected">Rejected / to revise</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.awaiting_pp }}</div><div class="l" data-i18n="plm.kpi.awaiting_pp">Awaiting PP approval</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.techpack_versions }}</div><div class="l" data-i18n="plm.kpi.versions">Tech-pack versions</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.by_status.in_production }}</div><div class="l" data-i18n="plm.kpi.in_production">In production</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.by_status.dropped }}</div><div class="l" data-i18n="plm.kpi.dropped">Dropped</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="plm.dash.open_samples">Open sample rounds</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="plm.field.style">Style</th><th data-i18n="plm.field.stage">Stage</th>
+          <th data-i18n="plm.field.sent">Sent</th><th data-i18n="plm.field.verdict">Verdict</th></tr></thead>
+        <tbody>
+        {% for s in d.open_samples %}
+          <tr>
+            <td><a href="{{ url_for('plm.style_detail', style_id=s.style_id) }}">{{ s.style_ref }}</a>
+              <div class="muted" style="font-size:11px">{{ s.style_name or '—' }} · {{ s.buyer or '—' }}</div></td>
+            <td>{{ s.stage|replace('_',' ') }} <span class="muted">#{{ s.round_no }}</span></td>
+            <td style="font-variant-numeric:tabular-nums">{{ s.sent_date or '—' }}</td>
+            <td>{{ vd(s.verdict) }}</td>
+          </tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="plm.empty.samples">No open sample rounds.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="plm.dash.recent">Recently updated styles</h3>
+      <a class="tag" href="{{ url_for('plm.styles') }}" data-i18n="plm.action.all_styles">All styles</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="plm.field.ref">Style ref</th><th data-i18n="plm.field.name">Name</th>
+          <th data-i18n="plm.field.buyer">Buyer</th><th data-i18n="plm.field.status">Status</th></tr></thead>
+        <tbody>
+        {% for s in d.recent_styles %}
+          <tr><td><a href="{{ url_for('plm.style_detail', style_id=s.id) }}">{{ s.style_ref }}</a></td>
+            <td>{{ s.name or '—' }}</td><td class="muted">{{ s.buyer or '—' }}</td>
+            <td><span class="tag">{{ s.status|replace('_',' ') }}</span></td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="plm.empty.styles">No styles yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

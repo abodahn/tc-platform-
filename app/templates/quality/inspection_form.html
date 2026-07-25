@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}New inspection{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="qc.eyebrow">Quality · Digital QMS</div>
+    <h1 data-i18n="qc.action.new">New inspection</h1>
+    <div class="sub" data-i18n="qc.form.sub">The sample size and the Ac/Re numbers are derived from the lot size and AQL — leave the counts blank to start the inspection as pending.</div></div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('quality.inspections') }}" data-i18n="qc.action.back">Back</a>
+</div>
+<form class="panel" method="post" action="{{ url_for('quality.create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field"><label data-i18n="qc.field.order">Order</label>
+        <select name="order_id">
+          <option value="" data-i18n="qc.field.no_order">Not linked to an order</option>
+          {% for o in orders %}<option value="{{ o.id }}">{{ o.order_no }} — {{ o.buyer }} ({{ '{:,.0f}'.format(o.qty or 0) }})</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="qc.field.stage">Stage</label>
+        <select name="stage">{% for s in stages %}<option value="{{ s }}" {{ 'selected' if s=='final' }}>{{ s|replace('_',' ') }}</option>{% endfor %}</select></div>
+      <div class="field"><label><span data-i18n="qc.field.lot">Lot size</span> *</label><input type="number" name="lot_size" min="1" step="1" required></div>
+      <div class="field"><label data-i18n="qc.field.aql">AQL</label>
+        <select name="aql">{% for a in aqls %}<option value="{{ a }}" {{ 'selected' if a==default_aql }}>{{ '%g'|format(a) }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="qc.field.units_insp">Units inspected</label><input type="number" name="units_inspected" min="0" step="any"></div>
+      <div class="field"><label data-i18n="qc.field.defectives">Defective units</label><input type="number" name="defective_units" min="0" step="any"></div>
+      <div class="field"><label data-i18n="qc.field.inspector">Inspector</label><input name="inspector"></div>
+      <div class="field"><label data-i18n="qc.field.insp_date">Inspection date</label><input type="date" name="inspection_date"></div>
+      <div class="field span-2"><label data-i18n="qc.field.notes">Notes</label><input name="notes"></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="qc.action.create">Create inspection</button>
+      <a class="btn btn-ghost" href="{{ url_for('quality.inspections') }}" data-i18n="qc.action.cancel">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endblock %}

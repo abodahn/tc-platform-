@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}HR Core{% endblock %}
+{% macro st(s) %}{% set c={'pending':'#b45309','approved':'#0f7a4d','rejected':'#be123c','cancelled':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="ppl.eyebrow">People · HR Core</div>
+    <h1 data-i18n="ppl.nav.home">HR Core</h1>
+    <div class="sub" data-i18n="ppl.dash.sub">Attendance, leave, the skill matrix that drives line allocation, and earned-minute incentive — one view.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('ppl_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('people.attendance') }}" data-i18n="ppl.action.mark_day">Mark today</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.leave') }}" data-i18n="ppl.nav.leave">Leave</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.skills') }}" data-i18n="ppl.nav.skills">Skill matrix</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.headcount }}</div><div class="l" data-i18n="ppl.kpi.headcount">Headcount</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.present_today }}</div><div class="l" data-i18n="ppl.kpi.present">Present today</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.absent_today }}</div><div class="l" data-i18n="ppl.kpi.absent">Absent today</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.leave_today }}</div><div class="l" data-i18n="ppl.kpi.on_leave">On leave today</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.pending_leave }}</div><div class="l" data-i18n="ppl.kpi.pending_leave">Leave to approve</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.avg_efficiency }}%</div><div class="l" data-i18n="ppl.kpi.avg_eff">Avg operator efficiency</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.attendance_pct }}%</div><div class="l" data-i18n="ppl.kpi.attendance">Attendance %</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.absenteeism_pct }}%</div><div class="l" data-i18n="ppl.kpi.absenteeism">Absenteeism %</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.1f}'.format(d.ot_hours or 0) }}</div><div class="l" data-i18n="ppl.kpi.ot">Overtime hours</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(d.incentive_total or 0) }} <span style="font-size:13px;font-weight:600">{{ currency }}</span></div><div class="l" data-i18n="ppl.kpi.incentive">Incentive earned</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="ppl.dash.by_dept">Attendance by department (30 days)</h3>
+      <a class="tag" href="{{ url_for('people.attendance') }}" data-i18n="ppl.nav.attendance">Attendance</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="ppl.field.department">Department</th>
+          <th style="text-align:right" data-i18n="ppl.field.scheduled">Scheduled</th>
+          <th style="text-align:right" data-i18n="ppl.field.attendance_pct">Attendance %</th>
+          <th style="text-align:right" data-i18n="ppl.field.absenteeism_pct">Absenteeism %</th></tr></thead>
+        <tbody>
+        {% for r in d.by_dept %}
+          <tr><td>{{ r.department }}</td>
+            <td style="text-align:right">{{ r.scheduled }}</td>
+            <td style="text-align:right">{{ r.attendance_pct }}%</td>
+            <td style="text-align:right">{% if r.absenteeism_pct > 10 %}<span class="tag" style="background:#be123c18;color:#be123c">{{ r.absenteeism_pct }}%</span>{% else %}{{ r.absenteeism_pct }}%{% endif %}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="ppl.empty.dept">No attendance recorded yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="ppl.dash.pending">Leave awaiting approval</h3>
+      <a class="tag" href="{{ url_for('people.leave', status='pending') }}" data-i18n="ppl.action.all_leave">All requests</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="ppl.field.employee">Employee</th><th data-i18n="ppl.field.type">Type</th>
+          <th data-i18n="ppl.field.from">From</th><th style="text-align:right" data-i18n="ppl.field.days">Days</th>
+          <th data-i18n="ppl.field.status">Status</th></tr></thead>
+        <tbody>
+        {% for l in d.pending %}
+          <tr><td>{{ l.employee_name }}<div class="muted" style="font-size:11px">{{ l.employee_code }} · {{ l.department or '—' }}</div></td>
+            <td><span class="tag">{{ l.leave_type }}</span></td>
+            <td style="font-variant-numeric:tabular-nums">{{ l.from_date }}</td>
+            <td style="text-align:right">{{ '%g'|format(l.days or 0) }}</td>
+            <td>{{ st(l.status) }}</td></tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="ppl.empty.pending">Nothing waiting for approval.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="ppl.dash.top">Top operators — last 30 days</h3>
+    <a class="tag" href="{{ url_for('people.incentive') }}" data-i18n="ppl.nav.incentive">Incentive</a></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ppl.field.employee">Employee</th><th data-i18n="ppl.field.department">Department</th>
+        <th style="text-align:right" data-i18n="ppl.field.pieces">Pieces</th>
+        <th style="text-align:right" data-i18n="ppl.field.earned">Earned min</th>
+        <th style="text-align:right" data-i18n="ppl.field.eff_pct">Efficiency %</th>
+        <th style="text-align:right" data-i18n="ppl.field.incentive">Incentive</th></tr></thead>
+      <tbody>
+      {% for o in d.top_operators %}
+        <tr><td>{{ o.employee_name }}<div class="muted" style="font-size:11px">{{ o.employee_code }}</div></td>
+          <td class="muted">{{ o.department or '—' }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(o.pieces or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.1f}'.format(o.earned_minutes or 0) }}</td>
+          <td style="text-align:right">{% if o.efficiency_pct >= 100 %}<span class="tag" style="background:#0f7a4d18;color:#0f7a4d">{{ o.efficiency_pct }}%</span>{% else %}{{ o.efficiency_pct }}%{% endif %}</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(o.incentive or 0) }}</td></tr>
+      {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:16px" data-i18n="ppl.empty.top">No production recorded yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

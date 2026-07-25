@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Record production{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="mes.eyebrow">Smart Factory · Shop-floor MES</div>
+    <h1 data-i18n="mes.nav.entry">Record hour &amp; downtime</h1>
+    <div class="sub" data-i18n="mes.entry.sub">One row per line and hour. Re-submitting the same hour edits it — it never double-counts.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.board', date=today) }}" data-i18n="mes.action.board">Hourly board</a>
+</div>
+
+<div class="grid cols-2">
+  <form class="panel" method="post" action="{{ url_for('mes.hourly_save') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-head"><h3 data-i18n="mes.entry.hourly">Hourly output</h3></div>
+    <div class="panel-pad">
+      <div class="grid cols-2">
+        <div class="field"><label data-i18n="mes.field.line">Line</label>
+          <select name="line_id" required>
+            {% for l in lines %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label data-i18n="mes.field.date">Production day</label>
+          <input type="date" name="work_date" value="{{ today }}"></div>
+        <div class="field"><label data-i18n="mes.field.hour">Hour slot</label>
+          <select name="hour_slot" required>
+            {% for s in slots %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label data-i18n="mes.field.order">Order</label>
+          <select name="order_id">
+            <option value="" data-i18n="mes.field.unassigned">Unassigned</option>
+            {% for o in orders %}<option value="{{ o.id }}">{{ o.order_no }} · {{ o.buyer }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label data-i18n="mes.field.target">Target (pcs)</label>
+          <input type="number" name="target_qty" min="0" step="1" required></div>
+        <div class="field"><label data-i18n="mes.field.actual">Actual (pcs)</label>
+          <input type="number" name="actual_qty" min="0" step="1" required></div>
+        <div class="field"><label data-i18n="mes.field.reject">Rejects (pcs)</label>
+          <input type="number" name="reject_qty" min="0" step="1" value="0"></div>
+        <div class="field"><label data-i18n="mes.field.operators">Operators present</label>
+          <input type="number" name="operators" min="0" step="1" required></div>
+        <div class="field"><label data-i18n="mes.field.smv">SMV (min/piece)</label>
+          <input type="number" name="smv" min="0" step="0.01"></div>
+        <div class="field"><label data-i18n="mes.field.notes">Notes</label>
+          <input name="notes"></div>
+      </div>
+      <div class="flex gap center mt-4">
+        <button class="btn btn-primary" data-i18n="mes.action.save">Save hour</button>
+      </div>
+    </div>
+  </form>
+
+  <form class="panel" method="post" action="{{ url_for('mes.downtime_save') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-head"><h3 data-i18n="mes.entry.downtime">Downtime / loss</h3></div>
+    <div class="panel-pad">
+      <div class="grid cols-2">
+        <div class="field"><label data-i18n="mes.field.line">Line</label>
+          <select name="line_id" required>
+            {% for l in lines %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label data-i18n="mes.field.date">Production day</label>
+          <input type="date" name="work_date" value="{{ today }}"></div>
+        <div class="field"><label data-i18n="mes.field.reason">Reason</label>
+          <select name="reason" required>
+            {% for r in reasons %}<option value="{{ r }}" data-i18n="mes.reason.{{ r }}">{{ r|replace('_',' ') }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label data-i18n="mes.field.minutes">Lost minutes</label>
+          <input type="number" name="minutes" min="1" step="1" required></div>
+      </div>
+      <div class="flex gap center mt-4">
+        <button class="btn btn-primary" data-i18n="mes.action.log">Log downtime</button>
+      </div>
+      <div class="muted mt-3" data-i18n="mes.entry.hint">Coded losses are what turn OEE into an action list. A line past 60 lost minutes alerts the bell.</div>
+    </div>
+  </form>
+</div>
+{% endblock %}

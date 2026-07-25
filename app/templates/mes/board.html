@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Hourly board{% endblock %}
+{% set C = {'green':'#15803d','amber':'#b45309','red':'#be123c','none':'#6b7280'} %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="mes.eyebrow">Smart Factory · Shop-floor MES</div>
+    <h1 data-i18n="mes.nav.board">Hourly production board</h1>
+    <div class="sub" data-i18n="mes.board.sub">Every line, every hour, against plan. Red means the hour is lost — act now.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('mes_entry') %}<a class="btn btn-primary btn-sm" href="{{ url_for('mes.entry', date=b.work_date) }}" data-i18n="mes.action.entry">Record hour</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.index', date=b.work_date) }}" data-i18n="mes.action.dashboard">Dashboard</a>
+  </div>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px">
+  <div class="panel-pad flex gap center wrap">
+    <div class="field" style="margin:0"><label data-i18n="mes.filter.date">Production day</label>
+      <input type="date" name="date" value="{{ b.work_date }}" onchange="this.form.submit()"></div>
+    <span class="tag" style="background:{{ C.green }}18;color:{{ C.green }}"><span data-i18n="mes.legend.green">Green ≥ 95%</span></span>
+    <span class="tag" style="background:{{ C.amber }}18;color:{{ C.amber }}"><span data-i18n="mes.legend.amber">Amber ≥ 85%</span></span>
+    <span class="tag" style="background:{{ C.red }}18;color:{{ C.red }}"><span data-i18n="mes.legend.red">Red below 85%</span></span>
+  </div>
+</form>
+
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="mes.board.grid">Line × hour</h3><span class="muted">{{ b.work_date }}</span></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th data-i18n="mes.field.line">Line</th>
+        {% for s in b.slots %}<th style="text-align:right">{{ s }}</th>{% endfor %}
+        <th style="text-align:right" data-i18n="mes.field.day">Day</th></tr></thead>
+      <tbody>
+      {% for l in b.lines %}
+        <tr><td><a href="{{ url_for('mes.line', line_id=l.line_id, date=b.work_date) }}">{{ l.line_name }}</a></td>
+          {% for s in b.slots %}{% set c = l.cells.get(s) %}
+            <td style="text-align:right">
+              {% if c %}<span class="tag" style="background:{{ C.get(c.rag) }}18;color:{{ C.get(c.rag) }}" title="{{ c.actual }} / {{ c.target }}">{{ c.actual }}<span class="muted" style="color:inherit;opacity:.7">/{{ c.target }}</span></span>
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+          {% endfor %}
+          <td style="text-align:right"><span class="tag" style="background:{{ C.get(l.rag) }}18;color:{{ C.get(l.rag) }}">{{ l.actual }}/{{ l.target }} · {{ l.achievement }}%</span></td></tr>
+      {% else %}<tr><td colspan="{{ b.slots|length + 2 }}" class="muted" style="text-align:center;padding:18px" data-i18n="mes.empty.board">No hours recorded for this day.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

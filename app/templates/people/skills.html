@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Skill matrix{% endblock %}
+{% macro lvl(n) %}{% set c={1:'#6b7280',2:'#1d4ed8',3:'#0369a1',4:'#0f7a4d',5:'#166534'} %}<span class="tag" style="background:{{ c.get(n,'#6b7280') }}18;color:{{ c.get(n,'#6b7280') }}">L{{ n }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="ppl.eyebrow">People · HR Core</div>
+    <h1 data-i18n="ppl.nav.skills">Skill matrix</h1>
+    <div class="sub" data-i18n="ppl.skills.sub">Who can run which operation, and how well — the input to skill-based line allocation.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('people.index') }}" data-i18n="ppl.nav.home">HR Core</a>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <select name="dept" onchange="this.form.submit()">
+    <option value="" data-i18n="ppl.filter.all_depts">All departments</option>
+    {% for x in departments %}<option value="{{ x }}" {{ 'selected' if f_dept==x }}>{{ x }}</option>{% endfor %}
+  </select>
+  <select name="op" onchange="this.form.submit()">
+    <option value="" data-i18n="ppl.filter.pick_op">Rank operators for…</option>
+    {% for o in operations %}<option value="{{ o }}" {{ 'selected' if f_op==o }}>{{ o }}</option>{% endfor %}
+  </select>
+  {% if f_dept or f_op %}<a class="tag" href="{{ url_for('people.skills') }}" data-i18n="ppl.filter.clear">Clear</a>{% endif %}
+</div></form>
+
+{% if f_op %}
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="ppl.skills.best">Best operators for this operation</h3><span class="tag">{{ f_op }}</span></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th>#</th><th data-i18n="ppl.field.employee">Employee</th>
+        <th data-i18n="ppl.field.department">Department</th><th data-i18n="ppl.field.level">Level</th>
+        <th style="text-align:right" data-i18n="ppl.field.eff_pct">Efficiency %</th></tr></thead>
+      <tbody>
+      {% for b in best %}
+        <tr><td class="muted">{{ loop.index }}</td>
+          <td>{{ b.employee_name }}<div class="muted" style="font-size:11px">{{ b.employee_code }}</div></td>
+          <td class="muted">{{ b.department or '—' }}</td><td>{{ lvl(b.level) }}</td>
+          <td style="text-align:right">{{ '{:,.1f}'.format(b.efficiency_pct or 0) }}%</td></tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:18px" data-i18n="ppl.empty.best">Nobody is rated at level 2 or above on this operation yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if can('ppl_manage') %}
+<form class="panel mt-4" method="post" action="{{ url_for('people.skill_save') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="dept" value="{{ f_dept or '' }}">
+  <div class="panel-head"><h3 data-i18n="ppl.skills.rate">Rate an operator</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field"><label data-i18n="ppl.field.employee">Employee</label>
+        <select name="employee_id" required>
+          {% for e in employees %}<option value="{{ e.id }}">{{ e.employee_code }} — {{ e.employee_name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="ppl.field.operation">Operation</label>
+        <select name="operation" required>{% for o in operations %}<option value="{{ o }}" {{ 'selected' if f_op==o }}>{{ o }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="ppl.field.level">Level</label>
+        <select name="level">{% for l in levels %}<option value="{{ l }}" {{ 'selected' if l==3 }}>{{ l }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="ppl.field.eff_pct">Efficiency %</label>
+        <input type="number" name="efficiency_pct" min="0" step="0.1" value="85"></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="ppl.action.save_skill">Save rating</button>
+      <span class="muted" data-i18n="ppl.skills.legend">Level 1 trainee · 2 assisted · 3 standard · 4 fast · 5 trainer. Only level 2 and above are proposed for allocation.</span>
+    </div>
+  </div>
+</form>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="ppl.skills.matrix">Employee × operation</h3></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ppl.field.employee">Employee</th>
+        {% for o in matrix.operations %}<th>{{ o }}</th>{% endfor %}
+        <th style="text-align:right" data-i18n="ppl.field.ops_count">Ops</th>
+        <th style="text-align:right" data-i18n="ppl.field.avg_level">Avg level</th></tr></thead>
+      <tbody>
+      {% for r in matrix.rows %}
+        <tr><td>{{ r.employee_name }}<div class="muted" style="font-size:11px">{{ r.employee_code }} · {{ r.department or '—' }}</div></td>
+          {% for o in matrix.operations %}
+            {% set c = r.cells.get(o) %}
+            <td>{% if c %}{{ lvl(c.level) }}<div class="muted" style="font-size:11px">{{ '{:,.0f}'.format(c.eff or 0) }}%</div>{% else %}<span class="muted">—</span>{% endif %}</td>
+          {% endfor %}
+          <td style="text-align:right">{{ r.ops_count }}</td>
+          <td style="text-align:right">{{ r.avg_level }}</td></tr>
+      {% else %}<tr><td colspan="3" class="muted" style="text-align:center;padding:18px" data-i18n="ppl.empty.matrix">No ratings yet — rate an operator above.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

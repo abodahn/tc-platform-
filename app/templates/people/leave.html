@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Leave{% endblock %}
+{% macro st(s) %}{% set c={'pending':'#b45309','approved':'#0f7a4d','rejected':'#be123c','cancelled':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="ppl.eyebrow">People · HR Core</div>
+    <h1 data-i18n="ppl.nav.leave">Leave</h1>
+    <div class="sub" data-i18n="ppl.leave.sub">A request can never exceed the remaining balance, and approving deducts it exactly once.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('people.index') }}" data-i18n="ppl.nav.home">HR Core</a>
+</div>
+
+{% if can('ppl_manage') %}
+<form class="panel" method="post" action="{{ url_for('people.leave_request') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="ppl.leave.new">New leave request</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field"><label data-i18n="ppl.field.employee">Employee</label>
+        <select name="employee_id" required>
+          {% for e in employees %}<option value="{{ e.id }}">{{ e.employee_code }} — {{ e.employee_name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="ppl.field.type">Type</label>
+        <select name="leave_type">{% for t in leave_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="ppl.field.from">From</label><input type="date" name="from_date" required></div>
+      <div class="field"><label data-i18n="ppl.field.to">To</label><input type="date" name="to_date" required></div>
+      <div class="field span-2"><label data-i18n="ppl.field.reason">Reason</label>
+        <input name="reason" data-i18n-ph="ppl.ph.reason" placeholder="Reason for the request"></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="ppl.action.submit">Submit request</button>
+      <span class="muted" data-i18n="ppl.leave.rule">Unpaid leave carries no entitlement and is not balance-checked.</span>
+    </div>
+  </div>
+</form>
+{% endif %}
+
+<form class="panel mt-4" method="get"><div class="panel-pad flex gap center wrap">
+  <select name="status" onchange="this.form.submit()">
+    <option value="" data-i18n="ppl.filter.all_status">All statuses</option>
+    {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f_status==s }}>{{ s }}</option>{% endfor %}
+  </select>
+  {% if f_status %}<a class="tag" href="{{ url_for('people.leave') }}" data-i18n="ppl.filter.clear">Clear</a>{% endif %}
+</div></form>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="ppl.leave.list">Leave requests</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ppl.field.employee">Employee</th><th data-i18n="ppl.field.type">Type</th>
+        <th data-i18n="ppl.field.from">From</th><th data-i18n="ppl.field.to">To</th>
+        <th style="text-align:right" data-i18n="ppl.field.days">Days</th>
+        <th data-i18n="ppl.field.reason">Reason</th><th data-i18n="ppl.field.status">Status</th>
+        <th data-i18n="ppl.field.approver">Approver</th><th></th></tr></thead>
+      <tbody>
+      {% for l in rows %}
+        <tr><td>{{ l.employee_name }}<div class="muted" style="font-size:11px">{{ l.employee_code }} · {{ l.department or '—' }}</div></td>
+          <td><span class="tag">{{ l.leave_type }}</span></td>
+          <td style="font-variant-numeric:tabular-nums">{{ l.from_date }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ l.to_date }}</td>
+          <td style="text-align:right">{{ '%g'|format(l.days or 0) }}</td>
+          <td class="muted">{{ (l.reason or '—')[:40] }}</td>
+          <td>{{ st(l.status) }}</td>
+          <td class="muted">{{ l.approver or '—' }}</td>
+          <td>{% if can('ppl_approve') and l.status in ('pending','approved') %}
+            <form method="post" action="{{ url_for('people.leave_decide', leave_id=l.id) }}" style="display:inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="back_status" value="{{ f_status or '' }}">
+              {% if l.status == 'pending' %}
+              <button class="btn btn-sm" name="action" value="approve" data-i18n="ppl.action.approve">Approve</button>
+              <button class="btn btn-ghost btn-sm" name="action" value="reject" data-i18n="ppl.action.reject">Reject</button>
+              {% else %}
+              <button class="btn btn-ghost btn-sm" name="action" value="cancel" data-i18n="ppl.action.cancel">Cancel</button>
+              {% endif %}
+            </form>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="9" class="muted" style="text-align:center;padding:18px" data-i18n="ppl.empty.leave">No leave requests yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="ppl.leave.balances">Leave balances</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ppl.field.employee">Employee</th><th data-i18n="ppl.field.type">Type</th>
+        <th style="text-align:right" data-i18n="ppl.field.entitled">Entitled</th>
+        <th style="text-align:right" data-i18n="ppl.field.taken">Taken</th>
+        <th style="text-align:right" data-i18n="ppl.field.remaining">Remaining</th></tr></thead>
+      <tbody>
+      {% for b in balances %}
+        <tr><td>{{ b.employee_name }}<div class="muted" style="font-size:11px">{{ b.employee_code }}</div></td>
+          <td><span class="tag">{{ b.leave_type }}</span></td>
+          <td style="text-align:right">{{ '%g'|format(b.entitled or 0) }}</td>
+          <td style="text-align:right">{{ '%g'|format(b.taken or 0) }}</td>
+          <td style="text-align:right">{% if b.remaining <= 0 %}<span class="tag" style="background:#be123c18;color:#be123c">{{ '%g'|format(b.remaining) }}</span>{% else %}{{ '%g'|format(b.remaining) }}{% endif %}</td></tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:18px" data-i18n="ppl.empty.balances">No balances yet — they are created on the first request.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ style.style_ref }} tech pack v{{ techpack.version }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ style.style_ref }} · <span data-i18n="plm.field.version">Version</span> {{ techpack.version }}</div>
+    <h1 data-i18n="plm.detail.techpack">Tech pack</h1>
+    <div class="sub">{{ style.name or '—' }} · {{ style.buyer or '—' }}
+      {% if is_latest %}· <span class="tag" style="background:#0f7a4d18;color:#0f7a4d" data-i18n="plm.detail.current">current version</span>
+      {% else %}· <span class="tag" style="background:#6b728018;color:#6b7280" data-i18n="plm.detail.frozen">read-only</span>{% endif %}</div>
+  </div>
+  {# techpack.style_id, not style.id: the header style dict is empty when the
+     style row is gone, and url_for on an undefined id would 500 the page. #}
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('plm.style_detail', style_id=techpack.style_id) }}" data-i18n="plm.action.back">Back</a>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="plm.field.change_note">Change note</h3>
+    <span class="tag"><span data-i18n="plm.field.published">Published</span> {{ techpack.published_at or '—' }}</span></div>
+  <div class="panel-pad">
+    <div class="muted">{{ techpack.change_note or '—' }}{% if techpack.published_by %} · {{ techpack.published_by }}{% endif %}</div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="plm.detail.sections">Sections</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="plm.field.title">Section</th><th data-i18n="plm.field.body">Detail</th></tr></thead>
+      <tbody>
+      {% for s in sections %}
+        <tr><td style="white-space:nowrap">{{ s.title }}</td><td class="muted">{{ s.body or '—' }}</td></tr>
+      {% else %}<tr><td colspan="2" class="muted" style="text-align:center;padding:16px" data-i18n="plm.empty.sections">No sections in this version.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="plm.detail.specs">Measurement spec</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="plm.field.pom">Point of measure</th><th data-i18n="plm.field.size">Size</th>
+        <th style="text-align:right" data-i18n="plm.field.spec">Spec (cm)</th>
+        <th style="text-align:right" data-i18n="plm.field.tolerance">Tol ±</th></tr></thead>
+      <tbody>
+      {% for m in specs %}
+        <tr><td>{{ m.pom }}</td><td class="muted">{{ m.size or '—' }}</td>
+          <td style="text-align:right">{{ '%.1f'|format(m.spec_value or 0) }}</td>
+          <td style="text-align:right">{{ '%.1f'|format(m.tolerance or 0) }}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="plm.empty.specs">No measurements in this version.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

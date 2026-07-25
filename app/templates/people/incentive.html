@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Incentive{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="ppl.eyebrow">People · HR Core</div>
+    <h1 data-i18n="ppl.nav.incentive">Incentive & productivity</h1>
+    <div class="sub" data-i18n="ppl.inc.sub">Earned-minute model: only minutes produced above the qualifying efficiency are paid.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('people.index') }}" data-i18n="ppl.nav.home">HR Core</a>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <div class="field"><label data-i18n="ppl.field.from">From</label><input type="date" name="from" value="{{ from_d }}"></div>
+  <div class="field"><label data-i18n="ppl.field.to">To</label><input type="date" name="to" value="{{ to_d }}"></div>
+  <button class="btn btn-sm" data-i18n="ppl.action.apply">Apply</button>
+</div></form>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(summary.pieces or 0) }}</div><div class="l" data-i18n="ppl.kpi.pieces">Pieces</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(summary.earned_minutes or 0) }}</div><div class="l" data-i18n="ppl.kpi.earned_min">Earned minutes</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(summary.minutes_worked or 0) }}</div><div class="l" data-i18n="ppl.kpi.worked_min">Minutes worked</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-g' if summary.efficiency_pct >= threshold else 'pb-kpi-r' }}"><div class="v">{{ summary.efficiency_pct }}%</div><div class="l" data-i18n="ppl.kpi.avg_eff">Avg operator efficiency</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ '{:,.2f}'.format(summary.incentive or 0) }} <span style="font-size:13px;font-weight:600">{{ currency }}</span></div><div class="l" data-i18n="ppl.kpi.incentive">Incentive earned</div></div>
+</div>
+
+{% if can('ppl_manage') %}
+<form class="panel mt-4" method="post" action="{{ url_for('people.incentive_add') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="ppl.inc.record">Record output</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field"><label data-i18n="ppl.field.employee">Employee</label>
+        <select name="employee_id" required>
+          {% for e in employees %}<option value="{{ e.id }}">{{ e.employee_code }} — {{ e.employee_name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="ppl.field.date">Date</label><input type="date" name="work_date" value="{{ to_d }}"></div>
+      <div class="field"><label data-i18n="ppl.field.operation">Operation</label>
+        <select name="operation">{% for o in operations %}<option value="{{ o }}">{{ o }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="ppl.field.pieces">Pieces</label><input type="number" name="pieces" min="0" step="1" value="0"></div>
+      <div class="field"><label data-i18n="ppl.field.smv">SMV (min/piece)</label><input type="number" name="smv" min="0" step="0.01" value="0.55" required></div>
+      <div class="field"><label data-i18n="ppl.field.minutes">Minutes worked</label><input type="number" name="minutes_worked" min="1" step="1" value="480" required></div>
+      <div class="field"><label data-i18n="ppl.field.rate">Rate per minute</label><input type="number" name="rate_per_minute" min="0" step="0.01" value="{{ rate }}"></div>
+      <div class="field"><label data-i18n="ppl.field.threshold">Threshold %</label><input type="number" name="threshold_pct" min="0" step="1" value="{{ threshold }}"></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="ppl.action.record">Record</button>
+      <span class="muted" data-i18n="ppl.inc.formula">Earned minutes = pieces × SMV. Efficiency = earned ÷ worked. Incentive = (earned − threshold minutes) × rate, never below zero.</span>
+    </div>
+  </div>
+</form>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="ppl.inc.summary">Operator ranking</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ppl.field.employee">Employee</th><th data-i18n="ppl.field.department">Department</th>
+        <th style="text-align:right" data-i18n="ppl.field.days">Days</th>
+        <th style="text-align:right" data-i18n="ppl.field.pieces">Pieces</th>
+        <th style="text-align:right" data-i18n="ppl.field.earned">Earned min</th>
+        <th style="text-align:right" data-i18n="ppl.field.eff_pct">Efficiency %</th>
+        <th style="text-align:right" data-i18n="ppl.field.incentive">Incentive</th></tr></thead>
+      <tbody>
+      {% for r in summary.rows %}
+        <tr><td>{{ r.employee_name }}<div class="muted" style="font-size:11px">{{ r.employee_code }}</div></td>
+          <td class="muted">{{ r.department or '—' }}</td>
+          <td style="text-align:right">{{ r.days }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(r.pieces or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.1f}'.format(r.earned_minutes or 0) }}</td>
+          <td style="text-align:right">{% if r.efficiency_pct >= threshold %}<span class="tag" style="background:#0f7a4d18;color:#0f7a4d">{{ r.efficiency_pct }}%</span>{% else %}<span class="tag" style="background:#b4530918;color:#b45309">{{ r.efficiency_pct }}%</span>{% endif %}</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(r.incentive or 0) }}</td></tr>
+      {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="ppl.empty.incentive">No production recorded in this range.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="ppl.inc.rows">Records</h3></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ppl.field.date">Date</th><th data-i18n="ppl.field.employee">Employee</th>
+        <th data-i18n="ppl.field.operation">Operation</th><th data-i18n="ppl.field.order">Order</th>
+        <th style="text-align:right" data-i18n="ppl.field.pieces">Pieces</th>
+        <th style="text-align:right" data-i18n="ppl.field.smv">SMV</th>
+        <th style="text-align:right" data-i18n="ppl.field.minutes">Minutes</th>
+        <th style="text-align:right" data-i18n="ppl.field.earned">Earned min</th>
+        <th style="text-align:right" data-i18n="ppl.field.eff_pct">Efficiency %</th>
+        <th style="text-align:right" data-i18n="ppl.field.incentive">Incentive</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr><td style="font-variant-numeric:tabular-nums">{{ r.work_date }}</td>
+          <td>{{ r.employee_name }}<div class="muted" style="font-size:11px">{{ r.employee_code }}</div></td>
+          <td class="muted">{{ r.operation or '—' }}</td>
+          <td>{% if r.order_id %}<a href="{{ url_for('orders.detail', order_id=r.order_id) }}">{{ r.order_no or r.order_id }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(r.pieces or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(r.smv or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(r.minutes_worked or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.1f}'.format(r.earned_minutes or 0) }}</td>
+          <td style="text-align:right">{{ r.efficiency_pct }}%</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(r.incentive or 0) }}</td></tr>
+      {% else %}<tr><td colspan="10" class="muted" style="text-align:center;padding:18px" data-i18n="ppl.empty.incentive_rows">No records in this range.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

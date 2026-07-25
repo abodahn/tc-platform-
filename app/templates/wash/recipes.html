@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Wash recipes{% endblock %}
+{% macro st(s) %}{% set c={'approved':'#0f7a4d','retired':'#6b7280','draft':'#1d4ed8'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="wsh.eyebrow">Wet processing · Wash & finishing</div>
+    <h1 data-i18n="wsh.nav.recipes">Recipes</h1>
+    <div class="sub" data-i18n="wsh.recipes.sub">One row per recipe family. Steps and chemicals live on a version, never on the family.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.index') }}" data-i18n="wsh.nav.home">Dashboard</a>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <select name="wash_type" onchange="this.form.submit()">
+    <option value="" data-i18n="wsh.filter.all_types">All wash types</option>
+    {% for w in wash_types %}<option value="{{ w }}" {{ 'selected' if f_type==w }}>{{ w }}</option>{% endfor %}
+  </select>
+  <select name="status" onchange="this.form.submit()">
+    <option value="" data-i18n="wsh.filter.all_status">Any latest status</option>
+    {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f_status==s }}>{{ s }}</option>{% endfor %}
+  </select>
+  {% if f_type or f_status %}<a class="tag" href="{{ url_for('wash.recipes') }}" data-i18n="wsh.filter.clear">Clear</a>{% endif %}
+</div></form>
+
+{% if can('wsh_manage') %}
+<form class="panel" method="post" action="{{ url_for('wash.recipe_create') }}" style="margin-bottom:14px">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="wsh.action.new_recipe">New recipe</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field"><label data-i18n="wsh.field.code">Code</label><input name="code" placeholder="WR-STN-04"></div>
+      <div class="field"><label><span data-i18n="wsh.field.name">Name</span> *</label><input name="name" required></div>
+      <div class="field"><label data-i18n="wsh.field.style">Style ref</label><input name="style_ref"></div>
+      <div class="field"><label data-i18n="wsh.field.wash_type">Wash type</label>
+        <select name="wash_type">{% for w in wash_types %}<option value="{{ w }}">{{ w }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="wsh.field.order">Order</label>
+        <select name="order_id"><option value="" data-i18n="wsh.field.no_order">Not linked</option>
+          {% for o in orders %}<option value="{{ o.id }}">{{ o.order_no }} · {{ o.buyer }}</option>{% endfor %}</select></div>
+      <div class="field span-2"><label data-i18n="wsh.field.notes">Notes</label><input name="notes"></div>
+    </div>
+    <div class="flex gap center mt-2">
+      <button class="btn btn-primary btn-sm" data-i18n="wsh.action.create">Create recipe</button>
+      <span class="muted" style="font-size:11.5px" data-i18n="wsh.recipes.hint">A draft version 1 is created automatically.</span>
+    </div>
+  </div>
+</form>
+{% endif %}
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="wsh.field.code">Code</th><th data-i18n="wsh.field.name">Name</th>
+      <th data-i18n="wsh.field.wash_type">Wash type</th><th data-i18n="wsh.field.style">Style ref</th>
+      <th style="text-align:right" data-i18n="wsh.field.versions">Versions</th>
+      <th data-i18n="wsh.field.bulk">Bulk standard</th><th data-i18n="wsh.field.latest">Latest</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr><td><a href="{{ url_for('wash.recipe_detail', recipe_id=r.id) }}">{{ r.code }}</a></td>
+        <td>{{ r.name }}</td><td><span class="tag">{{ r.wash_type }}</span></td>
+        <td class="muted">{{ r.style_ref or '—' }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.versions }}</td>
+        <td>{% if r.approved_version %}<span class="tag" style="background:#0f7a4d18;color:#0f7a4d">v{{ r.approved_version }}</span>{% else %}<span class="muted" data-i18n="wsh.badge.none">none</span>{% endif %}</td>
+        <td>v{{ r.latest }} {{ st(r.latest_status) }}</td></tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="wsh.empty.recipes">No recipes yet — create the first one.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

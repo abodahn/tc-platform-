@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Wash batches{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="wsh.eyebrow">Wet processing · Wash & finishing</div>
+    <h1 data-i18n="wsh.batches.title">Wash batches</h1>
+    <div class="sub" data-i18n="wsh.batches.sub">Every lot records the exact recipe version it ran — that is what makes the shade reproducible later.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.index') }}" data-i18n="wsh.nav.home">Dashboard</a>
+</div>
+
+{% if can('wsh_manage') %}
+<form class="panel" method="post" action="{{ url_for('wash.batch_create') }}" style="margin-bottom:14px">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="wsh.action.new_batch">Record a batch</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field span-2"><label data-i18n="wsh.field.version">Recipe version *</label>
+        <select name="version_id" required>
+          {% for v in versions %}<option value="{{ v.id }}">{{ v.code }} v{{ v.version }} · {{ v.status }} — {{ v.name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="wsh.field.machine">Machine</label>
+        <select name="machine">{% for m in machines %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="wsh.field.order">Order</label>
+        <select name="order_id"><option value="" data-i18n="wsh.field.no_order">Not linked</option>
+          {% for o in orders %}<option value="{{ o.id }}">{{ o.order_no }} · {{ o.buyer }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="wsh.field.load">Load kg</label><input type="number" name="load_kg" step="any" value="0"></div>
+      <div class="field"><label data-i18n="wsh.field.operator">Operator</label><input name="operator"></div>
+      <div class="field"><label data-i18n="wsh.field.started">Started</label><input name="started_at" type="datetime-local"></div>
+      <div class="field"><label data-i18n="wsh.field.ended">Ended</label><input name="ended_at" type="datetime-local"></div>
+      <div class="field"><label data-i18n="wsh.field.act_minutes">Actual minutes</label><input type="number" name="act_minutes" step="any" value="0"></div>
+      <div class="field"><label data-i18n="wsh.field.act_temp">Actual peak temp C</label><input type="number" name="act_temp_c" step="any" value="0"></div>
+      <div class="field"><label data-i18n="wsh.field.act_water">Metered water L</label><input type="number" name="act_water_l" step="any" value="0"></div>
+      <div class="field"><label data-i18n="wsh.field.shade">Shade</label><input name="shade"></div>
+      <div class="field"><label data-i18n="wsh.field.status">Status</label>
+        <select name="status">{% for s in batch_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+      <div class="field span-2"><label data-i18n="wsh.field.notes">Notes</label><input name="notes"></div>
+    </div>
+    <div class="flex gap center mt-2">
+      <button class="btn btn-primary btn-sm" data-i18n="wsh.action.record">Record batch</button>
+      <span class="muted" style="font-size:11.5px" data-i18n="wsh.batches.hint">Actuals outside tolerance are flagged and raise a bell alert.</span>
+    </div>
+  </div>
+</form>
+{% endif %}
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="wsh.field.batch">Batch</th><th data-i18n="wsh.field.recipe">Recipe</th>
+      <th data-i18n="wsh.field.machine">Machine</th>
+      <th style="text-align:right" data-i18n="wsh.field.load">Load kg</th>
+      <th style="text-align:right" data-i18n="wsh.field.act_minutes">Actual minutes</th>
+      <th style="text-align:right" data-i18n="wsh.field.act_temp">Actual peak temp C</th>
+      <th data-i18n="wsh.field.shade">Shade</th><th data-i18n="wsh.field.status">Status</th>
+      <th data-i18n="wsh.field.deviation">Deviation</th></tr></thead>
+    <tbody>
+    {% for b in rows %}
+      <tr><td style="font-variant-numeric:tabular-nums">{{ b.batch_no or b.id }}</td>
+        <td>{% if b.recipe_id %}<a href="{{ url_for('wash.recipe_detail', recipe_id=b.recipe_id, v=b.version_id) }}">{{ b.code or '—' }}</a>{% else %}{{ b.code or '—' }}{% endif %}
+          <span class="muted">v{{ b.version or '?' }}</span></td>
+        <td class="muted">{{ b.machine or '—' }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(b.load_kg or 0) }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(b.act_minutes or 0) }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(b.act_temp_c or 0) }}</td>
+        <td class="muted">{{ b.shade or '—' }}{% if b.notes %}<div style="font-size:11px">{{ b.notes }}</div>{% endif %}</td>
+        <td><span class="tag">{{ b.status }}</span></td>
+        <td>{% if b.deviation %}<span class="tag" style="background:#be123c18;color:#be123c">{{ b.deviation }}</span>{% else %}<span class="tag" style="background:#0f7a4d18;color:#0f7a4d" data-i18n="wsh.badge.in_tol">in tolerance</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="9" class="muted" style="text-align:center;padding:18px" data-i18n="wsh.empty.batches">No wash batches recorded yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

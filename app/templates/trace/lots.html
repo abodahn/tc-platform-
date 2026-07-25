@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Material lots{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="trc.eyebrow">Sustainability · Traceability & Product Passport</div>
+    <h1 data-i18n="trc.nav.lots">Material lots — chain of custody</h1>
+    <div class="sub" data-i18n="trc.lots.sub">Each lot points at the lot it was made from. That single link is what turns a fabric roll into a fibre-to-product chain.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+</div>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="trc.field.lot">Lot</th><th data-i18n="trc.field.material">Material</th>
+      <th data-i18n="trc.field.composition">Fibre composition</th><th data-i18n="trc.field.partner">Supplier</th>
+      <th data-i18n="trc.field.tier">Tier</th><th style="text-align:right" data-i18n="trc.field.qty">Qty</th>
+      <th data-i18n="trc.field.parent">From lot</th></tr></thead>
+    <tbody>
+    {% for l in rows %}
+      <tr>
+        <td><a href="{{ url_for('trace.lot_detail', lot_id=l.id) }}">{{ l.lot_ref or l.id }}</a>
+          {% if l.country_of_origin %}<div class="muted" style="font-size:11px">{{ l.country_of_origin }}</div>{% endif %}</td>
+        <td>{{ l.material or '—' }}</td>
+        <td class="muted">{{ l.fibre_composition or '—' }}</td>
+        <td class="muted">{{ l.partner_name or '—' }}</td>
+        {# only emit data-i18n for a tier that HAS a key: t() paints the raw key on
+           screen for anything else, so a stray tier 9 would read "trc.tier.9". #}
+        <td>{% if l.tier in tiers %}<span class="tag" data-i18n="trc.tier.{{ l.tier }}">{{ tiers[l.tier] }}</span>
+          {% elif l.tier %}<span class="tag">{{ l.tier }}</span>{% else %}—{% endif %}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ l.qty or 0 }} {{ l.uom or '' }}</td>
+        <td>{% if l.parent_lot_id %}<a href="{{ url_for('trace.lot_detail', lot_id=l.parent_lot_id) }}" data-i18n="trc.action.upstream">upstream</a>
+          {% else %}<span class="tag" style="background:#b4530918;color:#b45309" data-i18n="trc.badge.chain_end">chain ends here</span>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="trc.empty.lots">No material lots recorded yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+
+{% if can('trc_manage') %}
+<form class="panel mt-4" method="post" action="{{ url_for('trace.lot_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="trc.action.add_lot">Add material lot</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field"><label data-i18n="trc.field.material">Material *</label>
+        <input name="material" required data-i18n-ph="trc.ph.material" placeholder="Single jersey 180 gsm"></div>
+      <div class="field"><label data-i18n="trc.field.lot">Lot reference</label>
+        <input name="lot_ref" data-i18n-ph="trc.ph.lot" placeholder="auto if left blank"></div>
+      <div class="field"><label data-i18n="trc.field.composition">Fibre composition</label>
+        <input name="fibre_composition" data-i18n-ph="trc.ph.composition" placeholder="100% Organic Cotton"></div>
+      <div class="field"><label data-i18n="trc.field.partner">Supplier</label>
+        <select name="partner_id"><option value="" data-i18n="trc.opt.none">— none —</option>
+          {% for p in partners %}<option value="{{ p.id }}">{{ p.name }} (T{{ p.tier }})</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="trc.field.parent">Made from lot</label>
+        <select name="parent_lot_id"><option value="" data-i18n="trc.opt.none">— none —</option>
+          {% for l in rows %}<option value="{{ l.id }}">{{ l.lot_ref }} · {{ l.material }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="trc.field.country">Country of origin</label><input name="country_of_origin"></div>
+      <div class="field"><label data-i18n="trc.field.qty">Quantity</label><input type="number" name="qty" min="0" step="any"></div>
+      <div class="field"><label data-i18n="trc.field.uom">Unit</label><input name="uom" value="kg"></div>
+      <div class="field"><label data-i18n="trc.field.received">Received</label><input type="date" name="received_date"></div>
+    </div>
+    <button class="btn btn-primary btn-sm mt-2" data-i18n="trc.action.add_lot">Add material lot</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

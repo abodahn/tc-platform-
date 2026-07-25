@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}{{ recipe.code }} · {{ recipe.name }}{% endblock %}
+{% macro st(s) %}{% set c={'approved':'#0f7a4d','retired':'#6b7280','draft':'#1d4ed8'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
+{% macro vd(v) %}{% set c={'approved':'#0f7a4d','rejected':'#be123c','resubmit':'#b45309','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v,'#6b7280') }}18;color:{{ c.get(v,'#6b7280') }}">{{ v }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ recipe.code }} · {{ recipe.wash_type }}</div>
+    <h1>{{ recipe.name }}</h1>
+    <div class="sub">{% if recipe.style_ref %}{{ recipe.style_ref }} · {% endif %}
+      <span data-i18n="wsh.detail.versions_count">versions</span>: {{ versions|length }}</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.recipes') }}" data-i18n="wsh.action.back">Back</a>
+</div>
+
+<div class="panel" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <span class="muted" data-i18n="wsh.detail.pick_version">Version</span>
+  {% for v in versions %}
+    <a class="tag" href="{{ url_for('wash.recipe_detail', recipe_id=recipe.id, v=v.id) }}"
+       style="{{ 'outline:2px solid #1d4ed8' if sel and v.id==sel.id }}">v{{ v.version }} · {{ v.status }}</a>
+  {% endfor %}
+  {% if can('wsh_manage') %}
+  <form method="post" action="{{ url_for('wash.version_new', recipe_id=recipe.id) }}" class="flex gap center">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="source_version_id" value="{{ sel.id if sel else '' }}">
+    <button class="btn btn-ghost btn-sm" data-i18n="wsh.action.new_version">New version from this one</button>
+  </form>
+  {% endif %}
+</div></div>
+
+{% if not sel %}
+<div class="panel"><div class="panel-pad muted" data-i18n="wsh.empty.versions">This recipe has no version yet.</div></div>
+{% else %}
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ '%.0f'|format(tot.cycle_min) }}</div><div class="l" data-i18n="wsh.kpi.cycle">Cycle time (min)</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%.0f'|format(tot.water_l) }}</div><div class="l" data-i18n="wsh.kpi.water">Water est. (L)</div></div>
+  <div class="sf-kpi"><div class="v">{{ tot.baths }}</div><div class="l" data-i18n="wsh.kpi.baths">Baths</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%.0f'|format(tot.load_kg) }}</div><div class="l" data-i18n="wsh.kpi.nominal_load">Nominal load (kg)</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%.0f'|format(tot.max_temp_c) }}</div><div class="l" data-i18n="wsh.kpi.peak_temp">Peak temp (C)</div></div>
+  {# band 'na' (no goods weight yet) must stay UNCOLOURED: a brand-new draft with no
+     steps was rendering red, i.e. reading as the worst environmental band. #}
+  <div class="sf-kpi {{ {'low':'pb-kpi-g','medium':'pb-kpi-a','high':'pb-kpi-r'}.get(imp.band,'') }}">
+    <div class="v">{{ imp.score if imp.score is not none else '—' }}</div>
+    <div class="l" data-i18n="wsh.kpi.impact">Impact indicator</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="wsh.detail.version">Version v{{ sel.version }}</h3>{{ st(sel.status) }}</div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="wsh.field.created_by">Created by</td><td>{{ sel.created_by or '—' }} · {{ (sel.created_at or '')[:10] }}</td></tr>
+        <tr><td class="muted" data-i18n="wsh.field.approved_by">Approved by</td><td>{{ sel.approved_by or '—' }} {{ (sel.approved_at or '')[:10] }}</td></tr>
+      </table>
+      {% if can('wsh_approve') %}
+      <form method="post" action="{{ url_for('wash.version_status', version_id=sel.id) }}" class="flex gap center mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        {# 'draft' is not offered once a version has left it: re-opening it would rewrite
+           the recipe of record of every batch that already ran it. #}
+        <select name="status">{% for s in statuses %}{% if s != 'draft' or sel.status == 'draft' %}<option value="{{ s }}" {{ 'selected' if sel.status==s }}>{{ s }}</option>{% endif %}{% endfor %}</select>
+        <button class="btn btn-primary btn-sm" data-i18n="wsh.action.set_status">Set status</button>
+      </form>
+      <div class="muted mt-2" style="font-size:11.5px" data-i18n="wsh.detail.gate">A version can only be approved for bulk once one of its own lab dips is approved. Approving it retires the previous bulk standard.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="wsh.detail.impact">Environmental indicator</h3></div>
+    <div class="panel-pad">
+      <div class="muted" style="font-size:11.5px;margin-bottom:8px" data-i18n="wsh.detail.impact_note">Internal indicator only — not a certified EIM score. Water, energy and chemical intensity per kg of goods, each capped at 100 and averaged. Lower is better.</div>
+      <table class="tbl">
+        <thead><tr><th data-i18n="wsh.field.factor">Factor</th><th style="text-align:right" data-i18n="wsh.field.index">Index</th><th data-i18n="wsh.field.level">Level</th></tr></thead>
+        <tbody>
+          <tr><td data-i18n="wsh.impact.water">Water</td><td style="text-align:right;font-variant-numeric:tabular-nums">{{ imp.water }}</td>
+            <td><div class="pb-meter"><span style="width:{{ imp.water }}%"></span></div></td></tr>
+          <tr><td data-i18n="wsh.impact.energy">Energy</td><td style="text-align:right;font-variant-numeric:tabular-nums">{{ imp.energy }}</td>
+            <td><div class="pb-meter"><span style="width:{{ imp.energy }}%"></span></div></td></tr>
+          <tr><td data-i18n="wsh.impact.chem">Chemical</td><td style="text-align:right;font-variant-numeric:tabular-nums">{{ imp.chem }}</td>
+            <td><div class="pb-meter"><span style="width:{{ imp.chem }}%"></span></div></td></tr>
+          <tr><td data-i18n="wsh.field.chem_total">Chemical total (g)</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(tot.chem_g) }}</td>
+            <td class="muted">{{ imp.band }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="wsh.detail.steps">Steps & chemical dosing</h3>
+    <span class="tag">{{ tot.steps }} <span data-i18n="wsh.detail.steps_word">steps</span></span></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="wsh.field.step_no">#</th><th data-i18n="wsh.field.operation">Operation</th>
+        <th style="text-align:right" data-i18n="wsh.field.temp">Temp C</th>
+        <th style="text-align:right" data-i18n="wsh.field.minutes">Minutes</th>
+        <th style="text-align:right" data-i18n="wsh.field.liquor">Liquor ratio</th>
+        <th style="text-align:right" data-i18n="wsh.field.load">Load kg</th>
+        <th style="text-align:right" data-i18n="wsh.field.bath">Bath L</th>
+        <th data-i18n="wsh.field.chemicals">Chemicals</th></tr></thead>
+      <tbody>
+      {% for s in steps %}
+        <tr>
+          <td style="font-variant-numeric:tabular-nums">{{ s.step_no }}</td>
+          <td>{{ s.operation }}{% if s.notes %}<div class="muted" style="font-size:11px">{{ s.notes }}</div>{% endif %}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(s.temp_c or 0) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(s.minutes or 0) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.1f'|format(s.liquor_ratio or 0) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(s.load_kg or 0) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(s.bath_l or 0) }}</td>
+          <td>
+            {% for c in s.chemicals %}
+              <div>{{ c.name }} <span class="muted">{% if c.gpl %}{{ c.gpl }} g/L{% endif %}{% if c.owg_pct %} {{ c.owg_pct }}% OWG{% endif %} · {{ c.qty_g }} g</span></div>
+            {% else %}<span class="muted">—</span>{% endfor %}
+          </td>
+        </tr>
+      {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:16px" data-i18n="wsh.empty.steps">No steps on this version yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+
+    {% if can('wsh_manage') and sel.status == 'draft' %}
+    <form method="post" action="{{ url_for('wash.step_add', version_id=sel.id) }}" class="mt-4">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="grid cols-4">
+        <div class="field"><label data-i18n="wsh.field.operation">Operation</label>
+          <select name="operation">{% for o in operations %}<option value="{{ o }}">{{ o }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="wsh.field.temp">Temp C</label><input type="number" name="temp_c" step="any" value="40"></div>
+        <div class="field"><label data-i18n="wsh.field.minutes">Minutes</label><input type="number" name="minutes" step="any" value="15"></div>
+        <div class="field"><label data-i18n="wsh.field.liquor">Liquor ratio</label><input type="number" name="liquor_ratio" step="any" value="6"></div>
+        <div class="field"><label data-i18n="wsh.field.load">Load kg</label><input type="number" name="load_kg" step="any" value="{{ '%.0f'|format(tot.load_kg or 100) }}"></div>
+        <div class="field span-2"><label data-i18n="wsh.field.notes">Notes</label><input name="notes"></div>
+      </div>
+      <button class="btn btn-primary btn-sm mt-2" data-i18n="wsh.action.add_step">Add step</button>
+    </form>
+
+    {% if steps %}
+    <form method="post" action="{{ url_for('wash.chemical_add') }}" class="mt-4">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="grid cols-4">
+        <div class="field"><label data-i18n="wsh.field.step">Step</label>
+          <select name="step_id">{% for s in steps %}<option value="{{ s.id }}">{{ s.step_no }} · {{ s.operation }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="wsh.field.chemical">Chemical</label><input name="name" required></div>
+        <div class="field"><label data-i18n="wsh.field.gpl">g/L of bath</label><input type="number" name="gpl" step="any" value="0"></div>
+        <div class="field"><label data-i18n="wsh.field.owg">% on weight of goods</label><input type="number" name="owg_pct" step="any" value="0"></div>
+      </div>
+      <button class="btn btn-ghost btn-sm mt-2" data-i18n="wsh.action.add_chemical">Add chemical</button>
+    </form>
+    {% endif %}
+    {% elif can('wsh_manage') %}
+    <div class="muted mt-2" style="font-size:11.5px" data-i18n="wsh.detail.frozen">This version is frozen. Create a new version to change the steps — batches already reference this one.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="wsh.detail.dips">Lab dips on this version</h3>
+      <a class="tag" href="{{ url_for('wash.labdips') }}" data-i18n="wsh.action.all_dips">All lab dips</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="wsh.field.reference">Reference</th><th data-i18n="wsh.field.verdict">Verdict</th>
+          <th data-i18n="wsh.field.approver">Approver</th><th data-i18n="wsh.field.date">Date</th></tr></thead>
+        <tbody>
+        {% for x in dips %}
+          <tr><td>{{ x.reference or '—' }}</td><td>{{ vd(x.verdict) }}</td>
+            <td class="muted">{{ x.approver or '—' }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ x.verdict_date or '—' }}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="wsh.empty.dips_v">No lab dip on this version — bulk approval is blocked.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="wsh.detail.batches">Batches run on this version</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="wsh.field.batch">Batch</th><th data-i18n="wsh.field.machine">Machine</th>
+          <th style="text-align:right" data-i18n="wsh.field.load">Load kg</th><th data-i18n="wsh.field.deviation">Deviation</th></tr></thead>
+        <tbody>
+        {% for b in batches %}
+          <tr><td style="font-variant-numeric:tabular-nums">{{ b.batch_no or b.id }}</td>
+            <td class="muted">{{ b.machine or '—' }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(b.load_kg or 0) }}</td>
+            <td>{% if b.deviation %}<span class="tag" style="background:#be123c18;color:#be123c">{{ b.deviation }}</span>{% else %}<span class="tag" style="background:#0f7a4d18;color:#0f7a4d" data-i18n="wsh.badge.in_tol">in tolerance</span>{% endif %}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="wsh.empty.batches_v">No batch has run this version.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

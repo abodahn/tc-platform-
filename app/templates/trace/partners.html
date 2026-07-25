@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Supply-chain partners{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="trc.eyebrow">Sustainability · Traceability & Product Passport</div>
+    <h1 data-i18n="trc.nav.partners">Supply-chain partners</h1>
+    <div class="sub" data-i18n="trc.partners.sub">Every mill, spinner, dyehouse and farm behind the product, placed at its tier.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px">
+  <div class="panel-pad flex gap center wrap">
+    <select name="tier" onchange="this.form.submit()">
+      <option value="" data-i18n="trc.filter.all_tiers">All tiers</option>
+      {% for k in tier_keys %}<option value="{{ k }}" {{ 'selected' if f_tier == k|string }} data-i18n="trc.tier.{{ k }}">{{ tiers[k] }}</option>{% endfor %}
+    </select>
+    {% if f_tier %}<a class="tag" href="{{ url_for('trace.partners') }}" data-i18n="trc.filter.clear">Clear</a>{% endif %}
+  </div>
+</form>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="trc.field.partner">Partner</th><th data-i18n="trc.field.tier">Tier</th>
+      <th data-i18n="trc.field.country">Country</th><th data-i18n="trc.field.role">Role</th>
+      <th data-i18n="trc.field.certifications">Certifications</th><th data-i18n="trc.field.status">Status</th></tr></thead>
+    <tbody>
+    {% for p in rows %}
+      <tr>
+        <td>{{ p.name }}{% if p.contact %}<div class="muted" style="font-size:11px">{{ p.contact }}{% if p.contact_email %} · {{ p.contact_email }}{% endif %}</div>{% endif %}</td>
+        <td>{% if p.tier in tiers %}<span class="tag" data-i18n="trc.tier.{{ p.tier }}">{{ tiers[p.tier] }}</span>
+          {% else %}<span class="tag">{{ p.tier or '—' }}</span>{% endif %}</td>
+        <td class="muted">{{ p.country or '—' }}</td>
+        <td class="muted">{{ p.role or '—' }}</td>
+        <td class="muted" style="font-size:11.5px">{{ p.certifications or '—' }}</td>
+        <td>{% if p.status == 'active' %}<span class="tag" style="background:#04785718;color:#047857" data-i18n="trc.status.active">active</span>
+            {% else %}<span class="tag" style="background:#b4530918;color:#b45309">{{ p.status }}</span>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:18px" data-i18n="trc.empty.partners">No supply-chain partners recorded yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+
+{% if can('trc_manage') %}
+<form class="panel mt-4" method="post" action="{{ url_for('trace.partner_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="trc.action.add_partner">Add supply-chain partner</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field"><label data-i18n="trc.field.partner">Partner name *</label><input name="name" required></div>
+      <div class="field"><label data-i18n="trc.field.tier">Tier</label>
+        <select name="tier">{% for k in tier_keys %}<option value="{{ k }}" data-i18n="trc.tier.{{ k }}">{{ tiers[k] }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="trc.field.country">Country</label><input name="country"></div>
+      <div class="field"><label data-i18n="trc.field.role">Role</label>
+        <select name="role">{% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="trc.field.contact">Contact</label><input name="contact"></div>
+      <div class="field"><label data-i18n="trc.field.email">Contact e-mail</label><input name="contact_email"></div>
+      <div class="field"><label data-i18n="trc.field.status">Status</label>
+        <select name="status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="trc.field.certifications">Certifications held</label>
+        <input name="certifications" data-i18n-ph="trc.ph.certifications" placeholder="GOTS, OEKO-TEX Standard 100"></div>
+    </div>
+    <button class="btn btn-primary btn-sm mt-2" data-i18n="trc.action.add_partner">Add supply-chain partner</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

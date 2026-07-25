@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Traceability & DPP{% endblock %}
+{% macro pct_bar(p) %}<div class="pb-meter"><span style="width:{{ p }}%"></span></div>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="trc.eyebrow">Sustainability · Traceability & Product Passport</div>
+    <h1 data-i18n="trc.nav.home">Traceability & DPP</h1>
+    <div class="sub" data-i18n="trc.dash.sub">Fibre-to-product chain of custody, material certificates and the EU Digital Product Passport data set — built before the deadline, not after it.</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-primary btn-sm" href="{{ url_for('trace.passports') }}" data-i18n="trc.nav.passports">Product passports</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.certs') }}" data-i18n="trc.nav.certs">Material certificates</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.partners_total }}</div><div class="l" data-i18n="trc.kpi.partners">Supply-chain partners</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.lots_total }}</div><div class="l" data-i18n="trc.kpi.lots">Material lots</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.lots_traced }}</div><div class="l" data-i18n="trc.kpi.lots_traced">Lots with an upstream link</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.certs_valid }}</div><div class="l" data-i18n="trc.kpi.certs_valid">Certificates valid</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.certs_expiring }}</div><div class="l" data-i18n="trc.kpi.certs_expiring">Expiring soon</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.certs_expired }}</div><div class="l" data-i18n="trc.kpi.certs_expired">Expired</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi"><div class="v">{{ d.avg_completeness }}%</div><div class="l" data-i18n="trc.kpi.avg_complete">Average passport completeness</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.passports_weak }}</div><div class="l" data-i18n="trc.kpi.weak">Passports below target</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.passports_total }}</div><div class="l" data-i18n="trc.kpi.orders_covered">Live orders assessed</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.by_tier.get(4, 0) }}</div><div class="l" data-i18n="trc.kpi.tier4">Tier-4 fibre sources</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="trc.dash.tiers">Supply chain by tier</h3>
+      <a class="tag" href="{{ url_for('trace.partners') }}" data-i18n="trc.nav.partners">Partners</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="trc.field.tier">Tier</th><th style="text-align:right" data-i18n="trc.field.partners">Partners</th></tr></thead>
+        <tbody>
+        {% for k in tier_keys %}
+          <tr><td><span class="tag" data-i18n="trc.tier.{{ k }}">{{ tiers[k] }}</span></td>
+            <td style="text-align:right">{{ d.by_tier.get(k, 0) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="muted mt-2" style="font-size:11.5px" data-i18n="trc.dash.tier_note">Traceability depth is how far upstream the chain actually reaches — tier 4 is the fibre itself.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="trc.dash.watch">Material certificates expiring</h3>
+      <a class="tag" href="{{ url_for('trace.certs') }}" data-i18n="trc.action.all_certs">All certificates</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="trc.field.standard">Standard</th><th data-i18n="trc.field.partner">Partner</th>
+          <th data-i18n="trc.field.valid_until">Valid until</th><th style="text-align:right" data-i18n="trc.field.days">Days</th></tr></thead>
+        <tbody>
+        {% for w in d.watch %}
+          <tr><td>{{ w.standard }}{% if w.cert_no %}<div class="muted" style="font-size:11px">{{ w.cert_no }}</div>{% endif %}</td>
+            <td class="muted">{{ w.partner_name or '—' }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ w.valid_until }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">
+              {% if w.days is not none and w.days < 0 %}<span class="tag" style="background:#be123c18;color:#be123c">{{ w.days }}</span>
+              {% elif w.days is not none %}<span class="tag" style="background:#b4530918;color:#b45309">{{ w.days }}</span>{% else %}—{% endif %}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="trc.empty.watch">No material certificate is close to expiry.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="trc.dash.passports">Passport completeness by order</h3>
+    <a class="tag" href="{{ url_for('trace.passports') }}" data-i18n="trc.action.all_passports">All passports</a></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="trc.field.order">Order</th><th data-i18n="trc.field.buyer">Buyer</th>
+        <th data-i18n="trc.field.depth">Chain depth</th><th data-i18n="trc.field.completeness">Completeness</th>
+        <th style="text-align:right" data-i18n="trc.field.missing">Missing</th></tr></thead>
+      <tbody>
+      {% for r in d.passports %}
+        <tr><td><a href="{{ url_for('trace.passport', order_id=r.order.id) }}">{{ r.order.order_no }}</a>
+            <div class="muted" style="font-size:11px">{{ r.order.style_name or '—' }}</div></td>
+          <td class="muted">{{ r.order.buyer or '—' }}</td>
+          {# tiers.get, not tiers[...]: a partner tier outside 1..4 (a direct DB edit or
+             an import — the form clamps) rendered an empty cell and a raw i18n key. #}
+          <td>{% if r.deepest_tier in tiers %}<span class="tag" data-i18n="trc.tier.{{ r.deepest_tier }}">{{ tiers[r.deepest_tier] }}</span>
+            {% elif r.deepest_tier %}<span class="tag">{{ r.deepest_tier }}</span>
+            {% else %}<span class="muted" data-i18n="trc.badge.untraced">Not traced</span>{% endif %}</td>
+          <td style="min-width:140px">{{ pct_bar(r.pct) }}<span class="muted" style="font-size:11px">{{ r.pct }}%</span></td>
+          <td style="text-align:right">{% if r.missing %}<span class="tag" style="background:#b4530918;color:#b45309">{{ r.missing }}</span>{% else %}<span class="tag" style="background:#04785718;color:#047857">0</span>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="trc.empty.passports">No live orders to assess yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

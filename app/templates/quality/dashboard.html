@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Quality{% endblock %}
+{% macro vb(v) %}{% set c={'pass':'#0f7a4d','fail':'#be123c','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v,'#6b7280') }}18;color:{{ c.get(v,'#6b7280') }}">{{ v }}</span>{% endmacro %}
+{% macro dhu(v) %}<span class="tag" style="background:{{ '#be123c' if v > limit else '#0f7a4d' }}18;color:{{ '#be123c' if v > limit else '#0f7a4d' }}">{{ '%.2f'|format(v) }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="qc.eyebrow">Quality · Digital QMS</div>
+    <h1 data-i18n="qc.nav.home">Quality</h1>
+    <div class="sub" data-i18n="qc.dash.sub">AQL sampling, DHU, RFT and the defect Pareto — quality controlled, not just recorded.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('qc_inspect') %}<a class="btn btn-primary btn-sm" href="{{ url_for('quality.new') }}" data-i18n="qc.action.new">New inspection</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('quality.inspections') }}" data-i18n="qc.nav.inspections">Inspections</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.inspections }}</div><div class="l" data-i18n="qc.kpi.inspections">Inspections</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ '%.1f'|format(d.pass_rate) }}%</div><div class="l" data-i18n="qc.kpi.pass_rate">AQL pass rate</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-r' if d.dhu > limit else 'pb-kpi-g' }}"><div class="v">{{ '%.2f'|format(d.dhu) }}</div><div class="l" data-i18n="qc.kpi.dhu">DHU (defects / 100 units)</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ '%.2f'|format(d.rft) }}%</div><div class="l" data-i18n="qc.kpi.rft">RFT (first-pass yield)</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.failed }}</div><div class="l" data-i18n="qc.kpi.failed">Failed lots</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ '%g'|format(d.critical_defects) }}</div><div class="l" data-i18n="qc.kpi.critical">Critical defects</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi"><div class="v">{{ '%g'|format(d.units) }}</div><div class="l" data-i18n="qc.kpi.units">Units inspected</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%g'|format(d.defects) }}</div><div class="l" data-i18n="qc.kpi.defects">Defects found</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ '%.2f'|format(d.defect_rate) }}%</div><div class="l" data-i18n="qc.kpi.defect_rate">Defective rate</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.pending }}</div><div class="l" data-i18n="qc.kpi.pending">Pending</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="qc.panel.top_defects">Top defects — Pareto</h3>
+      <span class="tag" data-i18n="qc.hint.pareto">80% of trouble sits at the top</span></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th style="text-align:right" data-i18n="qc.field.rank">#</th><th data-i18n="qc.field.defect">Defect</th>
+          <th style="text-align:right" data-i18n="qc.field.qty">Qty</th>
+          <th style="text-align:right" data-i18n="qc.field.pct">%</th>
+          <th style="text-align:right" data-i18n="qc.field.cum">Cumulative %</th></tr></thead>
+        <tbody>
+        {% for p in d.top_defects %}
+          <tr><td style="text-align:right" class="muted">{{ p.rank }}</td><td>{{ p.defect_type }}</td>
+            <td style="text-align:right">{{ '%g'|format(p.qty) }}</td>
+            <td style="text-align:right">{{ '%.2f'|format(p.pct) }}</td>
+            <td style="text-align:right">{{ '%.2f'|format(p.cum_pct) }}</td></tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="qc.empty.defects">No defects recorded yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="qc.panel.by_section">DHU &amp; RFT by section</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="qc.field.section">Section</th>
+          <th style="text-align:right" data-i18n="qc.field.units">Units</th>
+          <th style="text-align:right" data-i18n="qc.field.dhu">DHU</th>
+          <th style="text-align:right" data-i18n="qc.field.rft">RFT %</th>
+          <th style="text-align:right" data-i18n="qc.field.failed">Failed</th></tr></thead>
+        <tbody>
+        {% for s in d.sections %}
+          <tr><td>{{ (s.section or '—')|replace('_',' ') }}</td>
+            <td style="text-align:right">{{ '%g'|format(s.units) }}</td>
+            <td style="text-align:right">{{ dhu(s.dhu) }}</td>
+            <td style="text-align:right">{{ '%.2f'|format(s.rft) }}</td>
+            <td style="text-align:right">{{ s.failed }}</td></tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="qc.empty.sections">No inspections counted yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="qc.panel.by_order">DHU &amp; RFT by order</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="qc.field.order">Order</th><th data-i18n="qc.field.buyer">Buyer</th>
+          <th style="text-align:right" data-i18n="qc.field.dhu">DHU</th>
+          <th style="text-align:right" data-i18n="qc.field.rft">RFT %</th>
+          <th style="text-align:right" data-i18n="qc.field.failed">Failed</th></tr></thead>
+        <tbody>
+        {% for o in by_order %}
+          <tr><td><a href="{{ url_for('orders.detail', order_id=o.order_id) }}">{{ o.order_no }}</a></td>
+            <td class="muted">{{ o.buyer or '—' }}</td>
+            <td style="text-align:right">{{ dhu(o.dhu) }}</td>
+            <td style="text-align:right">{{ '%.2f'|format(o.rft) }}</td>
+            <td style="text-align:right">{{ o.failed }}</td></tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="qc.empty.orders">No order-linked inspections yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="qc.panel.trend">Recent inspections</h3>
+      <a class="tag" href="{{ url_for('quality.inspections') }}" data-i18n="qc.action.all">All</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="qc.field.date">Date</th><th data-i18n="qc.field.ref">Ref</th>
+          <th data-i18n="qc.field.stage">Stage</th>
+          <th style="text-align:right" data-i18n="qc.field.dhu">DHU</th>
+          <th data-i18n="qc.field.verdict">Verdict</th></tr></thead>
+        <tbody>
+        {% for r in d.trend %}
+          <tr><td>{{ r.inspection_date or '—' }}</td>
+            <td><a href="{{ url_for('quality.detail', inspection_id=r.id) }}">{{ r.ref }}</a></td>
+            <td class="muted">{{ (r.stage or '—')|replace('_',' ') }}</td>
+            <td style="text-align:right">{{ '%.2f'|format(r.dhu) }}</td>
+            <td>{{ vb(r.verdict) }}</td></tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="qc.empty.inspections">No inspections yet — record the first one.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

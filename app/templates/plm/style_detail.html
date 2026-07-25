@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}{{ style.style_ref }} · {{ style.name or 'Style' }}{% endblock %}
+{% macro vd(v) %}{% set c={'approved':'#0f7a4d','rejected':'#be123c','revise':'#b45309','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v,'#6b7280') }}18;color:{{ c.get(v,'#6b7280') }}">{{ v }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ style.style_ref }}{% if style.season %} · {{ style.season }}{% endif %}</div>
+    <h1>{{ style.name or style.style_ref }}</h1>
+    <div class="sub">{{ style.buyer or '—' }}{% if style.category %} · {{ style.category }}{% endif %}
+      {% set c={'approved':'#0f7a4d','in_production':'#0f7a4d','sampling':'#b45309','dropped':'#be123c','development':'#6b7280'} %}
+      · <span class="tag" style="background:{{ c.get(style.status,'#6b7280') }}18;color:{{ c.get(style.status,'#6b7280') }}">{{ style.status|replace('_',' ') }}</span>
+      {% if pp_ok %}· <span class="tag" style="background:#0f7a4d18;color:#0f7a4d" data-i18n="plm.detail.pp_ok">PP approved</span>
+      {% else %}· <span class="tag" style="background:#b4530918;color:#b45309" data-i18n="plm.detail.pp_blocked">PP not approved</span>{% endif %}</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('plm.styles') }}" data-i18n="plm.action.back">Back</a>
+</div>
+
+<div class="grid cols-2">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="plm.detail.style">Style</h3></div>
+    <div class="panel-pad">
+      {% if can('plm_manage') %}
+      <form method="post" action="{{ url_for('plm.style_update', style_id=style.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="plm.field.name">Name</label><input name="name" value="{{ style.name or '' }}"></div>
+          <div class="field"><label data-i18n="plm.field.buyer">Buyer</label><input name="buyer" value="{{ style.buyer or '' }}"></div>
+          <div class="field"><label data-i18n="plm.field.season">Season</label><input name="season" value="{{ style.season or '' }}"></div>
+          <div class="field"><label data-i18n="plm.field.category">Category</label><input name="category" value="{{ style.category or '' }}"></div>
+          <div class="field span-2"><label data-i18n="plm.field.fabric">Fabric</label><input name="fabric" value="{{ style.fabric or '' }}"></div>
+          <div class="field"><label data-i18n="plm.field.designer">Designer</label><input name="designer" value="{{ style.designer or '' }}"></div>
+          <div class="field"><label data-i18n="plm.field.merch">Merchandiser</label><input name="merchandiser" value="{{ style.merchandiser or '' }}"></div>
+          <div class="field span-2"><label data-i18n="plm.field.description">Description</label><input name="description" value="{{ style.description or '' }}"></div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-i18n="plm.action.save">Save</button>
+      </form>
+      {% else %}
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="plm.field.buyer">Buyer</td><td>{{ style.buyer or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="plm.field.fabric">Fabric</td><td>{{ style.fabric or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="plm.field.description">Description</td><td>{{ style.description or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="plm.field.merch">Merchandiser</td><td>{{ style.merchandiser or '—' }}</td></tr>
+      </table>
+      {% endif %}
+      {% if can('plm_approve') %}
+      <form method="post" action="{{ url_for('plm.style_status', style_id=style.id) }}" class="mt-4">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="flex gap center wrap">
+          <select name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if style.status==s }}>{{ s|replace('_',' ') }}</option>{% endfor %}</select>
+          <button class="btn btn-primary btn-sm" data-i18n="plm.action.set_status">Set status</button>
+        </div>
+        <div class="muted mt-2" style="font-size:11.5px" data-i18n="plm.detail.pp_rule">A style cannot be approved or released to production until its PP sample is approved.</div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="plm.detail.techpack">Tech pack</h3>
+      {% if techpack %}<span class="tag">v{{ techpack.version }}{% if not is_latest %} · <span data-i18n="plm.detail.frozen">read-only</span>{% endif %}</span>{% endif %}</div>
+    <div class="panel-pad">
+      {% if versions %}
+      <div class="flex gap center wrap" style="margin-bottom:10px">
+        {% for v in versions %}
+          <a class="tag" href="{{ url_for('plm.style_detail', style_id=style.id, v=v.id) }}"
+             style="{{ 'font-weight:700' if techpack and v.id==techpack.id }}">v{{ v.version }}</a>
+        {% endfor %}
+        {% if techpack %}<a class="tag" href="{{ url_for('plm.techpack', techpack_id=techpack.id) }}" data-i18n="plm.action.open">Open full version</a>{% endif %}
+      </div>
+      {% if techpack %}
+      <div class="muted" style="font-size:11.5px;margin-bottom:8px">{{ techpack.change_note or '—' }}
+        · <span data-i18n="plm.field.published">Published</span> {{ techpack.published_at or '—' }} {{ techpack.published_by or '' }}</div>
+      {% endif %}
+      <table class="tbl">
+        <thead><tr><th data-i18n="plm.field.title">Section</th><th data-i18n="plm.field.body">Detail</th></tr></thead>
+        <tbody>
+        {% for s in sections %}
+          <tr><td style="white-space:nowrap">{{ s.title }}</td><td class="muted">{{ s.body or '—' }}</td></tr>
+        {% else %}<tr><td colspan="2" class="muted" style="text-align:center;padding:16px" data-i18n="plm.empty.sections">No sections in this version.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      {% if can('plm_manage') and is_latest and techpack %}
+      <form method="post" action="{{ url_for('plm.section_add', techpack_id=techpack.id) }}" class="mt-4">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="plm.field.title">Section title</label><input name="title" required></div>
+          <div class="field"><label data-i18n="plm.field.body">Detail</label><input name="body"></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-i18n="plm.action.add_section">Add section</button>
+      </form>
+      {% endif %}
+      {% else %}
+      <div class="muted" style="padding:12px 0" data-i18n="plm.empty.versions">No tech-pack version published yet.</div>
+      {% endif %}
+      {% if can('plm_manage') %}
+      <form method="post" action="{{ url_for('plm.techpack_publish', style_id=style.id) }}" class="mt-4">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field"><label data-i18n="plm.field.change_note">Change note</label><input name="change_note"></div>
+        <div class="muted" style="font-size:11.5px;margin:6px 0" data-i18n="plm.detail.snapshot_note">Publishing copies the current version's sections and measurements into a new version. Earlier versions are never changed.</div>
+        <button class="btn btn-primary btn-sm" data-i18n="plm.action.publish">Publish new version</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="plm.detail.specs">Measurement spec</h3>
+      {% if techpack %}<span class="tag">v{{ techpack.version }}</span>{% endif %}</div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="plm.field.pom">Point of measure</th><th data-i18n="plm.field.size">Size</th>
+          <th style="text-align:right" data-i18n="plm.field.spec">Spec (cm)</th>
+          <th style="text-align:right" data-i18n="plm.field.tolerance">Tol ±</th></tr></thead>
+        <tbody>
+        {% for m in specs %}
+          <tr><td>{{ m.pom }}</td><td class="muted">{{ m.size or '—' }}</td>
+            <td style="text-align:right">{{ '%.1f'|format(m.spec_value or 0) }}</td>
+            <td style="text-align:right">{{ '%.1f'|format(m.tolerance or 0) }}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="plm.empty.specs">No measurements in this version.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      {% if can('plm_manage') and is_latest and techpack %}
+      <form method="post" action="{{ url_for('plm.spec_add', techpack_id=techpack.id) }}" class="mt-4">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field span-2"><label data-i18n="plm.field.pom">Point of measure</label><input name="pom" required></div>
+          <div class="field"><label data-i18n="plm.field.size">Size</label><input name="size"></div>
+          <div class="field"><label><span data-i18n="plm.field.spec">Spec (cm)</span> *</label><input type="number" step="any" min="0.01" name="spec_value" required></div>
+          <div class="field"><label data-i18n="plm.field.tolerance">Tolerance ±</label><input type="number" step="any" min="0" name="tolerance"></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-i18n="plm.action.add_spec">Add measurement</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="plm.detail.bom">Style BOM (default per unit)</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="plm.field.material">Material</th><th data-i18n="plm.field.kind">Kind</th>
+          <th style="text-align:right" data-i18n="plm.field.consumption">Net/unit</th>
+          <th style="text-align:right" data-i18n="plm.field.wastage">Waste %</th>
+          <th style="text-align:right" data-i18n="plm.field.gross">Gross/unit</th>
+          <th data-i18n="plm.field.supplier">Supplier</th></tr></thead>
+        <tbody>
+        {% for b in bom %}
+          <tr><td>{{ b.material }}<div class="muted" style="font-size:11px">{{ b.placement or '—' }}{% if b.colour %} · {{ b.colour }}{% endif %}</div></td>
+            <td class="muted">{{ b.kind }}</td>
+            {# %.6g, not %.4f: a trim at 0.00012 kg/unit prints as 0.0001 at 4dp — a
+               17% understatement of the very figure the costing hook multiplies. #}
+            <td style="text-align:right">{{ '%.6g'|format(b.consumption or 0) }} {{ b.unit }}</td>
+            <td style="text-align:right">{{ '%.1f'|format(b.wastage_pct or 0) }}</td>
+            <td style="text-align:right"><strong>{{ '%.6g'|format(b.gross or 0) }}</strong> {{ b.unit }}</td>
+            <td class="muted">{{ b.supplier or '—' }}</td></tr>
+        {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:16px" data-i18n="plm.empty.bom">No BOM lines yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      {% if can('plm_manage') %}
+      <form method="post" action="{{ url_for('plm.bom_add', style_id=style.id) }}" class="mt-4">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field span-2"><label><span data-i18n="plm.field.material">Material</span> *</label><input name="material" required></div>
+          <div class="field"><label data-i18n="plm.field.kind">Kind</label>
+            <select name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="plm.field.placement">Placement</label><input name="placement"></div>
+          <div class="field"><label><span data-i18n="plm.field.consumption">Net/unit</span> *</label><input type="number" step="any" min="0" name="consumption" required></div>
+          <div class="field"><label data-i18n="plm.field.unit">Unit</label>
+            <select name="unit">{% for u in units %}<option value="{{ u }}">{{ u }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="plm.field.wastage">Wastage %</label><input type="number" step="any" min="0" max="100" name="wastage_pct" value="0"></div>
+          <div class="field"><label data-i18n="plm.field.supplier">Supplier</label><input name="supplier"></div>
+          <div class="field span-2"><label data-i18n="plm.field.colour">Colour</label><input name="colour"></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-i18n="plm.action.add_line">Add BOM line</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="plm.detail.samples">Sample rounds</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="plm.field.stage">Stage</th><th style="text-align:right" data-i18n="plm.field.round">Round</th>
+          <th data-i18n="plm.field.sent">Sent</th><th data-i18n="plm.field.comments">Buyer comments</th>
+          <th data-i18n="plm.field.verdict">Verdict</th>{% if can('plm_manage') %}<th></th>{% endif %}</tr></thead>
+        <tbody>
+        {% for s in samples %}
+          <tr><td>{{ s.stage|replace('_',' ') }}</td>
+            <td style="text-align:right">{{ s.round_no }}{% if s.revision_no %} <span class="muted">(rev {{ s.revision_no }})</span>{% endif %}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ s.sent_date or '—' }}</td>
+            <td class="muted">{{ (s.comments or '—')[:70] }}</td>
+            <td>{{ vd(s.verdict) }}{% if s.decided_at %}<div class="muted" style="font-size:11px">{{ s.decided_at[:10] }}</div>{% endif %}</td>
+            {% if can('plm_manage') %}
+            <td><form method="post" action="{{ url_for('plm.sample_verdict', sample_id=s.id) }}" class="flex gap center">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <select name="verdict">{% for v in verdicts %}<option value="{{ v }}" {{ 'selected' if s.verdict==v }}>{{ v }}</option>{% endfor %}</select>
+              <button class="btn btn-ghost btn-sm" data-i18n="plm.action.set_verdict">Set</button>
+            </form></td>
+            {% endif %}
+          </tr>
+        {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:16px" data-i18n="plm.empty.samples">No sample rounds yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      {% if can('plm_manage') %}
+      <form method="post" action="{{ url_for('plm.sample_add', style_id=style.id) }}" class="mt-4">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="plm.field.stage">Stage</label>
+            <select name="stage">{% for st in stages %}<option value="{{ st }}">{{ st|replace('_',' ') }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="plm.field.sent">Sent date</label><input type="date" name="sent_date"></div>
+          <div class="field"><label data-i18n="plm.field.verdict">Verdict</label>
+            <select name="verdict">{% for v in verdicts %}<option value="{{ v }}">{{ v }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="plm.field.comments">Buyer comments</label><input name="comments"></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-i18n="plm.action.record">Record sample round</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="plm.detail.orders">Orders using this style</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="plm.field.order">Order</th><th data-i18n="plm.field.buyer">Buyer</th>
+          <th style="text-align:right" data-i18n="plm.field.qty">Qty</th>
+          <th data-i18n="plm.field.ship">Ship</th><th data-i18n="plm.field.status">Status</th></tr></thead>
+        <tbody>
+        {% for o in orders %}
+          <tr><td><a href="{{ url_for('orders.detail', order_id=o.id) }}">{{ o.order_no }}</a></td>
+            <td class="muted">{{ o.buyer or '—' }}</td>
+            {# |float(0): ord_orders.qty is written by another module and can hold
+               free text; the raw format() would 500 this whole page on it. #}
+            <td style="text-align:right">{{ '{:,.0f}'.format(o.qty|float(0)) }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ o.ship_date or '—' }}</td>
+            <td><span class="tag">{{ (o.status or '')|replace('_',' ') }}</span></td></tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="plm.empty.orders">No orders quote this style ref yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      <div class="muted mt-2" style="font-size:11.5px" data-i18n="plm.detail.order_link">Orders are matched on the style reference — keep the order's style ref identical to this one.</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

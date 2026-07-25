@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Wash recipes{% endblock %}
+{% macro vd(v) %}{% set c={'approved':'#0f7a4d','rejected':'#be123c','resubmit':'#b45309','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v,'#6b7280') }}18;color:{{ c.get(v,'#6b7280') }}">{{ v }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="wsh.eyebrow">Wet processing · Wash & finishing</div>
+    <h1 data-i18n="wsh.dash.title">Wash recipe library</h1>
+    <div class="sub" data-i18n="wsh.dash.sub">Versioned wash recipes, chemical dosing and batch traceability — so a shade can be reproduced months later.</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.recipes') }}" data-i18n="wsh.nav.recipes">Recipes</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('wash.batches') }}" data-i18n="wsh.nav.batches">Batches</a>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('wash.labdips') }}" data-i18n="wsh.nav.labdips">Lab dips</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.recipes }}</div><div class="l" data-i18n="wsh.kpi.recipes">Recipes</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ d.approved }}</div><div class="l" data-i18n="wsh.kpi.approved">Approved for bulk</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.batches_today }}</div><div class="l" data-i18n="wsh.kpi.batches_today">Batches today</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%.0f'|format(d.avg_cycle_min) }}</div><div class="l" data-i18n="wsh.kpi.avg_cycle">Avg cycle (min)</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.dips_pending }}</div><div class="l" data-i18n="wsh.kpi.dips_pending">Lab dips pending</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.dips_rejected }}</div><div class="l" data-i18n="wsh.kpi.dips_rejected">Shades rejected</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi"><div class="v">{{ d.versions }}</div><div class="l" data-i18n="wsh.kpi.versions">Recipe versions</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.batches }}</div><div class="l" data-i18n="wsh.kpi.batches">Batches recorded</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.deviations }}</div><div class="l" data-i18n="wsh.kpi.deviations">Off-recipe batches</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="wsh.dash.recent">Recent batches</h3>
+      <a class="tag" href="{{ url_for('wash.batches') }}" data-i18n="wsh.action.all_batches">All batches</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="wsh.field.batch">Batch</th><th data-i18n="wsh.field.recipe">Recipe</th>
+          <th data-i18n="wsh.field.machine">Machine</th><th style="text-align:right" data-i18n="wsh.field.load">Load kg</th>
+          <th data-i18n="wsh.field.deviation">Deviation</th></tr></thead>
+        <tbody>
+        {% for b in d.recent %}
+          <tr><td style="font-variant-numeric:tabular-nums">{{ b.batch_no or b.id }}</td>
+            <td>{{ b.code or '—' }} <span class="muted">v{{ b.version or '?' }}</span></td>
+            <td class="muted">{{ b.machine or '—' }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '%.0f'|format(b.load_kg or 0) }}</td>
+            <td>{% if b.deviation %}<span class="tag" style="background:#be123c18;color:#be123c">{{ b.deviation }}</span>{% else %}<span class="tag" style="background:#0f7a4d18;color:#0f7a4d" data-i18n="wsh.badge.in_tol">in tolerance</span>{% endif %}</td></tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="wsh.empty.batches">No wash batches recorded yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="wsh.dash.dips">Shade sign-off queue</h3>
+      <a class="tag" href="{{ url_for('wash.labdips') }}" data-i18n="wsh.action.all_dips">All lab dips</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="wsh.field.reference">Reference</th><th data-i18n="wsh.field.recipe">Recipe</th>
+          <th data-i18n="wsh.field.verdict">Verdict</th></tr></thead>
+        <tbody>
+        {% for p in d.pending_dips %}
+          <tr><td>{{ p.reference or '—' }}</td>
+            <td>{% if p.recipe_id %}<a href="{{ url_for('wash.recipe_detail', recipe_id=p.recipe_id, v=p.version_id) }}">{{ p.code or '—' }}</a>{% else %}{{ p.code or '—' }}{% endif %}
+              <span class="muted">v{{ p.version or '?' }}</span></td>
+            <td>{{ vd(p.verdict) }}</td></tr>
+        {% else %}<tr><td colspan="3" class="muted" style="text-align:center;padding:16px" data-i18n="wsh.empty.dips">No lab dips waiting.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

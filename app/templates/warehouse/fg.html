@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Finished goods{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="wh.eyebrow">Operations · Raw Material &amp; Finished Goods</div>
+    <h1 data-i18n="wh.nav.fg">Finished goods</h1>
+    <div class="sub" data-i18n="wh.fg.sub">Packed and shipped by style, colour and size — the matrix a garment order actually ships in.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <select name="order_id" onchange="this.form.submit()">
+    <option value="" data-i18n="wh.filter.all_orders">All orders</option>
+    {% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if f_order==o.id }}>{{ o.order_no }} — {{ o.buyer }}</option>{% endfor %}
+  </select>
+  {% if f_order %}<a class="tag" href="{{ url_for('warehouse.fg') }}" data-i18n="wh.filter.clear">Clear</a>{% endif %}
+</div></form>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(m.totals.packed) }}</div><div class="l" data-i18n="wh.field.packed">Packed</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(m.totals.shipped) }}</div><div class="l" data-i18n="wh.field.shipped">Shipped</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ '{:,.0f}'.format(m.totals.onhand) }}</div><div class="l" data-i18n="wh.fg.onhand">In store</div></div>
+</div>
+
+<div class="panel mt-4"><div class="panel-pad" style="overflow-x:auto">
+  <table class="tbl">
+    <thead><tr>
+      <th data-i18n="wh.field.style">Style</th><th data-i18n="wh.field.color">Colour</th>
+      {% for s in m.sizes %}<th style="text-align:right">{{ s }}</th>{% endfor %}
+      <th style="text-align:right" data-i18n="wh.field.packed">Packed</th>
+      <th style="text-align:right" data-i18n="wh.field.shipped">Shipped</th>
+      <th style="text-align:right" data-i18n="wh.fg.onhand">In store</th>
+    </tr></thead>
+    <tbody>
+    {% for r in m.rows %}
+      <tr>
+        <td>{{ r.style_code }}{% if r.order_id %}<div class="muted" style="font-size:11px">order #{{ r.order_id }}</div>{% endif %}</td>
+        <td>{{ r.color }}</td>
+        {% for s in m.sizes %}{% set c = r.cells.get(s) %}
+          <td style="text-align:right">{% if c %}{{ '{:,.0f}'.format(c.onhand) }}<div class="muted" style="font-size:11px">{{ '{:,.0f}'.format(c.packed) }} / {{ '{:,.0f}'.format(c.shipped) }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
+        {% endfor %}
+        <td style="text-align:right">{{ '{:,.0f}'.format(r.packed) }}</td>
+        <td style="text-align:right">{{ '{:,.0f}'.format(r.shipped) }}</td>
+        <td style="text-align:right"><b>{{ '{:,.0f}'.format(r.onhand) }}</b></td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:18px" data-i18n="wh.empty.fg">Nothing packed yet for this filter.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <div class="muted mt-2" style="font-size:11px" data-i18n="wh.fg.legend">Each cell shows what is in store, then packed / shipped underneath.</div>
+</div></div>
+
+{% if can('wh_manage') %}
+<form class="panel mt-4" method="post" action="{{ url_for('warehouse.fg_post') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="wh.fg.update">Pack or ship</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field"><label data-i18n="wh.field.order">Customer order</label>
+        <select name="order_id" required>
+          {% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if f_order==o.id }}>{{ o.order_no }} — {{ o.buyer }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="wh.field.style">Style</label><input name="style_code" required></div>
+      <div class="field"><label data-i18n="wh.field.color">Colour</label><input name="color" required></div>
+      <div class="field"><label data-i18n="wh.field.size">Size</label>
+        <select name="size" required>{% for s in sizes %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="wh.field.qty">Quantity</label><input type="number" step="any" name="qty" required></div>
+    </div>
+    <div class="flex gap center mt-2">
+      <button class="btn btn-primary btn-sm" name="action" value="pack" data-i18n="wh.action.pack">Pack in</button>
+      <button class="btn btn-ghost btn-sm" name="action" value="ship" data-i18n="wh.action.ship">Ship out</button>
+    </div>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

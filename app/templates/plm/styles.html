@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Styles{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="plm.eyebrow">Product · Style, Tech Pack & BOM</div>
+    <h1 data-i18n="plm.nav.styles">Styles</h1>
+    <div class="sub" data-i18n="plm.styles.sub">Every style the factory develops, samples and produces — the reference orders quote.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('plm_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('plm.style_new') }}" data-i18n="plm.action.new_style">New style</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('plm.index') }}" data-i18n="plm.nav.home">PLM</a>
+  </div>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px">
+  <div class="panel-pad flex gap center wrap">
+    <input name="q" value="{{ f_q or '' }}" data-i18n-ph="plm.filter.search" placeholder="Search ref or name">
+    <select name="status" onchange="this.form.submit()">
+      <option value="" data-i18n="plm.filter.all_status">All statuses</option>
+      {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f_status==s }}>{{ s|replace('_',' ') }}</option>{% endfor %}
+    </select>
+    <select name="buyer" onchange="this.form.submit()">
+      <option value="" data-i18n="plm.filter.all_buyers">All buyers</option>
+      {% for b in buyer_list %}<option value="{{ b }}" {{ 'selected' if f_buyer==b }}>{{ b }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-ghost btn-sm" data-i18n="plm.action.apply">Apply</button>
+    {% if f_status or f_buyer or f_q %}<a class="tag" href="{{ url_for('plm.styles') }}" data-i18n="plm.filter.clear">Clear</a>{% endif %}
+  </div>
+</form>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="plm.field.ref">Style ref</th><th data-i18n="plm.field.name">Name</th>
+      <th data-i18n="plm.field.buyer">Buyer</th><th data-i18n="plm.field.season">Season</th>
+      <th data-i18n="plm.field.category">Category</th><th data-i18n="plm.field.status">Status</th>
+      <th data-i18n="plm.field.merch">Merchandiser</th></tr></thead>
+    <tbody>
+    {% for s in rows %}
+      <tr>
+        <td><a href="{{ url_for('plm.style_detail', style_id=s.id) }}">{{ s.style_ref }}</a></td>
+        <td>{{ s.name or '—' }}</td><td class="muted">{{ s.buyer or '—' }}</td>
+        <td>{{ s.season or '—' }}</td><td class="muted">{{ s.category or '—' }}</td>
+        <td><span class="tag">{{ s.status|replace('_',' ') }}</span></td>
+        <td class="muted">{{ s.merchandiser or '—' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="plm.empty.styles">No styles yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

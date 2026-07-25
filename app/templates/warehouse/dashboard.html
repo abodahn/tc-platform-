@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Warehouse{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="wh.eyebrow">Operations · Raw Material &amp; Finished Goods</div>
+    <h1 data-i18n="wh.nav.home">Warehouse</h1>
+    <div class="sub" data-i18n="wh.dash.sub">Every fabric roll, trim and packed carton — with the dye lot, the metres left and the order it was cut for.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('wh_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('warehouse.receive') }}" data-i18n="wh.action.receive">Receive material</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.issue') }}" data-i18n="wh.nav.issue">Issue to order</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.rolls') }}" data-i18n="wh.nav.rolls">Fabric rolls</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.rolls_available }}</div><div class="l" data-i18n="wh.kpi.rolls">Rolls available</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(d.total_m) }}</div><div class="l" data-i18n="wh.kpi.metres">Metres on hand</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ '{:,.0f}'.format(d.reserved_m) }}</div><div class="l" data-i18n="wh.kpi.reserved">Metres reserved</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.shade_lots }}</div><div class="l" data-i18n="wh.kpi.lots">Open shade lots</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.low_count }}</div><div class="l" data-i18n="wh.kpi.low">Materials short</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ '{:,.0f}'.format(d.fg_onhand) }}</div><div class="l" data-i18n="wh.kpi.fg">Finished goods in store</div></div>
+</div>
+<div class="grid cols-4 mt-4">
+  <div class="sf-kpi"><div class="v">{{ d.materials }}</div><div class="l" data-i18n="wh.kpi.materials">Active materials</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.quarantine }}</div><div class="l" data-i18n="wh.kpi.quarantine">Rolls in quarantine</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ '{:,.0f}'.format(d.fg_packed) }}</div><div class="l" data-i18n="wh.kpi.packed">Total packed</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(d.stock_value) }}</div><div class="l" data-i18n="wh.kpi.value">Stock value</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="wh.dash.low">Short / low materials</h3>
+      <a class="tag" href="{{ url_for('warehouse.materials', low=1) }}" data-i18n="wh.action.all_materials">All materials</a></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="wh.field.material">Material</th>
+          <th style="text-align:right" data-i18n="wh.field.available">Available</th>
+          <th style="text-align:right" data-i18n="wh.field.reorder">Reorder level</th></tr></thead>
+        <tbody>
+        {% for r in d.low %}
+          <tr><td>{{ r.code }}<div class="muted" style="font-size:11px">{{ r.name }}{% if r.color %} · {{ r.color }}{% endif %}</div></td>
+            <td style="text-align:right"><span class="tag" style="background:#be123c18;color:#be123c">{{ '{:,.0f}'.format(r.available) }} {{ r.uom }}</span></td>
+            <td style="text-align:right">{{ '{:,.0f}'.format(r.reorder_level or 0) }}</td></tr>
+        {% else %}<tr><td colspan="3" class="muted" style="text-align:center;padding:16px" data-i18n="wh.empty.low">Every material is above its reorder level.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="wh.dash.recent">Recent movements</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="wh.field.type">Type</th><th data-i18n="wh.field.material">Material</th>
+          <th style="text-align:right" data-i18n="wh.field.qty">Quantity</th><th data-i18n="wh.field.date">When</th></tr></thead>
+        <tbody>
+        {% for v in d.recent %}
+          <tr><td>{{ v.type|replace('_',' ') }}{% if v.order_id %}<div class="muted" style="font-size:11px">order #{{ v.order_id }}</div>{% endif %}</td>
+            <td>{{ v.mat_code or '—' }}{% if v.roll_no %}<div class="muted" style="font-size:11px">{{ v.roll_no }}</div>{% endif %}</td>
+            <td style="text-align:right">{{ '{:,.1f}'.format(v.qty or 0) }} {{ v.uom or '' }}</td>
+            <td class="muted">{{ (v.created_at or '')[:16] }}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="wh.empty.moves">No stock movements yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

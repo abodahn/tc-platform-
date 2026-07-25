@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Receive material{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="wh.eyebrow">Operations · Raw Material &amp; Finished Goods</div>
+    <h1 data-i18n="wh.nav.receive">Receive material</h1>
+    <div class="sub" data-i18n="wh.recv.sub">Book a delivery in. Roll-tracked materials create one roll per receipt; trims are added to the quantity on hand.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
+</div>
+
+<form class="panel" method="post" action="{{ url_for('warehouse.receive_post') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="wh.action.receive">Receive material</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field span-2"><label data-i18n="wh.field.material">Material</label>
+        <select name="material_id" required>
+          {% for m in materials %}<option value="{{ m.id }}">{{ m.code }} — {{ m.name }}{% if m.color %} ({{ m.color }}){% endif %} · {{ 'roll' if m.roll_tracked else m.uom }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="wh.field.grn">Goods-receipt reference</label><input name="grn_ref"></div>
+      <div class="field"><label data-i18n="wh.field.unitcost">Unit cost</label><input type="number" step="any" name="unit_cost"></div>
+    </div>
+
+    <div class="panel mt-4"><div class="panel-head"><h3 data-i18n="wh.recv.roll_hint">Roll-tracked materials (fabric, tape)</h3></div>
+      <div class="panel-pad"><div class="grid cols-2">
+        <div class="field"><label data-i18n="wh.field.length">Length (m)</label><input type="number" step="any" name="length_m"></div>
+        <div class="field"><label data-i18n="wh.field.rollno_in">Roll number (blank = auto)</label><input name="roll_no"></div>
+        <div class="field"><label data-i18n="wh.field.shade">Shade lot</label><input name="shade_lot"></div>
+        <div class="field"><label data-i18n="wh.field.suplot">Supplier lot</label><input name="supplier_lot"></div>
+        <div class="field"><label data-i18n="wh.field.width">Width (cm)</label><input type="number" step="any" name="width_cm"></div>
+        <div class="field"><label data-i18n="wh.field.grade">Grade</label><input name="grade" value="A"></div>
+        <div class="field"><label data-i18n="wh.field.bin">Bin</label><input name="bin"></div>
+        <div class="field"><label data-i18n="wh.field.received">Received on</label><input type="date" name="received_at"></div>
+      </div></div>
+    </div>
+
+    <div class="panel mt-4"><div class="panel-head"><h3 data-i18n="wh.recv.qty_hint">Quantity-tracked materials (buttons, thread, labels)</h3></div>
+      <div class="panel-pad"><div class="grid cols-2">
+        <div class="field"><label data-i18n="wh.field.qty">Quantity</label><input type="number" step="any" name="qty"></div>
+        <div class="field"><label data-i18n="wh.field.notes">Notes</label><input name="notes"></div>
+      </div></div>
+    </div>
+
+    <button class="btn btn-primary btn-sm mt-4" data-i18n="wh.action.receive">Receive material</button>
+  </div>
+</form>
+{% endblock %}

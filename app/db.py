@@ -957,6 +957,17 @@ def init_db():
             _ord_create_and_seed(conn)
         except Exception:
             conn.rollback()
+        # --- Manufacturing / supply-chain modules -------------------------
+        # ORDER MATTERS: masters first (styles), then material, then the modules
+        # whose demo seeds reference orders/material. Each is independently
+        # guarded so one failing seed can never abort the rest of boot.
+        for _mod in ("plm", "warehouse", "costing", "planning", "cutroom",
+                     "mes", "quality", "wash", "trace", "shipping", "people"):
+            try:
+                _m = __import__(f"app.{_mod}.schema", fromlist=["create_and_seed"])
+                _m.create_and_seed(conn)
+            except Exception:
+                conn.rollback()
         # Auto-provision a signature for every user who doesn't have one yet, so it
         # can be stamped on any paper without each person drawing one manually.
         try:

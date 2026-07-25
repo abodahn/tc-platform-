@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Order Costing{% endblock %}
+{% macro vtag(v) %}{% set c={'unfavourable':'#be123c','favourable':'#0f7a4d','on_plan':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v.flag,'#6b7280') }}18;color:{{ c.get(v.flag,'#6b7280') }}">{% if v.pct is not none %}{{ '{:+.1f}'.format(v.pct) }}%{% else %}—{% endif %}</span>{% endmacro %}
+{% macro mtag(p) %}{% if p is none %}<span class="muted">—</span>{% else %}<span class="tag" style="background:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}18;color:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}">{{ '{:.1f}'.format(p) }}%</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cst.eyebrow">Planning · BOM &amp; Order Costing</div>
+    <h1 data-i18n="cst.nav.home">BOM &amp; Order Costing</h1>
+    <div class="sub" data-i18n="cst.dash.sub">Every order costed once and reconciled to what it actually cost — before the margin is gone.</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.orders') }}" data-i18n="cst.nav.orders">All orders</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.orders_costed }}</div><div class="l" data-i18n="cst.kpi.costed">Orders costed</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.orders_unfavourable }}</div><div class="l" data-i18n="cst.kpi.unfav">Over estimate</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(d.est_total) }}</div><div class="l" data-i18n="cst.kpi.est_total">Estimated cost (all)</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ '{:,.0f}'.format(d.act_total) }}</div><div class="l" data-i18n="cst.kpi.act_total">Actual booked</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-r' if d.worst else 'pb-kpi-g' }}"><div class="v">{% if d.worst %}{{ '{:+.1f}'.format(d.worst.variance.total.pct or 0) }}%{% else %}0%{% endif %}</div><div class="l" data-i18n="cst.kpi.worst">Worst variance</div></div>
+</div>
+
+{% if d.unpriced_lines %}
+<div class="panel mt-4" style="border:1px solid #b45309">
+  <div class="panel-pad flex gap center wrap">
+    <span class="tag" style="background:#b4530918;color:#b45309">{{ d.unpriced_lines }}</span>
+    <span data-i18n="cst.warn.unpriced">BOM lines have no unit price — those estimates are incomplete and understate the cost.</span>
+  </div>
+</div>
+{% endif %}
+
+{% if d.worst %}
+<div class="panel mt-4" style="border:1px solid var(--tc-red)">
+  <div class="panel-head"><h3 data-i18n="cst.dash.worst">Biggest overrun</h3>
+    <span class="tag">{{ '{:+.1f}'.format(d.worst.variance.total.pct or 0) }}%</span></div>
+  <div class="panel-pad">
+    <div class="flex gap center wrap">
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.sheet', order_id=d.worst.id) }}">{{ d.worst.order_no }}</a>
+      <span class="muted">{{ d.worst.buyer }} · {{ d.worst.style_name or d.worst.style_ref or '—' }}</span>
+    </div>
+    <table class="tbl mt-2">
+      <thead><tr><th data-i18n="cst.field.measure">Measure</th>
+        <th style="text-align:right" data-i18n="cst.field.estimate">Estimate</th>
+        <th style="text-align:right" data-i18n="cst.field.actual">Actual</th>
+        <th style="text-align:right" data-i18n="cst.field.variance">Variance</th></tr></thead>
+      <tbody>
+        <tr><td data-i18n="cst.cat.material">Material</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(d.worst.estimate.material) }}</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(d.worst.actual.material) }}</td>
+          <td style="text-align:right">{{ vtag(d.worst.variance.material) }}</td></tr>
+        <tr><td data-i18n="cst.field.total_cost">Total cost</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(d.worst.estimate.total) }}</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(d.worst.actual.total) }}</td>
+          <td style="text-align:right">{{ vtag(d.worst.variance.total) }}</td></tr>
+        <tr><td data-i18n="cst.field.margin">Margin</td>
+          <td style="text-align:right">{{ mtag(d.worst.margin.est_pct) }}</td>
+          <td style="text-align:right">{{ mtag(d.worst.margin.act_pct) }}</td>
+          <td style="text-align:right" class="muted">{{ '{:,.2f}'.format(d.worst.margin.act_value - d.worst.margin.est_value) }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="cst.dash.all">Costed orders</h3>
+    <a class="tag" href="{{ url_for('costing.orders') }}" data-i18n="cst.nav.orders">All orders</a></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="cst.field.order">Order</th><th data-i18n="cst.field.buyer">Buyer</th>
+        <th style="text-align:right" data-i18n="cst.field.qty">Qty</th>
+        <th style="text-align:right" data-i18n="cst.field.revenue">Revenue</th>
+        <th style="text-align:right" data-i18n="cst.field.estimate">Estimate</th>
+        <th style="text-align:right" data-i18n="cst.field.actual">Actual</th>
+        <th style="text-align:right" data-i18n="cst.field.variance">Variance</th>
+        <th style="text-align:right" data-i18n="cst.field.margin_est">Margin (est)</th>
+        <th style="text-align:right" data-i18n="cst.field.margin_act">Margin (act)</th></tr></thead>
+      <tbody>
+      {% for o in d.rows %}
+        <tr>
+          <td><a href="{{ url_for('costing.sheet', order_id=o.id) }}">{{ o.order_no }}</a>
+            <div class="muted" style="font-size:11px">{{ o.style_name or o.style_ref or '—' }}</div></td>
+          <td>{{ o.buyer }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(o.qty or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(o.margin.revenue) }}</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(o.estimate.total) }}</td>
+          <td style="text-align:right">{% if o.has_actual %}{{ '{:,.2f}'.format(o.actual.total) }}{% else %}<span class="muted" data-i18n="cst.badge.no_actual">not booked</span>{% endif %}</td>
+          <td style="text-align:right">{% if o.has_actual %}{{ vtag(o.variance.total) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td style="text-align:right">{{ mtag(o.margin.est_pct) }}</td>
+          <td style="text-align:right">{% if o.has_actual %}{{ mtag(o.margin.act_pct) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        </tr>
+      {% else %}<tr><td colspan="9" class="muted" style="text-align:center;padding:18px" data-i18n="cst.empty.costed">No order has a BOM or cost sheet yet — open an order to build one.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

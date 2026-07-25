@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}New shipment{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="shp.eyebrow">Logistics · Shipments & Export Documents</div>
+    <h1 data-i18n="shp.action.new">New shipment</h1>
+    <div class="sub" data-i18n="shp.form.sub">Pick the order — buyer, currency and the invoice unit price are copied from it and frozen on this shipment.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.action.back">Back</a>
+</div>
+
+<form class="panel" method="post" action="{{ url_for('shipping.shipment_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field span-2"><label data-i18n="shp.field.order">Order</label>
+        <select name="order_id">
+          <option value="" data-i18n="shp.form.no_order">No order (stand-alone shipment)</option>
+          {% for o in orders %}<option value="{{ o.id }}">{{ o.order_no }} · {{ o.buyer }} · {{ o.style_name or o.style_ref or '' }} · {{ '{:,.0f}'.format(o.qty or 0) }} pcs</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="shp.field.buyer">Buyer</label><input name="buyer"></div>
+      <div class="field"><label data-i18n="shp.field.dest_full">Destination / port of discharge *</label><input name="destination" required></div>
+      <div class="field"><label data-i18n="shp.field.pol">Port of loading</label><input name="port_loading"></div>
+      <div class="field"><label data-i18n="shp.field.incoterm">Incoterm</label>
+        <select name="incoterm">{% for i in incoterms %}<option value="{{ i }}" {{ 'selected' if i=='FOB' }}>{{ i }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="shp.field.mode">Mode</label>
+        <select name="mode">{% for m in modes %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="shp.field.carrier">Carrier / forwarder</label><input name="carrier"></div>
+      <div class="field"><label data-i18n="shp.field.container">Container / AWB no</label><input name="container_no"></div>
+      <div class="field"><label data-i18n="shp.field.status">Status</label>
+        <select name="status">{% for s in statuses %}<option value="{{ s }}">{{ s|replace('_',' ') }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="shp.field.etd">ETD</label><input type="date" name="etd"></div>
+      <div class="field"><label data-i18n="shp.field.eta">ETA</label><input type="date" name="eta"></div>
+      <div class="field"><label data-i18n="shp.field.invoice_no">Invoice no</label><input name="invoice_no"></div>
+      <div class="field"><label data-i18n="shp.field.invoice_date">Invoice date</label><input type="date" name="invoice_date"></div>
+      <div class="field"><label data-i18n="shp.field.currency">Currency</label><input name="currency" placeholder="USD" data-i18n-ph="shp.ph.currency"></div>
+      <div class="field"><label data-i18n="shp.field.unit_price_hint">Unit price (blank = from order)</label><input type="number" name="unit_price" step="any" min="0"></div>
+      <div class="field span-2"><label data-i18n="shp.field.lc">LC / payment reference</label><input name="lc_ref"></div>
+      <div class="field span-2"><label data-i18n="shp.field.notes">Notes</label><input name="notes"></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="shp.action.create">Create shipment</button>
+      <a class="btn btn-ghost" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.action.cancel">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endblock %}

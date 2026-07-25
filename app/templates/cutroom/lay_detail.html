@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% import "cutroom/_macros.html" as m %}
+{% block title %}{{ lay.lay_no or 'Lay' }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cut.eyebrow">Production · Cut Room & Fabric Utilisation</div>
+    <h1>{{ lay.lay_no or lay.id }}</h1>
+    <div class="sub">{{ lay.marker_ref or '' }} · {{ lay.colour or '' }} {{ lay.shade_lot or '' }}
+      {% if lay.order_id %}· <a href="{{ url_for('cutroom.order', order_id=lay.order_id) }}">{{ lay.order_no or lay.order_id }}</a> {{ lay.style_name or '' }}{% endif %}</div>
+  </div>
+  <div class="flex gap center">
+    {% if lay.order_id %}<a class="btn btn-ghost btn-sm" href="{{ url_for('orders.detail', order_id=lay.order_id) }}" data-i18n="cut.action.open_order">Open order</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('cutroom.lays') }}" data-i18n="cut.action.back">Back</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ lay.pieces_cut }}</div><div class="l" data-i18n="cut.field.pieces">Pieces cut</div></div>
+  <div class="sf-kpi"><div class="v">{{ m.n(lay.fabric_used_m) }}</div><div class="l" data-i18n="cut.field.fabric_used">Fabric used (m)</div></div>
+  <div class="sf-kpi"><div class="v">{{ m.n(lay.cons_per_gmt, 4) }}</div><div class="l" data-i18n="cut.field.cpg">m/garment</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-g' if lay.marker_eff_pct is not none and lay.marker_eff_pct >= eff_good else 'pb-kpi-a' }}">
+    <div class="v">{{ m.pct(lay.marker_eff_pct) }}</div><div class="l" data-i18n="cut.field.marker_eff">Marker efficiency</div></div>
+  <div class="sf-kpi"><div class="v">{{ m.pct(lay.utilisation_pct) }}</div><div class="l" data-i18n="cut.field.util">Utilisation</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-r' if lay.waste_pct is not none and lay.waste_pct > 3 else 'pb-kpi-g' }}">
+    <div class="v">{{ m.pct(lay.waste_pct, 2) }}</div><div class="l" data-i18n="cut.field.waste">End loss</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cut.lay.numbers">The numbers</h3>
+      {% if not lay.measured %}<span class="tag" data-i18n="cut.tag.planned">plan</span>{% endif %}</div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <tbody>
+          <tr><td data-i18n="cut.field.marker_len">Marker length (m)</td><td style="text-align:right">{{ m.n(lay.marker_length_m) }}</td></tr>
+          <tr><td data-i18n="cut.field.marker_width">Marker width (cm)</td><td style="text-align:right">{{ m.n(lay.marker_width_cm, 1) }}</td></tr>
+          <tr><td data-i18n="cut.field.fabric_width">Fabric width (cm)</td><td style="text-align:right">{{ m.n(lay.fabric_width_cm, 1) }}</td></tr>
+          <tr><td data-i18n="cut.field.marker_area">Pattern area in marker (m²)</td><td style="text-align:right">{{ m.n(lay.marker_area_m2) }}</td></tr>
+          <tr><td data-i18n="cut.field.plies">Plies</td><td style="text-align:right">{{ lay.plies }}</td></tr>
+          <tr><td data-i18n="cut.field.ppp">Pieces per ply</td><td style="text-align:right">{{ lay.pieces_per_ply }}</td></tr>
+          <tr><td data-i18n="cut.field.ratio">Size ratio</td><td style="text-align:right">{{ lay.size_ratio or '—' }}</td></tr>
+          <tr><td data-i18n="cut.field.end_allow">End allowance per ply (m)</td><td style="text-align:right">{{ m.n(lay.end_allow_m, 3) }}</td></tr>
+          <tr><td data-i18n="cut.field.theoretical">Theoretical (marker × plies)</td><td style="text-align:right">{{ m.n(lay.theoretical_m) }}</td></tr>
+          <tr><td data-i18n="cut.field.planned_fabric">Planned fabric (m)</td><td style="text-align:right">{{ m.n(lay.planned_m) }}</td></tr>
+          <tr><td data-i18n="cut.field.actual_fabric">Actual fabric used (m)</td><td style="text-align:right">{{ m.n(lay.actual_fabric_m) }}</td></tr>
+          <tr><td data-i18n="cut.field.planned_cpg">Plan m/garment (BOM)</td><td style="text-align:right">{{ m.n(planned_cpg, 4) }}</td></tr>
+          <tr><td data-i18n="cut.field.variance">Fabric variance</td><td style="text-align:right">{{ m.variance(variance_pct) }}</td></tr>
+        </tbody>
+      </table>
+      {% if planned_cpg is none %}<div class="muted mt-2" data-i18n="cut.hint.no_plan">No metre-denominated fabric line on this order's BOM, so no planned consumption to compare against.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="cut.lay.update">Update the spread</h3></div>
+    <div class="panel-pad">
+      {% if can('cut_manage') %}
+      <form method="post" action="{{ url_for('cutroom.lay_update', lay_id=lay.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="cut.field.plies">Plies</label><input type="number" name="plies" min="0" step="1" value="{{ lay.plies }}"></div>
+          <div class="field"><label data-i18n="cut.field.actual_fabric">Actual fabric used (m)</label><input type="number" name="actual_fabric_m" min="0" step="any" value="{{ lay.actual_fabric_m }}"></div>
+          <div class="field"><label data-i18n="cut.field.cut_date">Cut date</label><input type="date" name="cut_date" value="{{ lay.cut_date or '' }}"></div>
+          <div class="field"><label data-i18n="cut.field.cutter">Cutter</label><input name="cutter" value="{{ lay.cutter or '' }}"></div>
+          <div class="field"><label data-i18n="cut.field.status">Status</label>
+            <select name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if lay.status==s }}>{{ s }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="cut.field.shade_lot">Shade lot</label><input name="shade_lot" value="{{ lay.shade_lot or '' }}"></div>
+          <div class="field span-2"><label data-i18n="cut.field.notes">Notes</label><input name="notes" value="{{ lay.notes or '' }}"></div>
+        </div>
+        <div class="flex gap center mt-4">
+          <button class="btn btn-primary btn-sm" data-i18n="cut.action.update">Update lay</button>
+        </div>
+      </form>
+      {% else %}<div class="muted" data-i18n="cut.hint.readonly">You have read-only access to the cut room.</div>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="cut.lay.rolls">Rolls consumed</h3>
+    <span class="tag">{{ m.n(rolls_m) }} / {{ m.n(lay.fabric_used_m) }} m</span></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="cut.field.roll">Roll</th><th data-i18n="cut.field.shade_lot">Shade lot</th>
+        <th style="text-align:right" data-i18n="cut.field.meters">Metres</th></tr></thead>
+      <tbody>
+      {% for r in rolls %}
+        <tr><td>{{ r.roll_no or r.roll_id or '—' }}</td><td class="muted">{{ r.shade_lot or '—' }}</td>
+          <td style="text-align:right">{{ m.n(r.meters, 2) }}</td></tr>
+      {% else %}<tr><td colspan="3" class="muted" style="text-align:center;padding:16px" data-i18n="cut.empty.rolls">No rolls booked to this lay yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% if rolls and rolls_gap_m|abs > 0.01 %}
+      <div class="muted mt-2"><span data-i18n="cut.hint.roll_gap">Unaccounted fabric (used minus booked rolls):</span> {{ m.n(rolls_gap_m) }} m</div>
+    {% endif %}
+    <div class="muted mt-2" data-i18n="cut.hint.rolls">Booking a roll here records traceability and shade-lot control only — stock is issued in the warehouse.</div>
+
+    {% if can('cut_manage') %}
+    <form method="post" action="{{ url_for('cutroom.lay_roll_add', lay_id=lay.id) }}" class="mt-4">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="roll_no" id="roll_no_field">
+      <div class="grid cols-4">
+        {% if wh_rolls %}
+        <div class="field span-2"><label data-i18n="cut.field.roll">Roll</label>
+          <select name="roll_id" id="roll_pick">
+            <option value="" data-no="" data-i18n="cut.filter.pick_roll">Pick a roll…</option>
+            {% for r in wh_rolls %}<option value="{{ r.id }}" data-no="{{ r.roll_no }}">{{ r.roll_no }} · {{ r.mat_code }} · {{ r.shade_lot or '' }} · {{ r.free_m }} m</option>{% endfor %}
+          </select></div>
+        {% else %}
+        <div class="field span-2"><label data-i18n="cut.field.roll">Roll no</label><input name="roll_no_text" id="roll_no_text"></div>
+        {% endif %}
+        <div class="field"><label data-i18n="cut.field.meters">Metres</label><input type="number" name="meters" min="0" step="any" required></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-primary btn-sm" data-i18n="cut.action.add_roll">Book roll</button></div>
+      </div>
+    </form>
+    <script>
+    (function () {
+      // Carry the picked roll's number alongside its id so the lay line stays
+      // readable even if the warehouse module is uninstalled later.
+      var sel = document.getElementById('roll_pick'), fld = document.getElementById('roll_no_field'),
+          txt = document.getElementById('roll_no_text');
+      if (sel && fld) sel.addEventListener('change', function () {
+        fld.value = sel.options[sel.selectedIndex].getAttribute('data-no') || '';
+      });
+      if (txt && fld) txt.addEventListener('input', function () { fld.value = txt.value; });
+    })();
+    </script>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

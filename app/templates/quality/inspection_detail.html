@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{{ inspection.ref }}{% endblock %}
+{% set vc={'pass':'#0f7a4d','fail':'#be123c','pending':'#6b7280'} %}
+{% macro sev(s) %}{% set c={'critical':'#be123c','major':'#b45309','minor':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ inspection.ref }}{% if inspection.order_no %} · {{ inspection.order_no }} — {{ inspection.buyer }}{% endif %}</div>
+    <h1>{{ (inspection.stage or 'inspection')|replace('_',' ')|title }}</h1>
+    <div class="sub">{{ inspection.inspection_date or '' }} · {{ inspection.inspector or '' }}
+      · <span class="tag" style="background:{{ vc.get(inspection.verdict,'#6b7280') }}18;color:{{ vc.get(inspection.verdict,'#6b7280') }}">{{ inspection.verdict }}</span></div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('quality.inspections') }}" data-i18n="qc.action.back">Back</a>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ '%g'|format(m.units) }}</div><div class="l" data-i18n="qc.kpi.units">Units inspected</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%g'|format(m.defects) }}</div><div class="l" data-i18n="qc.kpi.defects">Defects found</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ '%.2f'|format(m.dhu) }}</div><div class="l" data-i18n="qc.kpi.dhu">DHU (defects / 100 units)</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ '%.2f'|format(m.defect_rate) }}%</div><div class="l" data-i18n="qc.kpi.defect_rate">Defective rate</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ '%.2f'|format(m.rft) }}%</div><div class="l" data-i18n="qc.kpi.rft">RFT (first-pass yield)</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="qc.panel.plan">AQL sampling decision</h3>
+      <span class="tag" data-i18n="qc.badge.std">ANSI/ASQ Z1.4 · level II · single · normal</span></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="qc.field.lot">Lot size</td><td style="text-align:right">{{ '{:,.0f}'.format(inspection.lot_size or 0) }}</td></tr>
+        <tr><td class="muted" data-i18n="qc.field.aql">AQL</td><td style="text-align:right">{{ '%g'|format(inspection.aql or 0) }}</td></tr>
+        <tr><td class="muted" data-i18n="qc.field.code_letter">Sample-size code letter</td><td style="text-align:right">{{ inspection.code_letter }}</td></tr>
+        <tr><td class="muted" data-i18n="qc.field.sample">Sample size</td><td style="text-align:right">{{ '%g'|format(inspection.sample_size or 0) }}</td></tr>
+        <tr><td class="muted" data-i18n="qc.field.accept">Accept (Ac)</td><td style="text-align:right">{{ '%g'|format(inspection.accept_no or 0) }}</td></tr>
+        <tr><td class="muted" data-i18n="qc.field.reject">Reject (Re)</td><td style="text-align:right">{{ '%g'|format(inspection.reject_no or 0) }}</td></tr>
+        <tr><td class="muted" data-i18n="qc.field.defectives">Defective units</td><td style="text-align:right">{{ '%g'|format(inspection.defective_units or 0) }}</td></tr>
+        <tr><td class="muted" data-i18n="qc.field.verdict">Verdict</td>
+          <td style="text-align:right"><span class="tag" style="background:{{ vc.get(inspection.verdict,'#6b7280') }}18;color:{{ vc.get(inspection.verdict,'#6b7280') }}">{{ inspection.verdict }}</span></td></tr>
+      </table>
+      <div class="muted mt-2" style="font-size:11.5px" data-i18n="qc.hint.verdict">The verdict is computed from the sampling plan — accept at or below Ac, reject at Re. It cannot be typed in.</div>
+
+      {% if can('qc_inspect') %}
+      <form method="post" action="{{ url_for('quality.result', inspection_id=inspection.id) }}" class="mt-4">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="qc.field.units_insp">Units inspected</label>
+            <input type="number" name="units_inspected" min="0" step="any" value="{{ '%g'|format(inspection.units_inspected or 0) }}"></div>
+          <div class="field"><label data-i18n="qc.field.defectives">Defective units</label>
+            <input type="number" name="defective_units" min="0" step="any" value="{{ '%g'|format(inspection.defective_units or 0) }}"></div>
+          <div class="field span-2"><label data-i18n="qc.field.notes">Notes</label><input name="notes" value="{{ inspection.notes or '' }}"></div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-i18n="qc.action.save_result">Save result</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="qc.panel.pareto">Defect Pareto</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th style="text-align:right" data-i18n="qc.field.rank">#</th><th data-i18n="qc.field.defect">Defect</th>
+          <th style="text-align:right" data-i18n="qc.field.qty">Qty</th>
+          <th style="text-align:right" data-i18n="qc.field.pct">%</th>
+          <th style="text-align:right" data-i18n="qc.field.cum">Cumulative %</th></tr></thead>
+        <tbody>
+        {% for p in pareto %}
+          <tr><td style="text-align:right" class="muted">{{ p.rank }}</td><td>{{ p.defect_type }}</td>
+            <td style="text-align:right">{{ '%g'|format(p.qty) }}</td>
+            <td style="text-align:right">{{ '%.2f'|format(p.pct) }}</td>
+            <td style="text-align:right">{{ '%.2f'|format(p.cum_pct) }}
+              <div class="pb-meter" style="margin-top:3px"><span style="width:{{ p.cum_pct }}%"></span></div></td></tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="qc.empty.defects">No defects recorded yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="qc.panel.defects">Defects found</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="qc.field.defect">Defect</th><th data-i18n="qc.field.section">Section</th>
+        <th style="text-align:right" data-i18n="qc.field.qty">Qty</th>
+        <th data-i18n="qc.field.severity">Severity</th><th data-i18n="qc.field.notes">Notes</th></tr></thead>
+      <tbody>
+      {% for d in defects %}
+        <tr><td>{{ d.defect_type }}</td><td class="muted">{{ d.section or '—' }}</td>
+          <td style="text-align:right">{{ '%g'|format(d.qty or 0) }}</td>
+          <td>{{ sev(d.severity) }}</td><td class="muted">{{ d.notes or '' }}</td></tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:16px" data-i18n="qc.empty.defects">No defects recorded yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+
+    {% if can('qc_inspect') %}
+    <form method="post" action="{{ url_for('quality.defect', inspection_id=inspection.id) }}" class="mt-4">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="grid cols-4">
+        <div class="field"><label data-i18n="qc.field.defect">Defect</label>
+          <select name="defect_type">{% for t in defect_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="qc.field.section">Section</label>
+          <select name="section">{% for s in sections %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+        <div class="field"><label data-i18n="qc.field.qty">Qty</label><input type="number" name="qty" min="1" step="any" value="1"></div>
+        <div class="field"><label data-i18n="qc.field.severity">Severity</label>
+          <select name="severity">{% for s in severities %}<option value="{{ s }}" {{ 'selected' if s=='minor' }}>{{ s }}</option>{% endfor %}</select></div>
+        <div class="field span-2"><label data-i18n="qc.field.notes">Notes</label><input name="notes"></div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-i18n="qc.action.add_defect">Add defect</button>
+      <span class="muted" style="font-size:11.5px;margin-inline-start:8px" data-i18n="qc.hint.defects">Defect quantity is not defective units — one unit can carry several defects.</span>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

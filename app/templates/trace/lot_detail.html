@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ lot.lot_ref }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="trc.eyebrow">Sustainability · Traceability & Product Passport</div>
+    <h1>{{ lot.lot_ref or lot.id }}</h1>
+    <div class="sub">{{ lot.material or '' }}{% if lot.fibre_composition %} · {{ lot.fibre_composition }}{% endif %}</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.lots') }}" data-i18n="trc.nav.lots">Material lots</a>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ chain|length }}</div><div class="l" data-i18n="trc.kpi.chain_steps">Chain steps</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-g' if deepest_tier and deepest_tier >= 4 else 'pb-kpi-a' }}"><div class="v">{{ deepest_tier or '—' }}</div><div class="l" data-i18n="trc.kpi.deepest">Deepest tier reached</div></div>
+  <div class="sf-kpi"><div class="v">{{ certs|length }}</div><div class="l" data-i18n="trc.kpi.chain_certs">Certificates on the chain</div></div>
+  <div class="sf-kpi"><div class="v">{{ lot.qty or 0 }}</div><div class="l" data-i18n="trc.field.qty">Qty</div></div>
+</div>
+
+{% if truncated %}
+<div class="panel mt-4"><div class="panel-pad muted" data-i18n="trc.warn.truncated">The upstream walk was stopped early — this chain loops back on itself or is longer than the safety limit. Fix the parent lot links.</div></div>
+{% endif %}
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="trc.lot.chain">Upstream chain</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="trc.field.step">Step</th><th data-i18n="trc.field.lot">Lot</th>
+          <th data-i18n="trc.field.partner">Supplier</th><th data-i18n="trc.field.tier">Tier</th>
+          <th data-i18n="trc.field.country">Country</th></tr></thead>
+        <tbody>
+        {% for n in chain %}
+          <tr><td class="muted">{{ n.depth + 1 }}</td>
+            <td><a href="{{ url_for('trace.lot_detail', lot_id=n.id) }}">{{ n.lot_ref or n.id }}</a>
+              <div class="muted" style="font-size:11px">{{ n.material or '—' }}{% if n.fibre_composition %} · {{ n.fibre_composition }}{% endif %}</div></td>
+            <td class="muted">{{ n.partner_name or '—' }}</td>
+            <td>{% if n.tier in tiers %}<span class="tag" data-i18n="trc.tier.{{ n.tier }}">{{ tiers[n.tier] }}</span>
+              {% elif n.tier %}<span class="tag">{{ n.tier }}</span>{% else %}—{% endif %}</td>
+            <td class="muted">{{ n.country_of_origin or n.partner_country or '—' }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if chain|length == 1 %}<div class="muted mt-2" style="font-size:11.5px" data-i18n="trc.lot.no_upstream">No upstream lot recorded — traceability stops at this supplier.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="trc.lot.certs">Certificates covering this chain</h3></div>
+    <div class="panel-pad">
+      <table class="tbl">
+        <thead><tr><th data-i18n="trc.field.standard">Standard</th><th data-i18n="trc.field.partner">Partner</th>
+          <th data-i18n="trc.field.valid_until">Valid until</th><th data-i18n="trc.field.status">Status</th></tr></thead>
+        <tbody>
+        {% for c in certs %}
+          <tr><td>{{ c.standard }}{% if c.cert_no %}<div class="muted" style="font-size:11px">{{ c.cert_no }}</div>{% endif %}</td>
+            <td class="muted">{{ c.partner_name or '—' }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ c.valid_until or '—' }}</td>
+            <td>{% if c.derived_status == 'valid' %}<span class="tag" style="background:#04785718;color:#047857" data-i18n="trc.status.valid">valid</span>
+              {% elif c.derived_status == 'expiring' %}<span class="tag" style="background:#b4530918;color:#b45309" data-i18n="trc.status.expiring">expiring</span>
+              {% elif c.derived_status == 'expired' %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="trc.status.expired">expired</span>
+              {% elif c.derived_status == 'revoked' %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="trc.status.revoked">revoked</span>
+              {% elif c.derived_status == 'pending' %}<span class="tag" style="background:#b4530918;color:#b45309" data-i18n="trc.status.pending">not yet in force</span>
+              {% else %}<span class="tag" data-i18n="trc.status.unknown">unknown</span>{% endif %}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="trc.empty.chain_certs">No material certificate covers this chain.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if orders %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="trc.lot.orders">Used on orders</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="trc.field.order">Order</th><th data-i18n="trc.field.buyer">Buyer</th>
+        <th style="text-align:right" data-i18n="trc.field.qty_used">Qty used</th></tr></thead>
+      <tbody>
+      {% for o in orders %}
+        <tr><td><a href="{{ url_for('trace.passport', order_id=o.order_id) }}">{{ o.order_no or o.order_id }}</a></td>
+          <td class="muted">{{ o.buyer or '—' }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">{{ o.qty_used or 0 }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

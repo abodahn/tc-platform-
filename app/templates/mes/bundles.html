@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Bundles &amp; WIP{% endblock %}
+{% set SC = {'created':'#6b7280','in_progress':'#1d4ed8','completed':'#15803d','rejected':'#be123c'} %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="mes.eyebrow">Smart Factory · Shop-floor MES</div>
+    <h1 data-i18n="mes.nav.bundles">Bundles &amp; WIP</h1>
+    <div class="sub" data-i18n="mes.bundles.sub">Every bundle scanned section to section. A bundle can never pass more pieces than were cut into it.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.index') }}" data-i18n="mes.action.dashboard">Dashboard</a>
+</div>
+
+<div class="sf-kpis">
+  {% for w in wip %}
+    <div class="sf-kpi"><div class="v">{{ w.qty }}</div><div class="l" data-i18n="mes.section.{{ w.section }}">{{ w.section }}</div></div>
+  {% endfor %}
+</div>
+
+{% if can('mes_entry') %}
+<form class="panel mt-4" method="post" action="{{ url_for('mes.bundle_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="mes.bundles.new">Create bundle</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field"><label data-i18n="mes.field.order">Order</label>
+        <select name="order_id">
+          <option value="" data-i18n="mes.field.unassigned">Unassigned</option>
+          {% for o in orders %}<option value="{{ o.id }}">{{ o.order_no }} · {{ o.buyer }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label data-i18n="mes.field.size">Size</label><input name="size"></div>
+      <div class="field"><label data-i18n="mes.field.color">Colour</label><input name="color"></div>
+      <div class="field"><label data-i18n="mes.field.qty">Pieces</label>
+        <input type="number" name="qty" min="1" step="1" required></div>
+      <div class="field"><label data-i18n="mes.field.origin">Origin section</label>
+        <select name="origin_section">
+          {% for s in sections %}<option value="{{ s }}" data-i18n="mes.section.{{ s }}">{{ s }}</option>{% endfor %}
+        </select></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="mes.action.create">Create bundle</button>
+    </div>
+  </div>
+</form>
+{% endif %}
+
+<form class="panel mt-4" method="get" style="margin-bottom:0">
+  <div class="panel-pad flex gap center wrap">
+    <select name="status" onchange="this.form.submit()">
+      <option value="" data-i18n="mes.filter.all_status">All statuses</option>
+      {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f_status==s }} data-i18n="mes.status.{{ s }}">{{ s|replace('_',' ') }}</option>{% endfor %}
+    </select>
+    {% if f_status %}<a class="tag" href="{{ url_for('mes.bundles') }}" data-i18n="mes.filter.clear">Clear</a>{% endif %}
+  </div>
+</form>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mes.bundles.list">Bundles</h3></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th data-i18n="mes.field.bundle_no">Bundle</th>
+        <th data-i18n="mes.field.order">Order</th>
+        <th data-i18n="mes.field.size">Size</th>
+        <th data-i18n="mes.field.color">Colour</th>
+        <th style="text-align:right" data-i18n="mes.field.qty">Pieces</th>
+        <th data-i18n="mes.field.section">At section</th>
+        <th data-i18n="mes.field.status">Status</th>
+        {% if can('mes_entry') %}<th data-i18n="mes.field.move_to">Scan to</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr><td>{{ r.bundle_no }}</td>
+          <td>{% if r.order_id %}<a href="{{ url_for('orders.detail', order_id=r.order_id) }}">{{ r.order_no or r.order_id }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{{ r.size or '—' }}</td><td>{{ r.color or '—' }}</td>
+          <td style="text-align:right">{{ r.qty }}</td>
+          <td data-i18n="mes.section.{{ r.section }}">{{ r.section }}</td>
+          <td><span class="tag" style="background:{{ SC.get(r.status,'#6b7280') }}18;color:{{ SC.get(r.status,'#6b7280') }}" data-i18n="mes.status.{{ r.status }}">{{ r.status|replace('_',' ') }}</span>
+            {% if can('mes_entry') and r.status != 'rejected' %}
+            <form method="post" action="{{ url_for('mes.bundle_status', bundle_id=r.id) }}" style="display:inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="status" value="rejected">
+              <button class="btn btn-sm btn-ghost" data-i18n="mes.action.reject">Reject</button>
+            </form>{% endif %}</td>
+          {% if can('mes_entry') %}
+          <td>
+            <form method="post" action="{{ url_for('mes.bundle_move', bundle_id=r.id) }}" class="flex gap center">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              {# A partly-moved bundle still has pieces standing in an EARLIER section;
+                 hard-coding the last scanned one makes that residual unreachable. #}
+              <select name="from_section" aria-label="from section">
+                {% for s in sections %}<option value="{{ s }}" {{ 'selected' if s == r.section }} data-i18n="mes.section.{{ s }}">{{ s }}</option>{% endfor %}
+              </select>
+              <span class="muted">→</span>
+              <input type="number" name="qty" min="1" step="1" value="{{ r.qty }}" style="width:80px" aria-label="pieces">
+              <select name="to_section" aria-label="section">
+                {% for s in sections %}<option value="{{ s }}" data-i18n="mes.section.{{ s }}">{{ s }}</option>{% endfor %}
+              </select>
+              <button class="btn btn-sm btn-ghost" data-i18n="mes.action.move">Scan</button>
+            </form>
+          </td>{% endif %}
+        </tr>
+      {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.bundles">No bundles yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mes.bundles.moves">Recent scans</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="mes.field.bundle_no">Bundle</th>
+        <th data-i18n="mes.field.from">From</th><th data-i18n="mes.field.to">To</th>
+        <th style="text-align:right" data-i18n="mes.field.qty">Pieces</th>
+        <th data-i18n="mes.field.operator">Operator</th>
+        <th data-i18n="mes.field.when">When</th></tr></thead>
+      <tbody>
+      {% for m in moves %}
+        <tr><td>{{ m.bundle_no }}</td>
+          <td data-i18n="mes.section.{{ m.from_section }}">{{ m.from_section }}</td>
+          <td data-i18n="mes.section.{{ m.to_section }}">{{ m.to_section }}</td>
+          <td style="text-align:right">{{ m.qty }}</td>
+          <td class="muted">{{ m.operator or '—' }}</td>
+          <td class="muted">{{ m.moved_at }}</td></tr>
+      {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.moves">No scans recorded yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mes.dash.recon">Cut vs sewn by order</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="mes.field.order">Order</th>
+        <th style="text-align:right" data-i18n="mes.field.cut">Cut</th>
+        <th style="text-align:right" data-i18n="mes.field.sewn">Sewn</th>
+        <th style="text-align:right" data-i18n="mes.field.balance">Balance</th></tr></thead>
+      <tbody>
+      {% for r in recon %}
+        <tr><td>{% if r.order_id %}<a href="{{ url_for('orders.detail', order_id=r.order_id) }}">{{ r.order_no or r.order_id }}</a>
+              <span class="muted">{{ r.buyer or '' }}</span>{% else %}<span class="muted" data-i18n="mes.field.unassigned">Unassigned</span>{% endif %}</td>
+          <td style="text-align:right">{{ r.cut }}</td>
+          <td style="text-align:right">{{ r.sewn }}</td>
+          <td style="text-align:right"><strong>{{ r.balance }}</strong></td></tr>
+      {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.recon">Nothing to reconcile yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

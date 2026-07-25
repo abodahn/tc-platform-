@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Line capacity{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="pln.eyebrow">Planning · Finite capacity</div>
+    <h1 data-i18n="pln.nav.lines">Line capacity</h1>
+    <div class="sub" data-i18n="pln.lines.sub">Daily capacity = operators × working minutes × efficiency %. A line never delivers 100% of its theoretical minutes.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.index') }}" data-i18n="pln.nav.board">Load board</a>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="pln.lines.title">Lines</h3></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="pln.field.code">Code</th>
+          <th data-i18n="pln.field.name">Name</th>
+          <th data-i18n="pln.field.section">Section</th>
+          <th style="text-align:right" data-i18n="pln.field.operators">Operators</th>
+          <th style="text-align:right" data-i18n="pln.field.working_minutes">Minutes / day</th>
+          <th style="text-align:right" data-i18n="pln.field.efficiency">Efficiency %</th>
+          <th style="text-align:right" data-i18n="pln.field.capacity">Capacity / day</th>
+          <th data-i18n="pln.field.status">Status</th>
+          {% if can('pln_plan') %}<th data-i18n="pln.field.actions">Actions</th>{% endif %}
+        </tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            {% if can('pln_plan') %}
+              {% set fid = 'pln-line-' ~ r.id %}
+              <td>{{ r.code or '—' }}</td>
+              <td>{{ r.name }}</td>
+              <td class="muted">{{ r.section or '—' }}</td>
+              <td style="text-align:right"><input form="{{ fid }}" name="operators" type="number" min="0" step="1" value="{{ r.operators or 0 }}" style="width:80px;text-align:right"></td>
+              <td style="text-align:right"><input form="{{ fid }}" name="working_minutes" type="number" min="0" step="1" value="{{ r.working_minutes or 0 }}" style="width:90px;text-align:right"></td>
+              <td style="text-align:right"><input form="{{ fid }}" name="efficiency_pct" type="number" min="0" max="200" step="any" value="{{ r.efficiency_pct or 0 }}" style="width:80px;text-align:right"></td>
+              <td style="text-align:right"><strong>{{ r.capacity|round(0)|int }}</strong></td>
+              <td>{% if r.active %}<span class="tag" style="background:#15803d18;color:#15803d" data-i18n="pln.status.active">Active</span>{% else %}<span class="tag" data-i18n="pln.status.inactive">Inactive</span>{% endif %}</td>
+              <td>
+                {# the form lives in a cell; the row's inputs join it via form="" (valid HTML — a <form> may not wrap <td>) #}
+                <form id="{{ fid }}" class="flex gap center" method="post" action="{{ url_for('planning.line_update', pline_id=r.id) }}">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <button class="btn btn-sm btn-primary" data-i18n="pln.action.save">Save</button>
+                  <button class="btn btn-sm btn-ghost" name="active" value="{{ 0 if r.active else 1 }}" data-i18n="pln.action.toggle">Toggle</button>
+                </form>
+              </td>
+            {% else %}
+              <td>{{ r.code or '—' }}</td>
+              <td>{{ r.name }}</td>
+              <td class="muted">{{ r.section or '—' }}</td>
+              <td style="text-align:right">{{ r.operators or 0 }}</td>
+              <td style="text-align:right">{{ r.working_minutes or 0 }}</td>
+              <td style="text-align:right">{{ r.efficiency_pct or 0 }}</td>
+              <td style="text-align:right"><strong>{{ r.capacity|round(0)|int }}</strong></td>
+              <td>{% if r.active %}<span class="tag" style="background:#15803d18;color:#15803d" data-i18n="pln.status.active">Active</span>{% else %}<span class="tag" data-i18n="pln.status.inactive">Inactive</span>{% endif %}</td>
+            {% endif %}
+          </tr>
+        {% else %}
+          <tr><td colspan="9" class="muted" style="text-align:center;padding:16px" data-i18n="pln.empty.lines">No active lines. Add line capacity first.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if can('pln_plan') %}
+<form class="panel mt-4" method="post" action="{{ url_for('planning.line_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="pln.lines.add">Add a line</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-3">
+      <div class="field"><label data-i18n="pln.field.code">Code</label><input name="code" placeholder="SEW-3"></div>
+      <div class="field"><label><span data-i18n="pln.field.name">Name</span> *</label><input name="name" required></div>
+      <div class="field"><label data-i18n="pln.field.section">Section</label>
+        <select name="section">{% for s in sections %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="pln.field.operators">Operators</label><input name="operators" type="number" min="0" step="1" value="24"></div>
+      <div class="field"><label data-i18n="pln.field.working_minutes">Minutes / day</label><input name="working_minutes" type="number" min="0" step="1" value="540"></div>
+      <div class="field"><label data-i18n="pln.field.efficiency">Efficiency %</label><input name="efficiency_pct" type="number" min="0" max="200" step="any" value="65"></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="pln.action.add_line">Add line</button>
+    </div>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

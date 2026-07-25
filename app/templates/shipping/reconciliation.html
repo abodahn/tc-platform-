@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Shipped vs ordered{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="shp.eyebrow">Logistics · Shipments & Export Documents</div>
+    <h1 data-i18n="shp.recon.h1">Shipped vs ordered</h1>
+    <div class="sub" data-i18n="shp.recon.sub">Ordered against packed and shipped. Short and over shipments are both buyer chargebacks — they are flagged here and on the bell.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.nav.list">All shipments</a>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="shp.recon.title">Fulfilment by order</h3>
+    <span class="tag">± {{ '%.0f'|format(tolerance) }}% <span data-i18n="shp.recon.tolerance">tolerance</span></span></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th data-i18n="shp.field.order">Order</th><th data-i18n="shp.field.buyer">Buyer</th>
+        <th data-i18n="shp.field.style">Style</th>
+        <th style="text-align:right" data-i18n="shp.field.ordered">Ordered</th>
+        <th style="text-align:right" data-i18n="shp.field.packed">Packed</th>
+        <th style="text-align:right" data-i18n="shp.field.shipped">Shipped</th>
+        <th style="text-align:right" data-i18n="shp.field.balance">Balance</th>
+        <th data-i18n="shp.field.fulfil">Fulfilment</th>
+        <th data-i18n="shp.field.flag">Flag</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><a href="{{ url_for('orders.detail', order_id=r.id) }}">{{ r.order_no }}</a>
+            <div class="muted" style="font-size:11px">{{ r.shipments }} <span data-i18n="shp.list.count">shipments</span></div></td>
+          <td>{{ r.buyer or '—' }}</td>
+          <td class="muted">{{ r.style_name or r.style_ref or '—' }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(r.qty or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(r.packed) }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(r.shipped) }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(r.balance) }}</td>
+          <td>{% if r.fulfil_pct is none %}<span class="muted">—</span>
+              {% else %}<div class="pb-meter" style="min-width:90px"><span style="width:{{ [r.fulfil_pct, 100]|min }}%"></span></div>
+              <span class="muted" style="font-size:11px">{{ '%.1f'|format(r.fulfil_pct) }}%</span>{% endif %}</td>
+          <td>{% if r.short %}<span class="tag" style="background:#be123c18;color:#be123c" data-i18n="shp.flag.short">Short</span>{% endif %}
+              {% if r.over %}<span class="tag" style="background:#b4530918;color:#b45309" data-i18n="shp.flag.over">Over</span>{% endif %}
+              {% if not r.short and not r.over %}<span class="tag" style="background:#0f7a4d18;color:#0f7a4d" data-i18n="shp.flag.ok">In tolerance</span>{% endif %}</td>
+        </tr>
+      {% else %}<tr><td colspan="9" class="muted" style="text-align:center;padding:16px" data-i18n="shp.empty.recon_rows">No order-linked shipments yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

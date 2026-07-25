@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Fabric rolls{% endblock %}
+{% macro rst(s) %}{% set c={'available':'#0f7a4d','partial':'#b45309','consumed':'#6b7280','quarantine':'#be123c'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="wh.eyebrow">Operations · Raw Material &amp; Finished Goods</div>
+    <h1 data-i18n="wh.nav.rolls">Fabric rolls</h1>
+    <div class="sub" data-i18n="wh.rolls.sub">Each roll with its dye lot, width and the metres actually left on it.</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.issue') }}" data-i18n="wh.nav.issue">Issue to order</a>
+    {% if can('wh_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('warehouse.receive') }}" data-i18n="wh.action.receive">Receive material</a>{% endif %}
+  </div>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <select name="material_id" onchange="this.form.submit()">
+    <option value="" data-i18n="wh.filter.all_materials">All materials</option>
+    {% for m in materials %}{% if m.roll_tracked %}<option value="{{ m.id }}" {{ 'selected' if f_material==m.id }}>{{ m.code }} — {{ m.name }}{% if m.color %} ({{ m.color }}){% endif %}</option>{% endif %}{% endfor %}
+  </select>
+  <select name="shade_lot" onchange="this.form.submit()">
+    <option value="" data-i18n="wh.filter.all_lots">All shade lots</option>
+    {% for l in lots %}<option value="{{ l }}" {{ 'selected' if f_shade==l }}>{{ l }}</option>{% endfor %}
+  </select>
+  <select name="status" onchange="this.form.submit()">
+    <option value="" data-i18n="wh.filter.all_status">All statuses</option>
+    {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f_status==s }}>{{ s }}</option>{% endfor %}
+  </select>
+  {% if f_material or f_shade or f_status %}<a class="tag" href="{{ url_for('warehouse.rolls') }}" data-i18n="wh.filter.clear">Clear</a>{% endif %}
+</div></form>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr>
+      <th data-i18n="wh.field.rollno">Roll</th><th data-i18n="wh.field.material">Material</th>
+      <th data-i18n="wh.field.shade">Shade lot</th><th data-i18n="wh.field.grade">Grade</th>
+      <th style="text-align:right" data-i18n="wh.field.width">Width (cm)</th>
+      <th style="text-align:right" data-i18n="wh.field.length">Length (m)</th>
+      <th style="text-align:right" data-i18n="wh.field.remaining">Remaining</th>
+      <th style="text-align:right" data-i18n="wh.field.free">Free</th>
+      <th data-i18n="wh.field.status">Status</th><th data-i18n="wh.field.bin">Bin</th>
+      <th data-i18n="wh.field.received">Received on</th>
+      {% if can('wh_manage') %}<th data-i18n="wh.action.return">Return</th><th data-i18n="wh.field.adjust">Adjust</th><th data-i18n="wh.field.hold">Hold</th>{% endif %}
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.roll_no }}{% if r.grn_ref %}<div class="muted" style="font-size:11px">{{ r.grn_ref }}</div>{% endif %}</td>
+        <td>{{ r.mat_code }}<div class="muted" style="font-size:11px">{{ r.mat_name }}{% if r.mat_color %} · {{ r.mat_color }}{% endif %}</div></td>
+        <td>{{ r.shade_lot or '—' }}{% if r.supplier_lot %}<div class="muted" style="font-size:11px">{{ r.supplier_lot }}</div>{% endif %}</td>
+        <td class="muted">{{ r.grade or '—' }}</td>
+        <td style="text-align:right">{{ '{:,.0f}'.format(r.width_cm or 0) }}</td>
+        <td style="text-align:right">{{ '{:,.1f}'.format(r.length_m or 0) }}</td>
+        <td style="text-align:right">{{ '{:,.1f}'.format(r.remaining_m or 0) }}</td>
+        <td style="text-align:right">{% if (r.reserved_m or 0) > 0 %}<span class="tag" style="background:#b4530918;color:#b45309">{{ '{:,.1f}'.format(r.free_m) }}</span>{% else %}{{ '{:,.1f}'.format(r.free_m) }}{% endif %}</td>
+        <td>{{ rst(r.status) }}</td>
+        <td class="muted">{{ r.bin or '—' }}</td>
+        <td class="muted">{{ (r.received_at or '')[:10] }}</td>
+        {% if can('wh_manage') %}
+        <td><form method="post" action="{{ url_for('warehouse.roll_return', roll_id=r.id) }}" style="display:flex;gap:4px">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="number" step="any" name="qty" style="width:70px" data-i18n-ph="wh.field.qty" placeholder="Qty">
+          <button class="btn btn-ghost btn-sm" data-i18n="wh.action.return">Return</button></form></td>
+        {# a fabric stock take is corrected on the ROLL — the material header follows it #}
+        <td><form method="post" action="{{ url_for('warehouse.adjust') }}" style="display:flex;gap:4px">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="roll_id" value="{{ r.id }}">
+          <input type="number" step="any" name="delta" style="width:70px" data-i18n-ph="wh.field.delta" placeholder="+/-">
+          <input name="reason" style="width:100px" data-i18n-ph="wh.field.reason" placeholder="Reason">
+          <button class="btn btn-ghost btn-sm" data-i18n="wh.action.adjust">Adjust</button></form></td>
+        <td><form method="post" action="{{ url_for('warehouse.roll_hold', roll_id=r.id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="hold" value="{{ '0' if r.status=='quarantine' else '1' }}">
+          <button class="btn btn-ghost btn-sm" data-i18n="{{ 'wh.action.release_hold' if r.status=='quarantine' else 'wh.action.hold' }}">{{ 'Release' if r.status=='quarantine' else 'Quarantine' }}</button>
+        </form></td>
+        {% endif %}
+      </tr>
+    {% else %}<tr><td colspan="14" class="muted" style="text-align:center;padding:18px" data-i18n="wh.empty.rolls">No rolls match this filter.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

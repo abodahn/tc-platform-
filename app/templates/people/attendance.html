@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Attendance{% endblock %}
+{% macro att(s) %}{% set c={'present':'#0f7a4d','late':'#b45309','absent':'#be123c','leave':'#1d4ed8','holiday':'#6b7280','off':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="ppl.eyebrow">People · HR Core</div>
+    <h1 data-i18n="ppl.nav.attendance">Attendance</h1>
+    <div class="sub" data-i18n="ppl.att.sub">Mark the whole day in one pass. Re-posting a day corrects it — it never duplicates.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('people.index') }}" data-i18n="ppl.nav.home">HR Core</a>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <div class="field"><label data-i18n="ppl.field.date">Date</label><input type="date" name="d" value="{{ day }}"></div>
+  <div class="field"><label data-i18n="ppl.field.department">Department</label>
+    <select name="dept">
+      <option value="" data-i18n="ppl.filter.all_depts">All departments</option>
+      {% for x in departments %}<option value="{{ x }}" {{ 'selected' if f_dept==x }}>{{ x }}</option>{% endfor %}
+    </select></div>
+  <div class="field"><label data-i18n="ppl.field.from">From</label><input type="date" name="from" value="{{ from_d }}"></div>
+  <div class="field"><label data-i18n="ppl.field.to">To</label><input type="date" name="to" value="{{ to_d }}"></div>
+  <button class="btn btn-sm" data-i18n="ppl.action.apply">Apply</button>
+  {% if f_dept %}<a class="tag" href="{{ url_for('people.attendance', d=day) }}" data-i18n="ppl.filter.clear">Clear</a>{% endif %}
+</div></form>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ stats.scheduled }}</div><div class="l" data-i18n="ppl.kpi.scheduled">Scheduled days in range</div></div>
+  <div class="sf-kpi pb-kpi-g"><div class="v">{{ stats.attendance_pct }}%</div><div class="l" data-i18n="ppl.kpi.attendance">Attendance %</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ stats.absenteeism_pct }}%</div><div class="l" data-i18n="ppl.kpi.absenteeism">Absenteeism %</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ stats.late }}</div><div class="l" data-i18n="ppl.kpi.late">Late arrivals</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.1f}'.format(stats.ot_hours or 0) }}</div><div class="l" data-i18n="ppl.kpi.ot">Overtime hours</div></div>
+</div>
+
+{% if can('ppl_manage') %}
+<form class="panel mt-4" method="post" action="{{ url_for('people.attendance_save') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="work_date" value="{{ day }}">
+  <input type="hidden" name="dept" value="{{ f_dept or '' }}">
+  <div class="panel-head"><h3 data-i18n="ppl.att.entry">Day entry</h3><span class="tag">{{ day }}</span></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ppl.field.code">Code</th><th data-i18n="ppl.field.employee">Employee</th>
+        <th data-i18n="ppl.field.department">Department</th><th data-i18n="ppl.field.status">Status</th>
+        <th data-i18n="ppl.field.in">In</th><th data-i18n="ppl.field.out">Out</th>
+        <th style="text-align:right" data-i18n="ppl.field.ot">OT h</th></tr></thead>
+      <tbody>
+      {% for e in employees %}
+        {% set r = existing.get(e.id) %}
+        <tr><td>{{ e.employee_code }}</td><td>{{ e.employee_name }}</td>
+          <td class="muted">{{ e.department or '—' }}</td>
+          <td><select name="st_{{ e.id }}">
+            {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if r and r.status==s else ('selected' if not r and s=='present' else '') }}>{{ s }}</option>{% endfor %}
+          </select></td>
+          <td><input type="time" name="in_{{ e.id }}" value="{{ (r.check_in if r else '') or '' }}"></td>
+          <td><input type="time" name="out_{{ e.id }}" value="{{ (r.check_out if r else '') or '' }}"></td>
+          <td style="text-align:right"><input type="number" step="0.25" min="0" max="16" style="max-width:90px" name="ot_{{ e.id }}" value="{{ (r.ot_hours if r else 0) or 0 }}"></td></tr>
+      {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="ppl.empty.roster">No employees on the roster yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% if employees %}<div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="ppl.action.save_day">Save day</button></div>{% endif %}
+  </div>
+</form>
+{% endif %}
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="ppl.att.recent">Recent records</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="ppl.field.date">Date</th><th data-i18n="ppl.field.employee">Employee</th>
+        <th data-i18n="ppl.field.department">Department</th><th data-i18n="ppl.field.status">Status</th>
+        <th data-i18n="ppl.field.in">In</th><th data-i18n="ppl.field.out">Out</th>
+        <th style="text-align:right" data-i18n="ppl.field.hours">Hours</th>
+        <th style="text-align:right" data-i18n="ppl.field.ot">OT h</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr><td style="font-variant-numeric:tabular-nums">{{ r.work_date }}</td>
+          <td>{{ r.employee_name }}<div class="muted" style="font-size:11px">{{ r.employee_code }}</div></td>
+          <td class="muted">{{ r.department or '—' }}</td><td>{{ att(r.status) }}</td>
+          <td class="muted">{{ r.check_in or '—' }}</td><td class="muted">{{ r.check_out or '—' }}</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(r.worked_hours or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.2f}'.format(r.ot_hours or 0) }}</td></tr>
+      {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:18px" data-i18n="ppl.empty.records">No attendance recorded yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

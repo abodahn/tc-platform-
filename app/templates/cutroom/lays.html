@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% import "cutroom/_macros.html" as m %}
+{% block title %}Lays{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cut.eyebrow">Production · Cut Room & Fabric Utilisation</div>
+    <h1 data-i18n="cut.nav.lays">Lays</h1>
+    <div class="sub" data-i18n="cut.lays.sub">Every spread with its marker, plies, size ratio and what it really cost in fabric.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('cut_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('cutroom.lay_new') }}" data-i18n="cut.action.new_lay">Record lay</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('cutroom.index') }}" data-i18n="cut.nav.home">Cut room</a>
+  </div>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px">
+  <div class="panel-pad flex gap center wrap">
+    <select name="order_id" onchange="this.form.submit()">
+      <option value="" data-i18n="cut.filter.all_orders">All orders</option>
+      {% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if f_order==o.id }}>{{ o.order_no }} · {{ o.style_ref or '' }}</option>{% endfor %}
+    </select>
+    <select name="status" onchange="this.form.submit()">
+      <option value="" data-i18n="cut.filter.all_status">All statuses</option>
+      {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f_status==s }}>{{ s }}</option>{% endfor %}
+    </select>
+    {% if f_order or f_status %}<a class="tag" href="{{ url_for('cutroom.lays') }}" data-i18n="cut.filter.clear">Clear</a>{% endif %}
+  </div>
+</form>
+
+<div class="panel"><div class="panel-pad">
+  <div class="tbl-wrap">
+  <table class="tbl">
+    <thead><tr>
+      <th data-i18n="cut.field.lay">Lay</th>
+      <th data-i18n="cut.field.order">Order</th>
+      <th data-i18n="cut.field.marker_ref">Marker</th>
+      <th data-i18n="cut.field.ratio">Ratio</th>
+      <th style="text-align:right" data-i18n="cut.field.plies">Plies</th>
+      <th style="text-align:right" data-i18n="cut.field.pieces">Pieces</th>
+      <th style="text-align:right" data-i18n="cut.field.fabric_used">Used (m)</th>
+      <th style="text-align:right" data-i18n="cut.field.cpg">m/garment</th>
+      <th style="text-align:right" data-i18n="cut.field.marker_eff">Marker eff.</th>
+      <th style="text-align:right" data-i18n="cut.field.util">Utilisation</th>
+      <th data-i18n="cut.field.status">Status</th>
+    </tr></thead>
+    <tbody>
+    {% for l in rows %}
+      <tr>
+        <td><a href="{{ url_for('cutroom.lay_detail', lay_id=l.id) }}">{{ l.lay_no or l.id }}</a>
+          <div class="muted" style="font-size:11px">{{ l.cut_date or '' }}</div></td>
+        <td>{% if l.order_id %}<a href="{{ url_for('cutroom.order', order_id=l.order_id) }}">{{ l.order_no or l.order_id }}</a>{% else %}—{% endif %}
+          <div class="muted" style="font-size:11px">{{ l.colour or '' }} {{ l.shade_lot or '' }}</div></td>
+        <td class="muted">{{ l.marker_ref or '—' }}</td>
+        <td class="muted">{{ l.size_ratio or '—' }}</td>
+        <td style="text-align:right">{{ l.plies }}</td>
+        <td style="text-align:right">{{ l.pieces_cut }}</td>
+        <td style="text-align:right">{{ m.n(l.fabric_used_m) }}{% if not l.measured %} <span class="tag" data-i18n="cut.tag.planned">plan</span>{% endif %}</td>
+        <td style="text-align:right">{{ m.n(l.cons_per_gmt, 4) }}</td>
+        <td style="text-align:right">{{ m.eff(l.marker_eff_pct, eff_good) }}</td>
+        <td style="text-align:right">{{ m.pct(l.utilisation_pct) }}</td>
+        <td><span class="tag">{{ l.status }}</span></td>
+      </tr>
+    {% else %}<tr><td colspan="11" class="muted" style="text-align:center;padding:18px" data-i18n="cut.empty.lays">No lays recorded yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div></div>
+{% endblock %}

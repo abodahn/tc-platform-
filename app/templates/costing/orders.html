@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Order Costing · Orders{% endblock %}
+{% macro vtag(v) %}{% set c={'unfavourable':'#be123c','favourable':'#0f7a4d','on_plan':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v.flag,'#6b7280') }}18;color:{{ c.get(v.flag,'#6b7280') }}">{% if v.pct is not none %}{{ '{:+.1f}'.format(v.pct) }}%{% else %}—{% endif %}</span>{% endmacro %}
+{% macro mtag(p) %}{% if p is none %}<span class="muted">—</span>{% else %}<span class="tag" style="background:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}18;color:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}">{{ '{:.1f}'.format(p) }}%</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="cst.eyebrow">Planning · BOM &amp; Order Costing</div>
+    <h1 data-i18n="cst.nav.orders">All orders</h1>
+    <div class="sub" data-i18n="cst.orders.sub">Quoted margin against delivered margin, order by order.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.index') }}" data-i18n="cst.nav.home">Dashboard</a>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+  <label class="flex gap center" style="margin:0">
+    <input type="checkbox" name="costed" value="1" {{ 'checked' if f_costed }} onchange="this.form.submit()">
+    <span data-i18n="cst.filter.costed_only">Only orders with a BOM or cost sheet</span>
+  </label>
+  {% if f_costed %}<a class="tag" href="{{ url_for('costing.orders') }}" data-i18n="cst.filter.clear">Clear</a>{% endif %}
+</div></form>
+
+<div class="panel"><div class="panel-pad">
+  <table class="tbl">
+    <thead><tr><th data-i18n="cst.field.order">Order</th><th data-i18n="cst.field.buyer">Buyer</th>
+      <th data-i18n="cst.field.ship">Ship</th>
+      <th style="text-align:right" data-i18n="cst.field.qty">Qty</th>
+      <th style="text-align:right" data-i18n="cst.field.cost_unit">Cost/unit</th>
+      <th style="text-align:right" data-i18n="cst.field.price_unit">Price/unit</th>
+      <th style="text-align:right" data-i18n="cst.field.estimate">Estimate</th>
+      <th style="text-align:right" data-i18n="cst.field.actual">Actual</th>
+      <th style="text-align:right" data-i18n="cst.field.variance">Variance</th>
+      <th style="text-align:right" data-i18n="cst.field.margin_est">Margin (est)</th>
+      <th style="text-align:right" data-i18n="cst.field.margin_act">Margin (act)</th></tr></thead>
+    <tbody>
+    {% for o in rows %}
+      <tr>
+        <td><a href="{{ url_for('costing.sheet', order_id=o.id) }}">{{ o.order_no }}</a>
+          <div class="muted" style="font-size:11px">{{ o.style_name or o.style_ref or '—' }}</div></td>
+        <td>{{ o.buyer }}</td>
+        <td>{{ o.ship_date or '—' }}</td>
+        <td style="text-align:right">{{ '{:,.0f}'.format(o.qty or 0) }}</td>
+        <td style="text-align:right">{% if o.estimate.per_unit is not none %}{{ '{:,.4f}'.format(o.estimate.per_unit) }}{% else %}—{% endif %}</td>
+        <td style="text-align:right">{{ '{:,.4f}'.format(o.unit_price or 0) }}</td>
+        <td style="text-align:right">{{ '{:,.2f}'.format(o.estimate.total) }}</td>
+        <td style="text-align:right">{% if o.has_actual %}{{ '{:,.2f}'.format(o.actual.total) }}{% else %}<span class="muted" data-i18n="cst.badge.no_actual">not booked</span>{% endif %}</td>
+        <td style="text-align:right">{% if o.has_actual %}{{ vtag(o.variance.total) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td style="text-align:right">{{ mtag(o.margin.est_pct) }}</td>
+        <td style="text-align:right">{% if o.has_actual %}{{ mtag(o.margin.act_pct) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="11" class="muted" style="text-align:center;padding:18px" data-i18n="cst.empty.orders">No orders to cost yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}{{ shipment.shipment_no }} · {{ shipment.buyer or 'Shipment' }}{% endblock %}
+{% macro st(s) %}{% set c={'planned':'#6b7280','packed':'#1d4ed8','dispatched':'#b45309','delivered':'#0f7a4d','cancelled':'#be123c'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s|replace('_',' ') }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{ shipment.shipment_no }}{% if order %} · <a href="{{ url_for('orders.detail', order_id=order.id) }}">{{ order.order_no }}</a>{% endif %}</div>
+    <h1>{{ shipment.buyer or '—' }} — {{ shipment.destination or '—' }}</h1>
+    <div class="sub">{{ shipment.incoterm or '' }} · {{ shipment.mode or '' }} · {{ st(shipment.status) }}
+      {% if shipment.container_no %}· {{ shipment.container_no }}{% endif %}</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.packing_list', shipment_id=shipment.id) }}" data-i18n="shp.doc.packing">Packing list</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.invoice', shipment_id=shipment.id) }}" data-i18n="shp.doc.invoice">Invoice</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.action.back">Back</a>
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(totals.cartons) }}</div><div class="l" data-i18n="shp.field.cartons">Cartons</div></div>
+  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(totals.pieces) }}</div><div class="l" data-i18n="shp.field.pieces">Pieces</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%.1f'|format(totals.net) }}</div><div class="l" data-i18n="shp.kpi.net">Net weight (kg)</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%.1f'|format(totals.gross) }}</div><div class="l" data-i18n="shp.kpi.gross">Gross weight (kg)</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%.3f'|format(totals.cbm) }}</div><div class="l" data-i18n="shp.field.cbm">CBM</div></div>
+  <div class="sf-kpi"><div class="v">{{ shipment.currency }} {{ '%.2f'|format(shipment.unit_price or 0) }}</div><div class="l" data-i18n="shp.field.unit_price">Unit price</div></div>
+</div>
+
+{% if order %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="shp.detail.against">Against the order</h3>
+    <a class="tag" href="{{ url_for('shipping.reconciliation') }}" data-i18n="shp.nav.recon">Reconciliation</a></div>
+  <div class="panel-pad flex gap center wrap">
+    <div><span class="muted" data-i18n="shp.field.ordered">Ordered</span>: <b>{{ '{:,.0f}'.format(order.qty or 0) }}</b></div>
+    <div><span class="muted" data-i18n="shp.detail.this_ship">This shipment</span>: <b>{{ '{:,.0f}'.format(totals.pieces) }}</b></div>
+    {% if fg is not none %}<div><span class="muted" data-i18n="shp.detail.fg">Finished goods on hand</span>: <b>{{ '{:,.0f}'.format(fg) }}</b>
+      {% if totals.pieces > fg %}<span class="tag" style="background:#b4530918;color:#b45309" data-i18n="shp.detail.fg_gap">Packed above FG stock</span>{% endif %}</div>{% endif %}
+    <div><span class="muted" data-i18n="shp.field.ship_date">Ex-factory</span>: {{ order.ship_date or '—' }}</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="grid cols-2 mt-4">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="shp.detail.shipment">Shipment</h3></div>
+    <div class="panel-pad">
+      {% if can('shp_manage') %}
+      <form method="post" action="{{ url_for('shipping.shipment_update', shipment_id=shipment.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="shp.field.status">Status</label>
+            <select name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if shipment.status==s }}>{{ s|replace('_',' ') }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="shp.field.incoterm">Incoterm</label>
+            <select name="incoterm">{% for i in incoterms %}<option value="{{ i }}" {{ 'selected' if shipment.incoterm==i }}>{{ i }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="shp.field.mode">Mode</label>
+            <select name="mode">{% for m in modes %}<option value="{{ m }}" {{ 'selected' if shipment.mode==m }}>{{ m }}</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="shp.field.carrier">Carrier / forwarder</label><input name="carrier" value="{{ shipment.carrier or '' }}"></div>
+          <div class="field"><label data-i18n="shp.field.container">Container / AWB no</label><input name="container_no" value="{{ shipment.container_no or '' }}"></div>
+          <div class="field"><label data-i18n="shp.field.destination">Destination</label><input name="destination" value="{{ shipment.destination or '' }}"></div>
+          <div class="field"><label data-i18n="shp.field.etd">ETD</label><input type="date" name="etd" value="{{ shipment.etd or '' }}"></div>
+          <div class="field"><label data-i18n="shp.field.eta">ETA</label><input type="date" name="eta" value="{{ shipment.eta or '' }}"></div>
+          <div class="field"><label data-i18n="shp.field.invoice_no">Invoice no</label><input name="invoice_no" value="{{ shipment.invoice_no or '' }}"></div>
+          <div class="field"><label data-i18n="shp.field.invoice_date">Invoice date</label><input type="date" name="invoice_date" value="{{ shipment.invoice_date or '' }}"></div>
+          <div class="field"><label data-i18n="shp.field.unit_price">Invoice unit price</label><input type="number" name="unit_price" step="any" min="0" value="{{ shipment.unit_price or 0 }}"></div>
+          <div class="field"><label data-i18n="shp.field.lc">LC / payment reference</label><input name="lc_ref" value="{{ shipment.lc_ref or '' }}"></div>
+        </div>
+        <div class="muted" style="font-size:11.5px;margin:6px 0" data-i18n="shp.detail.lock_note">Once the status is dispatched or delivered the packing list is final and can no longer be edited.</div>
+        <button class="btn btn-primary btn-sm" data-i18n="shp.action.update">Update</button>
+      </form>
+      {% else %}
+      <table class="tbl">
+        <tr><td class="muted" data-i18n="shp.field.status">Status</td><td>{{ shipment.status }}</td></tr>
+        <tr><td class="muted" data-i18n="shp.field.carrier">Carrier</td><td>{{ shipment.carrier or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="shp.field.etd">ETD</td><td>{{ shipment.etd or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="shp.field.eta">ETA</td><td>{{ shipment.eta or '—' }}</td></tr>
+        <tr><td class="muted" data-i18n="shp.field.lc">LC reference</td><td>{{ shipment.lc_ref or '—' }}</td></tr>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="shp.detail.add_carton">Add carton line</h3></div>
+    <div class="panel-pad">
+      {% if can('shp_manage') and not locked %}
+      <form method="post" action="{{ url_for('shipping.carton_add', shipment_id=shipment.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="shp.field.carton_no">Carton no / range</label><input name="carton_no" placeholder="1-50" data-i18n-ph="shp.ph.carton_no"></div>
+          <div class="field"><label data-i18n="shp.field.style">Style</label><input name="style" value="{{ order.style_ref if order else '' }}"></div>
+          <div class="field"><label data-i18n="shp.field.colour">Colour</label><input name="colour"></div>
+          <div class="field"><label data-i18n="shp.field.size">Size</label><input name="size"></div>
+          <div class="field"><label data-i18n="shp.field.qty_per_req">Pieces per carton *</label><input type="number" name="qty_per_carton" step="1" min="1" required></div>
+          <div class="field"><label data-i18n="shp.field.cartons_req">Cartons *</label><input type="number" name="cartons" min="1" step="1" required></div>
+          <div class="field"><label data-i18n="shp.field.net_per">Net weight / carton (kg)</label><input type="number" name="net_weight" step="any" min="0"></div>
+          <div class="field"><label data-i18n="shp.field.gross_per">Gross weight / carton (kg)</label><input type="number" name="gross_weight" step="any" min="0"></div>
+          <div class="field"><label data-i18n="shp.field.len">Length (cm)</label><input type="number" name="length_cm" step="any" min="0"></div>
+          <div class="field"><label data-i18n="shp.field.wid">Width (cm)</label><input type="number" name="width_cm" step="any" min="0"></div>
+          <div class="field"><label data-i18n="shp.field.hei">Height (cm)</label><input type="number" name="height_cm" step="any" min="0"></div>
+        </div>
+        <div class="muted" style="font-size:11.5px;margin:6px 0" data-i18n="shp.detail.carton_note">Weights and dimensions are per carton. CBM = L x W x H in metres, times the number of cartons.</div>
+        <button class="btn btn-primary btn-sm" data-i18n="shp.action.add_carton">Add line</button>
+      </form>
+      {% elif locked %}
+      <div class="muted" data-i18n="shp.detail.locked">This shipment has left the factory — its packing list is a customs document and is now final.</div>
+      {% else %}
+      <div class="muted" data-i18n="shp.detail.no_rights">You do not have permission to edit this packing list.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="shp.detail.cartons">Carton lines</h3>
+    <span class="tag">{{ '{:,.0f}'.format(totals.cartons) }} <span data-i18n="shp.field.cartons">Cartons</span></span></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th data-i18n="shp.field.carton_no">Carton no</th><th data-i18n="shp.field.style">Style</th>
+        <th data-i18n="shp.field.colour">Colour</th><th data-i18n="shp.field.size">Size</th>
+        <th style="text-align:right" data-i18n="shp.field.qty_per">Pcs / carton</th>
+        <th style="text-align:right" data-i18n="shp.field.cartons">Cartons</th>
+        <th style="text-align:right" data-i18n="shp.field.pieces">Pieces</th>
+        <th style="text-align:right" data-i18n="shp.field.net">Net (kg)</th>
+        <th style="text-align:right" data-i18n="shp.field.gross">Gross (kg)</th>
+        <th data-i18n="shp.field.dims">L x W x H (cm)</th>
+        <th style="text-align:right" data-i18n="shp.field.cbm">CBM</th>
+        {% if can('shp_manage') and not locked %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for c in cartons %}
+        <tr>
+          <td>{{ c.carton_no or '—' }}</td><td>{{ c.style or '—' }}</td><td>{{ c.colour or '—' }}</td><td>{{ c.size or '—' }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(c.qty_per_carton or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(c.cartons or 0) }}</td>
+          <td style="text-align:right"><b>{{ '{:,.0f}'.format(c.pieces) }}</b></td>
+          <td style="text-align:right">{{ '%.2f'|format(c.net_total) }}</td>
+          <td style="text-align:right">{{ '%.2f'|format(c.gross_total) }}</td>
+          <td class="muted">{{ '%.0f'|format(c.length_cm or 0) }} x {{ '%.0f'|format(c.width_cm or 0) }} x {{ '%.0f'|format(c.height_cm or 0) }}</td>
+          <td style="text-align:right">{{ '%.4f'|format(c.cbm) }}</td>
+          {% if can('shp_manage') and not locked %}
+          <td><form method="post" action="{{ url_for('shipping.carton_delete', carton_id=c.id) }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button class="btn btn-ghost btn-sm" data-i18n="shp.action.remove">Remove</button></form></td>
+          {% endif %}
+        </tr>
+      {% else %}<tr><td colspan="12" class="muted" style="text-align:center;padding:16px" data-i18n="shp.empty.cartons">No carton lines yet — add the first one.</td></tr>{% endfor %}
+      </tbody>
+      {% if cartons %}
+      <tfoot><tr>
+        <th colspan="5" data-i18n="shp.field.total">Total</th>
+        <th style="text-align:right">{{ '{:,.0f}'.format(totals.cartons) }}</th>
+        <th style="text-align:right">{{ '{:,.0f}'.format(totals.pieces) }}</th>
+        <th style="text-align:right">{{ '%.2f'|format(totals.net) }}</th>
+        <th style="text-align:right">{{ '%.2f'|format(totals.gross) }}</th>
+        <th></th>
+        <th style="text-align:right">{{ '%.4f'|format(totals.cbm) }}</th>
+        {% if can('shp_manage') and not locked %}<th></th>{% endif %}
+      </tr></tfoot>
+      {% endif %}
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

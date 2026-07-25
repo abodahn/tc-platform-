@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}{{ b.order.order_no }} · line balancing{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="pln.eyebrow">Planning · Finite capacity</div>
+    <h1 data-i18n="pln.nav.balance">Line balancing</h1>
+    <div class="sub">{{ b.order.order_no }} · {{ b.order.style_name or b.order.style_ref or '' }} · {{ b.order.buyer or '—' }}</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.order_detail', order_id=b.order.id) }}" data-i18n="pln.action.back">Back</a>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ b.total_smv }}</div><div class="l" data-i18n="pln.kpi.total_smv">Total SMV</div></div>
+  <div class="sf-kpi"><div class="v">{{ b.total_operators }}</div><div class="l" data-i18n="pln.field.operators">Operators</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ b.bottleneck_time }}</div><div class="l" data-i18n="pln.kpi.bottleneck">Bottleneck (min/pc)</div></div>
+  <div class="sf-kpi"><div class="v">{{ b.output_per_hour }}</div><div class="l" data-i18n="pln.kpi.output_hr">Output / hour</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-g' if b.line_efficiency >= 85 else ('pb-kpi-a' if b.line_efficiency >= 70 else 'pb-kpi-r') }}"><div class="v">{{ b.line_efficiency }}%</div><div class="l" data-i18n="pln.kpi.balance_eff">Balancing efficiency</div></div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="pln.bal.title">Operation bulletin</h3>
+    <span class="muted" style="font-size:11px" data-i18n="pln.bal.hint">Bottleneck = the highest SMV per operator. Output/hour = 60 ÷ bottleneck. Efficiency = total SMV ÷ (operators × bottleneck).</span></div>
+  <div class="panel-pad">
+    {% if b.bottleneck_op %}
+    <div class="muted" style="margin-bottom:10px"><span data-i18n="pln.bal.constraint">Constraint operation</span>: <strong>{{ b.bottleneck_op }}</strong></div>
+    {% endif %}
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th style="text-align:right" data-i18n="pln.field.seq">#</th>
+          <th data-i18n="pln.field.operation">Operation</th>
+          <th data-i18n="pln.field.machine">Machine</th>
+          <th style="text-align:right" data-i18n="pln.field.smv">SMV</th>
+          <th style="text-align:right" data-i18n="pln.field.operators">Operators</th>
+          <th style="text-align:right" data-i18n="pln.field.pitch">Min / piece</th>
+          {% if can('pln_plan') %}<th data-i18n="pln.field.actions">Actions</th>{% endif %}
+        </tr></thead>
+        <tbody>
+        {% for r in b.rows %}
+          <tr>
+            <td style="text-align:right">{{ r.seq }}</td>
+            <td>{{ r.name }}{% if r.is_bottleneck %} <span class="tag" style="background:#be123c18;color:#be123c" data-i18n="pln.tag.bottleneck">bottleneck</span>{% endif %}</td>
+            <td class="muted">{{ r.machine or '—' }}</td>
+            <td style="text-align:right">{{ r.smv }}</td>
+            <td style="text-align:right">{{ r.operators }}</td>
+            <td style="text-align:right;{% if r.is_bottleneck %}color:#be123c;font-weight:700{% endif %}">{{ r.pitch }}</td>
+            {% if can('pln_plan') %}
+            <td><form method="post" action="{{ url_for('planning.op_delete', op_id=r.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button class="btn btn-sm btn-ghost" data-i18n="pln.action.remove">Remove</button></form></td>
+            {% endif %}
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="muted" style="text-align:center;padding:16px" data-i18n="pln.empty.ops">No operations yet — add the operation bulletin to balance this line.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if can('pln_plan') %}
+<form class="panel mt-4" method="post" action="{{ url_for('planning.op_add', order_id=b.order.id) }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="pln.bal.add">Add an operation</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field"><label><span data-i18n="pln.field.operation">Operation</span> *</label><input name="name" required></div>
+      <div class="field"><label data-i18n="pln.field.machine">Machine</label><input name="machine" placeholder="Overlock"></div>
+      <div class="field"><label data-i18n="pln.field.smv">SMV</label><input name="smv" type="number" min="0" step="any" value="1.0"></div>
+      <div class="field"><label data-i18n="pln.field.operators">Operators</label><input name="operators" type="number" min="0" step="1" value="1"></div>
+    </div>
+    <div class="flex gap center mt-4"><button class="btn btn-primary" data-i18n="pln.action.add_op">Add operation</button></div>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

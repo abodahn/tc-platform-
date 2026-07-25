@@ -42,9 +42,38 @@ NAV = [
         ("maint_reports", "nav.maint_reports", "chart", "maintenance.reports", "maint_view"),
         ("maint_settings", "nav.maint_settings", "settings", "maintenance.settings", "maint_admin"),
     ]},
-    {"section": "nav.smart_factory", "items": [
+    # Product development — the single source of style truth.
+    {"section": "nav.product", "items": [
+        ("plm", "nav.plm", "book", "plm.index", "plm_view"),
+        ("plm_styles", "nav.plm_styles", "kanban", "plm.styles", "plm_view"),
+    ]},
+    # Orders, capacity and margin — what we promised, can we make it, does it pay.
+    {"section": "nav.planning", "items": [
         ("orders", "nav.orders", "boxes", "orders.index", "view_dashboard"),
         ("orders_tna", "nav.orders_tna", "clock", "orders.tna", "view_dashboard"),
+        ("planning", "nav.planning_board", "target", "planning.index", "pln_view"),
+        ("pln_lines", "nav.pln_lines", "factory", "planning.lines", "pln_view"),
+        ("costing", "nav.costing", "wallet", "costing.index", "cost_view"),
+        ("cost_orders", "nav.cost_orders", "chart", "costing.orders", "cost_view"),
+    ]},
+    # The live shop floor.
+    {"section": "nav.factory_floor", "items": [
+        ("mes", "nav.mes", "activity", "mes.index", "mes_view"),
+        ("mes_board", "nav.mes_board", "grid", "mes.board", "mes_view"),
+        ("mes_bundles", "nav.mes_bundles", "boxes", "mes.bundles", "mes_view"),
+        ("cutroom", "nav.cutroom", "target", "cutroom.index", "cut_view"),
+        ("quality", "nav.quality", "check", "quality.index", "qc_view"),
+        ("wash", "nav.wash", "refresh", "wash.index", "wsh_view"),
+    ]},
+    # Material in, finished goods out, and provenance for both.
+    {"section": "nav.supply_chain", "items": [
+        ("warehouse", "nav.warehouse", "server", "warehouse.index", "wh_view"),
+        ("wh_rolls", "nav.wh_rolls", "boxes", "warehouse.rolls", "wh_view"),
+        ("wh_fg", "nav.wh_fg", "kanban", "warehouse.fg", "wh_view"),
+        ("shipping", "nav.shipping", "cart", "shipping.index", "shp_view"),
+        ("trace", "nav.trace", "map", "trace.index", "trc_view"),
+    ]},
+    {"section": "nav.smart_factory", "items": [
         ("sf_cc", "nav.sf_cc", "grid", "smartfactory.command_center", "view_dashboard"),
         ("sf_floor", "nav.sf_floor", "target", "smartfactory.floor", "view_dashboard"),
         ("sf_production", "nav.sf_production", "report", "smartfactory.production", "view_dashboard"),
@@ -60,6 +89,10 @@ NAV = [
         ("sf_reports", "nav.sf_reports", "chart", "smartfactory.reports", "view_dashboard"),
     ]},
     {"section": "nav.hr", "items": [
+        ("people", "nav.people", "users", "people.index", "ppl_view"),
+        ("ppl_attendance", "nav.ppl_attendance", "check", "people.attendance", "ppl_view"),
+        ("ppl_leave", "nav.ppl_leave", "clock", "people.leave", "ppl_view"),
+        ("ppl_skills", "nav.ppl_skills", "trend", "people.skills", "ppl_view"),
         ("prob_dashboard", "nav.prob_dashboard", "grid", "probation.dashboard", "prob_view"),
         ("prob_mine", "nav.prob_mine", "check", "probation.mine", "prob_view"),
         ("prob_cases", "nav.prob_cases", "users", "probation.cases", "prob_view"),

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}New style{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="plm.eyebrow">Product · Style, Tech Pack & BOM</div>
+    <h1 data-i18n="plm.action.new_style">New style</h1>
+    <div class="sub" data-i18n="plm.form.sub">The style ref is the key customer orders quote — keep it identical to the order's style reference.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('plm.styles') }}" data-i18n="plm.action.back">Back</a>
+</div>
+
+<form class="panel" method="post" action="{{ url_for('plm.style_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div class="field"><label><span data-i18n="plm.field.ref">Style ref</span> *</label><input name="style_ref" required></div>
+      <div class="field"><label data-i18n="plm.field.name">Name</label><input name="name"></div>
+      <div class="field"><label data-i18n="plm.field.buyer">Buyer</label><input name="buyer"></div>
+      <div class="field"><label data-i18n="plm.field.season">Season</label><input name="season"></div>
+      <div class="field"><label data-i18n="plm.field.category">Category</label>
+        <select name="category">{% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></div>
+      <div class="field"><label data-i18n="plm.field.fabric">Fabric</label><input name="fabric"></div>
+      <div class="field"><label data-i18n="plm.field.designer">Designer</label><input name="designer"></div>
+      <div class="field"><label data-i18n="plm.field.merch">Merchandiser</label><input name="merchandiser"></div>
+      <div class="field span-2"><label data-i18n="plm.field.description">Description</label><input name="description"></div>
+    </div>
+    <div class="flex gap center mt-4">
+      <button class="btn btn-primary" data-i18n="plm.action.create">Create style</button>
+      <a class="btn btn-ghost" href="{{ url_for('plm.styles') }}" data-i18n="plm.action.cancel">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Shipments{% endblock %}
+{% macro st(s) %}{% set c={'planned':'#6b7280','packed':'#1d4ed8','dispatched':'#b45309','delivered':'#0f7a4d','cancelled':'#be123c'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s|replace('_',' ') }}</span>{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="shp.eyebrow">Logistics · Shipments & Export Documents</div>
+    <h1 data-i18n="shp.list.h1">Shipments</h1>
+    <div class="sub" data-i18n="shp.list.sub">Every export shipment with its cartons, volume and documents.</div>
+  </div>
+  <div class="flex gap center">
+    {% if can('shp_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('shipping.shipment_new') }}" data-i18n="shp.action.new">New shipment</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.reconciliation') }}" data-i18n="shp.nav.recon">Reconciliation</a>
+  </div>
+</div>
+
+<form class="panel" method="get" style="margin-bottom:14px">
+  <div class="panel-pad flex gap center wrap">
+    <select name="status" onchange="this.form.submit()">
+      <option value="" data-i18n="shp.filter.all_status">All statuses</option>
+      {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f_status==s }}>{{ s|replace('_',' ') }}</option>{% endfor %}
+    </select>
+    <select name="mode" onchange="this.form.submit()">
+      <option value="" data-i18n="shp.filter.all_modes">All modes</option>
+      {% for m in modes %}<option value="{{ m }}" {{ 'selected' if f_mode==m }}>{{ m }}</option>{% endfor %}
+    </select>
+    {% if f_status or f_mode %}<a class="tag" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.filter.clear">Clear</a>{% endif %}
+    <span class="muted" style="margin-inline-start:auto">{{ rows|length }} <span data-i18n="shp.list.count">shipments</span></span>
+  </div>
+</form>
+
+<div class="panel">
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th data-i18n="shp.field.shipment">Shipment</th><th data-i18n="shp.field.buyer">Buyer</th>
+        <th data-i18n="shp.field.destination">Destination</th><th data-i18n="shp.field.incoterm">Incoterm</th>
+        <th data-i18n="shp.field.mode">Mode</th><th data-i18n="shp.field.etd">ETD</th><th data-i18n="shp.field.eta">ETA</th>
+        <th style="text-align:right" data-i18n="shp.field.cartons">Cartons</th>
+        <th style="text-align:right" data-i18n="shp.field.pieces">Pieces</th>
+        <th style="text-align:right" data-i18n="shp.field.cbm">CBM</th>
+        <th data-i18n="shp.field.status">Status</th><th data-i18n="shp.field.docs">Documents</th></tr></thead>
+      <tbody>
+      {% for s in rows %}
+        <tr>
+          <td><a href="{{ url_for('shipping.detail', shipment_id=s.id) }}">{{ s.shipment_no }}</a>
+            {% if s.container_no %}<div class="muted" style="font-size:11px">{{ s.container_no }}</div>{% endif %}</td>
+          <td>{{ s.buyer or '—' }}</td>
+          <td>{{ s.destination or '—' }}</td>
+          <td class="muted">{{ s.incoterm or '—' }}</td>
+          <td class="muted">{{ s.mode or '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ s.etd or '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ s.eta or '—' }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(s.cartons or 0) }}</td>
+          <td style="text-align:right">{{ '{:,.0f}'.format(s.pieces or 0) }}</td>
+          <td style="text-align:right">{{ '%.3f'|format(s.cbm or 0) }}</td>
+          <td>{{ st(s.status) }}</td>
+          <td class="flex gap"><a class="tag" href="{{ url_for('shipping.packing_list', shipment_id=s.id) }}" data-i18n="shp.doc.packing">Packing list</a>
+            <a class="tag" href="{{ url_for('shipping.invoice', shipment_id=s.id) }}" data-i18n="shp.doc.invoice">Invoice</a></td>
+        </tr>
+      {% else %}<tr><td colspan="12" class="muted" style="text-align:center;padding:16px" data-i18n="shp.empty.shipments">No shipments yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

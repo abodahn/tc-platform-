@@ -1,0 +1,23 @@
+{# Shared cut-room cell renderers. Every number may legitimately be None
+   (undefined, not zero) — these render an em dash rather than a fake 0. #}
+{% macro n(v, dp=2) %}{% if v is not none %}{{ "%.*f"|format(dp, v) }}{% else %}—{% endif %}{% endmacro %}
+
+{% macro pct(v, dp=1) %}{% if v is not none %}{{ "%.*f"|format(dp, v) }}%{% else %}—{% endif %}{% endmacro %}
+
+{# Marker efficiency against the 85-92% industry band. #}
+{% macro eff(v, good=85.0) %}{% if v is none %}<span class="muted">—</span>
+{% elif v >= 92 %}<span class="tag" style="background:#15803d18;color:#15803d">{{ "%.1f"|format(v) }}%</span>
+{% elif v >= good %}<span class="tag" style="background:#1d4ed818;color:#1d4ed8">{{ "%.1f"|format(v) }}%</span>
+{% else %}<span class="tag" style="background:#b4530918;color:#b45309">{{ "%.1f"|format(v) }}%</span>{% endif %}{% endmacro %}
+
+{# Fabric variance vs the BOM plan: positive = using more than planned = money out. #}
+{% macro variance(v, alert=3.0) %}{% if v is none %}<span class="muted">—</span>
+{% elif v > alert %}<span class="tag" style="background:#be123c18;color:#be123c">+{{ "%.2f"|format(v) }}%</span>
+{% elif v > 0 %}<span class="tag" style="background:#b4530918;color:#b45309">+{{ "%.2f"|format(v) }}%</span>
+{% else %}<span class="tag" style="background:#15803d18;color:#15803d">{{ "%.2f"|format(v) }}%</span>{% endif %}{% endmacro %}
+
+{# Cut vs ordered: >0 pieces still to cut (short), <0 already over-cut. #}
+{% macro balance(v) %}{% if v is none %}<span class="muted">—</span>
+{% elif v > 0 %}<span class="tag" style="background:#b4530918;color:#b45309">{{ "%.0f"|format(v) }}</span>
+{% elif v < 0 %}<span class="tag" style="background:#be123c18;color:#be123c">{{ "%.0f"|format(v) }}</span>
+{% else %}<span class="tag" style="background:#15803d18;color:#15803d">0</span>{% endif %}{% endmacro %}
