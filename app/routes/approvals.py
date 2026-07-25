@@ -1029,6 +1029,99 @@ def rename_settings():
     return redirect(url_for("approvals.settings", department=old))
 
 
+# --------------------------------------------------------------------------
+# Workflow & Governance — the cycle explained, and every rule that drives it.
+# Reading it needs proc_view (any procurement user should be able to look up how
+# their own approval cycle works); every edit needs proc_admin and is audited.
+# --------------------------------------------------------------------------
+@bp.route("/workflow", methods=["GET"])
+@login_required
+@permission_required("proc_view")
+def workflow():
+    return render_template("approvals/workflow.html", active="procurement",
+                           v=svc.workflow_view(request.args.get("department")),
+                           can_edit=user_can("proc_admin"))
+
+
+def _back(dept=None):
+    return redirect(url_for("approvals.workflow", department=dept or None))
+
+
+_WF_ERRORS = {
+    "bad_value": "That value isn’t valid for this setting.",
+    "out_of_range": "That value is outside the allowed range.",
+    "unknown_setting": "Unknown setting.",
+    "unknown_stage": "Unknown stage.",
+    "unknown_role": "Unknown role.",
+    "unknown_section": "Unknown section.",
+    "not_a_signing_stage": "The requester signs by submitting — no approver role applies.",
+    "empty": "Enter some text first.",
+}
+
+
+def _wf_flash(ok, msg, done):
+    flash(done if ok else _WF_ERRORS.get(msg, "Could not save."),
+          "success" if ok else "error")
+
+
+@bp.route("/workflow/stage", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def workflow_stage():
+    """Save one stage: its signing roles and/or its explanation. `reset` names the
+    part to clear ('role' or 'explanation') — clearing DELETES the override so the
+    code default applies again."""
+    f = request.form
+    stage, reset = f.get("stage") or "", f.get("reset") or ""
+    ok, msg = svc.set_stage_meta(
+        stage,
+        roles=None if reset else f.getlist("roles"),
+        explanation=None if reset else f.get("explanation"),
+        user=_u(), ip=_ip(),
+        reset_role=(reset == "role"), reset_explanation=(reset == "explanation"))
+    _wf_flash(ok, msg, "Reset to the default." if reset else "Stage saved.")
+    return _back(f.get("department"))
+
+
+@bp.route("/workflow/role", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def workflow_role():
+    f = request.form
+    reset = f.get("reset") == "1"
+    ok, msg = svc.set_role_meta(f.get("role_key"), f.get("explanation"),
+                                user=_u(), ip=_ip(), reset=reset)
+    _wf_flash(ok, msg, "Reset to the default." if reset else "Role description saved.")
+    return _back(f.get("department"))
+
+
+@bp.route("/workflow/doc", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def workflow_doc():
+    f = request.form
+    reset = f.get("reset") == "1"
+    ok, msg = svc.set_doc(f.get("section"), f.get("body"),
+                          user=_u(), ip=_ip(), reset=reset)
+    _wf_flash(ok, msg, "Reset to the default." if reset else "Text saved.")
+    return _back(f.get("department"))
+
+
+@bp.route("/workflow/setting", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def workflow_setting():
+    f = request.form
+    key = f.get("key") or ""
+    if f.get("reset") == "1":
+        ok, msg = svc.reset_setting(key, user=_u(), ip=_ip())
+        _wf_flash(ok, msg, "Reset to the code default.")
+    else:
+        ok, msg = svc.set_setting(key, f.get("value"), user=_u(), ip=_ip())
+        _wf_flash(ok, msg, "Setting saved — it applies to the next action.")
+    return _back(f.get("department"))
+
+
 # ---------------------------------------------------------------------------
 # Public signature verification — no login on purpose: the code printed on a
 # PR/PO PDF must let anyone (an auditor, a vendor) confirm the document is

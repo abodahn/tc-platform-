@@ -17,6 +17,7 @@ from app.security import has_permission
 from app.maintenance import services as svc
 from app.maintenance import constants as C
 from app.maintenance import ai as ai_engine
+from app.maintenance import workflow as wf
 
 bp = Blueprint("maintenance", __name__, url_prefix="/maintenance")
 
@@ -1065,6 +1066,57 @@ def import_run(kind):
     return render_template("maintenance/import.html", kind=kind,
                            result={"added": added, "skipped": skipped, "errors": errors},
                            active="maint_settings")
+
+
+# --------------------------------------------------------------------------
+# Workflow & Governance — the documented, admin-configurable workflow
+# --------------------------------------------------------------------------
+@bp.route("/workflow")
+@login_required
+def workflow():
+    _require("maint_view")
+    conn = _db()
+    try:
+        d = wf.page_data(conn)
+    finally:
+        conn.close()
+    return render_template("maintenance/workflow.html", d=d, wf=wf, active="maint_workflow")
+
+
+@bp.route("/workflow/setting", methods=["POST"])
+@login_required
+def workflow_setting():
+    _require("maint_admin")
+    key = request.form.get("key") or ""
+    conn = _db()
+    try:
+        if request.form.get("reset"):
+            ok, msg = wf.reset_setting(conn, key, _u())
+        else:
+            ok, msg = wf.set_setting(conn, key, request.form.get("value"), _u())
+    finally:
+        conn.close()
+    flash("m_saved" if ok else msg, "success" if ok else "error")
+    return redirect(url_for("maintenance.workflow"))
+
+
+@bp.route("/workflow/text", methods=["POST"])
+@login_required
+def workflow_text():
+    """One editor for every explanation block (and a stage's signing role)."""
+    _require("maint_admin")
+    kind, key = request.form.get("kind") or "", request.form.get("key") or ""
+    conn = _db()
+    try:
+        if request.form.get("reset"):
+            ok, msg = wf.reset_text(conn, kind, key, _u())
+        else:
+            ok, msg = wf.set_text(conn, kind, key, request.form.get("explanation"), _u(),
+                                  role=request.form.get("role"))
+    finally:
+        conn.close()
+    flash("m_saved" if ok else msg, "success" if ok else "error")
+    return redirect(url_for("maintenance.workflow"))
 
 
 @bp.route("/settings")

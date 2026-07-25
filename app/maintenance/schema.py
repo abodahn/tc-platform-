@@ -262,6 +262,11 @@ def create_and_seed(conn):
         conn.commit()
     except Exception:
         conn.rollback()
+    # Workflow & Governance tables + default explanation text. Must run BEFORE the
+    # "already seeded" bail-out below so deployed databases get them too.
+    # INSERT OR IGNORE inside, so an admin's edited text is never overwritten.
+    from app.maintenance.workflow import ensure as _wf_ensure
+    _wf_ensure(conn)
     if conn.execute("SELECT COUNT(*) c FROM mnt_machines").fetchone()["c"] > 0:
         return  # already seeded; never overwrite
 

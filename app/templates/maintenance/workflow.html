@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}Maintenance Workflow &amp; Governance{% endblock %}
+
+{# ---- one editor for every explanation block (and a stage's signing role) ---- #}
+{% macro editor(kind, key, text, roles=None, stored_role='') %}
+  {% if mcan('maint_admin') %}
+  <details class="mt-2">
+    <summary class="muted" style="cursor:pointer;font-size:12px" data-i18n="mwf.action.edit">Edit</summary>
+    <form method="post" action="{{ url_for('maintenance.workflow_text') }}" class="mt-2">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="kind" value="{{ kind }}">
+      <input type="hidden" name="key" value="{{ key }}">
+      {% if roles %}
+      <div class="field">
+        <label><span data-i18n="mwf.field.role">Signing role</span></label>
+        <select name="role">
+          <option value="" data-i18n="mwf.opt.role_default">Keep the default signer</option>
+          {% for r in roles %}<option value="{{ r }}"{% if r == stored_role %} selected{% endif %}>{{ r|mtext }}</option>{% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <div class="field">
+        <label><span data-i18n="mwf.field.explanation">Explanation</span></label>
+        <textarea name="explanation" rows="4">{{ text }}</textarea>
+      </div>
+      <div class="flex gap center">
+        <button class="btn btn-primary btn-sm" data-i18n="mwf.action.save">Save</button>
+        <button class="btn btn-ghost btn-sm" name="reset" value="1" data-i18n="mwf.action.reset">Reset to default</button>
+      </div>
+    </form>
+  </details>
+  {% endif %}
+{% endmacro %}
+
+{% macro mark(overridden) %}
+  {% if overridden %}<span class="tag" data-i18n="mwf.tag.override">Admin override</span>
+  {% else %}<span class="tag muted" data-i18n="mwf.tag.default">Default</span>{% endif %}
+{% endmacro %}
+
+{# ---- an editable rules block ---- #}
+{% macro docblock(section, doc, i18n) %}
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="{{ i18n }}">{{ section|mtext }}</h3>{{ mark(doc.overridden) }}</div>
+  <div class="panel-pad">
+    <div style="font-size:13px;line-height:1.6">{{ doc.body }}</div>
+    {{ editor('doc', section, doc.body) }}
+  </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="mwf.title">Workflow &amp; Governance</h1>
+    <div class="sub" data-i18n="mwf.sub">The ticket lifecycle, the spare-request approval ladder, who signs what and every rule the module enforces — documented here and editable by a maintenance administrator.</div>
+  </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.tickets') }}" data-i18n="nav.maint_tickets">Tickets</a>
+    {% if mcan('maint_admin') %}<a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.settings') }}" data-i18n="nav.maint_settings">Settings / Master Data</a>{% endif %}
+  </div>
+</div>
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v">{{ d.statuses|length }}</div><div class="l" data-i18n="mwf.kpi.statuses">Lifecycle statuses</div></div>
+  <div class="sf-kpi"><div class="v">{{ d.counts.rungs }}</div><div class="l" data-i18n="mwf.kpi.rungs">Approval rungs</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%g'|format(d.threshold) }}</div><div class="l" data-i18n="mwf.kpi.threshold">Critical-ladder value threshold</div></div>
+  <div class="sf-kpi {{ 'pb-kpi-a' if d.counts.overrides else 'pb-kpi-g' }}"><div class="v">{{ d.counts.overrides }}</div><div class="l" data-i18n="mwf.kpi.overrides">Admin overrides in force</div></div>
+</div>
+
+<div class="grid cols-2 mt-4">
+  {{ docblock('lifecycle', d.docs.lifecycle, 'mwf.doc.lifecycle') }}
+  {{ docblock('sla', d.docs.sla, 'mwf.doc.sla') }}
+</div>
+
+{# ---------------- a. the ticket lifecycle ---------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mwf.lifecycle.title">Ticket lifecycle</h3>
+    <span class="muted" style="font-size:12px" data-i18n="mwf.lifecycle.hint">Only these moves are allowed; every move is audited.</span></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="mwf.col.status">Status</th>
+        <th data-i18n="mwf.col.meaning">What it means</th>
+        <th data-i18n="mwf.col.next">Can move to</th>
+        <th data-i18n="mwf.col.state">State</th>
+      </tr></thead>
+      <tbody>
+      {% for s in d.statuses %}
+        <tr>
+          <td><span class="badge {{ s.status|mbadge }}">{{ s.status|mhuman }}</span></td>
+          <td style="font-size:13px;line-height:1.55;max-width:520px">{{ s.explanation }}
+            {{ editor('status', s.status, s.explanation) }}</td>
+          <td>
+            {% if s.terminal %}<span class="tag" data-i18n="mwf.terminal">Terminal — nothing follows</span>
+            {% else %}{% for n in s.next %}<span class="tag">{{ n|mhuman }}</span> {% endfor %}{% endif %}
+          </td>
+          <td>{{ mark(s.overridden) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ---------------- b. the spare-request approval ladder ---------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mwf.ladder.title">Spare-request approval ladder</h3>
+    <span class="muted" style="font-size:12px" data-i18n="mwf.ladder.hint">A request is approved only when every rung has signed. Only the role that owns a rung may sign it.</span></div>
+  <div class="panel-pad">
+    <div class="muted" style="font-size:13px;margin-bottom:8px" data-i18n="mwf.ladder.route">Route: a request whose value reaches the threshold, or that contains a critical part, takes the critical ladder; everything else takes the standard one.</div>
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="mwf.col.route">Route</th>
+        <th data-i18n="mwf.col.level">Level</th>
+        <th data-i18n="mwf.col.signer">Signs</th>
+        <th data-i18n="mwf.col.default_signer">Default signer</th>
+        <th data-i18n="mwf.col.meaning">What it means</th>
+        <th data-i18n="mwf.col.state">State</th>
+      </tr></thead>
+      <tbody>
+      {% for l in d.ladder %}
+        <tr>
+          <td>{% if l.rule == 'crit' %}<span class="tag" data-i18n="mwf.route.crit">Critical / high value</span>
+              {% else %}<span class="tag" data-i18n="mwf.route.std">Standard</span>{% endif %}
+            <div class="muted" style="font-size:11px">{{ l.rule_name }}</div></td>
+          <td>{{ l.level }}</td>
+          <td><b>{{ l.role|mtext }}</b>
+            {% if l.issuer %}<div class="muted" style="font-size:11px" data-i18n="mwf.issuer">Issues the parts — not an approval vote</div>{% endif %}
+            {% if l.invalid %}<div class="tag" data-i18n="mwf.invalid">Stored role cannot sign — default in use</div>{% endif %}</td>
+          <td class="muted">{{ l.default_role|mtext }}</td>
+          <td style="font-size:13px;line-height:1.55;max-width:460px">{{ l.explanation }}
+            {% if not l.issuer %}{{ editor('stage', l.stage, l.explanation, d.approver_choices, l.stored_role) }}{% endif %}</td>
+          <td>{% if l.issuer %}<span class="tag muted" data-i18n="mwf.tag.fixed">Fixed</span>{% else %}{{ mark(l.overridden) }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ---------------- c. roles ---------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mwf.roles.title">Roles and what they may do</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="mwf.col.role">Role</th>
+        <th data-i18n="mwf.col.perms">Maintenance permissions</th>
+        <th data-i18n="mwf.col.meaning">What it means</th>
+        <th data-i18n="mwf.col.state">State</th>
+      </tr></thead>
+      <tbody>
+      {% for r in d.roles %}
+        <tr>
+          <td><b>{{ r.role_key|mtext }}</b>
+            {% if r.can_approve %}<div class="tag" data-i18n="mwf.can_approve">Can sign approvals</div>{% endif %}</td>
+          <td>{% for p in r.perms %}<span class="tag">{{ p }}</span> {% endfor %}</td>
+          <td style="font-size:13px;line-height:1.55;max-width:520px">{{ r.explanation }}
+            {{ editor('role', r.role_key, r.explanation) }}</td>
+          <td>{{ mark(r.overridden) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ---------------- d. the rules the code enforces ---------------- #}
+<div class="grid cols-2 mt-4">
+  {{ docblock('reservation', d.docs.reservation, 'mwf.doc.reservation') }}
+  {{ docblock('auto_reorder', d.docs.auto_reorder, 'mwf.doc.auto_reorder') }}
+  {{ docblock('costing', d.docs.costing, 'mwf.doc.costing') }}
+</div>
+
+{# ---------------- e. the knobs ---------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mwf.settings.title">Configurable rules</h3>
+    <span class="muted" style="font-size:12px" data-i18n="mwf.settings.hint">Every value falls back to its default when no override is stored, and a bad value is ignored in favour of the default.</span></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="mwf.col.setting">Rule</th>
+        <th data-i18n="mwf.col.effective">In force</th>
+        <th data-i18n="mwf.col.default">Default</th>
+        <th data-i18n="mwf.col.reader">Read by</th>
+        <th data-i18n="mwf.col.state">State</th>
+        {% if mcan('maint_admin') %}<th data-i18n="mwf.col.change">Change</th>{% endif %}
+      </tr></thead>
+      <tbody>
+      {% for s in d.settings %}
+        <tr>
+          <td><b data-i18n="mwf.set.{{ s.key }}">{{ s.key|mtext }}</b><div class="muted" style="font-size:11px">{{ s.source }}</div></td>
+          <td><b>{% if s.kind == 'bool' %}<span data-i18n="{{ 'mwf.on' if s.value else 'mwf.off' }}">{{ 'On' if s.value else 'Off' }}</span>
+              {% else %}{{ '%g'|format(s.value) }}{% endif %}</b></td>
+          <td class="muted">{% if s.kind == 'bool' %}<span data-i18n="{{ 'mwf.on' if s.default else 'mwf.off' }}">{{ 'On' if s.default else 'Off' }}</span>
+              {% else %}{{ '%g'|format(s.default) }}{% endif %}</td>
+          <td class="muted" style="font-size:12px">{{ s.reader }}</td>
+          <td>{{ mark(s.overridden) }}</td>
+          {% if mcan('maint_admin') %}
+          <td>
+            <form method="post" action="{{ url_for('maintenance.workflow_setting') }}" class="flex gap center">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="key" value="{{ s.key }}">
+              {% if s.kind == 'bool' %}
+                <select name="value">
+                  <option value="1"{% if s.value %} selected{% endif %} data-i18n="mwf.on">On</option>
+                  <option value="0"{% if not s.value %} selected{% endif %} data-i18n="mwf.off">Off</option>
+                </select>
+              {% else %}
+                <input type="number" name="value" step="any" min="0" value="{{ '%g'|format(s.value) }}" style="max-width:110px">
+              {% endif %}
+              <button class="btn btn-primary btn-sm" data-i18n="mwf.action.save">Save</button>
+              <button class="btn btn-ghost btn-sm" name="reset" value="1" data-i18n="mwf.action.reset">Reset to default</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="muted mt-2" style="font-size:12px" data-i18n="mwf.settings.readonly">Read-only by design: the lifecycle statuses and the allowed moves between them, the atomic stock reservation, the 3-step issue-and-confirm sequence, and the escalation/quantity columns of the approval matrix.</div>
+  </div>
+</div>
+{% endblock %}

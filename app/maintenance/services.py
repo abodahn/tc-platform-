@@ -13,6 +13,7 @@ from werkzeug.utils import secure_filename
 from config import Config
 from app.db import get_db
 from app.maintenance.constants import TICKET_TRANSITIONS
+from app.maintenance import workflow as wf
 
 YEAR = None  # set lazily per call to avoid import-time clock reads in tooling
 
@@ -25,7 +26,9 @@ OPEN_TICKET_STATUSES = (
     "parts_issued", "repair", "testing", "reopened",
 )
 # SLA target scales with priority (critical is far tighter than the base hours).
-_SLA_FACTOR = {"critical": 0.25, "high": 0.5, "medium": 1.0, "low": 2.0}
+# The numbers now live in workflow.SLA_FACTOR so Workflow & Governance can show
+# and override them; this name stays as the module's constant reference.
+_SLA_FACTOR = wf.SLA_FACTOR
 
 
 def _now():
@@ -166,8 +169,10 @@ def create_ticket(data, user, ip=None, submit=True):
             return None, "description_required"
         # Guard: don't let one machine collect several open tickets for the same
         # breakdown. If it already has an open ticket, point back to it.
+        # (the guard itself is switchable from Workflow & Governance; default ON,
+        # so with no override row this is the same unconditional check as before)
         mid = data.get("machine_id") or None
-        if mid and submit and not data.get("allow_duplicate"):
+        if mid and submit and not data.get("allow_duplicate") and wf.dup_guard_on(conn):
             dup = conn.execute(
                 "SELECT ticket_no FROM mnt_tickets WHERE machine_id=? AND is_active=1 "
                 "AND status IN (%s) ORDER BY id DESC LIMIT 1" % ",".join("?" * len(OPEN_TICKET_STATUSES)),
@@ -196,9 +201,11 @@ def create_ticket(data, user, ip=None, submit=True):
         # response/resolution due dates were only set at assignment, so a fresh
         # critical ticket had no clock and sla_breach was never computed.
         try:
-            factor = _SLA_FACTOR.get(priority, 1.0)
-            resp_h = float(_setting(conn, "response_sla_hours", 4)) * factor
-            reso_h = float(_setting(conn, "resolution_sla_hours", 24)) * factor
+            # Same arithmetic as before (base hours x priority factor); each of the
+            # three numbers is now an admin-overridable setting whose default is the
+            # old literal, and a bad stored value falls back to that literal.
+            resp_h = wf.sla_hours(conn, priority, 4.0, "response_sla_hours")
+            reso_h = wf.sla_hours(conn, priority, 24.0, "resolution_sla_hours")
             base = datetime.now(timezone.utc).replace(tzinfo=None)
             conn.execute(
                 "UPDATE mnt_tickets SET ticket_no=?, response_due=?, resolution_due=? WHERE id=?",
@@ -302,16 +309,20 @@ def _pick_matrix_levels(conn, items):
             cost += (sp["avg_cost"] or 0) * it["qty"]
             if sp["criticality"] == "critical":
                 critical = True
-    rule = None
-    if critical or cost >= 100:
+    # Rule choice is unchanged; the 100 is now wf.critical_threshold(), whose
+    # default is the critical matrix rule's own cost_threshold (100 as seeded).
+    rule, rule_key = None, "std"
+    if critical or cost >= wf.critical_threshold(conn):
         rule = conn.execute("SELECT levels FROM mnt_approval_matrix WHERE active=1 AND "
                             "part_criticality='critical' LIMIT 1").fetchone()
+        if rule:
+            rule_key = "crit"
     if not rule:
         rule = conn.execute("SELECT levels FROM mnt_approval_matrix WHERE active=1 "
                             "ORDER BY id LIMIT 1").fetchone()
-    levels = (rule["levels"] if rule else "maintenance_manager,storekeeper").split(",")
-    # storekeeper is the issuer, not an approval vote
-    return [r.strip() for r in levels if r.strip() and r.strip() != "storekeeper"]
+    # Same rungs as the matrix defines (storekeeper is the issuer, not a vote),
+    # with any valid per-stage role override applied.
+    return wf.approver_roles(conn, rule_key, rule)
 
 
 def create_request(ticket_id, items, reason, urgency, user, ip=None):

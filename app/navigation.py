@@ -40,6 +40,7 @@ NAV = [
         ("maint_calendar", "nav.maint_calendar", "clock", "maintenance.calendar", "maint_view"),
         ("maint_stock", "nav.maint_stock", "server", "maintenance.stock", "maint_view"),
         ("maint_reports", "nav.maint_reports", "chart", "maintenance.reports", "maint_view"),
+        ("maint_workflow", "nav.maint_workflow", "map", "maintenance.workflow", "maint_view"),
         ("maint_settings", "nav.maint_settings", "settings", "maintenance.settings", "maint_admin"),
     ]},
     # Product development — the single source of style truth.
@@ -118,6 +119,7 @@ NAV = [
         ("proc_vendors", "nav.proc_vendors", "boxes", "approvals.vendors", "proc_view"),
         ("proc_budgets", "nav.proc_budgets", "wallet", "approvals.budgets", "proc_view"),
         ("proc_delegations", "nav.proc_delegations", "users", "approvals.delegations", "proc_view"),
+        ("proc_workflow", "nav.proc_workflow", "map", "approvals.workflow", "proc_view"),
         ("proc_settings", "nav.proc_settings", "settings", "approvals.settings", "proc_admin"),
     ]},
     {"section": "nav.services", "items": [

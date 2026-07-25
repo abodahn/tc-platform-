@@ -180,6 +180,50 @@ CREATE TABLE IF NOT EXISTS proc_resp_matrix (
     updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_resp_dept ON proc_resp_matrix(department);
+
+-- ===== Workflow & Governance (admin-configurable, additive) =====
+-- Every table here is an OVERRIDE store: an absent row means "use the constant
+-- in constants.py". A database with no rows behaves exactly as the code always
+-- has, which is why nothing about the ladder/gates changes on upgrade.
+--
+-- Each carries a surrogate `id` even though the natural key is unique, because
+-- app/db.py appends "RETURNING id" to every INSERT for tables outside its own
+-- allow-list — a bare TEXT-primary-key table would fail on PostgreSQL.
+
+-- Module-wide knobs (rfq_quote_min, rfq_value_threshold, sod_admin_exempt,
+-- payment_tolerance_pct). Deliberately NOT seeded: absent == use the constant.
+CREATE TABLE IF NOT EXISTS proc_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT UNIQUE NOT NULL,
+    value TEXT,
+    updated_by TEXT, updated_at TEXT
+);
+
+-- Per-stage role override + explanation. role NULL/blank = use STAGE_ROLES.
+-- role may hold a comma-separated list ("storekeeper,warehouse_manager").
+CREATE TABLE IF NOT EXISTS proc_stage_meta (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stage TEXT UNIQUE NOT NULL,
+    role TEXT,
+    explanation TEXT,
+    updated_by TEXT, updated_at TEXT
+);
+
+-- What each procurement role is responsible for.
+CREATE TABLE IF NOT EXISTS proc_role_meta (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role_key TEXT UNIQUE NOT NULL,
+    explanation TEXT,
+    updated_by TEXT, updated_at TEXT
+);
+
+-- Free-text blocks: 'overview', one per gate, and 'status.<pr_status>'.
+CREATE TABLE IF NOT EXISTS proc_doc (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    section TEXT UNIQUE NOT NULL,
+    body TEXT,
+    updated_by TEXT, updated_at TEXT
+);
 """
 
 # Columns added to pr_steps after first release — applied as idempotent ALTERs
@@ -273,6 +317,35 @@ _ITEM_MIGRATIONS = [
 ]
 
 
+def seed_governance(conn):
+    """Seed the default workflow explanation text (stages, roles, gate docs and
+    status meanings). INSERT OR IGNORE, so an admin's edited text is never
+    overwritten by a later boot, and a row the admin RESET (deleted) is restored
+    to the code default. Returns the number of rows the seed set covers.
+
+    Runs on EVERY boot — before the sample-data guard below — so an already
+    deployed database picks the text up without being re-seeded from scratch."""
+    from app.approvals.constants import (STAGE_EXPLAIN, ROLE_EXPLAIN,
+                                         DOC_SECTIONS, STATUS_MEANING)
+    n = 0
+    for stage, text in STAGE_EXPLAIN.items():
+        conn.execute("INSERT OR IGNORE INTO proc_stage_meta (stage, explanation) VALUES (?,?)",
+                     (stage, text))
+        n += 1
+    for role, text in ROLE_EXPLAIN.items():
+        conn.execute("INSERT OR IGNORE INTO proc_role_meta (role_key, explanation) VALUES (?,?)",
+                     (role, text))
+        n += 1
+    docs = dict(DOC_SECTIONS)
+    docs.update({f"status.{k}": v for k, v in STATUS_MEANING.items()})
+    for section, body in docs.items():
+        conn.execute("INSERT OR IGNORE INTO proc_doc (section, body) VALUES (?,?)",
+                     (section, body))
+        n += 1
+    conn.commit()
+    return n
+
+
 def create_and_seed(conn):
     """Create procurement tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
@@ -286,6 +359,7 @@ def create_and_seed(conn):
             conn.commit()
         except Exception:
             conn.rollback()
+    seed_governance(conn)
     if conn.execute("SELECT COUNT(*) c FROM proc_vendors").fetchone()["c"] > 0:
         return  # already seeded; never overwrite
 

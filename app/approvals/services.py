@@ -13,7 +13,7 @@ import secrets
 from datetime import datetime, timezone
 
 from app.db import get_db
-from app.security import has_permission
+from app.security import has_permission, effective_roles
 from app.approvals import constants as C
 from app.approvals.constants import (
     build_ladder, ladder_rungs, rungs_from_stages, stage_label, STAGE_ROLES,
@@ -106,10 +106,100 @@ def _email_targets(conn, usernames, title, message, link):
     send_email_to(recips, f"[TC Platform] {title}", body)
 
 
+# --------------------------------------------------------------------------
+# Workflow & Governance — DB override -> constants.py default
+# --------------------------------------------------------------------------
+# Every accessor below reads a tiny override table on each call (no cache), so a
+# setting an admin saves takes effect on the next request with no restart. When
+# the row is absent, blank, or fails coercion, the constant is used — which is
+# exactly why a database with NO override rows behaves as the module always has.
+def _raw_setting(conn, key):
+    """Stored string for a knob, or None. Tolerates a pre-migration database
+    (table not created yet) so the engine falls back to the constant instead of
+    raising on a money path."""
+    try:
+        r = conn.execute("SELECT value FROM proc_settings WHERE key=?", (key,)).fetchone()
+    except Exception:
+        return None
+    return r["value"] if r else None
+
+
+def num_setting(conn, key):
+    """Numeric knob: the override coerced against its spec, else the constant.
+    Blank, non-numeric, NaN, infinity and out-of-bounds all fall back, so a bad
+    entry can never disable a gate or widen a payment cap."""
+    spec = C.WORKFLOW_SETTINGS.get(key) or {}
+    default = spec.get("default")
+    raw = _raw_setting(conn, key)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        v = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    if v != v or v in (float("inf"), float("-inf")):     # NaN / +-inf
+        return default
+    lo, hi = spec.get("min"), spec.get("max")
+    if (lo is not None and v < lo) or (hi is not None and v > hi):
+        return default
+    return int(v) if spec.get("kind") == "int" else v
+
+
+_TRUE_WORDS = {"1", "true", "yes", "on"}
+_FALSE_WORDS = {"0", "false", "no", "off"}
+
+
+def bool_setting(conn, key):
+    """Boolean knob. Only an unambiguous word counts; anything else (blank,
+    "maybe", a number) falls back to the constant rather than silently turning a
+    control off."""
+    raw = _raw_setting(conn, key)
+    s = str(raw).strip().lower() if raw is not None else ""
+    if s in _TRUE_WORDS:
+        return True
+    if s in _FALSE_WORDS:
+        return False
+    return bool((C.WORKFLOW_SETTINGS.get(key) or {}).get("default"))
+
+
+def stage_roles_map(conn=None):
+    """{stage: set(role_keys)} — constants.STAGE_ROLES with any admin override
+    from proc_stage_meta applied. `role` may hold a comma-separated list.
+
+    Unknown role keys are dropped, and if nothing valid remains the constant is
+    kept: a typo must never leave a stage that nobody but an admin can sign."""
+    own = conn is None
+    if own:
+        conn = get_db()
+    try:
+        try:
+            rows = conn.execute("SELECT stage, role FROM proc_stage_meta "
+                                "WHERE role IS NOT NULL AND role<>''").fetchall()
+        except Exception:
+            rows = []                       # pre-migration database -> constants
+    finally:
+        if own:
+            conn.close()
+    out = {k: set(v) for k, v in STAGE_ROLES.items()}
+    valid = set(effective_roles())
+    for r in rows:
+        if r["stage"] not in LADDER:
+            continue                        # only ladder stages are ever signed
+        picked = {x.strip() for x in str(r["role"] or "").split(",") if x.strip()} & valid
+        if picked:
+            out[r["stage"]] = picked
+    return out
+
+
+def stage_role(stage):
+    """Effective roles that sign `stage` (override -> constant)."""
+    return stage_roles_map().get(stage, set())
+
+
 def eligible_approvers(conn, stage):
     """Usernames allowed to act on a stage: everyone holding a qualifying role,
     plus anyone with an active delegation from such a person."""
-    roles = STAGE_ROLES.get(stage, set())
+    roles = stage_roles_map(conn).get(stage, set())
     if not roles:
         return []
     ph = ",".join(["?"] * len(roles))
@@ -151,12 +241,13 @@ def active_delegator_roles(username):
         conn.close()
 
 
-def can_act(user, stage, _deleg=None):
+def can_act(user, stage, _deleg=None, _roles=None):
     """May this user approve/reject the given ladder stage? True for the stage's
     own roles, for super_admin / proc_admin, or for anyone actively delegated a
     qualifying role by another user. Pass `_deleg` (a prefetched set from
-    active_delegator_roles) when checking many stages in a loop so the
-    delegation lookup runs one query instead of one per stage."""
+    active_delegator_roles) and `_roles` (a prefetched stage_roles_map) when
+    checking many stages in a loop so those lookups run one query in total
+    instead of one per stage."""
     if not user:
         return False
     role = user.get("role")
@@ -164,7 +255,9 @@ def can_act(user, stage, _deleg=None):
         return True
     if not has_permission(role, "proc_approve"):
         return False
-    allowed = STAGE_ROLES.get(stage, set())
+    if _roles is None:
+        _roles = stage_roles_map()
+    allowed = _roles.get(stage, set())
     if role in allowed:
         return True
     if _deleg is None:
@@ -297,6 +390,7 @@ def my_queue(user):
         step_rows = conn.execute(
             f"SELECT * FROM pr_steps WHERE status='pending' AND pr_id IN ({ph})",
             tuple(ids)).fetchall()
+        roles_map = stage_roles_map(conn)      # one read, reused for every PR below
     finally:
         conn.close()
     by_pr = {}
@@ -306,7 +400,8 @@ def my_queue(user):
     out = []
     for pr in prs:
         cur = [s for s in by_pr.get(pr["id"], []) if s["seq"] == pr["current_seq"]]
-        mine = next((s for s in cur if can_act(user, s["stage"], _deleg=deleg)), None)
+        mine = next((s for s in cur if can_act(user, s["stage"], _deleg=deleg,
+                                               _roles=roles_map)), None)
         if mine:
             pr = dict(pr)
             pr["_stage"] = mine["stage"]
@@ -867,7 +962,8 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             (pr_id, pr["current_seq"])).fetchall()
         if not cur_steps:
             return False, "no_active_step"
-        step = next((s for s in cur_steps if can_act(user, s["stage"])), None)
+        _roles = stage_roles_map(conn)     # reuse this transaction's connection
+        step = next((s for s in cur_steps if can_act(user, s["stage"], _roles=_roles)), None)
         if not step:
             return False, "forbidden"
 
@@ -883,11 +979,13 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         #       resubmitted PR are rebuilt from scratch, so old history rows never
         #       trip this check.
         # Platform admins (super_admin / proc_admin — the same predicate can_act
-        # uses) are exempt while C.SOD_ADMIN_EXEMPT is True, so a small team can
-        # still operate the full ladder.
+        # uses) are exempt while the 'sod_admin_exempt' setting is on (DB override
+        # -> C.SOD_ADMIN_EXEMPT), so a small team can still operate the full
+        # ladder. `_is_admin` is tested FIRST so the setting is only read for the
+        # handful of admin signatures — same result, one fewer query for everyone.
         role = user.get("role")
         _is_admin = role == "super_admin" or has_permission(role, "proc_admin")
-        if not (C.SOD_ADMIN_EXEMPT and _is_admin):
+        if not (_is_admin and bool_setting(conn, "sod_admin_exempt")):
             if pr["requester"] == uname:
                 return False, "self_approval"
             other = conn.execute(
@@ -1380,7 +1478,8 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         draft/pending/cancelled request;
       * the 3-way match must not show over-billing (invoice > PO, or invoice >
         received value) — "payment block on mismatch";
-      * total paid may not exceed the PO grand total (+1% tolerance)."""
+      * total paid may not exceed the PO grand total (+ the payment tolerance,
+        setting 'payment_tolerance_pct' -> C.PAYMENT_TOLERANCE_PCT, default 1%)."""
     # run the match first (own connections) — before opening ours
     match = three_way_match(pr_id)
     conn = get_db()
@@ -1399,7 +1498,11 @@ def add_payment(pr_id, data, user, ip=None, force=False):
            and (not match["price_ok"] or not match["receipt_inv_ok"]):
             return False, "match_blocked"
         grand = pr_amounts(pr)["grand"]
-        tol = max(1.0, grand * 0.01)
+        # Configurable slack on the caps. Written as x * (pct/100.0), NOT
+        # x * pct / 100.0: with the default 1.0 the first form is bit-for-bit the
+        # old `x * 0.01`, the second can differ in the last bit.
+        _tol_pct = num_setting(conn, "payment_tolerance_pct") / 100.0
+        tol = max(1.0, grand * _tol_pct)
         already = float(pr["paid_amount"] or 0)
         if not force and grand > 0 and already + amount > grand + tol:
             return False, "over_payment"
@@ -1408,7 +1511,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         # (No-invoice advance payments are unchanged, governed by the PO cap above.)
         if match and match["has_invoice"] and not force:
             billed = float(match.get("invoiced") or 0)
-            if billed > 0 and already + amount > billed + max(1.0, billed * 0.01):
+            if billed > 0 and already + amount > billed + max(1.0, billed * _tol_pct):
                 return False, "exceeds_invoiced"
         now = _now()
         if force:
@@ -1668,8 +1771,9 @@ def _pr_field(pr, key, default=None):
 
 def rfq_gate_check(conn, pr):
     """RFQ / competitive-quotation gate for the Purchasing sign-off (pure check,
-    no writes). A PRICED request whose total is at/above C.RFQ_VALUE_THRESHOLD
-    must carry at least C.RFQ_QUOTE_MIN competing vendor quotes — unless
+    no writes). A PRICED request whose total is at/above the rfq_value_threshold
+    setting (override -> C.RFQ_VALUE_THRESHOLD) must carry at least
+    rfq_quote_min (override -> C.RFQ_QUOTE_MIN) competing vendor quotes — unless
     Purchasing has recorded a single-source justification on the PR.
 
     `pr` is the pr_requests row (dict or Row). Returns (ok, msg):
@@ -1683,7 +1787,7 @@ def rfq_gate_check(conn, pr):
         total = float(egp_total(pr))
     except (TypeError, ValueError):
         total = 0.0
-    if total < C.RFQ_VALUE_THRESHOLD:
+    if total < num_setting(conn, "rfq_value_threshold"):
         return True, ""          # below the competitive-quote threshold
     if str(_pr_field(pr, "single_source_reason") or "").strip():
         return True, ""          # justified single/sole-source purchase
@@ -1695,7 +1799,7 @@ def rfq_gate_check(conn, pr):
     except Exception:
         n = conn.execute("SELECT COUNT(*) c FROM pr_quotes WHERE pr_id=?",
                          (_pr_field(pr, "id"),)).fetchone()["c"]
-    if int(n or 0) < C.RFQ_QUOTE_MIN:
+    if int(n or 0) < num_setting(conn, "rfq_quote_min"):
         return False, "needs_quotes"
     return True, ""
 
@@ -2100,3 +2204,351 @@ def ticket_prefill(ticket_id):
         "ticket_id": t.get("id"),
         "ticket_no": t.get("ticket_no"),
     }
+
+
+# ==========================================================================
+# Workflow & Governance — editors + the page model
+# ==========================================================================
+# Writers are deliberately small and each one audits "who: key old -> new".
+# A RESET always DELETES the override (or NULLs the overriding column) — it never
+# writes the constant's current value, otherwise a future change to the code
+# default would be masked by a frozen copy of today's default.
+def _wf_audit(conn, actor, action, detail, ip=None):
+    """Governance audit row. pr_id NULL = a module-level change, not a request;
+    surfaced by governance_log() on the workflow page."""
+    audit(conn, None, actor or "system", action, detail, ip)
+
+
+def governance_log(limit=25):
+    """Recent workflow/governance changes (newest first)."""
+    conn = get_db()
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT actor, action, detail, created_at FROM pr_events "
+            "WHERE pr_id IS NULL AND action LIKE ? ORDER BY id DESC LIMIT ?",
+            ("wf%", int(limit))).fetchall()]
+    finally:
+        conn.close()
+
+
+def set_setting(key, value, user=None, ip=None):
+    """Store a module knob. Refuses a value that would be ignored at read time,
+    so the admin sees an error instead of a silently unchanged setting.
+    Returns (ok, msg)."""
+    spec = C.WORKFLOW_SETTINGS.get(key)
+    if not spec:
+        return False, "unknown_setting"
+    raw = str(value if value is not None else "").strip()
+    if spec["kind"] == "bool":
+        if raw.lower() not in _TRUE_WORDS | _FALSE_WORDS:
+            return False, "bad_value"
+        raw = "1" if raw.lower() in _TRUE_WORDS else "0"
+    else:
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return False, "bad_value"
+        if v != v or v in (float("inf"), float("-inf")):
+            return False, "bad_value"
+        lo, hi = spec.get("min"), spec.get("max")
+        if (lo is not None and v < lo) or (hi is not None and v > hi):
+            return False, "out_of_range"
+        raw = str(int(v)) if spec["kind"] == "int" else f"{v:g}"
+    conn = get_db()
+    try:
+        old = _raw_setting(conn, key)
+        now, uname = _now(), (user or {}).get("username")
+        if old is None:
+            conn.execute("INSERT INTO proc_settings (key, value, updated_by, updated_at) "
+                         "VALUES (?,?,?,?)", (key, raw, uname, now))
+        else:
+            conn.execute("UPDATE proc_settings SET value=?, updated_by=?, updated_at=? "
+                         "WHERE key=?", (raw, uname, now, key))
+        _wf_audit(conn, uname, "wf_setting",
+                  f"{key}: {old if old is not None else 'default'} -> {raw}", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def reset_setting(key, user=None, ip=None):
+    """Delete a knob's override so the constant applies again. Returns (ok, msg)."""
+    if key not in C.WORKFLOW_SETTINGS:
+        return False, "unknown_setting"
+    conn = get_db()
+    try:
+        old = _raw_setting(conn, key)
+        conn.execute("DELETE FROM proc_settings WHERE key=?", (key,))
+        _wf_audit(conn, (user or {}).get("username"), "wf_setting_reset",
+                  f"{key}: {old if old is not None else 'default'} -> default", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def _stage_meta_row(conn, stage):
+    try:
+        return conn.execute("SELECT role, explanation FROM proc_stage_meta WHERE stage=?",
+                            (stage,)).fetchone()
+    except Exception:
+        return None
+
+
+def set_stage_meta(stage, roles=None, explanation=None, user=None, ip=None,
+                   reset_role=False, reset_explanation=False):
+    """Save a stage's signing roles and/or its explanation. `roles` is a list of
+    role keys (stored comma-separated). Only role keys that exist on the platform
+    are accepted, so an override can never leave a stage unsignable.
+
+    reset_role / reset_explanation NULL the respective column (the "delete the
+    override" case); when both end up empty the row is removed entirely.
+    Returns (ok, msg)."""
+    if stage not in C.STAGE_LABELS:
+        return False, "unknown_stage"
+    if roles and stage not in LADDER:
+        return False, "not_a_signing_stage"     # the requester signs by submitting
+    valid = set(effective_roles())
+    picked = [r for r in (roles or []) if r in valid]
+    if roles and not picked:
+        return False, "unknown_role"
+    conn = get_db()
+    try:
+        row = _stage_meta_row(conn, stage)
+        old_role = (row["role"] if row else None) or "default"
+        old_expl = (row["explanation"] if row else None)
+        new_role = None if reset_role else (",".join(sorted(picked)) if picked
+                                            else (row["role"] if row else None))
+        new_expl = None if reset_explanation else (
+            explanation if explanation is not None else old_expl)
+        if isinstance(new_expl, str):
+            new_expl = new_expl.strip()[:4000] or None
+        now, uname = _now(), (user or {}).get("username")
+        if row is None:
+            conn.execute("INSERT INTO proc_stage_meta (stage, role, explanation, "
+                         "updated_by, updated_at) VALUES (?,?,?,?,?)",
+                         (stage, new_role, new_expl, uname, now))
+        elif new_role is None and new_expl is None:
+            conn.execute("DELETE FROM proc_stage_meta WHERE stage=?", (stage,))
+        else:
+            conn.execute("UPDATE proc_stage_meta SET role=?, explanation=?, updated_by=?, "
+                         "updated_at=? WHERE stage=?", (new_role, new_expl, uname, now, stage))
+        detail = f"stage {stage} role: {old_role} -> {new_role or 'default'}"
+        if (old_expl or "") != (new_expl or ""):
+            detail += "; explanation " + ("reset to default" if new_expl is None else "edited")
+        _wf_audit(conn, uname, "wf_stage", detail, ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def set_role_meta(role_key, explanation=None, user=None, ip=None, reset=False):
+    """Save (or reset) what a role is responsible for. Returns (ok, msg)."""
+    role_key = (role_key or "").strip()
+    if not role_key or role_key not in set(effective_roles()) | set(C.ROLE_EXPLAIN):
+        return False, "unknown_role"
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT explanation FROM proc_role_meta WHERE role_key=?",
+                           (role_key,)).fetchone()
+        now, uname = _now(), (user or {}).get("username")
+        if reset:
+            conn.execute("DELETE FROM proc_role_meta WHERE role_key=?", (role_key,))
+            _wf_audit(conn, uname, "wf_role_reset", f"role {role_key}: -> default text", ip)
+        else:
+            text = (explanation or "").strip()[:4000]
+            if not text:
+                return False, "empty"
+            if row:
+                conn.execute("UPDATE proc_role_meta SET explanation=?, updated_by=?, "
+                             "updated_at=? WHERE role_key=?", (text, uname, now, role_key))
+            else:
+                conn.execute("INSERT INTO proc_role_meta (role_key, explanation, updated_by, "
+                             "updated_at) VALUES (?,?,?,?)", (role_key, text, uname, now))
+            _wf_audit(conn, uname, "wf_role", f"role {role_key}: explanation edited", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def _doc_default(section):
+    """Code default for a documentation block: a gate/overview body, or a PR
+    status meaning ('status.<key>')."""
+    if section.startswith("status."):
+        return C.STATUS_MEANING.get(section[7:])
+    return C.DOC_SECTIONS.get(section)
+
+
+def set_doc(section, body=None, user=None, ip=None, reset=False):
+    """Save (or reset) one free-text block. Returns (ok, msg)."""
+    section = (section or "").strip()
+    if _doc_default(section) is None:
+        return False, "unknown_section"      # only the known blocks are editable
+    conn = get_db()
+    try:
+        now, uname = _now(), (user or {}).get("username")
+        if reset:
+            conn.execute("DELETE FROM proc_doc WHERE section=?", (section,))
+            _wf_audit(conn, uname, "wf_doc_reset", f"doc {section}: -> default text", ip)
+        else:
+            text = (body or "").strip()[:8000]
+            if not text:
+                return False, "empty"
+            row = conn.execute("SELECT id FROM proc_doc WHERE section=?", (section,)).fetchone()
+            if row:
+                conn.execute("UPDATE proc_doc SET body=?, updated_by=?, updated_at=? "
+                             "WHERE section=?", (text, uname, now, section))
+            else:
+                conn.execute("INSERT INTO proc_doc (section, body, updated_by, updated_at) "
+                             "VALUES (?,?,?,?)", (section, text, uname, now))
+            _wf_audit(conn, uname, "wf_doc", f"doc {section}: edited", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+# --- the page model -------------------------------------------------------
+def _effective_matrix(department):
+    """(ordered [(stage, threshold)], source) actually applied to `department`.
+    A department with its own responsibility matrix uses it; everyone else uses
+    the global default from constants.APPROVAL_MATRIX."""
+    if department in all_dept_matrices():
+        m = get_dept_matrix(department)
+        rows = sorted(((s, v) for s, v in m.items() if v["included"]),
+                      key=lambda kv: kv[1]["seq"])
+        return [(s, v["threshold"]) for s, v in rows], "department"
+    return [(s, float(APPROVAL_MATRIX.get(s, 0))) for s in LADDER], "default"
+
+
+def _stage_gates(stage, is_last):
+    """Which gates fire at a stage — derived, so it cannot drift from the engine."""
+    gates = ["sod"]                                    # every signature
+    if stage == PRICING_GATE_STAGE:
+        gates = ["pricing_gate", "rfq"] + gates        # act_on_step checks both here
+    if is_last:
+        gates.append("budget_gate")                    # PO issue follows this signature
+    return gates
+
+
+def workflow_view(department=None):
+    """Everything the Workflow & Governance page renders, read from the database
+    so the page can never drift from the engine that enforces it."""
+    depts = list_departments()
+    department = department or (depts[0] if depts else "")
+    matrix, thr_source = _effective_matrix(department)
+    conn = get_db()
+    try:
+        smeta = {r["stage"]: dict(r) for r in conn.execute(
+            "SELECT stage, role, explanation, updated_by, updated_at "
+            "FROM proc_stage_meta").fetchall()}
+        rmeta = {r["role_key"]: dict(r) for r in conn.execute(
+            "SELECT role_key, explanation, updated_by, updated_at "
+            "FROM proc_role_meta").fetchall()}
+        docs = {r["section"]: dict(r) for r in conn.execute(
+            "SELECT section, body, updated_by, updated_at FROM proc_doc").fetchall()}
+        knob_rows = {r["key"]: dict(r) for r in conn.execute(
+            "SELECT key, value, updated_by, updated_at FROM proc_settings").fetchall()}
+        roles_map = stage_roles_map(conn)
+        knobs = []
+        for key, spec in C.WORKFLOW_SETTINGS.items():
+            row = knob_rows.get(key) or {}
+            eff = (bool_setting(conn, key) if spec["kind"] == "bool"
+                   else num_setting(conn, key))
+            stored = row.get("value")
+            knobs.append({
+                "key": key, "kind": spec["kind"], "default": spec["default"],
+                "stored": stored, "effective": eff,
+                "is_override": stored is not None,
+                # a stored value the coercion rejected: shown so nobody has to
+                # wonder why their edit "did nothing"
+                "ignored": stored is not None and not _same_value(spec, stored, eff),
+                "min": spec.get("min"), "max": spec.get("max"),
+                "updated_by": row.get("updated_by"), "updated_at": row.get("updated_at"),
+            })
+    finally:
+        conn.close()
+
+    all_roles = effective_roles()
+
+    def _expl(store, key, default_map):
+        """(text, is_override, by, at) — the admin's text if any, else the default."""
+        row = store.get(key) or {}
+        txt = (row.get("explanation") or "").strip()
+        if txt:
+            return txt, True, row.get("updated_by"), row.get("updated_at")
+        return (default_map.get(key) or ""), False, None, None
+
+    stages = []
+    for i, (stage, thr) in enumerate(matrix, start=1):
+        roles = sorted(roles_map.get(stage, set()))
+        default_roles = sorted(STAGE_ROLES.get(stage, set()))
+        txt, custom, by, at = _expl(smeta, stage, C.STAGE_EXPLAIN)
+        stages.append({
+            "seq": i, "stage": stage, "label": stage_label(stage),
+            "roles": roles, "default_roles": default_roles,
+            "role_override": roles != default_roles,
+            # a role without proc_approve could only be signed by an admin — worth
+            # showing rather than silently producing a stuck request
+            "roles_cannot_approve": [r for r in roles
+                                     if not has_permission(r, "proc_approve")],
+            "threshold": thr, "always": thr <= 0,
+            "gates": _stage_gates(stage, i == len(matrix)),
+            "explanation": txt, "explanation_custom": custom,
+            "updated_by": by, "updated_at": at,
+        })
+
+    role_keys = set(C.ROLE_EXPLAIN)          # documented even if no stage points at one
+    for v in roles_map.values():
+        role_keys |= set(v)
+    roles = []
+    for k in sorted(role_keys):
+        txt, custom, by, at = _expl(rmeta, k, C.ROLE_EXPLAIN)
+        perms = list((all_roles.get(k) or {}).get("perms") or [])
+        roles.append({
+            "key": k, "label": (all_roles.get(k) or {}).get("label", k),
+            "exists": k in all_roles,
+            "perms": ["*"] if "*" in perms else [p for p in perms if p.startswith("proc_")],
+            "can_approve": has_permission(k, "proc_approve"),
+            "signs": [stage_label(s) for s in LADDER if k in roles_map.get(s, set())],
+            "explanation": txt, "explanation_custom": custom,
+            "updated_by": by, "updated_at": at,
+        })
+
+    def _doc(section):
+        row = docs.get(section) or {}
+        txt = (row.get("body") or "").strip()
+        return {"section": section, "body": txt or (_doc_default(section) or ""),
+                "custom": bool(txt), "updated_by": row.get("updated_by"),
+                "updated_at": row.get("updated_at")}
+
+    return {
+        "department": department, "departments": depts,
+        "threshold_source": thr_source,
+        "stages": stages, "roles": roles, "knobs": knobs,
+        "overview": _doc("overview"),
+        "gates": [_doc(s) for s in ("pricing_gate", "rfq", "sod",
+                                    "budget_gate", "three_way_match", "payment_cap")],
+        "statuses": [dict(_doc("status." + s), key=s) for s in PR_STATUSES],
+        "role_choices": sorted(
+            ({"key": k, "label": v["label"],
+              "can_approve": has_permission(k, "proc_approve")}
+             for k, v in all_roles.items()), key=lambda r: r["label"].lower()),
+        "sla_hours": C.SLA_HOURS_PER_STAGE, "sla_warn": C.SLA_WARN_HOURS,
+        "match_tolerance_pct": 1.0,      # three_way_match's own, deliberately fixed
+        "log": governance_log(),
+    }
+
+
+def _same_value(spec, stored, effective):
+    """Did the stored override survive coercion? Used only to badge a rejected
+    value in the UI, never to decide behaviour."""
+    if spec["kind"] == "bool":
+        return (str(stored).strip().lower() in _TRUE_WORDS) == bool(effective)
+    try:
+        return float(str(stored).strip()) == float(effective)
+    except (TypeError, ValueError):
+        return False

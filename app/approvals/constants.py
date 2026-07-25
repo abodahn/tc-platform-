@@ -229,3 +229,183 @@ def stage_label(stage):
 # (pr_requests.single_source_reason). Enforced by services.rfq_gate_check.
 RFQ_QUOTE_MIN = 2            # competitive quotes required
 RFQ_VALUE_THRESHOLD = 25000  # EGP-equivalent total at/above which the rule applies
+
+
+# --- Payment cap tolerance --------------------------------------------------
+# Rounding/bank-charge slack allowed on the payment caps in services.add_payment
+# (cumulative paid vs the PO grand total, and vs the invoiced gross total). The
+# hard floor of 1 currency unit inside add_payment is separate and stays fixed.
+# NOTE: services.three_way_match uses its own 1% for the MATCH verdict; that one
+# is deliberately NOT configurable (see docs/still_hardcoded in the workflow page).
+PAYMENT_TOLERANCE_PCT = 1.0
+
+
+# ===========================================================================
+# Workflow & Governance — the admin-configurable surface
+# ===========================================================================
+# Every knob below is read as "DB override (proc_settings) -> constant here".
+# An ABSENT row means "use the constant", so a database with no override rows
+# behaves exactly as the code always has.
+#   kind: num | int | bool  — how a stored string is coerced
+#   min/max: inclusive bounds. A stored value that is blank, non-numeric, NaN,
+#            or outside the bounds is IGNORED and the constant is used, so a bad
+#            entry can never disable a control or open a money gate.
+WORKFLOW_SETTINGS = {
+    # A competitive-quote minimum below 1 would silently switch the RFQ gate off,
+    # so 1 is the floor rather than 0.
+    "rfq_quote_min": {"kind": "int", "min": 1, "default": RFQ_QUOTE_MIN},
+    # 0 is legitimate here: "every purchase needs competitive quotes".
+    "rfq_value_threshold": {"kind": "num", "min": 0, "default": RFQ_VALUE_THRESHOLD},
+    "sod_admin_exempt": {"kind": "bool", "default": SOD_ADMIN_EXEMPT},
+    # Capped at 100%: a fat-fingered 5000 would let someone pay 51x the PO.
+    "payment_tolerance_pct": {"kind": "num", "min": 0, "max": 100,
+                              "default": PAYMENT_TOLERANCE_PCT},
+}
+
+# Default explanation text per ladder stage. Seeded into proc_stage_meta and
+# used as the fallback whenever an admin resets a stage's explanation.
+STAGE_EXPLAIN = {
+    "requester": (
+        "Any user with “Raise purchase requests” opens the request and states what is "
+        "needed: item, quantity, unit, specification and the department it is for. "
+        "Submitting IS the requester's signature, which is why they may never sign an "
+        "approval stage of their own request. Requesters cannot enter money either — "
+        "unit price, estimated cost, tax rate and payment condition are stripped from "
+        "anything they submit and are filled in later by Purchasing."),
+    "warehouse": (
+        "Warehouse checks the store before any money is committed: is the item already "
+        "on the shelf, how much was last ordered and at what price. This is a demand "
+        "stage — always required, whatever the request is worth."),
+    "factory_manager": (
+        "The Factory Manager confirms the request is operationally necessary and "
+        "correctly specified for the asset, machine or line it is raised for. Demand "
+        "stage — always required, whatever the request is worth."),
+    "purchasing": (
+        "Purchasing owns the commercial side: choose the vendor, enter the pricing, set "
+        "the exchange rate on a foreign-currency request, collect competing quotes (or "
+        "record a single-source justification) and — once every signature is in — issue "
+        "the Purchase Order. Two gates fire at this stage: the request cannot leave it "
+        "unpriced, and a high-value request cannot leave it without competitive quotes."),
+    "finance": (
+        "Finance checks the priced request against the department budget, the tax and the "
+        "payment terms before the money is committed. Value stage — it joins the ladder "
+        "only when the EGP-equivalent total reaches its threshold."),
+    "cfo": (
+        "The CFO authorises significant committed spend and confirms it is funded. "
+        "Value stage — it joins the ladder only when the EGP-equivalent total reaches "
+        "its threshold."),
+    "ceo": (
+        "The CEO is the final authority on major spend. Value stage — it joins the "
+        "ladder only when the EGP-equivalent total reaches its threshold. When this "
+        "last signature lands the request becomes Approved and a Purchase Order number "
+        "is drafted automatically."),
+}
+
+# Default explanation per role that signs somewhere in the cycle.
+ROLE_EXPLAIN = {
+    "storekeeper": (
+        "Holds the store. Signs the Warehouse stage: confirms live stock, last order "
+        "quantity and last order price, and receives the goods against the PO."),
+    "warehouse_manager": (
+        "Accountable for the store as a whole. Signs the Warehouse stage and is the "
+        "escalation point when a storekeeper is unavailable."),
+    "factory_manager": (
+        "Accountable for the plant. Signs the Factory Manager stage: confirms the "
+        "request is operationally justified and correctly specified."),
+    "purchasing_manager": (
+        "Runs procurement. Prices requests, sets FX rates, collects and compares vendor "
+        "quotes, records single-source justifications, signs the Purchasing stage and "
+        "issues Purchase Orders."),
+    "finance_manager": (
+        "Accountable for financial control. Signs the Finance stage, owns the department "
+        "budgets, registers vendor invoices and records payments."),
+    "finance_user": (
+        "Finance team member. Signs the Finance stage and handles invoice registration "
+        "and payment recording day to day."),
+    "cfo": (
+        "Chief Financial Officer. Signs the CFO stage for significant committed spend "
+        "and is the authority on budget breaches."),
+    "ceo": (
+        "Chief Executive Officer. Signs the CEO stage — the final authority on the "
+        "largest purchases."),
+}
+
+# Default body per free-text documentation block (proc_doc sections).
+DOC_SECTIONS = {
+    "overview": (
+        "A purchase request starts as pure demand: the requester says WHAT is needed, "
+        "never what it costs. It is then routed up a ladder of signatures. Warehouse, "
+        "Factory Manager and Purchasing always sign. Purchasing enters the pricing, and "
+        "only then do the value-based approvals (Finance, CFO, CEO) join the ladder — "
+        "each one from its own amount upwards, compared on the EGP-equivalent total so a "
+        "foreign-currency request is converted first. Every approver stamps their saved "
+        "digital signature, and every signature is recorded as a separately verifiable "
+        "event. When the last stage approves, a Purchase Order is drafted automatically; "
+        "Purchasing issues it (subject to the department budget), the goods are received "
+        "line by line, the vendor invoice is registered, the 3-way match runs, and only "
+        "then can a payment be recorded — capped by what was ordered and what was billed."),
+    "pricing_gate": (
+        "The Purchasing stage cannot be approved while the request is still unpriced. "
+        "This is what stops a zero-value request slipping past the value-based Finance / "
+        "CFO / CEO approvals. When pricing is entered on a request that is already "
+        "circulating, the value rungs are recalculated against the new total: the ones "
+        "now required are appended, and value rungs that no longer qualify and have not "
+        "been reached yet are removed. Stages that are already approved, rejected or "
+        "currently active are never touched, so an in-flight signature is never "
+        "disturbed. A non-EGP request must also carry a real exchange rate before it can "
+        "be priced, otherwise its value would route on the raw foreign figure."),
+    "rfq": (
+        "A priced request whose EGP-equivalent total reaches the RFQ threshold must carry "
+        "at least the minimum number of quotes from DISTINCT vendors before Purchasing "
+        "can sign off — two quotes typed against the same supplier do not satisfy the "
+        "rule. Purchasing may waive it by recording a single-source justification on the "
+        "request (OEM-only part, proprietary spare, genuine emergency); the justification "
+        "is stored on the request and audited. Below the threshold, or while the request "
+        "is still unpriced, this gate does not fire."),
+    "sod": (
+        "Two independence rules run on every signature. (1) Self-approval: the requester "
+        "of a request may never sign any of its approval stages — raising it is already "
+        "their signature. (2) Dual role: one person may not sign two DIFFERENT stages of "
+        "the same request, not even when a delegation makes them eligible for both; each "
+        "rung must be an independent pair of eyes. A rejected request that is resubmitted "
+        "gets a brand-new set of steps, so old history never blocks a fresh cycle. While "
+        "“admins exempt” is on, super_admin and any role holding Procurement-admin bypass "
+        "both rules so a small team can still walk a request through the whole ladder; "
+        "switch it off for strict mode, where admins are bound exactly like everyone else."),
+    "budget_gate": (
+        "Issuing the Purchase Order is blocked when the department has an explicit budget "
+        "row for the current year AND its committed spend already exceeds it. Committed "
+        "spend counts requests dated in that year with status approved, PO issued, "
+        "partially received, received or closed. A department with no budget row "
+        "configured is never blocked. An admin can force the PO through; the override is "
+        "written to the audit trail."),
+    "three_way_match": (
+        "Before payment, ORDERED (the PO grand total and quantities) is compared with "
+        "RECEIVED (goods-receipt quantities and their value at the order price) and "
+        "INVOICED (registered vendor invoices, gross of tax). Short delivery is flagged "
+        "but does NOT block payment — paying for what was actually delivered on a partial "
+        "receipt is legitimate. Over-billing does block: invoiced above the PO total, or "
+        "invoiced pre-tax above the value of what was received. The comparison allows a "
+        "tolerance of 1% of the PO total or 1 currency unit, whichever is larger."),
+    "payment_cap": (
+        "A payment can only be recorded once a Purchase Order exists — never against a "
+        "draft, pending or cancelled request. Cumulative payments may not exceed the PO "
+        "grand total, and once invoices exist they may not exceed the invoiced gross "
+        "total either, so in practice the cap is the LOWER of the two, each with the "
+        "payment tolerance applied. A payment is also refused while the 3-way match shows "
+        "over-billing. An admin can override any of these and the override is audited."),
+}
+
+# One-line meaning per PR status (stored as proc_doc sections 'status.<key>').
+STATUS_MEANING = {
+    "draft": "Being filled in by the requester — not yet in the approval ladder.",
+    "pending": "In the ladder, waiting on the signature of the current stage.",
+    "approved": "Every required stage has signed; a PO number has been drafted.",
+    "rejected": "A stage rejected it with a reason; it bounces back to the requester, "
+                "who can correct and resubmit (which rebuilds the ladder from scratch).",
+    "po_issued": "The Purchase Order has been issued to the vendor; payment may begin.",
+    "partially_received": "Some ordered lines have been received, not all of them.",
+    "received": "Delivery confirmed for every line.",
+    "closed": "Completed and archived — no further action expected.",
+    "cancelled": "Withdrawn by the requester, Purchasing or an admin before completion.",
+}
