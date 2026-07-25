@@ -14,10 +14,13 @@ Arithmetic invariants (all covered by tests_selftest.py):
   * a negative or non-numeric quantity/weight/dimension is REFUSED on write, never coerced
     with abs() or silently zeroed, so the SQL aggregates can trust what is stored.
 """
+import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 
 from app.db import get_db
+
+log = logging.getLogger("tc.shipping")
 from .constants import (SHIPPED_STATUS, LOCKED_STATUS, QTY_TOLERANCE_PCT, ETD_SOON_DAYS,
                         SHIPMENT_STATUS, CREATE_STATUS, INCOTERMS, MODES)
 
@@ -324,7 +327,7 @@ def update_shipment(shipment_id, data, user):
       * its invoice unit price is frozen once it has left, for the same reason."""
     conn = get_db()
     try:
-        cur = conn.execute("SELECT status,incoterm,mode,unit_price,dispatched_at "
+        cur = conn.execute("SELECT status,incoterm,mode,unit_price,dispatched_at,order_id "
                            "FROM shp_shipments WHERE id=?", (shipment_id,)).fetchone()
         if not cur:
             return False, "not_found"
@@ -384,9 +387,51 @@ def update_shipment(shipment_id, data, user):
         args.append(shipment_id)
         conn.execute("UPDATE shp_shipments SET " + ", ".join(sets) + " WHERE id=?", args)
         conn.commit()
-        return True, refused or "updated"
+        left_now = stamp                      # this call is the moment it departed
+        order_id = cur["order_id"]
     finally:
         conn.close()
+    # Departure must LEAVE THE STORE. wh_fg.shipped_qty existed but nothing ever wrote
+    # it, so finished-goods on hand (packed - shipped) drifted permanently upward: every
+    # carton stayed "in stock" after it had physically gone. Post-commit and best-effort
+    # so a warehouse problem can never block or reverse a real departure.
+    if left_now:
+        _post_shipped_to_fg(shipment_id, order_id, user)
+    return True, refused or "updated"
+
+
+def _post_shipped_to_fg(shipment_id, order_id, user):
+    """Decrement finished goods for every carton line on a shipment that just left."""
+    if not order_id:
+        return
+    try:
+        from app.warehouse import services as wh      # optional sibling module
+    except ImportError:
+        return
+    conn = get_db()
+    try:
+        lines = conn.execute(
+            "SELECT style, colour, size, qty_per_carton, cartons FROM shp_cartons "
+            "WHERE shipment_id=?", (shipment_id,)).fetchall()
+    except Exception:
+        return
+    finally:
+        conn.close()
+    for ln in lines:
+        qty = _f(ln["qty_per_carton"]) * _f(ln["cartons"])
+        if qty <= 0:
+            continue
+        try:
+            ok, msg = wh.fg_move(order_id, ln["style"], ln["colour"], ln["size"],
+                                 qty, "ship", user,
+                                 notes=f"Shipment {shipment_id} dispatched")
+            if not ok:
+                # Most likely 'more than packed' — real information, not noise: it means
+                # the packing list and the finished-goods store disagree.
+                log.warning("FG ship post refused for shipment %s (%s/%s/%s): %s",
+                            shipment_id, ln["style"], ln["colour"], ln["size"], msg)
+        except Exception:
+            log.warning("FG ship post crashed for shipment %s", shipment_id, exc_info=True)
 
 
 def add_carton(shipment_id, data, user):
