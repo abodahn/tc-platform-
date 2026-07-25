@@ -58,7 +58,7 @@
   <div class="panel-head"><h3 data-i18n="trc.action.add_cert">Add material certificate</h3></div>
   <div class="panel-pad">
     <div class="grid cols-2">
-      <div class="field"><label data-i18n="trc.field.standard">Standard *</label>
+      <div class="field"><label><span data-i18n="trc.field.standard">Standard</span> *</label>
         <select name="standard">{% for s in standards %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
       <div class="field"><label data-i18n="trc.field.certno">Certificate no.</label><input name="cert_no"></div>
       <div class="field"><label data-i18n="trc.field.issuer">Issuer / certification body</label><input name="issuer"></div>

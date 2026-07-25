@@ -1,0 +1,597 @@
+{
+  "wsh.eyebrow": {
+    "en": "Wet processing · Wash & finishing",
+    "ar": "التجهيز الرطب · الغسيل والتشطيب",
+    "tr": "Islak işlem · Yıkama ve terbiye"
+  },
+  "wsh.dash.title": {
+    "en": "Wash recipe library",
+    "ar": "مكتبة وصفات الغسيل",
+    "tr": "Yıkama reçete kütüphanesi"
+  },
+  "wsh.dash.sub": {
+    "en": "Versioned wash recipes, chemical dosing and batch traceability — so a shade can be reproduced months later.",
+    "ar": "وصفات غسيل بإصدارات، وجرعات المواد الكيميائية، وتتبّع الدفعات — حتى يمكن إعادة إنتاج درجة اللون بعد أشهر.",
+    "tr": "Versiyonlu yıkama reçeteleri, kimyasal dozajı ve parti izlenebilirliği — bir ton aylar sonra yeniden üretilebilsin."
+  },
+  "wsh.dash.recent": {
+    "en": "Recent batches",
+    "ar": "أحدث الدفعات",
+    "tr": "Son partiler"
+  },
+  "wsh.dash.dips": {
+    "en": "Shade sign-off queue",
+    "ar": "قائمة اعتماد درجة اللون",
+    "tr": "Ton onay kuyruğu"
+  },
+  "wsh.recipes.sub": {
+    "en": "One row per recipe family. Steps and chemicals live on a version, never on the family.",
+    "ar": "سطر واحد لكل عائلة وصفات. الخطوات والمواد الكيميائية تتبع الإصدار، لا العائلة.",
+    "tr": "Her reçete ailesi için bir satır. Adımlar ve kimyasallar aileye değil, versiyona aittir."
+  },
+  "wsh.recipes.hint": {
+    "en": "A draft version 1 is created automatically.",
+    "ar": "يتم إنشاء الإصدار 1 كمسودة تلقائيًا.",
+    "tr": "Taslak versiyon 1 otomatik olarak oluşturulur."
+  },
+  "wsh.batches.title": {
+    "en": "Wash batches",
+    "ar": "دفعات الغسيل",
+    "tr": "Yıkama partileri"
+  },
+  "wsh.batches.sub": {
+    "en": "Every lot records the exact recipe version it ran — that is what makes the shade reproducible later.",
+    "ar": "كل دفعة تسجّل إصدار الوصفة الذي شُغّل بالضبط — وهذا ما يجعل درجة اللون قابلة للتكرار لاحقًا.",
+    "tr": "Her parti, çalıştırdığı reçete versiyonunu birebir kaydeder — tonu sonradan tekrarlanabilir kılan budur."
+  },
+  "wsh.batches.hint": {
+    "en": "Actuals outside tolerance are flagged and raise a bell alert.",
+    "ar": "القيم الفعلية الخارجة عن حدود السماح يتم تمييزها وترفع تنبيهًا في الجرس.",
+    "tr": "Tolerans dışı gerçekleşen değerler işaretlenir ve zil uyarısı oluşturur."
+  },
+  "wsh.dips.title": {
+    "en": "Lab dips & shade approval",
+    "ar": "عيّنات اللون المخبرية واعتماد درجة اللون",
+    "tr": "Laboratuvar numuneleri ve ton onayı"
+  },
+  "wsh.dips.sub": {
+    "en": "A recipe version cannot go to bulk until one of its own lab dips is approved.",
+    "ar": "لا يمكن لإصدار الوصفة الانتقال إلى الإنتاج الكمي قبل اعتماد إحدى عيّناته المخبرية.",
+    "tr": "Bir reçete versiyonu, kendi laboratuvar numunelerinden biri onaylanmadan seri üretime geçemez."
+  },
+  "wsh.detail.versions_count": {
+    "en": "versions",
+    "ar": "الإصدارات",
+    "tr": "versiyonlar"
+  },
+  "wsh.detail.pick_version": {
+    "en": "Version",
+    "ar": "الإصدار",
+    "tr": "Versiyon"
+  },
+  "wsh.detail.version": {
+    "en": "Version",
+    "ar": "الإصدار",
+    "tr": "Versiyon"
+  },
+  "wsh.detail.gate": {
+    "en": "A version can only be approved for bulk once one of its own lab dips is approved. Approving it retires the previous bulk standard.",
+    "ar": "لا يُعتمد الإصدار للإنتاج الكمي إلا بعد اعتماد إحدى عيّناته المخبرية. واعتماده يسحب المعيار الكمي السابق من الخدمة.",
+    "tr": "Bir versiyon, ancak kendi laboratuvar numunelerinden biri onaylandığında seri üretim için onaylanabilir. Onaylanması, önceki seri üretim standardını devre dışı bırakır."
+  },
+  "wsh.detail.impact": {
+    "en": "Environmental indicator",
+    "ar": "المؤشر البيئي",
+    "tr": "Çevresel gösterge"
+  },
+  "wsh.detail.impact_note": {
+    "en": "Internal indicator only — not a certified EIM score. Water, energy and chemical intensity per kg of goods, each capped at 100 and averaged. Lower is better.",
+    "ar": "مؤشر داخلي فقط — وليس درجة EIM معتمدة. كثافة الماء والطاقة والمواد الكيميائية لكل كجم من البضاعة، كل منها محدود بـ 100 ثم يُحسب المتوسط. الأقل أفضل.",
+    "tr": "Yalnızca dahili bir göstergedir — sertifikalı bir EIM puanı değildir. Kilogram mal başına su, enerji ve kimyasal yoğunluğu; her biri 100 ile sınırlanıp ortalaması alınır. Düşük olan daha iyidir."
+  },
+  "wsh.detail.steps": {
+    "en": "Steps & chemical dosing",
+    "ar": "الخطوات وجرعات المواد الكيميائية",
+    "tr": "Adımlar ve kimyasal dozajı"
+  },
+  "wsh.detail.steps_word": {
+    "en": "steps",
+    "ar": "خطوات",
+    "tr": "adım"
+  },
+  "wsh.detail.frozen": {
+    "en": "This version is frozen. Create a new version to change the steps — batches already reference this one.",
+    "ar": "هذا الإصدار مُجمَّد. أنشئ إصدارًا جديدًا لتغيير الخطوات — فهناك دفعات تشير إليه بالفعل.",
+    "tr": "Bu versiyon dondurulmuştur. Adımları değiştirmek için yeni bir versiyon oluşturun — partiler bu versiyona referans veriyor."
+  },
+  "wsh.detail.dips": {
+    "en": "Lab dips on this version",
+    "ar": "العيّنات المخبرية لهذا الإصدار",
+    "tr": "Bu versiyonun laboratuvar numuneleri"
+  },
+  "wsh.detail.batches": {
+    "en": "Batches run on this version",
+    "ar": "الدفعات التي شُغّلت على هذا الإصدار",
+    "tr": "Bu versiyonla çalışan partiler"
+  },
+  "wsh.kpi.recipes": {
+    "en": "Recipes",
+    "ar": "الوصفات",
+    "tr": "Reçeteler"
+  },
+  "wsh.kpi.approved": {
+    "en": "Approved for bulk",
+    "ar": "معتمدة للإنتاج الكمي",
+    "tr": "Seri üretime onaylı"
+  },
+  "wsh.kpi.batches_today": {
+    "en": "Batches today",
+    "ar": "دفعات اليوم",
+    "tr": "Bugünkü partiler"
+  },
+  "wsh.kpi.avg_cycle": {
+    "en": "Avg cycle (min)",
+    "ar": "متوسط زمن الدورة (دقيقة)",
+    "tr": "Ort. çevrim (dk)"
+  },
+  "wsh.kpi.dips_pending": {
+    "en": "Lab dips pending",
+    "ar": "عيّنات مخبرية معلّقة",
+    "tr": "Bekleyen laboratuvar numuneleri"
+  },
+  "wsh.kpi.dips_rejected": {
+    "en": "Shades rejected",
+    "ar": "درجات لون مرفوضة",
+    "tr": "Reddedilen tonlar"
+  },
+  "wsh.kpi.versions": {
+    "en": "Recipe versions",
+    "ar": "إصدارات الوصفات",
+    "tr": "Reçete versiyonları"
+  },
+  "wsh.kpi.batches": {
+    "en": "Batches recorded",
+    "ar": "الدفعات المسجّلة",
+    "tr": "Kaydedilen partiler"
+  },
+  "wsh.kpi.deviations": {
+    "en": "Off-recipe batches",
+    "ar": "دفعات خارجة عن الوصفة",
+    "tr": "Reçete dışı partiler"
+  },
+  "wsh.kpi.cycle": {
+    "en": "Cycle time (min)",
+    "ar": "زمن الدورة (دقيقة)",
+    "tr": "Çevrim süresi (dk)"
+  },
+  "wsh.kpi.water": {
+    "en": "Water est. (L)",
+    "ar": "الماء التقديري (لتر)",
+    "tr": "Tahmini su (L)"
+  },
+  "wsh.kpi.baths": {
+    "en": "Baths",
+    "ar": "الحمّامات",
+    "tr": "Banyolar"
+  },
+  "wsh.kpi.nominal_load": {
+    "en": "Nominal load (kg)",
+    "ar": "الحمولة الاسمية (كجم)",
+    "tr": "Nominal yük (kg)"
+  },
+  "wsh.kpi.peak_temp": {
+    "en": "Peak temp (C)",
+    "ar": "أقصى درجة حرارة (م)",
+    "tr": "Maks. sıcaklık (C)"
+  },
+  "wsh.kpi.impact": {
+    "en": "Impact indicator",
+    "ar": "مؤشر الأثر",
+    "tr": "Etki göstergesi"
+  },
+  "wsh.impact.water": {
+    "en": "Water",
+    "ar": "الماء",
+    "tr": "Su"
+  },
+  "wsh.impact.energy": {
+    "en": "Energy",
+    "ar": "الطاقة",
+    "tr": "Enerji"
+  },
+  "wsh.impact.chem": {
+    "en": "Chemical",
+    "ar": "المواد الكيميائية",
+    "tr": "Kimyasal"
+  },
+  "wsh.field.factor": {
+    "en": "Factor",
+    "ar": "العامل",
+    "tr": "Faktör"
+  },
+  "wsh.field.index": {
+    "en": "Index",
+    "ar": "المؤشر",
+    "tr": "Endeks"
+  },
+  "wsh.field.level": {
+    "en": "Level",
+    "ar": "المستوى",
+    "tr": "Seviye"
+  },
+  "wsh.field.chem_total": {
+    "en": "Chemical total (g)",
+    "ar": "إجمالي المواد الكيميائية (جرام)",
+    "tr": "Toplam kimyasal (g)"
+  },
+  "wsh.field.step_no": {
+    "en": "#",
+    "ar": "#",
+    "tr": "#"
+  },
+  "wsh.field.operation": {
+    "en": "Operation",
+    "ar": "العملية",
+    "tr": "İşlem"
+  },
+  "wsh.field.temp": {
+    "en": "Temp C",
+    "ar": "الحرارة (م)",
+    "tr": "Sıcaklık C"
+  },
+  "wsh.field.minutes": {
+    "en": "Minutes",
+    "ar": "الدقائق",
+    "tr": "Dakika"
+  },
+  "wsh.field.liquor": {
+    "en": "Liquor ratio",
+    "ar": "نسبة الحمّام",
+    "tr": "Flotte oranı"
+  },
+  "wsh.field.load": {
+    "en": "Load kg",
+    "ar": "الحمولة (كجم)",
+    "tr": "Yük kg"
+  },
+  "wsh.field.bath": {
+    "en": "Bath L",
+    "ar": "الحمّام (لتر)",
+    "tr": "Banyo L"
+  },
+  "wsh.field.chemicals": {
+    "en": "Chemicals",
+    "ar": "المواد الكيميائية",
+    "tr": "Kimyasallar"
+  },
+  "wsh.field.chemical": {
+    "en": "Chemical",
+    "ar": "المادة الكيميائية",
+    "tr": "Kimyasal"
+  },
+  "wsh.field.gpl": {
+    "en": "g/L of bath",
+    "ar": "جرام/لتر من الحمّام",
+    "tr": "Banyo başına g/L"
+  },
+  "wsh.field.owg": {
+    "en": "% on weight of goods",
+    "ar": "% من وزن البضاعة",
+    "tr": "Mal ağırlığına göre %"
+  },
+  "wsh.field.step": {
+    "en": "Step",
+    "ar": "الخطوة",
+    "tr": "Adım"
+  },
+  "wsh.field.notes": {
+    "en": "Notes",
+    "ar": "ملاحظات",
+    "tr": "Notlar"
+  },
+  "wsh.field.created_by": {
+    "en": "Created by",
+    "ar": "أنشأها",
+    "tr": "Oluşturan"
+  },
+  "wsh.field.approved_by": {
+    "en": "Approved by",
+    "ar": "اعتمدها",
+    "tr": "Onaylayan"
+  },
+  "wsh.field.code": {
+    "en": "Code",
+    "ar": "الكود",
+    "tr": "Kod"
+  },
+  "wsh.field.name": {
+    "en": "Name",
+    "ar": "الاسم",
+    "tr": "Ad"
+  },
+  "wsh.field.style": {
+    "en": "Style ref",
+    "ar": "مرجع الموديل",
+    "tr": "Model referansı"
+  },
+  "wsh.field.wash_type": {
+    "en": "Wash type",
+    "ar": "نوع الغسيل",
+    "tr": "Yıkama tipi"
+  },
+  "wsh.field.order": {
+    "en": "Order",
+    "ar": "أمر الشغل",
+    "tr": "Sipariş"
+  },
+  "wsh.field.no_order": {
+    "en": "Not linked",
+    "ar": "غير مرتبط",
+    "tr": "Bağlı değil"
+  },
+  "wsh.field.versions": {
+    "en": "Versions",
+    "ar": "الإصدارات",
+    "tr": "Versiyonlar"
+  },
+  "wsh.field.bulk": {
+    "en": "Bulk standard",
+    "ar": "المعيار الكمي",
+    "tr": "Seri üretim standardı"
+  },
+  "wsh.field.latest": {
+    "en": "Latest",
+    "ar": "الأحدث",
+    "tr": "En son"
+  },
+  "wsh.field.version": {
+    "en": "Recipe version",
+    "ar": "إصدار الوصفة",
+    "tr": "Reçete versiyonu"
+  },
+  "wsh.field.machine": {
+    "en": "Machine",
+    "ar": "الماكينة",
+    "tr": "Makine"
+  },
+  "wsh.field.operator": {
+    "en": "Operator",
+    "ar": "المشغّل",
+    "tr": "Operatör"
+  },
+  "wsh.field.started": {
+    "en": "Started",
+    "ar": "البداية",
+    "tr": "Başlangıç"
+  },
+  "wsh.field.ended": {
+    "en": "Ended",
+    "ar": "النهاية",
+    "tr": "Bitiş"
+  },
+  "wsh.field.act_minutes": {
+    "en": "Actual minutes",
+    "ar": "الدقائق الفعلية",
+    "tr": "Gerçekleşen dakika"
+  },
+  "wsh.field.act_temp": {
+    "en": "Actual peak temp C",
+    "ar": "أقصى حرارة فعلية (م)",
+    "tr": "Gerçekleşen maks. sıcaklık C"
+  },
+  "wsh.field.act_water": {
+    "en": "Metered water L",
+    "ar": "الماء المقيس بالعدّاد (لتر)",
+    "tr": "Sayaçla ölçülen su L"
+  },
+  "wsh.field.shade": {
+    "en": "Shade",
+    "ar": "درجة اللون",
+    "tr": "Ton"
+  },
+  "wsh.field.status": {
+    "en": "Status",
+    "ar": "الحالة",
+    "tr": "Durum"
+  },
+  "wsh.field.batch": {
+    "en": "Batch",
+    "ar": "الدفعة",
+    "tr": "Parti"
+  },
+  "wsh.field.no_batch": {
+    "en": "Recipe-level (no batch)",
+    "ar": "على مستوى الوصفة (بدون دفعة)",
+    "tr": "Reçete düzeyinde (parti yok)"
+  },
+  "wsh.field.recipe": {
+    "en": "Recipe",
+    "ar": "الوصفة",
+    "tr": "Reçete"
+  },
+  "wsh.field.deviation": {
+    "en": "Deviation",
+    "ar": "الانحراف",
+    "tr": "Sapma"
+  },
+  "wsh.field.reference": {
+    "en": "Reference",
+    "ar": "المرجع",
+    "tr": "Referans"
+  },
+  "wsh.field.verdict": {
+    "en": "Verdict",
+    "ar": "القرار",
+    "tr": "Karar"
+  },
+  "wsh.field.approver": {
+    "en": "Approver",
+    "ar": "المعتمد",
+    "tr": "Onaylayan"
+  },
+  "wsh.field.date": {
+    "en": "Date",
+    "ar": "التاريخ",
+    "tr": "Tarih"
+  },
+  "wsh.field.decision": {
+    "en": "Decision",
+    "ar": "القرار",
+    "tr": "Karar"
+  },
+  "wsh.filter.all_types": {
+    "en": "All wash types",
+    "ar": "كل أنواع الغسيل",
+    "tr": "Tüm yıkama tipleri"
+  },
+  "wsh.filter.all_status": {
+    "en": "Any latest status",
+    "ar": "أي حالة أخيرة",
+    "tr": "Herhangi bir son durum"
+  },
+  "wsh.filter.all_verdicts": {
+    "en": "All verdicts",
+    "ar": "كل القرارات",
+    "tr": "Tüm kararlar"
+  },
+  "wsh.filter.clear": {
+    "en": "Clear",
+    "ar": "مسح",
+    "tr": "Temizle"
+  },
+  "wsh.nav.home": {
+    "en": "Dashboard",
+    "ar": "لوحة المتابعة",
+    "tr": "Panel"
+  },
+  "wsh.nav.recipes": {
+    "en": "Recipes",
+    "ar": "الوصفات",
+    "tr": "Reçeteler"
+  },
+  "wsh.nav.batches": {
+    "en": "Batches",
+    "ar": "الدفعات",
+    "tr": "Partiler"
+  },
+  "wsh.nav.labdips": {
+    "en": "Lab dips",
+    "ar": "العيّنات المخبرية",
+    "tr": "Laboratuvar numuneleri"
+  },
+  "wsh.action.back": {
+    "en": "Back",
+    "ar": "رجوع",
+    "tr": "Geri"
+  },
+  "wsh.action.new_version": {
+    "en": "New version from this one",
+    "ar": "إصدار جديد من هذا الإصدار",
+    "tr": "Bundan yeni versiyon"
+  },
+  "wsh.action.set_status": {
+    "en": "Set status",
+    "ar": "تحديد الحالة",
+    "tr": "Durumu ayarla"
+  },
+  "wsh.action.add_step": {
+    "en": "Add step",
+    "ar": "إضافة خطوة",
+    "tr": "Adım ekle"
+  },
+  "wsh.action.add_chemical": {
+    "en": "Add chemical",
+    "ar": "إضافة مادة كيميائية",
+    "tr": "Kimyasal ekle"
+  },
+  "wsh.action.all_dips": {
+    "en": "All lab dips",
+    "ar": "كل العيّنات المخبرية",
+    "tr": "Tüm laboratuvar numuneleri"
+  },
+  "wsh.action.all_batches": {
+    "en": "All batches",
+    "ar": "كل الدفعات",
+    "tr": "Tüm partiler"
+  },
+  "wsh.action.new_recipe": {
+    "en": "New recipe",
+    "ar": "وصفة جديدة",
+    "tr": "Yeni reçete"
+  },
+  "wsh.action.create": {
+    "en": "Create recipe",
+    "ar": "إنشاء الوصفة",
+    "tr": "Reçete oluştur"
+  },
+  "wsh.action.new_batch": {
+    "en": "Record a batch",
+    "ar": "تسجيل دفعة",
+    "tr": "Parti kaydet"
+  },
+  "wsh.action.record": {
+    "en": "Record batch",
+    "ar": "تسجيل الدفعة",
+    "tr": "Partiyi kaydet"
+  },
+  "wsh.action.new_dip": {
+    "en": "Log a lab dip",
+    "ar": "تسجيل عيّنة مخبرية",
+    "tr": "Laboratuvar numunesi kaydet"
+  },
+  "wsh.action.log_dip": {
+    "en": "Log lab dip",
+    "ar": "تسجيل العيّنة",
+    "tr": "Numuneyi kaydet"
+  },
+  "wsh.action.save_verdict": {
+    "en": "Save",
+    "ar": "حفظ",
+    "tr": "Kaydet"
+  },
+  "wsh.badge.in_tol": {
+    "en": "in tolerance",
+    "ar": "داخل حدود السماح",
+    "tr": "tolerans içinde"
+  },
+  "wsh.badge.none": {
+    "en": "none",
+    "ar": "لا يوجد",
+    "tr": "yok"
+  },
+  "wsh.empty.recipes": {
+    "en": "No recipes yet — create the first one.",
+    "ar": "لا توجد وصفات بعد — أنشئ الأولى.",
+    "tr": "Henüz reçete yok — ilkini oluşturun."
+  },
+  "wsh.empty.versions": {
+    "en": "This recipe has no version yet.",
+    "ar": "لا يوجد إصدار لهذه الوصفة بعد.",
+    "tr": "Bu reçetenin henüz versiyonu yok."
+  },
+  "wsh.empty.steps": {
+    "en": "No steps on this version yet.",
+    "ar": "لا توجد خطوات في هذا الإصدار بعد.",
+    "tr": "Bu versiyonda henüz adım yok."
+  },
+  "wsh.empty.dips": {
+    "en": "No lab dips waiting.",
+    "ar": "لا توجد عيّنات مخبرية في الانتظار.",
+    "tr": "Bekleyen laboratuvar numunesi yok."
+  },
+  "wsh.empty.dips_v": {
+    "en": "No lab dip on this version — bulk approval is blocked.",
+    "ar": "لا توجد عيّنة مخبرية لهذا الإصدار — اعتماد الإنتاج الكمي متوقف.",
+    "tr": "Bu versiyonda laboratuvar numunesi yok — seri üretim onayı engelli."
+  },
+  "wsh.empty.batches": {
+    "en": "No wash batches recorded yet.",
+    "ar": "لم تُسجَّل أي دفعات غسيل بعد.",
+    "tr": "Henüz yıkama partisi kaydedilmedi."
+  },
+  "wsh.empty.batches_v": {
+    "en": "No batch has run this version.",
+    "ar": "لم تُشغَّل أي دفعة على هذا الإصدار.",
+    "tr": "Bu versiyonla çalışan parti yok."
+  }
+}

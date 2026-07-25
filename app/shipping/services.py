@@ -4,7 +4,9 @@ ordered-vs-shipped reconciliation that flags chargeback risk on the bell.
 
 Arithmetic invariants (all covered by tests_selftest.py):
   * weights and dimensions are stored PER CARTON, so every total multiplies by `cartons`;
-  * pieces = qty_per_carton x cartons;
+  * pieces = qty_per_carton x cartons, and BOTH are whole counts — a fractional box or a
+    fractional garment is refused on write, because every document prints pieces rounded
+    ('{:,.0f}') while the invoice would charge the unrounded value;
   * CBM = L x W x H in METRES x cartons — dimensions are captured in cm, hence /1_000_000;
   * invoice line amount = pieces x the unit price SNAPSHOTTED on the shipment, rounded to
     2dp per line, and the invoice total is the sum of those rounded lines (that is how a

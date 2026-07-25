@@ -688,19 +688,20 @@ with app.app_context():
                 ("pieces", t["pieces"], float(want["pieces"])),
                 ("net", t["net"], float(round(want["net"], 3))),
                 ("gross", t["gross"], float(round(want["gross"], 3))),
-                ("cbm", t["cbm"], float(round(want["cbm"], 4))),
                 ("sql pieces", lst[sk]["pieces"], float(want["pieces"])),
                 ("sql cartons", lst[sk]["cartons"], int(want["cartons"])),
-                # the list page rounds the SUM, the detail page sums the ROUNDED lines,
-                # so they may disagree by ~1e-4 m3 (0.1 litre) on a many-line shipment
-                ("sql cbm", lst[sk]["cbm"], float(round(want["cbm_exact"], 4))),
                 ("invoice lines", len(iv["lines"]), len(want["sku"])),
                 ("invoice total", iv["invoice_total"], float(want_total))):
             if abs(got - wanted) > 1e-4:
                 bad.append("shipment %s %s: %r != %r" % (sk, label, got, wanted))
-        drift = abs(_D(str(t["cbm"])) - want["cbm_exact"])
-        if drift > _D("0.001"):
-            bad.append("shipment %s cbm drift %s" % (sk, drift))
+        # CBM is the one value where the detail page (sum of the 4dp-rounded lines, so the
+        # document foots) and the list page (one 4dp rounding of the whole SUM) can differ
+        # in the 4th decimal — 1e-4 m3 is 0.1 litre, far below any freight relevance, and
+        # SUM(ROUND(x,4)) is not portable (PostgreSQL has no round(double precision,int)).
+        for label, got in (("detail cbm", t["cbm"]), ("sql cbm", lst[sk]["cbm"])):
+            if abs(_D(str(got)) - want["cbm_exact"]) > _D("0.001"):
+                bad.append("shipment %s %s drifts: %r vs %s" % (sk, label, got,
+                                                                want["cbm_exact"]))
     ck(not bad, "every total, SQL aggregate and invoice matches an independent "
                 "Decimal recomputation %s" % (bad[:4] or ""))
 

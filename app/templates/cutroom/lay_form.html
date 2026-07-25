@@ -14,7 +14,7 @@
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
   <div class="panel-pad">
     <div class="grid cols-2">
-      <div class="field"><label data-i18n="cut.field.order">Order *</label>
+      <div class="field"><label><span data-i18n="cut.field.order">Order</span> *</label>
         <select name="order_id" required>
           <option value="" data-i18n="cut.filter.pick_order">Pick an order…</option>
           {% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if f_order==o.id }}>{{ o.order_no }} · {{ o.style_ref or '' }} · {{ o.buyer or '' }}</option>{% endfor %}

@@ -25,7 +25,7 @@
   <div class="panel-head"><h3 data-i18n="wsh.action.new_dip">Log a lab dip</h3></div>
   <div class="panel-pad">
     <div class="grid cols-4">
-      <div class="field span-2"><label data-i18n="wsh.field.version">Recipe version *</label>
+      <div class="field span-2"><label><span data-i18n="wsh.field.version">Recipe version</span> *</label>
         <select name="version_id" required>
           {% for v in versions %}<option value="{{ v.id }}">{{ v.code }} v{{ v.version }} · {{ v.status }} — {{ v.name }}</option>{% endfor %}
         </select></div>

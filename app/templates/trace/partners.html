@@ -48,7 +48,7 @@
   <div class="panel-head"><h3 data-i18n="trc.action.add_partner">Add supply-chain partner</h3></div>
   <div class="panel-pad">
     <div class="grid cols-2">
-      <div class="field"><label data-i18n="trc.field.partner">Partner name *</label><input name="name" required></div>
+      <div class="field"><label><span data-i18n="trc.field.partner">Partner name</span> *</label><input name="name" required></div>
       <div class="field"><label data-i18n="trc.field.tier">Tier</label>
         <select name="tier">{% for k in tier_keys %}<option value="{{ k }}" data-i18n="trc.tier.{{ k }}">{{ tiers[k] }}</option>{% endfor %}</select></div>
       <div class="field"><label data-i18n="trc.field.country">Country</label><input name="country"></div>

@@ -55,7 +55,7 @@
             <select name="mode">{% for m in modes %}<option value="{{ m }}" {{ 'selected' if shipment.mode==m }}>{{ m }}</option>{% endfor %}</select></div>
           <div class="field"><label data-i18n="shp.field.carrier">Carrier / forwarder</label><input name="carrier" value="{{ shipment.carrier or '' }}"></div>
           <div class="field"><label data-i18n="shp.field.container">Container / AWB no</label><input name="container_no" value="{{ shipment.container_no or '' }}"></div>
-          <div class="field"><label data-i18n="shp.field.destination">Destination</label><input name="destination" value="{{ shipment.destination or '' }}"></div>
+          <div class="field"><label data-i18n="shp.field.destination">Destination</label><input name="destination" value="{{ shipment.destination or '' }}" required></div>
           <div class="field"><label data-i18n="shp.field.etd">ETD</label><input type="date" name="etd" value="{{ shipment.etd or '' }}"></div>
           <div class="field"><label data-i18n="shp.field.eta">ETA</label><input type="date" name="eta" value="{{ shipment.eta or '' }}"></div>
           <div class="field"><label data-i18n="shp.field.invoice_no">Invoice no</label><input name="invoice_no" value="{{ shipment.invoice_no or '' }}"></div>
@@ -89,8 +89,8 @@
           <div class="field"><label data-i18n="shp.field.style">Style</label><input name="style" value="{{ order.style_ref if order else '' }}"></div>
           <div class="field"><label data-i18n="shp.field.colour">Colour</label><input name="colour"></div>
           <div class="field"><label data-i18n="shp.field.size">Size</label><input name="size"></div>
-          <div class="field"><label data-i18n="shp.field.qty_per_req">Pieces per carton *</label><input type="number" name="qty_per_carton" step="1" min="1" required></div>
-          <div class="field"><label data-i18n="shp.field.cartons_req">Cartons *</label><input type="number" name="cartons" min="1" step="1" required></div>
+          <div class="field"><label><span data-i18n="shp.field.qty_per_req">Pieces per carton</span> *</label><input type="number" name="qty_per_carton" step="1" min="1" required></div>
+          <div class="field"><label><span data-i18n="shp.field.cartons_req">Cartons</span> *</label><input type="number" name="cartons" min="1" step="1" required></div>
           <div class="field"><label data-i18n="shp.field.net_per">Net weight / carton (kg)</label><input type="number" name="net_weight" step="any" min="0"></div>
           <div class="field"><label data-i18n="shp.field.gross_per">Gross weight / carton (kg)</label><input type="number" name="gross_weight" step="any" min="0"></div>
           <div class="field"><label data-i18n="shp.field.len">Length (cm)</label><input type="number" name="length_cm" step="any" min="0"></div>

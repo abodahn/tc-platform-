@@ -168,11 +168,11 @@
     <form method="post" action="{{ url_for('costing.bom_add', order_id=order.id) }}" class="mt-4" style="border-top:1px solid var(--line-2);padding-top:12px">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <div class="grid cols-4">
-        <div class="field span-2"><label data-i18n="cst.field.item">Material / item *</label><input name="item" required></div>
+        <div class="field span-2"><label><span data-i18n="cst.field.item">Material / item</span> *</label><input name="item" required></div>
         <div class="field"><label data-i18n="cst.field.kind">Type</label>
           <select name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></div>
         <div class="field"><label data-i18n="cst.field.colour">Colour</label><input name="colour"></div>
-        <div class="field"><label data-i18n="cst.field.consumption">Consumption / unit *</label>
+        <div class="field"><label><span data-i18n="cst.field.consumption">Consumption / unit</span> *</label>
           <input type="number" step="any" min="0" name="consumption" required></div>
         <div class="field"><label data-i18n="cst.field.uom">Unit</label>
           <select name="uom">{% for u in uoms %}<option value="{{ u }}">{{ u }}</option>{% endfor %}</select></div>
@@ -269,7 +269,7 @@
         <div class="grid cols-2">
           <div class="field"><label data-i18n="cst.field.category">Category</label>
             <select name="category">{% for c in categories %}<option value="{{ c }}" {{ 'selected' if c=='cm' }}>{{ catlabel[c] }}</option>{% endfor %}</select></div>
-          <div class="field"><label data-i18n="cst.field.amount_total">Amount (total) *</label>
+          <div class="field"><label><span data-i18n="cst.field.amount_total">Amount (total)</span> *</label>
             <input type="number" step="any" min="0" name="amount" required></div>
           <div class="field span-2"><label data-i18n="cst.field.source">Source / reference</label><input name="source"></div>
         </div>

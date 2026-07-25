@@ -701,24 +701,30 @@ with app.app_context():
 
     # ---------------------------------------------------------------- 22
     section(22, "deactivating a line must not hide the work already committed to it")
-    ok, aid = svc.create_allocation({"order_id": oid, "pline_id": lid, "qty": 10000,
+    # a private line, so only this scenario's own load is on it
+    conn.execute("INSERT INTO pln_lines (code,name,operators,working_minutes,efficiency_pct,"
+                 "active,created_at) VALUES ('RETIRE','Line to retire',10,500,100,1,'t')")
+    conn.commit()
+    rid = conn.execute("SELECT id FROM pln_lines WHERE code='RETIRE'").fetchone()["id"]
+    ok, aid = svc.create_allocation({"order_id": oid, "pline_id": rid, "qty": 500,
                                      "start_date": str(TODAY)}, {})
-    yes("fixture allocation on SEW-1", ok)
-    loaded = sum(c["minutes"] for g in svc.board(14)["grid"] if g["line"]["id"] == lid
+    yes("fixture allocation on the private line", ok)
+    loaded = sum(c["minutes"] for g in svc.board(14)["grid"] if g["line"]["id"] == rid
                  for c in g["cells"])
-    yes("the line carries load while active", loaded > 0)
-    svc.update_line(lid, {"active": "0"}, {})
-    row = [g for g in svc.board(14)["grid"] if g["line"]["id"] == lid]
+    check("the line carries 500 x 10 SMV of load while active", loaded, 5000.0)
+    svc.update_line(rid, {"active": "0"}, {})
+    row = [g for g in svc.board(14)["grid"] if g["line"]["id"] == rid]
     check("an inactive line with committed work stays on the board", len(row), 1)
     check("its minutes are still counted", sum(c["minutes"] for c in row[0]["cells"]), loaded)
     check("feasibility and the board agree it is planned",
           svc.feasibility(oid)["planned_qty"] > 0, True)
     svc.delete_allocation(aid)
     check("once un-planned, the retired line drops off the board",
-          [g for g in svc.board(14)["grid"] if g["line"]["id"] == lid], [])
-    svc.update_line(lid, {"active": "1"}, {})
+          [g for g in svc.board(14)["grid"] if g["line"]["id"] == rid], [])
+    svc.update_line(rid, {"active": "1"}, {})
     check("re-activating brings it back",
-          len([g for g in svc.board(14)["grid"] if g["line"]["id"] == lid]), 1)
+          len([g for g in svc.board(14)["grid"] if g["line"]["id"] == rid]), 1)
+    svc.update_line(rid, {"active": "0"}, {})
 
     # ---------------------------------------------------------------- 23
     section(23, "over-planning an order must be visible, not clamped away")
@@ -745,6 +751,7 @@ with app.app_context():
     conn.execute("DELETE FROM pln_ops")
     conn.execute("UPDATE ord_orders SET created_by='ahmed'")   # nothing is demo any more
     conn.commit()
+    bells = conn.execute("SELECT COUNT(*) AS n FROM notifications").fetchone()["n"]
     create_and_seed(conn); conn.commit()
     check("no invented SMV on a real order", conn.execute(
         "SELECT COUNT(*) AS n FROM pln_order_smv").fetchone()["n"], 0)
@@ -752,9 +759,8 @@ with app.app_context():
         "SELECT COUNT(*) AS n FROM pln_allocations").fetchone()["n"], 0)
     check("no invented operation bulletin", conn.execute(
         "SELECT COUNT(*) AS n FROM pln_ops").fetchone()["n"], 0)
-    check("no bell alert was raised for a plan nobody made", conn.execute(
-        "SELECT COUNT(*) AS n FROM notifications WHERE module='planning' AND "
-        "title LIKE '%ADV%'").fetchone()["n"], 0)
+    check("seeding raised no bell alert for a plan nobody made", conn.execute(
+        "SELECT COUNT(*) AS n FROM notifications").fetchone()["n"], bells)
     conn.execute("UPDATE ord_orders SET created_by='seed' WHERE order_no LIKE 'SO-10%'")
     conn.commit()
     create_and_seed(conn); conn.commit()
@@ -768,14 +774,20 @@ with app.app_context():
     conn.commit()
     rl = conn.execute("SELECT id FROM pln_lines WHERE code='ROUND'").fetchone()["id"]
     ro = conn.execute("SELECT id FROM ord_orders WHERE order_no='ADV-2'").fetchone()["id"]
-    # 1000 min/day capacity vs 1000.4 minutes of work: 100.04% -> rounds to 100.0%
-    svc.create_allocation({"order_id": ro, "pline_id": rl, "qty": 10004, "smv": 0.1,
+
+    def day0(line_id):
+        return [g for g in svc.board(2)["grid"] if g["line"]["id"] == line_id][0]["cells"][0]
+
+    # capacity 1 x 1000 x 100% = 1000 min/day. First fill it EXACTLY: 5000 x 0.2 = 1000.
+    svc.create_allocation({"order_id": ro, "pline_id": rl, "qty": 5000, "smv": 0.2,
                            "start_date": str(TODAY)}, {})
-    cell = [g for g in svc.board(2)["grid"] if g["line"]["id"] == rl][0]["cells"][0]
-    check("the rounded % hides it", cell["pct"], 100.0)
-    check("the overload is still flagged", cell["over"], True)
-    check("exactly 100% is still not an overload",
-          [g for g in svc.board(2)["grid"] if g["line"]["id"] == rl][0]["cells"][1]["over"], False)
+    check("exactly 100% is not an overload", (day0(rl)["pct"], day0(rl)["over"]), (100.0, False))
+    # now overlap 4 x 0.1 = 0.4 more minutes: 1000.4 / 1000 = 100.04% -> rounds to 100.0%
+    svc.create_allocation({"order_id": ro, "pline_id": rl, "qty": 4, "smv": 0.1,
+                           "start_date": str(TODAY)}, {})
+    check("the loaded minutes really exceed capacity", day0(rl)["minutes"], 1000.4)
+    check("the rounded % hides it", day0(rl)["pct"], 100.0)
+    check("the overload is flagged from the raw minutes anyway", day0(rl)["over"], True)
 
     # ---------------------------------------------------------------- 26
     section(26, "create_and_seed x3 again, after the seed guard changed")
@@ -802,10 +814,12 @@ if MAP.exists():
     for lang in ("en", "ar", "tr"):
         missing = sorted(need - set(m.get(lang, {})))
         check(f"{lang}: keys missing from the map", missing, [])
+    # 'SMV' and '#' are the same token in Turkish — everything else must be translated
+    SAME_OK = {"pln.field.smv", "pln.field.seq"}
     check("ar is not an English copy",
-          sum(1 for k in need if m["ar"].get(k) == m["en"].get(k)), 0)
+          sorted(k for k in need if m["ar"].get(k) == m["en"].get(k)), [])
     check("tr is not an English copy",
-          sum(1 for k in need if m["tr"].get(k) == m["en"].get(k)), 0)
+          sorted(k for k in need - SAME_OK if m["tr"].get(k) == m["en"].get(k)), [])
 
 print("\n" + "=" * 62)
 if FAILS:

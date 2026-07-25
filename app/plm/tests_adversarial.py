@@ -331,7 +331,8 @@ def main():
     # between the anonymous / low-privilege / admin clients below.
     print("\n[J] the real HTTP surface (blueprint registered into a test app)")
     from app.routes import plm as plm_routes
-    app.register_blueprint(plm_routes.bp)
+    if "plm.index" not in app.view_functions:      # create_app registers it once spliced
+        app.register_blueprint(plm_routes.bp)
     from app.db import get_db
     from app.plm.schema import create_and_seed
     conn = get_db()
@@ -351,10 +352,30 @@ def main():
        "...and the status is untouched")
 
     low = app.test_client()
-    _login(low, "exec")                          # a real account with no plm_* permission
+    _login(low, "agent")     # service_desk_agent: a real account with no plm_* permission
     for path in ("/plm/", "/plm/styles", f"/plm/styles/{sid}", "/plm/styles/new",
                  f"/plm/techpack/{tp['id']}"):
         ok(low.get(path).status_code == 403, f"no-permission user gets 403 on {path}")
+
+    # exec = executive_viewer: security.py grants it plm_view (read-only across the
+    # operation) and nothing else, so it must be able to LOOK and never to write.
+    ro = app.test_client()
+    _login(ro, "exec")
+    ok(ro.get("/plm/").status_code == 200, "a plm_view-only user can read the dashboard")
+    ok(ro.get("/plm/styles/new").status_code == 403, "...but cannot open the create form")
+    ro_tok = _csrf(ro)
+    for path, data in ((f"/plm/styles/{sid}/status", {"status": "approved"}),
+                       (f"/plm/styles/{sid}/bom", {"material": "X", "consumption": "1"}),
+                       (f"/plm/styles/{sid}/sample", {"stage": "pp", "verdict": "approved"}),
+                       (f"/plm/styles/{sid}/techpack", {"change_note": "x"}),
+                       (f"/plm/styles/{sid}/update", {"name": "hijacked"}),
+                       (f"/plm/techpack/{tp['id']}/section", {"title": "x"}),
+                       (f"/plm/techpack/{tp['id']}/spec", {"pom": "x", "spec_value": "1"}),
+                       ("/plm/samples/1/verdict", {"verdict": "approved"})):
+        ok(ro.post(path, data=dict(data, _csrf=ro_tok)).status_code == 403,
+           f"...and POST {path} -> 403")
+    ok(_row("SELECT name FROM plm_styles WHERE id=?", (sid,))["name"] != "hijacked",
+       "no read-only write got through")
 
     c = app.test_client()
     _login(c, config.Config.ADMIN_USER, config.Config.ADMIN_PASSWORD)
@@ -693,9 +714,12 @@ def _login(client, username, password=None):
 
 
 def _csrf(client):
-    import re as _re
-    html = client.get("/plm/styles/new").get_data(as_text=True)
-    return _re.search(r'name="_csrf" value="([^"]+)"', html).group(1)
+    """Straight out of the session, so it also works for a client whose pages all
+    403 (a read-only user must still be able to send a WELL-FORMED write attempt —
+    otherwise CSRF, not RBAC, would be what stopped it and the test proves nothing)."""
+    client.get("/plm/")                       # let before_request mint the token
+    with client.session_transaction() as s:
+        return s.get("_csrf_token", "")
 
 
 def _counts(conn):

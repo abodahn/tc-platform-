@@ -735,7 +735,7 @@ with app.app_context():
     for _ in range(2):
         svc.add_downtime({"line_id": L1, "work_date": "2026-04-04",
                           "reason": "power", "minutes": 30}, U)
-    ok("PINNED: downtime is an append-only event log — a double-click books it twice",
+    ok("PINNED: downtime is an append-only event log: a double-click books it twice",
        one("SELECT COUNT(*) FROM mes_downtime WHERE work_date='2026-04-04'") == d0 + 2)
     ZE = "2026-04-05"
     for i in range(3):

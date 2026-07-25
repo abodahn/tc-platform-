@@ -20,7 +20,7 @@
           {% for o in orders %}<option value="{{ o.id }}">{{ o.order_no }} · {{ o.buyer }} · {{ o.style_name or o.style_ref or '' }} · {{ '{:,.0f}'.format(o.qty or 0) }} pcs</option>{% endfor %}
         </select></div>
       <div class="field"><label data-i18n="shp.field.buyer">Buyer</label><input name="buyer"></div>
-      <div class="field"><label data-i18n="shp.field.dest_full">Destination / port of discharge *</label><input name="destination" required></div>
+      <div class="field"><label><span data-i18n="shp.field.dest_full">Destination / port of discharge</span> *</label><input name="destination" required></div>
       <div class="field"><label data-i18n="shp.field.pol">Port of loading</label><input name="port_loading"></div>
       <div class="field"><label data-i18n="shp.field.incoterm">Incoterm</label>
         <select name="incoterm">{% for i in incoterms %}<option value="{{ i }}" {{ 'selected' if i=='FOB' }}>{{ i }}</option>{% endfor %}</select></div>
