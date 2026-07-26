@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ cu.lang_pref if cu else 'en' }}" data-theme="{{ cu.theme_pref if cu else 'light' }}">
+<html lang="{{ cu.lang_pref if cu else 'en' }}" dir="{{ 'rtl' if cu and cu.lang_pref == 'ar' else 'ltr' }}" data-theme="{{ cu.theme_pref if cu else 'light' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">

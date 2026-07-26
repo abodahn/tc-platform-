@@ -2,24 +2,30 @@
 {% block title %}Procurement workflow &amp; governance{% endblock %}
 {% block content %}
 
-{#- English fallback titles: the visible text before/without i18n. -#}
-{% set gate_titles = {
-  'pricing_gate': 'Pricing gate',
-  'rfq': 'RFQ / competitive quotes',
-  'sod': 'Segregation of duties',
-  'budget_gate': 'Budget gate',
-  'three_way_match': '3-way match',
-  'payment_cap': 'Payment cap'} %}
-{% set setting_titles = {
-  'rfq_quote_min': 'Competing quotes required',
-  'rfq_value_threshold': 'Quotes required from (EGP)',
-  'sod_admin_exempt': 'Admins exempt from segregation of duties',
-  'payment_tolerance_pct': 'Payment tolerance (%)'} %}
+{#- Stage / gate / status / rule / role names come from v.L, already resolved for
+    the reader's language SERVER-SIDE (services.py::_labels). They deliberately do
+    NOT use data-i18n: app.js prints a key it cannot find raw on the page, and the
+    static dictionary this module does not own has no keys for them. -#}
+{#- prose editor: one box per language (suffix matches the DB column) -#}
+{% set prose_langs = [('en', '', 'text_en'), ('ar', '_ar', 'text_ar'),
+                      ('tr', '_tr', 'text_tr')] %}
 
 {#- src badge: is a value the code default, or an admin override? -#}
 {% macro src(is_override) %}
   {% if is_override %}<span class="tag" data-i18n="pwf.src.override">Admin override</span>
   {% else %}<span class="tag" data-i18n="pwf.src.default">Code default</span>{% endif %}
+{% endmacro %}
+
+{#- Three textareas, one per language. A box left empty keeps whatever that
+    language already holds; Reset clears all three back to the built-in text. -#}
+{% macro prose(name, edit, rows) %}
+  {% for lg, sfx, uikey in prose_langs %}
+  <div class="field">
+    <label>{{ v.L.ui[uikey] }}</label>
+    <textarea name="{{ name }}{{ sfx }}" rows="{{ rows or 6 }}"{% if lg == 'ar' %} dir="rtl"{% endif %}>{{ edit[lg] }}</textarea>
+  </div>
+  {% endfor %}
+  <div class="muted" style="font-size:11.5px">{{ v.L.ui.lang_hint }}</div>
 {% endmacro %}
 
 {% macro stamp(by, at) %}
@@ -68,9 +74,9 @@
   <div class="panel-head"><h3 data-i18n="pwf.flow">The route for this department</h3></div>
   <div class="panel-pad">
     <div class="ladder-chips">
-      <span class="lc req" data-i18n="pwf.stage.requester">Requester</span>
+      <span class="lc req">{{ v.L.stage.requester }}</span>
       {% for s in v.stages %}<span class="arrow">›</span>
-        <span class="lc" data-i18n="pwf.stage.{{ s.stage }}">{{ s.label }}</span>{% endfor %}
+        <span class="lc">{{ s.label }}</span>{% endfor %}
       <span class="arrow">›</span><span class="lc" data-i18n="pwf.po">Purchase Order</span>
     </div>
     <div class="muted mt-2" style="font-size:12px" data-i18n="pwf.egp_note">The requester signs by submitting. Thresholds are compared on the EGP-equivalent total, so a request in another currency is converted at its exchange rate before the route is decided.</div>
@@ -92,8 +98,7 @@
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <input type="hidden" name="department" value="{{ v.department }}">
         <input type="hidden" name="section" value="overview">
-        <div class="field"><label data-i18n="pwf.text">Text</label>
-          <textarea name="body" rows="7">{{ v.overview.body }}</textarea></div>
+        {{ prose('body', v.overview.edit, 7) }}
         <div class="flex gap">
           <button class="btn btn-primary btn-sm" type="submit" data-i18n="pwf.save">Save</button>
           <button class="btn btn-ghost btn-sm" type="submit" name="reset" value="1" data-i18n="pwf.reset">Reset to default</button>
@@ -112,7 +117,7 @@
 {% for s in v.stages %}
 <div class="panel mt-2">
   <div class="panel-head">
-    <h3><span class="tag">{{ s.seq }}</span> <span data-i18n="pwf.stage.{{ s.stage }}">{{ s.label }}</span></h3>
+    <h3><span class="tag">{{ s.seq }}</span> <span>{{ s.label }}</span></h3>
     <span class="flex gap center wrap">
       {% if s.always %}<span class="tag" data-i18n="pwf.always_tag">Always required</span>
       {% else %}<span class="tag" data-i18n="pwf.value_tag">Value-gated</span>{% endif %}
@@ -126,10 +131,11 @@
           <tr>
             <th style="width:40%" data-i18n="pwf.signed_by">Signed by</th>
             <td>
-              {% for r in s.roles %}<span class="tag">{{ r }}</span> {% endfor %}
+              {% for r in s.roles %}<span class="tag">{{ v.L.role.get(r, r) }}</span> {% endfor %}
               {% if s.role_override %}<div class="muted" style="font-size:11px">
                 <span data-i18n="pwf.default_is">Code default:</span>
-                {{ s.default_roles|join(', ') or '—' }}</div>{% endif %}
+                {% for r in s.default_roles %}{{ v.L.role.get(r, r) }}{{ ', ' if not loop.last }}{% endfor %}
+                {% if not s.default_roles %}—{% endif %}</div>{% endif %}
               {% if s.roles_cannot_approve %}<div class="mt-2" style="color:var(--crit);font-size:11.5px"
                    data-i18n="pwf.no_approve_warn">One of these roles does not hold the “approve stages” permission — only a Procurement admin could sign this stage.</div>{% endif %}
             </td>
@@ -141,7 +147,7 @@
           </tr>
           <tr>
             <th data-i18n="pwf.gates_here">Gates at this stage</th>
-            <td>{% for g in s.gates %}<span class="tag" data-i18n="pwf.gate.{{ g }}">{{ gate_titles[g] }}</span> {% endfor %}</td>
+            <td>{% for g in s.gates %}<span class="tag">{{ v.L.gate.get(g, g) }}</span> {% endfor %}</td>
           </tr>
           <tr>
             <th data-i18n="pwf.sla">Overdue after</th>
@@ -166,13 +172,14 @@
           <div class="field"><label data-i18n="pwf.roles_select">Roles that sign this stage</label>
             <select name="roles" multiple size="6">
               {% for rc in v.role_choices %}
-              <option value="{{ rc.key }}" {{ 'selected' if rc.key in s.roles }}>{{ rc.label }}{{ '' if rc.can_approve else ' — no approve permission' }}</option>
+              <option value="{{ rc.key }}" {{ 'selected' if rc.key in s.roles }}
+                      {% if not rc.can_approve %}title="{{ v.L.ui.no_approve_opt }}"{% endif %}>{{ rc.label }}</option>
               {% endfor %}
             </select>
           </div>
           <div class="muted" style="font-size:11.5px" data-i18n="pwf.roles_hint">Hold Ctrl (or Cmd) to pick more than one. Selecting nothing leaves the roles unchanged — use Reset to go back to the code default.</div>
-          <div class="field mt-2"><label data-i18n="pwf.explanation">What happens here</label>
-            <textarea name="explanation" rows="6">{{ s.explanation }}</textarea></div>
+          <div class="mt-2"><b style="font-size:12.5px" data-i18n="pwf.explanation">What happens here</b></div>
+          {{ prose('explanation', s.edit, 6) }}
           <div class="flex gap wrap">
             <button class="btn btn-primary btn-sm" type="submit" data-i18n="pwf.save">Save</button>
             <button class="btn btn-ghost btn-sm" type="submit" name="reset" value="role" data-i18n="pwf.reset_role">Reset roles</button>
@@ -194,7 +201,7 @@
     {% for g in v.gates %}
     <div class="mt-3" style="border-top:1px solid var(--line);padding-top:14px">
       <div class="flex gap center wrap">
-        <b data-i18n="pwf.gate.{{ g.section }}">{{ gate_titles[g.section] }}</b>
+        <b>{{ v.L.gate.get(g.section, g.section) }}</b>
         {{ src(g.custom) }}
         {% if g.section == 'rfq' %}
           <span class="tag">{{ v.knobs|selectattr('key','equalto','rfq_quote_min')|map(attribute='effective')|first }}
@@ -218,7 +225,7 @@
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <input type="hidden" name="department" value="{{ v.department }}">
           <input type="hidden" name="section" value="{{ g.section }}">
-          <div class="field"><textarea name="body" rows="7">{{ g.body }}</textarea></div>
+          {{ prose('body', g.edit, 7) }}
           <div class="flex gap">
             <button class="btn btn-primary btn-sm" type="submit" data-i18n="pwf.save">Save</button>
             <button class="btn btn-ghost btn-sm" type="submit" name="reset" value="1" data-i18n="pwf.reset">Reset to default</button>
@@ -246,12 +253,12 @@
       <tbody>
       {% for k in v.knobs %}
         <tr>
-          <td><b data-i18n="pwf.set.{{ k.key }}">{{ setting_titles[k.key] }}</b>
+          <td><b>{{ v.L.setting.get(k.key, k.key) }}</b>
             <div class="muted" style="font-size:11px">{{ k.key }}</div></td>
           <td><b>{% if k.kind == 'bool' %}{% if k.effective %}<span data-i18n="pwf.yes">Yes</span>{% else %}<span data-i18n="pwf.no">No</span>{% endif %}
                  {% else %}{{ '%g'|format(k.effective) }}{% endif %}</b>
             {% if k.ignored %}<div style="color:var(--crit);font-size:11px" data-i18n="pwf.ignored">The stored value is invalid and was ignored — the code default is in force.</div>{% endif %}</td>
-          <td class="muted">{% if k.kind == 'bool' %}{{ 'Yes' if k.default else 'No' }}{% else %}{{ '%g'|format(k.default) }}{% endif %}</td>
+          <td class="muted">{% if k.kind == 'bool' %}{% if k.default %}<span data-i18n="pwf.yes">Yes</span>{% else %}<span data-i18n="pwf.no">No</span>{% endif %}{% else %}{{ '%g'|format(k.default) }}{% endif %}</td>
           <td>{{ src(k.is_override) }}{{ stamp(k.updated_by, k.updated_at) }}</td>
           {% if can_edit %}
           <td>
@@ -302,7 +309,7 @@
           <td><b>{{ r.label }}</b>
             <div class="muted" style="font-size:11px">{{ r.key }}</div>
             {% if not r.exists %}<span class="tag" data-i18n="pwf.role_missing">Not a platform role</span>{% endif %}</td>
-          <td>{% for s in r.signs %}<span class="tag">{{ s }}</span> {% endfor %}
+          <td>{% for s in r.signs %}<span class="tag">{{ v.L.stage.get(s, s) }}</span> {% endfor %}
               {% if not r.signs %}<span class="muted">—</span>{% endif %}</td>
           <td>{% for p in r.perms %}<span class="tag">{{ p }}</span> {% endfor %}
               {% if not r.can_approve %}<div class="muted" style="font-size:11px" data-i18n="pwf.cannot_approve">Cannot sign an approval stage.</div>{% endif %}</td>
@@ -316,7 +323,7 @@
                 <input type="hidden" name="_csrf" value="{{ csrf_token }}">
                 <input type="hidden" name="department" value="{{ v.department }}">
                 <input type="hidden" name="role_key" value="{{ r.key }}">
-                <div class="field"><textarea name="explanation" rows="5">{{ r.explanation }}</textarea></div>
+                {{ prose('explanation', r.edit, 5) }}
                 <div class="flex gap">
                   <button class="btn btn-primary btn-sm" type="submit" data-i18n="pwf.save">Save</button>
                   <button class="btn btn-ghost btn-sm" type="submit" name="reset" value="1" data-i18n="pwf.reset">Reset to default</button>
@@ -344,18 +351,20 @@
       <tbody>
       {% for st in v.statuses %}
         <tr>
-          <td><b>{{ st.key.replace('_', ' ') }}</b> {{ src(st.custom) }}</td>
+          <td><b>{{ v.L.status.get(st.key, st.key.replace('_', ' ')) }}</b> {{ src(st.custom) }}</td>
           <td>{{ st.body }}
             {{ stamp(st.updated_by, st.updated_at) }}
             {% if can_edit %}
             <details class="mt-2"><summary class="muted" style="cursor:pointer;font-size:12px" data-i18n="pwf.edit">Edit</summary>
-              <form method="post" action="{{ url_for('approvals.workflow_doc') }}" class="flex gap center wrap mt-2" style="gap:8px">
+              <form method="post" action="{{ url_for('approvals.workflow_doc') }}" class="mt-2">
                 <input type="hidden" name="_csrf" value="{{ csrf_token }}">
                 <input type="hidden" name="department" value="{{ v.department }}">
                 <input type="hidden" name="section" value="{{ st.section }}">
-                <input name="body" value="{{ st.body }}" style="min-width:340px">
-                <button class="btn btn-primary btn-sm" type="submit" data-i18n="pwf.save">Save</button>
-                <button class="btn btn-ghost btn-sm" type="submit" name="reset" value="1" data-i18n="pwf.reset">Reset to default</button>
+                {{ prose('body', st.edit, 2) }}
+                <div class="flex gap">
+                  <button class="btn btn-primary btn-sm" type="submit" data-i18n="pwf.save">Save</button>
+                  <button class="btn btn-ghost btn-sm" type="submit" name="reset" value="1" data-i18n="pwf.reset">Reset to default</button>
+                </div>
               </form>
             </details>
             {% endif %}

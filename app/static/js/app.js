@@ -14,6 +14,9 @@
   };
   const RTL = new Set(["ar"]);
   let DICT = {};
+  // Set once the user has typed into any form, so switching language never
+  // reloads away unsaved input (see setLanguage).
+  let formDirty = false;
   const cfg = window.TC_CFG || {};
   const CSRF = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
   let STATIC = cfg.staticBase || "static";
@@ -69,7 +72,15 @@
     applyI18n();
     document.querySelectorAll("[data-lang-btn]").forEach(b =>
       b.classList.toggle("on", b.getAttribute("data-lang-btn") === lang));
-    if (persist && cfg.authed) savePrefs({ lang });
+    if (persist && cfg.authed) {
+      // Pages also render text SERVER-side in the reader's language (DB prose and
+      // resolved stage/role/status labels — e.g. the Workflow & Governance pages).
+      // The client-side swap above cannot touch that text, so persist the choice
+      // and reload; without the reload the page is left half-translated.
+      // Skipped while a form is dirty — never trade someone's typing for a redraw.
+      const ok = await savePrefs({ lang });
+      if (ok && !formDirty) location.reload();
+    }
   }
 
   /* ---------------- Theme ---------------- */
@@ -89,11 +100,13 @@
   }
 
   function savePrefs(payload) {
-    fetch("/prefs", {
+    // Returns true only when the server actually stored the preference, so a
+    // caller can decide whether it is safe to act on it (see setLanguage).
+    return fetch("/prefs", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF },
       body: JSON.stringify(payload),
-    }).catch(() => {});
+    }).then(r => r.ok).catch(() => false);
   }
 
   // Add a hidden _csrf field to every form (covers all POST forms uniformly).
@@ -557,6 +570,10 @@
       b.addEventListener("click", () => setLanguage(b.getAttribute("data-lang-btn"))));
     document.querySelectorAll("[data-theme-btn]").forEach(b =>
       b.addEventListener("click", () => setTheme(b.getAttribute("data-theme-btn"))));
+
+    document.addEventListener("input", e => {
+      if (e.target && e.target.closest && e.target.closest("form")) formDirty = true;
+    }, true);
 
     injectCsrfIntoForms();
     initSidebar();

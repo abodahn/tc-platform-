@@ -1038,8 +1038,11 @@ def rename_settings():
 @login_required
 @permission_required("proc_view")
 def workflow():
+    # The explanation prose lives in the database, so it cannot be swapped by the
+    # client-side data-i18n pass — the reader's own language picks the column here.
+    lang = (_u() or {}).get("lang_pref") or "en"
     return render_template("approvals/workflow.html", active="procurement",
-                           v=svc.workflow_view(request.args.get("department")),
+                           v=svc.workflow_view(request.args.get("department"), lang),
                            can_edit=user_can("proc_admin"))
 
 
@@ -1077,6 +1080,8 @@ def workflow_stage():
         stage,
         roles=None if reset else f.getlist("roles"),
         explanation=None if reset else f.get("explanation"),
+        explanation_ar=None if reset else f.get("explanation_ar"),
+        explanation_tr=None if reset else f.get("explanation_tr"),
         user=_u(), ip=_ip(),
         reset_role=(reset == "role"), reset_explanation=(reset == "explanation"))
     _wf_flash(ok, msg, "Reset to the default." if reset else "Stage saved.")
@@ -1090,7 +1095,9 @@ def workflow_role():
     f = request.form
     reset = f.get("reset") == "1"
     ok, msg = svc.set_role_meta(f.get("role_key"), f.get("explanation"),
-                                user=_u(), ip=_ip(), reset=reset)
+                                user=_u(), ip=_ip(), reset=reset,
+                                explanation_ar=f.get("explanation_ar"),
+                                explanation_tr=f.get("explanation_tr"))
     _wf_flash(ok, msg, "Reset to the default." if reset else "Role description saved.")
     return _back(f.get("department"))
 
@@ -1102,7 +1109,8 @@ def workflow_doc():
     f = request.form
     reset = f.get("reset") == "1"
     ok, msg = svc.set_doc(f.get("section"), f.get("body"),
-                          user=_u(), ip=_ip(), reset=reset)
+                          user=_u(), ip=_ip(), reset=reset,
+                          body_ar=f.get("body_ar"), body_tr=f.get("body_tr"))
     _wf_flash(ok, msg, "Reset to the default." if reset else "Text saved.")
     return _back(f.get("department"))
 

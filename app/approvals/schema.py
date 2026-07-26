@@ -306,6 +306,18 @@ CREATE TABLE IF NOT EXISTS pr_po_revisions (
 CREATE INDEX IF NOT EXISTS ix_po_rev_pr ON pr_po_revisions(pr_id);
 """
 
+# Trilingual prose (added after first release). The English column stays exactly
+# as it is — it is the source of truth and the fallback; Arabic and Turkish sit
+# beside it, NULL until seeded/edited. Same guarded-ALTER pattern as above.
+_PROSE_MIGRATIONS = [
+    ("explanation_ar", "ALTER TABLE proc_stage_meta ADD COLUMN explanation_ar TEXT"),
+    ("explanation_tr", "ALTER TABLE proc_stage_meta ADD COLUMN explanation_tr TEXT"),
+    ("explanation_ar", "ALTER TABLE proc_role_meta ADD COLUMN explanation_ar TEXT"),
+    ("explanation_tr", "ALTER TABLE proc_role_meta ADD COLUMN explanation_tr TEXT"),
+    ("body_ar", "ALTER TABLE proc_doc ADD COLUMN body_ar TEXT"),
+    ("body_tr", "ALTER TABLE proc_doc ADD COLUMN body_tr TEXT"),
+]
+
 # Columns added to pr_items after first release (line-level receiving).
 _ITEM_MIGRATIONS = [
     ("received_qty", "ALTER TABLE pr_items ADD COLUMN received_qty REAL DEFAULT 0"),
@@ -319,9 +331,10 @@ _ITEM_MIGRATIONS = [
 
 def seed_governance(conn):
     """Seed the default workflow explanation text (stages, roles, gate docs and
-    status meanings). INSERT OR IGNORE, so an admin's edited text is never
-    overwritten by a later boot, and a row the admin RESET (deleted) is restored
-    to the code default. Returns the number of rows the seed set covers.
+    status meanings) in all three languages. INSERT OR IGNORE for English, so an
+    admin's edited text is never overwritten by a later boot, and a row the admin
+    RESET (deleted) is restored to the code default. Returns the number of rows
+    the seed set covers.
 
     Runs on EVERY boot — before the sample-data guard below — so an already
     deployed database picks the text up without being re-seeded from scratch."""
@@ -342,8 +355,35 @@ def seed_governance(conn):
         conn.execute("INSERT OR IGNORE INTO proc_doc (section, body) VALUES (?,?)",
                      (section, body))
         n += 1
+    seed_translations(conn)
     conn.commit()
     return n
+
+
+def seed_translations(conn):
+    """Fill the Arabic/Turkish prose columns from app/approvals/i18n_text.py.
+
+    Only ever fills a column that is NULL or blank — an admin's translated text
+    is left exactly as it is, on this boot and every later one. Returns the
+    number of columns actually written."""
+    from app.approvals import i18n_text as T
+    filled = 0
+    for table, keycol, col, defaults in (
+            ("proc_stage_meta", "stage", "explanation", T.STAGE),
+            ("proc_role_meta", "role_key", "explanation", T.ROLE),
+            ("proc_doc", "section", "body", T.DOC)):
+        for lang in ("ar", "tr"):
+            for key, text in defaults.get(lang, {}).items():
+                try:
+                    cur = conn.execute(
+                        f"UPDATE {table} SET {col}_{lang}=? WHERE {keycol}=? "
+                        f"AND ({col}_{lang} IS NULL OR {col}_{lang}='')", (text, key))
+                    filled += cur.rowcount if (cur.rowcount or 0) > 0 else 0
+                except Exception:
+                    conn.rollback()      # column not there yet -> English only
+                    return filled
+    conn.commit()
+    return filled
 
 
 def create_and_seed(conn):
@@ -353,7 +393,8 @@ def create_and_seed(conn):
     conn.executescript(_PO_REV_DDL)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
-    for _col, _ddl in _STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS:
+    for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS
+                       + _PROSE_MIGRATIONS):
         try:
             conn.execute(_ddl)
             conn.commit()

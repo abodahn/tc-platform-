@@ -1,7 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Maintenance Workflow &amp; Governance{% endblock %}
 
-{# ---- one editor for every explanation block (and a stage's signing role) ---- #}
+{# ---- a short label (role / rung / knob / permission name) in all three
+       languages: rendered server-side for THIS reader, and carried in
+       data-loc-en/ar/tr so app.js re-swaps it on a language switch. Used instead
+       of data-i18n for labels the platform dictionary has no key for — a missing
+       key would render as the raw key, which is worse than English. ---- #}
+{% macro loc(kind, key, en=None) %}{% set L = wf.label(kind, key, en) %}<span data-loc-en="{{ L.en }}" data-loc-ar="{{ L.ar }}" data-loc-tr="{{ L.tr }}">{{ L[d.lang] }}</span>{% endmacro %}
+
+{# ---- a DB-stored paragraph. page_data resolved it for all three readers (each
+       through pick(), so a missing translation is already the English), and it
+       ships in its own span so the language button re-swaps it without a reload
+       and never overwrites the admin editor sitting next to it. ---- #}
+{% macro pr(langs) %}<span data-loc-en="{{ langs.en }}" data-loc-ar="{{ langs.ar }}" data-loc-tr="{{ langs.tr }}">{{ langs[d.lang] }}</span>{% endmacro %}
+
+{# ---- one editor for every explanation block, one field per language ---- #}
 {% macro editor(kind, key, text, roles=None, stored_role='') %}
   {% if mcan('maint_admin') %}
   <details class="mt-2">
@@ -15,15 +28,24 @@
         <label><span data-i18n="mwf.field.role">Signing role</span></label>
         <select name="role">
           <option value="" data-i18n="mwf.opt.role_default">Keep the default signer</option>
-          {% for r in roles %}<option value="{{ r }}"{% if r == stored_role %} selected{% endif %}>{{ r|mtext }}</option>{% endfor %}
+          {% for r in roles %}{% set L = wf.label('role', r, d.role_labels.get(r)) %}<option value="{{ r }}"{% if r == stored_role %} selected{% endif %} data-loc-en="{{ L.en }}" data-loc-ar="{{ L.ar }}" data-loc-tr="{{ L.tr }}">{{ L[d.lang] }}</option>{% endfor %}
         </select>
       </div>
       {% endif %}
       <div class="field">
-        <label><span data-i18n="mwf.field.explanation">Explanation</span></label>
-        <textarea name="explanation" rows="4">{{ text }}</textarea>
+        <label>{{ loc('ui', 'expl_en') }}</label>
+        <textarea name="explanation" rows="4" dir="ltr">{{ text.en or '' }}</textarea>
       </div>
-      <div class="flex gap center">
+      <div class="field">
+        <label>{{ loc('ui', 'expl_ar') }}</label>
+        <textarea name="explanation_ar" rows="4" dir="rtl">{{ text.ar or '' }}</textarea>
+      </div>
+      <div class="field">
+        <label>{{ loc('ui', 'expl_tr') }}</label>
+        <textarea name="explanation_tr" rows="4" dir="ltr">{{ text.tr or '' }}</textarea>
+      </div>
+      <div class="muted" style="font-size:11px">{{ loc('ui', 'editor_hint') }}</div>
+      <div class="flex gap center mt-2">
         <button class="btn btn-primary btn-sm" data-i18n="mwf.action.save">Save</button>
         <button class="btn btn-ghost btn-sm" name="reset" value="1" data-i18n="mwf.action.reset">Reset to default</button>
       </div>
@@ -37,13 +59,16 @@
   {% else %}<span class="tag muted" data-i18n="mwf.tag.default">Default</span>{% endif %}
 {% endmacro %}
 
+{# ---- a role name: translated label, plain text for a role we have no key for ---- #}
+{% macro rolename(key) %}{{ loc('role', key, d.role_labels.get(key)) }}{% endmacro %}
+
 {# ---- an editable rules block ---- #}
-{% macro docblock(section, doc, i18n) %}
+{% macro docblock(section, doc) %}
 <div class="panel">
-  <div class="panel-head"><h3 data-i18n="{{ i18n }}">{{ section|mtext }}</h3>{{ mark(doc.overridden) }}</div>
+  <div class="panel-head"><h3>{{ loc('rule', section, wf.DOC_LABELS.get(section)) }}</h3>{{ mark(doc.overridden) }}</div>
   <div class="panel-pad">
-    <div style="font-size:13px;line-height:1.6">{{ doc.body }}</div>
-    {{ editor('doc', section, doc.body) }}
+    <div style="font-size:13px;line-height:1.6">{{ pr(doc.langs) }}</div>
+    {{ editor('doc', section, doc.text) }}
   </div>
 </div>
 {% endmacro %}
@@ -69,8 +94,8 @@
 </div>
 
 <div class="grid cols-2 mt-4">
-  {{ docblock('lifecycle', d.docs.lifecycle, 'mwf.doc.lifecycle') }}
-  {{ docblock('sla', d.docs.sla, 'mwf.doc.sla') }}
+  {{ docblock('lifecycle', d.docs.lifecycle) }}
+  {{ docblock('sla', d.docs.sla) }}
 </div>
 
 {# ---------------- a. the ticket lifecycle ---------------- #}
@@ -89,8 +114,8 @@
       {% for s in d.statuses %}
         <tr>
           <td><span class="badge {{ s.status|mbadge }}">{{ s.status|mhuman }}</span></td>
-          <td style="font-size:13px;line-height:1.55;max-width:520px">{{ s.explanation }}
-            {{ editor('status', s.status, s.explanation) }}</td>
+          <td style="font-size:13px;line-height:1.55;max-width:520px">{{ pr(s.langs) }}
+            {{ editor('status', s.status, s.text) }}</td>
           <td>
             {% if s.terminal %}<span class="tag" data-i18n="mwf.terminal">Terminal — nothing follows</span>
             {% else %}{% for n in s.next %}<span class="tag">{{ n|mhuman }}</span> {% endfor %}{% endif %}
@@ -123,14 +148,15 @@
         <tr>
           <td>{% if l.rule == 'crit' %}<span class="tag" data-i18n="mwf.route.crit">Critical / high value</span>
               {% else %}<span class="tag" data-i18n="mwf.route.std">Standard</span>{% endif %}
-            <div class="muted" style="font-size:11px">{{ l.rule_name }}</div></td>
-          <td>{{ l.level }}</td>
-          <td><b>{{ l.role|mtext }}</b>
+            <div class="muted" style="font-size:11px">{{ loc('matrix', l.rule_name, l.rule_name) }}</div></td>
+          <td>{{ l.level }}
+            {% if l.stage in wf.STAGE_LABELS %}<div class="muted" style="font-size:11px">{{ loc('stage', l.stage, wf.STAGE_LABELS[l.stage]) }}</div>{% endif %}</td>
+          <td><b>{{ rolename(l.role) }}</b>
             {% if l.issuer %}<div class="muted" style="font-size:11px" data-i18n="mwf.issuer">Issues the parts — not an approval vote</div>{% endif %}
             {% if l.invalid %}<div class="tag" data-i18n="mwf.invalid">Stored role cannot sign — default in use</div>{% endif %}</td>
-          <td class="muted">{{ l.default_role|mtext }}</td>
-          <td style="font-size:13px;line-height:1.55;max-width:460px">{{ l.explanation }}
-            {% if not l.issuer %}{{ editor('stage', l.stage, l.explanation, d.approver_choices, l.stored_role) }}{% endif %}</td>
+          <td class="muted">{{ rolename(l.default_role) }}</td>
+          <td style="font-size:13px;line-height:1.55;max-width:460px">{{ pr(l.langs) }}
+            {% if not l.issuer %}{{ editor('stage', l.stage, l.text, d.approver_choices, l.stored_role) }}{% endif %}</td>
           <td>{% if l.issuer %}<span class="tag muted" data-i18n="mwf.tag.fixed">Fixed</span>{% else %}{{ mark(l.overridden) }}{% endif %}</td>
         </tr>
       {% endfor %}
@@ -153,11 +179,11 @@
       <tbody>
       {% for r in d.roles %}
         <tr>
-          <td><b>{{ r.role_key|mtext }}</b>
+          <td><b>{{ rolename(r.role_key) }}</b>
             {% if r.can_approve %}<div class="tag" data-i18n="mwf.can_approve">Can sign approvals</div>{% endif %}</td>
-          <td>{% for p in r.perms %}<span class="tag">{{ p }}</span> {% endfor %}</td>
-          <td style="font-size:13px;line-height:1.55;max-width:520px">{{ r.explanation }}
-            {{ editor('role', r.role_key, r.explanation) }}</td>
+          <td>{% for p in r.perms %}<span class="tag" title="{{ p }}">{{ loc('perm', p, p) }}</span> {% endfor %}</td>
+          <td style="font-size:13px;line-height:1.55;max-width:520px">{{ pr(r.langs) }}
+            {{ editor('role', r.role_key, r.text) }}</td>
           <td>{{ mark(r.overridden) }}</td>
         </tr>
       {% endfor %}
@@ -168,9 +194,9 @@
 
 {# ---------------- d. the rules the code enforces ---------------- #}
 <div class="grid cols-2 mt-4">
-  {{ docblock('reservation', d.docs.reservation, 'mwf.doc.reservation') }}
-  {{ docblock('auto_reorder', d.docs.auto_reorder, 'mwf.doc.auto_reorder') }}
-  {{ docblock('costing', d.docs.costing, 'mwf.doc.costing') }}
+  {{ docblock('reservation', d.docs.reservation) }}
+  {{ docblock('auto_reorder', d.docs.auto_reorder) }}
+  {{ docblock('costing', d.docs.costing) }}
 </div>
 
 {# ---------------- e. the knobs ---------------- #}
@@ -190,7 +216,7 @@
       <tbody>
       {% for s in d.settings %}
         <tr>
-          <td><b data-i18n="mwf.set.{{ s.key }}">{{ s.key|mtext }}</b><div class="muted" style="font-size:11px">{{ s.source }}</div></td>
+          <td><b>{{ loc('setting', s.key) }}</b><div class="muted" style="font-size:11px">{{ s.source }}</div></td>
           <td><b>{% if s.kind == 'bool' %}<span data-i18n="{{ 'mwf.on' if s.value else 'mwf.off' }}">{{ 'On' if s.value else 'Off' }}</span>
               {% else %}{{ '%g'|format(s.value) }}{% endif %}</b></td>
           <td class="muted">{% if s.kind == 'bool' %}<span data-i18n="{{ 'mwf.on' if s.default else 'mwf.off' }}">{{ 'On' if s.default else 'Off' }}</span>

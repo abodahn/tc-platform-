@@ -2290,17 +2290,108 @@ def reset_setting(key, user=None, ip=None):
 
 def _stage_meta_row(conn, stage):
     try:
-        return conn.execute("SELECT role, explanation FROM proc_stage_meta WHERE stage=?",
-                            (stage,)).fetchone()
+        row = conn.execute("SELECT * FROM proc_stage_meta WHERE stage=?",
+                           (stage,)).fetchone()
+        return dict(row) if row else None
     except Exception:
         return None
 
 
+# --- Trilingual prose -----------------------------------------------------
+# Each prose column has two siblings: <col>_ar and <col>_tr (see
+# app/approvals/schema.py _PROSE_MIGRATIONS). English stays in <col>.
+_LANGS = ("en", "ar", "tr")
+_SUFFIX = {"en": "", "ar": "_ar", "tr": "_tr"}
+
+
+def _labels(lang):
+    """Every short LABEL the workflow page names, resolved for `lang`.
+
+    Server-side, not data-i18n: the keys these would need live in
+    app/static/i18n/*.json, which this module does not own, and app.js prints a
+    key it cannot find RAW on the page ("Warehouse" -> "proc.stage.warehouse")
+    in every language, English included. See app/approvals/i18n_text.py LABELS.
+
+    Role labels follow the same rule as an admin-edited explanation: a role an
+    admin RENAMED keeps the admin's name in every language; a role still on its
+    code-default name is translated."""
+    from app.approvals import i18n_text as T
+    from app.security import ROLES as _CODE_ROLES
+
+    def pick(m, key, en):
+        return (m.get(lang) or {}).get(key) or en
+
+    live = effective_roles()
+    roles = {}
+    for k, v in live.items():
+        label = v.get("label") or k
+        default = (_CODE_ROLES.get(k) or {}).get("label")
+        roles[k] = label if (default and label != default) else pick(T.ROLE_LABEL, k, label)
+    return {
+        "stage": {k: pick(T.STAGE_LABEL, k, v) for k, v in C.STAGE_LABELS.items()},
+        "gate": {k: pick(T.GATE_LABEL, k, v) for k, v in T.GATE_LABEL["en"].items()},
+        "status": {k: pick(T.STATUS_LABEL, k, v) for k, v in T.STATUS_LABEL["en"].items()},
+        "setting": {k: pick(T.SETTING_LABEL, k, v) for k, v in T.SETTING_LABEL["en"].items()},
+        "role": roles,
+        "ui": dict(T.UI["en"], **(T.UI.get(lang) or {})),
+    }
+
+
+def _prose_columns(col, texts, limit):
+    """{column: trimmed text} for the languages actually SUBMITTED with content.
+
+    A language that is absent, None or blank is simply not written, so saving one
+    language can never blank another — clearing is done with reset, which is what
+    restores the code default."""
+    out = {}
+    for lang, sfx in _SUFFIX.items():
+        v = (texts or {}).get(lang)
+        if isinstance(v, str) and v.strip():
+            out[col + sfx] = v.strip()[:limit]
+    return out
+
+
+def _localise(row, col, lang, def_en, def_lang):
+    """Pick one prose field for `lang`, server-side.
+
+    Order: DB <col>_<lang> -> DB <col> (English) -> code default in <lang> ->
+    code default in English -> ''. Blank/whitespace counts as absent, so a panel
+    is never rendered empty. Returns (text, is_override), where is_override means
+    the text shown is not one of the code defaults, i.e. an admin wrote it."""
+    row = row or {}
+    def_lang = (def_lang or "").strip()
+    def_en = (def_en or "").strip()
+    for c in ([col] if lang == "en" else [col + _SUFFIX.get(lang, ""), col]):
+        txt = (row.get(c) or "").strip()
+        if txt:
+            return txt, txt not in (def_lang, def_en)
+    return def_lang or def_en, False
+
+
+def _prose(row, col, key, def_en, defaults, lang):
+    """One prose field resolved for `lang`, plus the three editable values.
+    `defaults` is a {lang: {key: text}} map from app/approvals/i18n_text.py."""
+    text, custom = _localise(row, col, lang, def_en, (defaults.get(lang) or {}).get(key))
+    edit = {}
+    for lg in _LANGS:
+        stored = ((row or {}).get(col + _SUFFIX[lg]) or "").strip()
+        edit[lg] = stored or (def_en if lg == "en"
+                              else (defaults.get(lg) or {}).get(key) or "") or ""
+    return {"text": text, "custom": custom, "edit": edit,
+            "updated_by": (row or {}).get("updated_by"),
+            "updated_at": (row or {}).get("updated_at")}
+
+
 def set_stage_meta(stage, roles=None, explanation=None, user=None, ip=None,
-                   reset_role=False, reset_explanation=False):
+                   reset_role=False, reset_explanation=False,
+                   explanation_ar=None, explanation_tr=None):
     """Save a stage's signing roles and/or its explanation. `roles` is a list of
     role keys (stored comma-separated). Only role keys that exist on the platform
     are accepted, so an override can never leave a stage unsignable.
+
+    explanation / explanation_ar / explanation_tr are independent: a language
+    submitted blank is left untouched, so editing the Arabic never blanks the
+    English or the Turkish.
 
     reset_role / reset_explanation NULL the respective column (the "delete the
     override" case); when both end up empty the row is removed entirely.
@@ -2316,27 +2407,41 @@ def set_stage_meta(stage, roles=None, explanation=None, user=None, ip=None,
     conn = get_db()
     try:
         row = _stage_meta_row(conn, stage)
-        old_role = (row["role"] if row else None) or "default"
-        old_expl = (row["explanation"] if row else None)
+        old_role = (row or {}).get("role") or "default"
         new_role = None if reset_role else (",".join(sorted(picked)) if picked
-                                            else (row["role"] if row else None))
-        new_expl = None if reset_explanation else (
-            explanation if explanation is not None else old_expl)
-        if isinstance(new_expl, str):
-            new_expl = new_expl.strip()[:4000] or None
+                                            else (row or {}).get("role"))
+        # Per-language explanation: submitted text wins, blank keeps what is
+        # stored, reset clears all three so the code defaults apply again.
+        submitted = _prose_columns("explanation", {"en": explanation,
+                                                   "ar": explanation_ar,
+                                                   "tr": explanation_tr}, 4000)
+        expl = {}
+        for lang, sfx in _SUFFIX.items():
+            col = "explanation" + sfx
+            expl[col] = (None if reset_explanation
+                         else submitted.get(col, (row or {}).get(col)))
         now, uname = _now(), (user or {}).get("username")
+        cols = ["role"] + list(expl)
+        vals = [new_role] + [expl[c] for c in expl]
         if row is None:
-            conn.execute("INSERT INTO proc_stage_meta (stage, role, explanation, "
-                         "updated_by, updated_at) VALUES (?,?,?,?,?)",
-                         (stage, new_role, new_expl, uname, now))
-        elif new_role is None and new_expl is None:
+            names = ", ".join(cols)
+            qs = ",".join("?" * len(cols))
+            conn.execute(f"INSERT INTO proc_stage_meta (stage, {names}, updated_by, "
+                         f"updated_at) VALUES (?,{qs},?,?)",
+                         (stage, *vals, uname, now))
+        elif new_role is None and not any(expl.values()):
             conn.execute("DELETE FROM proc_stage_meta WHERE stage=?", (stage,))
         else:
-            conn.execute("UPDATE proc_stage_meta SET role=?, explanation=?, updated_by=?, "
-                         "updated_at=? WHERE stage=?", (new_role, new_expl, uname, now, stage))
+            sets = ", ".join(f"{c}=?" for c in cols)
+            conn.execute(f"UPDATE proc_stage_meta SET {sets}, updated_by=?, updated_at=? "
+                         f"WHERE stage=?", (*vals, uname, now, stage))
         detail = f"stage {stage} role: {old_role} -> {new_role or 'default'}"
-        if (old_expl or "") != (new_expl or ""):
-            detail += "; explanation " + ("reset to default" if new_expl is None else "edited")
+        changed = [lg for lg, sfx in _SUFFIX.items()
+                   if ((row or {}).get("explanation" + sfx) or "")
+                   != (expl["explanation" + sfx] or "")]
+        if changed:
+            detail += ("; explanation reset to default" if reset_explanation
+                       else "; explanation edited (%s)" % ", ".join(sorted(changed)))
         _wf_audit(conn, uname, "wf_stage", detail, ip)
         conn.commit()
         return True, ""
@@ -2344,30 +2449,40 @@ def set_stage_meta(stage, roles=None, explanation=None, user=None, ip=None,
         conn.close()
 
 
-def set_role_meta(role_key, explanation=None, user=None, ip=None, reset=False):
-    """Save (or reset) what a role is responsible for. Returns (ok, msg)."""
+def set_role_meta(role_key, explanation=None, user=None, ip=None, reset=False,
+                  explanation_ar=None, explanation_tr=None):
+    """Save (or reset) what a role is responsible for, per language. Only the
+    languages submitted with text are written; the others keep what they hold.
+    Returns (ok, msg)."""
     role_key = (role_key or "").strip()
     if not role_key or role_key not in set(effective_roles()) | set(C.ROLE_EXPLAIN):
         return False, "unknown_role"
     conn = get_db()
     try:
-        row = conn.execute("SELECT explanation FROM proc_role_meta WHERE role_key=?",
+        row = conn.execute("SELECT id FROM proc_role_meta WHERE role_key=?",
                            (role_key,)).fetchone()
         now, uname = _now(), (user or {}).get("username")
         if reset:
             conn.execute("DELETE FROM proc_role_meta WHERE role_key=?", (role_key,))
             _wf_audit(conn, uname, "wf_role_reset", f"role {role_key}: -> default text", ip)
         else:
-            text = (explanation or "").strip()[:4000]
-            if not text:
+            cols = _prose_columns("explanation", {"en": explanation,
+                                                  "ar": explanation_ar,
+                                                  "tr": explanation_tr}, 4000)
+            if not cols:
                 return False, "empty"
             if row:
-                conn.execute("UPDATE proc_role_meta SET explanation=?, updated_by=?, "
-                             "updated_at=? WHERE role_key=?", (text, uname, now, role_key))
+                sets = ", ".join(f"{c}=?" for c in cols)
+                conn.execute(f"UPDATE proc_role_meta SET {sets}, updated_by=?, updated_at=? "
+                             f"WHERE role_key=?", (*cols.values(), uname, now, role_key))
             else:
-                conn.execute("INSERT INTO proc_role_meta (role_key, explanation, updated_by, "
-                             "updated_at) VALUES (?,?,?,?)", (role_key, text, uname, now))
-            _wf_audit(conn, uname, "wf_role", f"role {role_key}: explanation edited", ip)
+                names = ", ".join(cols)
+                qs = ",".join("?" * len(cols))
+                conn.execute(f"INSERT INTO proc_role_meta (role_key, {names}, updated_by, "
+                             f"updated_at) VALUES (?,{qs},?,?)",
+                             (role_key, *cols.values(), uname, now))
+            _wf_audit(conn, uname, "wf_role",
+                      f"role {role_key}: explanation edited ({', '.join(sorted(cols))})", ip)
         conn.commit()
         return True, ""
     finally:
@@ -2382,8 +2497,11 @@ def _doc_default(section):
     return C.DOC_SECTIONS.get(section)
 
 
-def set_doc(section, body=None, user=None, ip=None, reset=False):
-    """Save (or reset) one free-text block. Returns (ok, msg)."""
+def set_doc(section, body=None, user=None, ip=None, reset=False,
+            body_ar=None, body_tr=None):
+    """Save (or reset) one free-text block, per language. Only the languages
+    submitted with text are written; the others keep what they hold.
+    Returns (ok, msg)."""
     section = (section or "").strip()
     if _doc_default(section) is None:
         return False, "unknown_section"      # only the known blocks are editable
@@ -2394,17 +2512,22 @@ def set_doc(section, body=None, user=None, ip=None, reset=False):
             conn.execute("DELETE FROM proc_doc WHERE section=?", (section,))
             _wf_audit(conn, uname, "wf_doc_reset", f"doc {section}: -> default text", ip)
         else:
-            text = (body or "").strip()[:8000]
-            if not text:
+            cols = _prose_columns("body", {"en": body, "ar": body_ar,
+                                           "tr": body_tr}, 8000)
+            if not cols:
                 return False, "empty"
             row = conn.execute("SELECT id FROM proc_doc WHERE section=?", (section,)).fetchone()
             if row:
-                conn.execute("UPDATE proc_doc SET body=?, updated_by=?, updated_at=? "
-                             "WHERE section=?", (text, uname, now, section))
+                sets = ", ".join(f"{c}=?" for c in cols)
+                conn.execute(f"UPDATE proc_doc SET {sets}, updated_by=?, updated_at=? "
+                             f"WHERE section=?", (*cols.values(), uname, now, section))
             else:
-                conn.execute("INSERT INTO proc_doc (section, body, updated_by, updated_at) "
-                             "VALUES (?,?,?,?)", (section, text, uname, now))
-            _wf_audit(conn, uname, "wf_doc", f"doc {section}: edited", ip)
+                names = ", ".join(cols)
+                qs = ",".join("?" * len(cols))
+                conn.execute(f"INSERT INTO proc_doc ({names}, section, updated_by, updated_at) "
+                             f"VALUES ({qs},?,?,?)", (*cols.values(), section, uname, now))
+            _wf_audit(conn, uname, "wf_doc",
+                      f"doc {section}: edited ({', '.join(sorted(cols))})", ip)
         conn.commit()
         return True, ""
     finally:
@@ -2434,22 +2557,26 @@ def _stage_gates(stage, is_last):
     return gates
 
 
-def workflow_view(department=None):
+def workflow_view(department=None, lang="en"):
     """Everything the Workflow & Governance page renders, read from the database
-    so the page can never drift from the engine that enforces it."""
+    so the page can never drift from the engine that enforces it.
+
+    `lang` ('en' | 'ar' | 'tr', normally the reader's users.lang_pref) selects the
+    prose column SERVER-SIDE — database text cannot use the client-side data-i18n
+    swap. See _localise for the exact fallback order."""
+    lang = lang if lang in _LANGS else "en"
     depts = list_departments()
     department = department or (depts[0] if depts else "")
     matrix, thr_source = _effective_matrix(department)
     conn = get_db()
     try:
+        # SELECT * so a database whose _ar/_tr ALTER has not run yet still reads.
         smeta = {r["stage"]: dict(r) for r in conn.execute(
-            "SELECT stage, role, explanation, updated_by, updated_at "
-            "FROM proc_stage_meta").fetchall()}
+            "SELECT * FROM proc_stage_meta").fetchall()}
         rmeta = {r["role_key"]: dict(r) for r in conn.execute(
-            "SELECT role_key, explanation, updated_by, updated_at "
-            "FROM proc_role_meta").fetchall()}
+            "SELECT * FROM proc_role_meta").fetchall()}
         docs = {r["section"]: dict(r) for r in conn.execute(
-            "SELECT section, body, updated_by, updated_at FROM proc_doc").fetchall()}
+            "SELECT * FROM proc_doc").fetchall()}
         knob_rows = {r["key"]: dict(r) for r in conn.execute(
             "SELECT key, value, updated_by, updated_at FROM proc_settings").fetchall()}
         roles_map = stage_roles_map(conn)
@@ -2474,21 +2601,19 @@ def workflow_view(department=None):
 
     all_roles = effective_roles()
 
-    def _expl(store, key, default_map):
-        """(text, is_override, by, at) — the admin's text if any, else the default."""
-        row = store.get(key) or {}
-        txt = (row.get("explanation") or "").strip()
-        if txt:
-            return txt, True, row.get("updated_by"), row.get("updated_at")
-        return (default_map.get(key) or ""), False, None, None
+    from app.approvals import i18n_text as T
+
+    L = _labels(lang)            # short labels, resolved server-side (see _labels)
 
     stages = []
     for i, (stage, thr) in enumerate(matrix, start=1):
         roles = sorted(roles_map.get(stage, set()))
         default_roles = sorted(STAGE_ROLES.get(stage, set()))
-        txt, custom, by, at = _expl(smeta, stage, C.STAGE_EXPLAIN)
+        p = _prose(smeta.get(stage), "explanation", stage,
+                   C.STAGE_EXPLAIN.get(stage), T.STAGE, lang)
+        txt, custom, by, at = p["text"], p["custom"], p["updated_by"], p["updated_at"]
         stages.append({
-            "seq": i, "stage": stage, "label": stage_label(stage),
+            "seq": i, "stage": stage, "label": L["stage"].get(stage) or stage_label(stage),
             "roles": roles, "default_roles": default_roles,
             "role_override": roles != default_roles,
             # a role without proc_approve could only be signed by an admin — worth
@@ -2498,6 +2623,7 @@ def workflow_view(department=None):
             "threshold": thr, "always": thr <= 0,
             "gates": _stage_gates(stage, i == len(matrix)),
             "explanation": txt, "explanation_custom": custom,
+            "edit": p["edit"],
             "updated_by": by, "updated_at": at,
         })
 
@@ -2506,26 +2632,27 @@ def workflow_view(department=None):
         role_keys |= set(v)
     roles = []
     for k in sorted(role_keys):
-        txt, custom, by, at = _expl(rmeta, k, C.ROLE_EXPLAIN)
+        p = _prose(rmeta.get(k), "explanation", k, C.ROLE_EXPLAIN.get(k), T.ROLE, lang)
         perms = list((all_roles.get(k) or {}).get("perms") or [])
         roles.append({
-            "key": k, "label": (all_roles.get(k) or {}).get("label", k),
+            "key": k, "label": L["role"].get(k) or (all_roles.get(k) or {}).get("label", k),
             "exists": k in all_roles,
-            "perms": ["*"] if "*" in perms else [p for p in perms if p.startswith("proc_")],
+            "perms": ["*"] if "*" in perms else [p2 for p2 in perms if p2.startswith("proc_")],
             "can_approve": has_permission(k, "proc_approve"),
-            "signs": [stage_label(s) for s in LADDER if k in roles_map.get(s, set())],
-            "explanation": txt, "explanation_custom": custom,
-            "updated_by": by, "updated_at": at,
+            "signs": [s for s in LADDER if k in roles_map.get(s, set())],
+            "explanation": p["text"], "explanation_custom": p["custom"],
+            "edit": p["edit"],
+            "updated_by": p["updated_by"], "updated_at": p["updated_at"],
         })
 
     def _doc(section):
-        row = docs.get(section) or {}
-        txt = (row.get("body") or "").strip()
-        return {"section": section, "body": txt or (_doc_default(section) or ""),
-                "custom": bool(txt), "updated_by": row.get("updated_by"),
-                "updated_at": row.get("updated_at")}
+        p = _prose(docs.get(section), "body", section, _doc_default(section), T.DOC, lang)
+        return {"section": section, "body": p["text"], "custom": p["custom"],
+                "edit": p["edit"], "updated_by": p["updated_by"],
+                "updated_at": p["updated_at"]}
 
     return {
+        "lang": lang,
         "department": department, "departments": depts,
         "threshold_source": thr_source,
         "stages": stages, "roles": roles, "knobs": knobs,
@@ -2534,9 +2661,11 @@ def workflow_view(department=None):
                                     "budget_gate", "three_way_match", "payment_cap")],
         "statuses": [dict(_doc("status." + s), key=s) for s in PR_STATUSES],
         "role_choices": sorted(
-            ({"key": k, "label": v["label"],
+            ({"key": k, "label": L["role"].get(k) or v["label"],
               "can_approve": has_permission(k, "proc_approve")}
              for k, v in all_roles.items()), key=lambda r: r["label"].lower()),
+        # Every short label already resolved for this reader's language.
+        "L": L,
         "sla_hours": C.SLA_HOURS_PER_STAGE, "sla_warn": C.SLA_WARN_HOURS,
         "match_tolerance_pct": 1.0,      # three_way_match's own, deliberately fixed
         "log": governance_log(),

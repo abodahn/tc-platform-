@@ -1077,7 +1077,9 @@ def workflow():
     _require("maint_view")
     conn = _db()
     try:
-        d = wf.page_data(conn)
+        # The stored prose is picked SERVER-SIDE for this reader's language; static
+        # labels stay data-i18n and are swapped client-side from the same lang_pref.
+        d = wf.page_data(conn, lang=(_u().get("lang_pref") or "en"))
     finally:
         conn.close()
     return render_template("maintenance/workflow.html", d=d, wf=wf, active="maint_workflow")
@@ -1111,8 +1113,12 @@ def workflow_text():
         if request.form.get("reset"):
             ok, msg = wf.reset_text(conn, kind, key, _u())
         else:
+            # A language absent from the form stays untouched (set_text skips None),
+            # so saving one language never blanks the other two.
             ok, msg = wf.set_text(conn, kind, key, request.form.get("explanation"), _u(),
-                                  role=request.form.get("role"))
+                                  role=request.form.get("role"),
+                                  ar=request.form.get("explanation_ar"),
+                                  tr=request.form.get("explanation_tr"))
     finally:
         conn.close()
     flash("m_saved" if ok else msg, "success" if ok else "error")
