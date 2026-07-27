@@ -225,29 +225,36 @@ def _material_actual(issued, proc, manual):
 
     Fabric bought on an order-linked PR and then issued from the warehouse to the
     same order is ONE cost seen twice. So the material actual comes from exactly
-    ONE source, in this priority, never a sum:
-      1. warehouse issues      — what was really consumed (the truest actual)
-      2. procurement receipts  — what really arrived, when there is no issue data
-      3. manual 'material' entries — cash/subcontract buys the platform never saw
+    ONE source, never a sum:
+      * warehouse issues vs procurement receipts — the same fabric counted two
+        ways, so take the LARGER of the two (see why below);
+      * manual 'material' entries — cash/subcontract buys the platform never saw;
+        used ONLY when there is neither an issue nor a receipt.
     The basis is returned with the number so it is never anonymous on screen.
     """
-    # Take the HIGHEST single source, never the first non-zero one. Warehouse issues
-    # are INCREMENTAL (they grow metre by metre as the order is cut) while procurement
-    # receipts and manual entries are COMPLETE figures. Preferring "issued" the moment
-    # it is non-zero therefore let the first metre issued replace the entire material
-    # actual: on the demo data the actual dropped 19,180.00 -> 3.20 and the margin
-    # "improved" from 24% to 65%, so a real overrun would be erased and the variance
-    # alert would never fire. max() keeps the one-source rule (no double-counting)
-    # while making it impossible to UNDER-report.
-    cands = {"issued": round(issued or 0, 2), "procured": round(proc or 0, 2),
-             "manual": round(manual or 0, 2)}
-    basis = max(cands, key=lambda k: cands[k])
-    if cands[basis] <= 0:
-        return 0.0, "none"
-    # Name it honestly when issues are still catching up with a bigger known figure.
-    if basis != "issued" and cands["issued"] > 0:
-        basis += " (issues partial)"
-    return cands[max(cands, key=lambda k: cands[k])], basis
+    # "issued" and "procured" are two views of the SAME physical fabric, so they
+    # compete on SIZE, not on rank. Warehouse issues are INCREMENTAL (they grow
+    # metre by metre as the order is cut) while receipts are a COMPLETE figure, so
+    # preferring "issued" the moment it is non-zero let the first metre issued
+    # replace the whole material actual: on the demo data it dropped 19,180.00 ->
+    # 3.20 and the margin "improved" from 24% to 65%, erasing a real overrun.
+    # Taking the larger of the two cannot UNDER-report and still picks ONE source.
+    #
+    # "manual" is different in kind — cash and subcontract buys the platform has no
+    # other record of — so it is a FALLBACK, never a competitor. Letting it into the
+    # comparison meant a large manual entry outranked a real procurement receipt,
+    # breaking the rule this function exists to enforce: a receipt for the order
+    # REPLACES the manual figure (see tests_selftest.py "no manual double-count").
+    issued, proc, manual = (round(issued or 0, 2), round(proc or 0, 2),
+                            round(manual or 0, 2))
+    if issued > 0 or proc > 0:
+        if proc >= issued:
+            # Name it honestly when issues are still catching up with the receipts.
+            return proc, "procured (issues partial)" if issued > 0 else "procured"
+        return issued, "issued"
+    if manual > 0:
+        return manual, "manual"
+    return 0.0, "none"
 
 
 # --- reads ----------------------------------------------------------------

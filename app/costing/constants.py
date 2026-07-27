@@ -43,6 +43,12 @@ PERMISSION_DESC = {
 # gap here shows up on screen as "cst.field.roll". tests_adversarial.py diffs the
 # templates against this map.
 I18N = {
+    # Export buttons on the order sheet (a parameterised route, so easy to miss)
+    "cst.action.export":           ("Export", "تصدير", "Dışa aktar"),
+    "cst.action.export_bom":       ("Export BOM", "تصدير قائمة المواد", "Malzeme listesini aktar"),
+    "cst.action.export_actuals":   ("Export actuals", "تصدير التكاليف الفعلية", "Gerçekleşenleri aktar"),
+    "cst.action.export_breakdown": ("Export breakdown", "تصدير تفصيل التكلفة", "Maliyet dökümünü aktar"),
+
     "cst.nav.home": ("BOM & Order Costing", "قائمة الخامات وتكلفة الأوامر", "Reçete ve Sipariş Maliyeti"),
     "cst.nav.orders": ("All orders", "كل الأوامر", "Tüm siparişler"),
     "cst.eyebrow": ("Planning · BOM & Order Costing", "التخطيط · قائمة الخامات وتكلفة الأوامر", "Planlama · Reçete ve Sipariş Maliyeti"),

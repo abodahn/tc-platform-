@@ -259,8 +259,23 @@ with app.app_context():
     svc._wh_issued_fn = lambda: (lambda oid: 4300.0)
     try:
         b = svc.cost_sheet(O1)
-        assert b["actual"]["material"] == 4300.0 and b["material"]["actual_basis"] == "issued"
-        ok("warehouse issues (4300) win over receipts+manual — the total is 4300, not 9800")
+        # The invariant is ONE source, never a sum: 4300+4500+1000 = 9800 must
+        # never appear. Between issues and receipts we now take the LARGER rather
+        # than always preferring issues, because warehouse issues are INCREMENTAL:
+        # preferring them the moment they are non-zero let the first metre issued
+        # erase the whole actual (observed on demo data: 19,180 -> 3.20, margin
+        # "improving" 24% -> 65%) and a real overrun would never raise a variance.
+        # The basis names the partial state, so the figure is never anonymous.
+        assert b["actual"]["material"] == 4500.0, b["actual"]["material"]
+        assert b["material"]["actual_basis"] == "procured (issues partial)", \
+            b["material"]["actual_basis"]
+        ok("issues+receipts+manual give ONE number (4500), never the 9800 sum")
+
+        svc._wh_issued_fn = lambda: (lambda oid: 6000.0)
+        b = svc.cost_sheet(O1)
+        assert b["actual"]["material"] == 6000.0 and b["material"]["actual_basis"] == "issued"
+        ok("once issues (6000) overtake receipts they become the basis")
+        svc._wh_issued_fn = lambda: (lambda oid: 4300.0)
         svc._wh_issued_fn = lambda: (lambda oid: (_ for _ in ()).throw(RuntimeError("boom")))
         b = svc.cost_sheet(O1)
         assert b["issued"] is None and b["actual"]["material"] == 4500.0
@@ -400,7 +415,10 @@ with app.app_context():
 head("routes: auth, method and rendering, through a real client")
 from app.routes.costing import bp as costing_bp        # noqa: E402
 
-app.register_blueprint(costing_bp)
+# create_app() already registers it; re-registering raises ValueError. Only
+# attach it when this app was built without it.
+if "costing" not in app.blueprints:
+    app.register_blueprint(costing_bp)
 client = app.test_client()
 
 GETS = ["/costing/", "/costing/orders", "/costing/order/1"]

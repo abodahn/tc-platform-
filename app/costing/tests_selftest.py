@@ -289,7 +289,10 @@ print("\n-- live render --")
 import re                                              # noqa: E402
 from app.routes.costing import bp as costing_bp        # noqa: E402
 
-app.register_blueprint(costing_bp)
+# create_app() already registers it; re-registering raises ValueError. Only
+# attach it when this app was built without it.
+if "costing" not in app.blueprints:
+    app.register_blueprint(costing_bp)
 cl = app.test_client()
 tok = re.search(rb'name="_csrf" value="([^"]+)"', cl.get("/login").data).group(1).decode()
 cl.post("/login", data={"username": "admin", "password": "Admin@12345", "_csrf": tok})
