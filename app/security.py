@@ -282,6 +282,48 @@ _merge_module_rbac(HR_PERMISSIONS, HR_ROLE_PERMS, HR_ROLE_LABELS)
 _merge_module_rbac(USERS_PERMISSIONS, USERS_ROLE_PERMS, USERS_ROLE_LABELS)
 
 
+# --- The manufacturing modules' permissions ---------------------------------
+# These twelve grant their permissions by being written straight into ROLES
+# above, so they never went through _merge_module_rbac and their names never
+# reached PERMISSIONS. That list is not documentation: app/routes/admin.py
+# filters every submitted grant through it
+#     perms = [p for p in f.getlist("perms[]") if p in PERMISSIONS]
+# so an admin editing a role or a user's extra permissions could tick any of
+# these 22 boxes, save, get no error, and have the grant silently dropped.
+# Each module owns its own permission names; we only fold them in here, so a
+# module that adds a permission tomorrow is registered without touching this
+# file. tests/test_security_rbac.py asserts no role grants an unregistered
+# permission, which is what caught the omission.
+_MODULE_PERM_SOURCES = [
+    ("app.warehouse.constants", "WH_PERMISSIONS"),
+    ("app.costing.constants", "COST_PERMISSIONS"),
+    ("app.quality.constants", "QC_PERMISSIONS"),
+    ("app.planning.constants", "PLN_PERMISSIONS"),
+    ("app.cutroom.constants", "CUT_PERMISSIONS"),
+    ("app.plm.constants", "PLM_PERMISSIONS"),
+    ("app.mes.constants", "MES_PERMISSIONS"),
+    ("app.people.constants", "PPL_PERMISSIONS"),
+    ("app.trace.constants", "TRC_PERMISSIONS"),
+    ("app.shipping.constants", "SHP_PERMISSIONS"),
+    ("app.wash.constants", "WSH_PERMISSIONS"),
+    ("app.compliance.constants", "CMP_PERMS"),   # dict: code -> description
+]
+
+_MODULE_PERM_DESC = {}          # descriptions any module supplied alongside its codes
+
+for _mod_path, _attr in _MODULE_PERM_SOURCES:
+    try:
+        _mod = __import__(_mod_path, fromlist=[_attr])
+        _catalogue = getattr(_mod, _attr)
+    except Exception:
+        continue          # a module absent from this build must not break boot
+    for _p in _catalogue:                       # iterating a dict yields its keys
+        if _p not in PERMISSIONS:
+            PERMISSIONS.append(_p)
+    if isinstance(_catalogue, dict):            # code -> description form
+        _MODULE_PERM_DESC.update(_catalogue)
+
+
 # --- Permission catalogue + built-in set (for the Admin -> Roles editor) ----
 BUILTIN_ROLE_KEYS = set(ROLES.keys())   # code-defined roles (captured post-merge)
 
@@ -393,6 +435,12 @@ PERMISSION_DESC = {
     "users_view_security_audit": "View the account security audit trail.",
 }
 
+# Descriptions a module shipped next to its own permission codes (see
+# _MODULE_PERM_SOURCES). setdefault, so a description written by hand above
+# always wins over the module's terser one.
+for _p, _d in _MODULE_PERM_DESC.items():
+    PERMISSION_DESC.setdefault(_p, _d)
+
 
 def permission_label(p):
     return PERMISSION_LABELS.get(p, p.replace("_", " ").capitalize())
@@ -402,20 +450,46 @@ def permission_desc(p):
     return PERMISSION_DESC.get(p, "")
 
 
+# Permission prefix -> the group it belongs to in the Admin > Roles editor.
+# Without this the 22 manufacturing permissions all land in "Platform", which
+# turns the first group into an unreadable dumping ground of 30-odd checkboxes.
+_PERM_GROUPS = [
+    ("maint_", "Maintenance"),
+    ("proc_", "Procurement"),
+    ("prob_", "HR / Probation"),
+    ("users_", "Accounts / Users"),
+    ("ppl_", "HR / Probation"),
+    ("wh_", "Warehouse & Shipping"),
+    ("shp_", "Warehouse & Shipping"),
+    ("trc_", "Warehouse & Shipping"),
+    ("pln_", "Planning & Costing"),
+    ("cost_", "Planning & Costing"),
+    ("plm_", "Product Development"),
+    ("cut_", "Production Floor"),
+    ("mes_", "Production Floor"),
+    ("wsh_", "Production Floor"),
+    ("qc_", "Quality & Compliance"),
+    ("cmp_", "Quality & Compliance"),
+]
+
+# Fixed display order; every group named above must appear here.
+_PERM_GROUP_ORDER = ["Platform", "Planning & Costing", "Product Development",
+                     "Production Floor", "Quality & Compliance",
+                     "Warehouse & Shipping", "Maintenance", "Procurement",
+                     "HR / Probation", "Accounts / Users"]
+
+
 def permission_catalogue():
-    """Permissions grouped for the editor: {group: [(key, label, desc), ...]}."""
-    groups = {"Platform": [], "Maintenance": [], "Procurement": [],
-              "HR / Probation": [], "Accounts / Users": []}
+    """Permissions grouped for the editor: {group: [(key, label, desc), ...]}.
+    Groups are returned in a fixed order and empty ones are dropped, so a build
+    without a given module simply shows fewer sections."""
+    groups = {name: [] for name in _PERM_GROUP_ORDER}
     for p in PERMISSIONS:
         entry = (p, permission_label(p), permission_desc(p))
-        if p.startswith("maint_"):
-            groups["Maintenance"].append(entry)
-        elif p.startswith("proc_"):
-            groups["Procurement"].append(entry)
-        elif p.startswith("prob_"):
-            groups["HR / Probation"].append(entry)
-        elif p.startswith("users_"):
-            groups["Accounts / Users"].append(entry)
+        for prefix, group in _PERM_GROUPS:
+            if p.startswith(prefix):
+                groups[group].append(entry)
+                break
         else:
             groups["Platform"].append(entry)
-    return groups
+    return {name: items for name, items in groups.items() if items}
