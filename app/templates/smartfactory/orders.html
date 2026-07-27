@@ -5,6 +5,7 @@
   <div>
     <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
     <h1 data-i18n="sf.orders_styles">Orders &amp; styles</h1>
+    <div class="sub" data-i18n="sf.orders_sub">The platform order book, with the canonical SMV every module resolves.</div>
   </div>
   <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
 </div>
@@ -14,20 +15,24 @@
     <table class="tbl">
       <thead><tr>
         <th data-i18n="sf.po">PO</th><th data-i18n="sf.style">Style</th><th data-i18n="sf.buyer">Buyer</th>
-        <th data-i18n="sf.qty">Qty</th><th data-i18n="sf.color">Color</th><th>SMV</th>
+        <th data-i18n="sf.qty">Qty</th><th>SMV</th>
         <th data-i18n="sf.delivery">Delivery</th><th data-i18n="sf.status">Status</th>
       </tr></thead>
       <tbody>
       {% for o in orders %}
         <tr>
-          <td><b>{{ o.po_no }}</b></td><td>{{ o.style_code }} · {{ o.style_name }}</td><td>{{ o.buyer }}</td>
-          <td>{{ '{:,}'.format(o.qty) }}</td><td>{{ o.color }}</td><td>{{ o.smv }}</td>
-          <td class="muted">{{ o.delivery_date }}</td>
-          <td><span class="tag">{{ o.status|replace('_',' ') }}</span></td>
+          <td><b><a href="{{ url_for('orders.detail', order_id=o.id) }}">{{ o.po_no }}</a></b></td>
+          <td>{{ o.style_code or '—' }}{% if o.style_name %} · {{ o.style_name }}{% endif %}</td><td>{{ o.buyer }}</td>
+          <td>{{ '{:,.0f}'.format(o.qty or 0) }}</td>
+          <td>{% if o.smv %}{{ o.smv }}{% if o.smv_conflict %} <span class="tag" data-i18n="sf.smv_differs">SMV differs</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="muted">{{ o.delivery_date or '—' }}</td>
+          <td><span class="tag">{{ (o.status or '')|replace('_',' ') }}</span></td>
         </tr>
-      {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_orders">No orders yet.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_orders">No orders yet.</td></tr>{% endfor %}
       </tbody>
     </table>
+    {% set src_href = url_for('orders.listing') %}{% set src_label = '/orders/list' %}
+    {% include "smartfactory/_source.html" %}
   </div>
 </div>
 {% endblock %}

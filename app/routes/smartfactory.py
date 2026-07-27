@@ -1,13 +1,32 @@
 """
-Smart Factory (MES) — routes. Merged into the TC Platform, reusing its auth,
-RBAC, CSRF, i18n, base template and design.
+Smart Factory (/factory) — routes.
 
-  /factory              live command center (efficiency, RAG, DHU/RFT, sustainability)
-  /factory/production   hourly production entry board
-  /factory/quality      quality checks (DHU/RFT + defect pareto)
-  /factory/orders       orders & styles (SMV)
+/factory is a PRESENTATION layer: every page here reads the module that OWNS the
+record (MES, QMS, wash, orders, warehouse, people, costing) and writes nothing.
+See app/smartfactory/services.py for why.
 
-Viewing needs `view_dashboard`; shop-floor entry needs `manage_production`.
+The four POST endpoints that used to write /factory's own copy of the floor are
+kept — a bookmarked or cached form must not 404 — but they now say where the
+record is made and redirect there. Nothing is written on the way past, because
+writing a real module's table from here would step around that module's own
+validation and its own permission, and a supervisor with /factory rights would be
+recording MES output without MES rights.
+
+  /factory              command center (MES day roll-up + QMS + wash)
+  /factory/floor        the big live board
+  /factory/production   the MES hourly board          (entry: /mes/entry)
+  /factory/quality      the QMS inspection register   (entry: /quality)
+  /factory/bundles      the MES bundle ledger + warehouse rolls (entry: /mes/bundles)
+  /factory/wash         executed wash lots            (entry: /wash/batches)
+  /factory/orders       the platform order book + canonical SMV
+  /factory/workforce    piece-rate scorecards from /people
+  /factory/costing      floor conversion cost per piece
+  /factory/intelligence money-first explainability
+  /factory/approvals    STILL its own sf_approvals data — labelled as such
+  /factory/reports      exports of the above
+
+Viewing needs `view_dashboard`; the (now redirecting) entry routes still need
+`manage_production`, exactly as before.
 """
 from flask import (Blueprint, render_template, request, redirect, url_for, flash,
                    send_file, abort)
@@ -18,10 +37,27 @@ from app.smartfactory import approvals as appr
 
 bp = Blueprint("smartfactory", __name__, url_prefix="/factory")
 
+# Where each /factory form's record is actually made now.
+_MOVED = {
+    "production": ("mes.entry", "Hourly production is recorded on the MES board."),
+    "quality": ("quality.new", "Inspections are recorded in the Quality module."),
+    "bundles": ("mes.bundles", "Bundles are created and scanned in the MES bundle ledger."),
+    "wash": ("wash.batches", "Wash batches are recorded against a recipe version in Wash."),
+}
+
 
 def _u():
     u = current_user()
     return (u.get("full_name") or u.get("username")) if u else ""
+
+
+def _moved(what):
+    """Tell the user where the record is made, then send them there. Deliberately
+    NOT a silent write to the owning module: that module's own screen is where its
+    rules, its permission and its validation live."""
+    endpoint, msg = _MOVED[what]
+    flash(msg + " Nothing was saved here — please enter it there.", "error")
+    return redirect(url_for(endpoint))
 
 
 @bp.route("/")
@@ -37,25 +73,14 @@ def command_center():
 @permission_required("view_dashboard")
 def production():
     return render_template("smartfactory/production.html", active="sf_production",
-                           rows=svc.list_production(), lines=svc.list_lines(),
-                           orders=svc.list_orders(),
-                           slots=["08:00-09:00", "09:00-10:00", "10:00-11:00", "11:00-12:00",
-                                  "13:00-14:00", "14:00-15:00", "15:00-16:00"])
+                           rows=svc.list_production())
 
 
 @bp.route("/production", methods=["POST"])
 @login_required
 @permission_required("manage_production")
 def production_add():
-    f = request.form
-    try:
-        svc.add_production(int(f.get("line_id")), f.get("order_id") or None, f.get("hour_slot", ""),
-                           f.get("target_qty", 0), f.get("actual_qty", 0), f.get("lost_min", 0),
-                           f.get("operator", ""), _u())
-        flash("Production entry saved.", "success")
-    except Exception:  # noqa: BLE001
-        flash("Could not save the entry.", "error")
-    return redirect(url_for("smartfactory.production"))
+    return _moved("production")
 
 
 @bp.route("/quality", methods=["GET"])
@@ -64,29 +89,14 @@ def production_add():
 def quality():
     data = svc.dashboard()
     return render_template("smartfactory/quality.html", active="sf_quality",
-                           rows=svc.list_quality(), lines=svc.list_lines(),
-                           orders=svc.list_orders(), pareto=data["pareto"])
+                           rows=svc.list_quality(), pareto=data["pareto"], kpis=data["kpis"])
 
 
 @bp.route("/quality", methods=["POST"])
 @login_required
 @permission_required("manage_production")
 def quality_add():
-    f = request.form
-    defects = []
-    for code in ("SKIP-STITCH", "BROKEN-STITCH", "SHADE-VAR", "MEASUREMENT", "OTHER"):
-        qty = f.get(f"def_{code}")
-        if qty and int(qty or 0) > 0:
-            cat = "wash" if code == "SHADE-VAR" else ("measurement" if code == "MEASUREMENT" else "stitching")
-            defects.append({"code": code, "category": cat, "qty": int(qty)})
-    try:
-        svc.add_quality(int(f.get("line_id")), f.get("order_id") or None, f.get("stage", "endline"),
-                        f.get("inspected", 0), f.get("defect", 0), f.get("rework", 0),
-                        f.get("reject", 0), _u(), defects)
-        flash("Quality check recorded.", "success")
-    except Exception:  # noqa: BLE001
-        flash("Could not record the check.", "error")
-    return redirect(url_for("smartfactory.quality"))
+    return _moved("quality")
 
 
 @bp.route("/orders")
@@ -109,22 +119,14 @@ def floor():
 @login_required
 @permission_required("view_dashboard")
 def bundles():
-    return render_template("smartfactory/bundles.html", active="sf_bundles",
-                           orders=svc.list_orders(), **svc.bundles())
+    return render_template("smartfactory/bundles.html", active="sf_bundles", **svc.bundles())
 
 
 @bp.route("/bundles", methods=["POST"])
 @login_required
 @permission_required("manage_production")
 def bundles_add():
-    f = request.form
-    try:
-        svc.add_bundle(f.get("order_id") or None, f.get("roll_id") or None, f.get("size", "M"),
-                       f.get("color", ""), f.get("qty", 0), f.get("operation_at", "cutting"))
-        flash("Bundle created.", "success")
-    except Exception:  # noqa: BLE001
-        flash("Could not create the bundle.", "error")
-    return redirect(url_for("smartfactory.bundles"))
+    return _moved("bundles")
 
 
 # ---- Laundry / wash ----
@@ -132,23 +134,14 @@ def bundles_add():
 @login_required
 @permission_required("view_dashboard")
 def wash():
-    return render_template("smartfactory/wash.html", active="sf_wash",
-                           orders=svc.list_orders(), **svc.wash_list())
+    return render_template("smartfactory/wash.html", active="sf_wash", **svc.wash_list())
 
 
 @bp.route("/wash", methods=["POST"])
 @login_required
 @permission_required("manage_production")
 def wash_add():
-    f = request.form
-    try:
-        svc.add_wash(f.get("order_id") or None, f.get("recipe", ""), f.get("water_l", 0),
-                     f.get("energy_kwh", 0), f.get("chemical_kg", 0), f.get("pieces", 0),
-                     f.get("shade", ""), f.get("rewash", 0))
-        flash("Wash batch recorded.", "success")
-    except Exception:  # noqa: BLE001
-        flash("Could not record the batch.", "error")
-    return redirect(url_for("smartfactory.wash"))
+    return _moved("wash")
 
 
 # ---- Workforce / efficiency ----
@@ -185,6 +178,12 @@ def intelligence():
 
 
 # ---- Smart approval engine + cost intelligence ----
+# NOT converted: this is a self-contained cost-approval ladder on sf_approvals, and
+# re-pointing it at the platform's procurement ladder would move approval
+# behaviour. Its order picker therefore stays on the LEGACY sf_orders list — the
+# rows already in sf_approvals hold sf_orders ids, and handing it real order ids
+# would silently re-label every request in the table. The page is labelled in the
+# UI as running on its own /factory data.
 @bp.route("/approvals", methods=["GET"])
 @login_required
 @permission_required("view_dashboard")
@@ -192,7 +191,7 @@ def approvals():
     status = request.args.get("status", "open")
     return render_template("smartfactory/approvals.html", active="sf_approvals",
                            rows=appr.list_approvals(status), status=status,
-                           dash=appr.dashboard(), kinds=appr.KINDS, orders=svc.list_orders(),
+                           dash=appr.dashboard(), kinds=appr.KINDS, orders=svc.list_sf_orders(),
                            lines=svc.list_lines(), can_decide=(True))
 
 
@@ -233,21 +232,34 @@ def reports():
 @login_required
 @permission_required("view_dashboard")
 def report_export(kind, fmt):
+    """Same four downloads, now of the REAL records. The owning modules export
+    their own datasets too (/mes/export, /quality/export, /wash/export); these stay
+    because they are the cross-module cut /factory presents on one screen."""
     import io
     import csv
     datasets = {
-        "production": (["Line", "Order", "Hour", "Target", "Actual", "Lost min"],
-                       [[r.get("line_name"), r.get("po_no"), r.get("hour_slot"), r.get("target_qty"),
-                         r.get("actual_qty"), r.get("lost_min")] for r in svc.list_production(1000)]),
-        "quality": (["Line", "Stage", "Inspected", "Defect", "Rework", "Reject"],
-                    [[r.get("line_name"), r.get("stage"), r.get("inspected"), r.get("defect"),
-                      r.get("rework"), r.get("reject")] for r in svc.list_quality(1000)]),
-        "costing": (["PO", "Style", "Produced", "Labor", "Rework", "Downtime", "Wash", "Total", "Cost/pc"],
-                    [[r["po_no"], r["style"], r["produced"], r["labor"], r["rework"], r["downtime"],
-                      r["wash"], r["total"], r["cpp"]] for r in svc.costing()["rows"]]),
-        "wash": (["Batch", "Order", "Recipe", "Water L", "Energy kWh", "Chemical kg", "Pieces", "Shade", "Rewash"],
-                 [[r.get("batch_no"), r.get("po_no"), r.get("recipe"), r.get("water_l"), r.get("energy_kwh"),
-                   r.get("chemical_kg"), r.get("pieces"), r.get("shade"), r.get("rewash")] for r in svc.wash_list()["rows"]]),
+        "production": (["Date", "Line", "Order", "Hour", "Target", "Actual", "Reject",
+                        "Operators", "SMV"],
+                       [[r.get("work_date"), r.get("line_name"), r.get("po_no"), r.get("hour_slot"),
+                         r.get("target_qty"), r.get("actual_qty"), r.get("reject_qty"),
+                         r.get("operators"), r.get("smv")] for r in svc.list_production(1000)]),
+        "quality": (["Ref", "Order", "Stage", "Units", "Defective", "Defects", "DHU", "RFT",
+                     "Verdict"],
+                    [[r.get("ref"), r.get("po_no"), r.get("stage"), r.get("units_inspected"),
+                      r.get("defective_units"), r.get("defects"), r.get("dhu"), r.get("rft"),
+                      r.get("verdict")] for r in svc.list_quality(1000)]),
+        "costing": (["PO", "Style", "Produced", "Reject", "SMV", "Rate/min", "Rate source",
+                     "Labour", "Scrap", "Wash", "Total", "Cost/pc"],
+                    [[r["po_no"], r["style"], r["produced"], r["reject"], r["smv"], r["rate"],
+                      "cost sheet" if r["priced"] else "default tariff",
+                      r["labor"], r["rework"], r["wash"], r["total"], r["cpp"]]
+                     for r in svc.costing()["rows"]]),
+        "wash": (["Batch", "Order", "Recipe", "Load kg", "Water L", "Metered", "Chemical kg",
+                  "Heat L.K", "Shade", "Deviation"],
+                 [[r.get("batch_no"), r.get("po_no"), r.get("recipe"), r.get("load_kg"),
+                   r.get("water_l"), "yes" if r.get("water_metered") else "recipe",
+                   r.get("chem_kg"), r.get("heat_lk"), r.get("shade"), r.get("deviation")]
+                  for r in svc.wash_list()["rows"]]),
     }
     if kind not in datasets:
         abort(404)

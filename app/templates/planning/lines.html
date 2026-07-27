@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Line capacity{% endblock %}
+{# Measured from the MES hourly record. "no actuals" is NOT 0% — a line the floor
+   has never booked against has nothing to measure, and 0% would read as a dead line. #}
+{% macro eff_measured(r) %}{% if r.measured_efficiency is none %}<span class="muted" data-i18n="pln.actual.none_short">no actuals</span>{% else %}{{ r.measured_efficiency }}%{% if r.efficiency_gap %}<div class="muted" style="font-size:11px">{{ '+' if r.efficiency_gap > 0 else '' }}{{ r.efficiency_gap }}</div>{% endif %}{% endif %}{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -14,7 +17,8 @@
 </div>
 
 <div class="panel">
-  <div class="panel-head"><h3 data-i18n="pln.lines.title">Lines</h3></div>
+  <div class="panel-head"><h3 data-i18n="pln.lines.title">Lines</h3>
+    <span class="muted" style="font-size:11px" data-i18n="pln.lines.eff_hint">Measured efficiency comes from the last 14 days of the MES hourly record. It is a suggestion — nothing changes until you apply it.</span></div>
   <div class="panel-pad">
     <div class="tbl-wrap">
       <table class="tbl">
@@ -25,6 +29,7 @@
           <th style="text-align:right" data-i18n="pln.field.operators">Operators</th>
           <th style="text-align:right" data-i18n="pln.field.working_minutes">Minutes / day</th>
           <th style="text-align:right" data-i18n="pln.field.efficiency">Efficiency %</th>
+          <th style="text-align:right" data-i18n="pln.field.eff_measured">Measured efficiency</th>
           <th style="text-align:right" data-i18n="pln.field.capacity">Capacity / day</th>
           <th data-i18n="pln.field.status">Status</th>
           {% if can('pln_plan') %}<th data-i18n="pln.field.actions">Actions</th>{% endif %}
@@ -40,7 +45,9 @@
               <td style="text-align:right"><input form="{{ fid }}" name="operators" type="number" min="0" step="1" value="{{ r.operators or 0 }}" style="width:80px;text-align:right"></td>
               <td style="text-align:right"><input form="{{ fid }}" name="working_minutes" type="number" min="0" step="1" value="{{ r.working_minutes or 0 }}" style="width:90px;text-align:right"></td>
               <td style="text-align:right"><input form="{{ fid }}" name="efficiency_pct" type="number" min="0" max="200" step="any" value="{{ r.efficiency_pct or 0 }}" style="width:80px;text-align:right"></td>
-              <td style="text-align:right"><strong>{{ r.capacity|round(0)|int }}</strong></td>
+              <td style="text-align:right">{{ eff_measured(r) }}</td>
+              <td style="text-align:right"><strong>{{ r.capacity|round(0)|int }}</strong>
+                {% if r.capacity_measured is not none and r.capacity_measured != r.capacity %}<div class="muted" style="font-size:11px">{{ r.capacity_measured|round(0)|int }}</div>{% endif %}</td>
               <td>{% if r.active %}<span class="tag" style="background:#15803d18;color:#15803d" data-i18n="pln.status.active">Active</span>{% else %}<span class="tag" data-i18n="pln.status.inactive">Inactive</span>{% endif %}</td>
               <td>
                 {# the form lives in a cell; the row's inputs join it via form="" (valid HTML — a <form> may not wrap <td>) #}
@@ -49,6 +56,14 @@
                   <button class="btn btn-sm btn-primary" data-i18n="pln.action.save">Save</button>
                   <button class="btn btn-sm btn-ghost" name="active" value="{{ 0 if r.active else 1 }}" data-i18n="pln.action.toggle">Toggle</button>
                 </form>
+                {% if r.measured_efficiency is not none and r.efficiency_gap and (r.efficiency_gap|abs) >= 1 %}
+                {# Suggestion, never an automatic overwrite: the planner owns their plan. #}
+                <form class="mt-2" method="post" action="{{ url_for('planning.line_update', pline_id=r.id) }}">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <input type="hidden" name="efficiency_pct" value="{{ r.measured_efficiency }}">
+                  <button class="btn btn-sm btn-ghost" data-i18n="pln.action.apply_eff">Use measured</button>
+                </form>
+                {% endif %}
               </td>
             {% else %}
               <td>{{ r.code or '—' }}</td>
@@ -57,12 +72,13 @@
               <td style="text-align:right">{{ r.operators or 0 }}</td>
               <td style="text-align:right">{{ r.working_minutes or 0 }}</td>
               <td style="text-align:right">{{ r.efficiency_pct or 0 }}</td>
+              <td style="text-align:right">{{ eff_measured(r) }}</td>
               <td style="text-align:right"><strong>{{ r.capacity|round(0)|int }}</strong></td>
               <td>{% if r.active %}<span class="tag" style="background:#15803d18;color:#15803d" data-i18n="pln.status.active">Active</span>{% else %}<span class="tag" data-i18n="pln.status.inactive">Inactive</span>{% endif %}</td>
             {% endif %}
           </tr>
         {% else %}
-          <tr><td colspan="9" class="muted" style="text-align:center;padding:16px" data-i18n="pln.empty.lines">No active lines. Add line capacity first.</td></tr>
+          <tr><td colspan="10" class="muted" style="text-align:center;padding:16px" data-i18n="pln.empty.lines">No active lines. Add line capacity first.</td></tr>
         {% endfor %}
         </tbody>
       </table>

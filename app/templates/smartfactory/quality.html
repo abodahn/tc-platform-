@@ -5,36 +5,22 @@
   <div>
     <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
     <h1 data-i18n="sf.quality">Quality — DHU / RFT</h1>
+    <div class="sub" data-i18n="sf.quality_sub">The QMS inspection register — AQL verdicts and the defect pareto behind them.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+  <div class="flex gap">
+    <a class="btn btn-primary btn-sm" href="{{ url_for('quality.new') }}" data-i18n="sf.record_check">Record check</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+  </div>
 </div>
-
-{% if can('manage_production') %}
-<div class="panel">
-  <form method="post" action="{{ url_for('smartfactory.quality_add') }}">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <div class="panel-pad grid cols-4">
-      <div class="field"><label data-i18n="sf.line">Line</label>
-        <select name="line_id" required>{% for l in lines %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}</select></div>
-      <div class="field"><label data-i18n="sf.stage">Stage</label>
-        <select name="stage"><option value="inline">Inline</option><option value="endline" selected>Endline</option><option value="final">Final</option></select></div>
-      <div class="field"><label data-i18n="sf.inspected">Inspected</label><input name="inspected" type="number" min="0" value="500"></div>
-      <div class="field"><label data-i18n="sf.defect">Defects</label><input name="defect" type="number" min="0" value="30"></div>
-      <div class="field"><label data-i18n="sf.rework">Rework</label><input name="rework" type="number" min="0" value="20"></div>
-      <div class="field"><label data-i18n="sf.reject">Reject</label><input name="reject" type="number" min="0" value="4"></div>
-      <div class="field"><label>Skip-stitch</label><input name="def_SKIP-STITCH" type="number" min="0" value="0"></div>
-      <div class="field"><label>Shade var.</label><input name="def_SHADE-VAR" type="number" min="0" value="0"></div>
-    </div>
-    <div class="panel-pad" style="padding-top:0"><button class="btn btn-primary" type="submit" data-i18n="sf.record_check">Record check</button></div>
-  </form>
-</div>
-{% endif %}
 
 <div class="grid cols-2 mt-4">
   <div class="panel">
-    <div class="panel-head"><h3 data-i18n="sf.defect_pareto">Defect pareto</h3></div>
+    <div class="panel-head"><h3 data-i18n="sf.defect_pareto">Defect pareto</h3>
+      <span class="tag">DHU {{ kpis.dhu }} · RFT {{ kpis.rft }}%</span></div>
     <div class="panel-pad">
-      {% set maxd = (pareto|map(attribute='qty')|max) if pareto else 1 %}
+      {# `or 1`: a legacy/hand-edited defect row of qty 0 makes the max 0 and the
+         bar width a division by zero — a 500 on this page. #}
+      {% set maxd = ((pareto|map(attribute='qty')|max) if pareto else 0) or 1 %}
       {% for p in pareto %}
       <div style="display:flex;align-items:center;gap:10px;font-size:13px;margin:6px 0">
         <div style="width:130px" class="muted">{{ p.code }}</div>
@@ -48,16 +34,25 @@
     <div class="panel-head"><h3 data-i18n="sf.recent_checks">Recent checks</h3></div>
     <div class="panel-pad" style="overflow-x:auto">
       <table class="tbl">
-        <thead><tr><th data-i18n="sf.line">Line</th><th data-i18n="sf.stage">Stage</th><th>Insp</th><th>Def</th><th>DHU</th><th>RFT%</th></tr></thead>
+        <thead><tr>
+          <th data-i18n="sf.ref">Ref</th><th data-i18n="sf.order">Order</th><th data-i18n="sf.stage">Stage</th>
+          <th data-i18n="sf.inspected">Inspected</th><th data-i18n="sf.defect">Defects</th>
+          <th>DHU</th><th>RFT%</th><th data-i18n="sf.verdict">Verdict</th>
+        </tr></thead>
         <tbody>
         {% for r in rows %}
-          {% set dhu = (100*r.defect/r.inspected)|round(1) if r.inspected else 0 %}
-          {% set rft = (100*(r.inspected-r.defect)/r.inspected)|round(1) if r.inspected else 0 %}
-          <tr><td>{{ r.line_name or r.line_id }}</td><td>{{ r.stage }}</td><td>{{ r.inspected }}</td><td>{{ r.defect }}</td>
-            <td style="color:{{ 'var(--ok)' if dhu<=5 else 'var(--crit)' }}">{{ dhu }}</td><td>{{ rft }}</td></tr>
-        {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:16px" data-i18n="sf.no_checks">No checks yet.</td></tr>{% endfor %}
+          <tr>
+            <td class="mono"><a href="{{ url_for('quality.detail', inspection_id=r.id) }}">{{ r.ref or r.id }}</a></td>
+            <td class="muted">{{ r.po_no }}</td><td>{{ r.stage }}</td>
+            <td>{{ (r.units_inspected or 0)|round(0)|int }}</td><td>{{ (r.defects or 0)|round(0)|int }}</td>
+            <td style="color:{{ 'var(--ok)' if r.dhu<=5 else 'var(--crit)' }}">{{ r.dhu }}</td><td>{{ r.rft }}</td>
+            <td><span class="tag">{{ r.verdict }}</span></td>
+          </tr>
+        {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:16px" data-i18n="sf.no_checks">No checks yet.</td></tr>{% endfor %}
         </tbody>
       </table>
+      {% set src_href = url_for('quality.inspections') %}{% set src_label = '/quality/inspections' %}
+      {% include "smartfactory/_source.html" %}
     </div>
   </div>
 </div>

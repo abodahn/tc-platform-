@@ -25,6 +25,43 @@
   </div>
 </div>
 
+{# ---------------- Factory pulse — cross-module risk strip ----------------
+     Built by main._factory_pulse(): each tile is permission-gated server-side,
+     so a module the user cannot open contributes no markup at all. #}
+{# Every string here is COMPUTED server-side, so it is emitted as data-loc-en/ar/tr
+   (app.js swaps those) — NOT data-i18n, which renders the literal key unless it
+   also exists in app/static/i18n/*.json. #}
+{% macro loc(x) %}data-loc-en="{{ x.en }}" data-loc-ar="{{ x.ar }}" data-loc-tr="{{ x.tr }}"{% endmacro %}
+<div class="flex between center mt-6" style="margin-bottom:-6px">
+  <h3 style="margin:0;font-size:15px" {{ loc(pulse_head.title) }}>{{ pulse_head.title.en }}</h3>
+  <a class="tag" href="{{ url_for('main.my_work') }}" {{ loc(pulse_head.my_work) }}>{{ pulse_head.my_work.en }}</a>
+</div>
+{% if pulse %}
+<div class="grid cols-4 mt-4" id="factoryPulse">
+  {% for t in pulse %}
+  <a class="kpi {{ t.klass }}" data-exec="{{ t.k }}" href="{{ t.url }}"
+     style="text-decoration:none;color:inherit">
+    <div class="ktop">
+      <div class="kicon"><svg class="ico"><use href="#i-{{ t.icon }}"></use></svg></div>
+      <span class="badge b-{{ t.badge }}"><span class="dot"></span><span {{ loc(t.state) }}>{{ t.state.en }}</span></span>
+    </div>
+    <div class="kval">{{ t.n }}{{ t.suffix }}</div>
+    <div class="klabel" {{ loc(t.label) }}>{{ t.label.en }}</div>
+    {% if t.total is not none and t.scope %}
+    <div class="muted" style="font-size:11.5px;margin-top:4px">{{ t.total }}
+      <span {{ loc(t.scope) }}>{{ t.scope.en }}</span></div>
+    {% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel mt-4" id="factoryPulseEmpty">
+  <div class="panel-pad muted" style="font-size:13px" {{ loc(pulse_head.none) }}>
+    {{ pulse_head.none.en }}
+  </div>
+</div>
+{% endif %}
+
 {# ---------------- Consolidated Business Overview (all systems) ---------------- #}
 <div class="panel mt-6">
   <div class="panel-head">

@@ -8,8 +8,9 @@ the code actually enforces. The texts here are translations of exactly those
 paragraphs — same meaning, same controls, nothing added or softened.
 
 They are SEEDED into the *_ar / *_tr columns of proc_stage_meta, proc_role_meta
-and proc_doc (only where the column is still empty, so an admin's edit is never
-overwritten) and act as the code default for a row that has none.
+and proc_doc (only where the column is still NULL — never translated — so neither
+an admin's edit nor a box he emptied on purpose is ever overwritten) and act as
+the code default for a row that has none.
 
 Acronyms stay acronyms inside the sentence: PR, PO, RFQ, EGP, FX, OEM, CFO, CEO.
 """
@@ -483,25 +484,25 @@ UI = {
     "en": {
         "text_en": "Text (English)", "text_ar": "Text (Arabic)",
         "text_tr": "Text (Turkish)",
-        "lang_hint": "Each language is saved on its own: a box left empty keeps the "
-                     "text already stored for that language. Reset clears all three "
-                     "back to the built-in wording.",
+        "lang_hint": "Each language is saved on its own. Empty a box and that "
+                     "language's readers see the English text instead — it stays "
+                     "empty. Reset puts all three back to the built-in wording.",
         "no_approve_opt": "No approve permission",
     },
     "ar": {
         "text_en": "النص (بالإنجليزية)", "text_ar": "النص (بالعربية)",
         "text_tr": "النص (بالتركية)",
-        "lang_hint": "كل لغة تُحفَظ على حدة: الحقل المتروك فارغًا يُبقي النص المحفوظ "
-                     "لتلك اللغة كما هو. و«إعادة التعيين» تُرجع اللغات الثلاث إلى "
-                     "الصياغة المدمجة.",
+        "lang_hint": "كل لغة تُحفَظ على حدة. أفرِغ أي حقل فيرى قرّاء تلك اللغة النص "
+                     "الإنجليزي بدلًا منه، ويبقى الحقل فارغًا. و«إعادة التعيين» تُرجع "
+                     "اللغات الثلاث إلى الصياغة المدمجة.",
         "no_approve_opt": "لا يحمل صلاحية الموافقة",
     },
     "tr": {
         "text_en": "Metin (İngilizce)", "text_ar": "Metin (Arapça)",
         "text_tr": "Metin (Türkçe)",
-        "lang_hint": "Her dil kendi başına kaydedilir: boş bırakılan bir kutu, o dil "
-                     "için saklı metni olduğu gibi bırakır. Sıfırla, üç dilin hepsini "
-                     "yerleşik metne döndürür.",
+        "lang_hint": "Her dil kendi başına kaydedilir. Bir kutuyu boşaltırsanız o "
+                     "dilin okuyucuları İngilizce metni görür ve kutu boş kalır. "
+                     "Sıfırla, üç dilin hepsini yerleşik metne döndürür.",
         "no_approve_opt": "Onay yetkisi yok",
     },
 }

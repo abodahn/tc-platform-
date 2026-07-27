@@ -4,52 +4,41 @@
 <div class="page-head">
   <div>
     <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
-    <h1 data-i18n="sf.production">Hourly production entry</h1>
+    <h1 data-i18n="sf.production">Hourly production</h1>
+    <div class="sub" data-i18n="sf.production_sub">The MES hourly board — the same rows the floor records, not a second copy.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+  <div class="flex gap">
+    <a class="btn btn-primary btn-sm" href="{{ url_for('mes.entry') }}" data-i18n="sf.add_entry">Add entry</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+  </div>
 </div>
 
-{% if can('manage_production') %}
 <div class="panel">
-  <form method="post" action="{{ url_for('smartfactory.production_add') }}">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <div class="panel-pad grid cols-4">
-      <div class="field"><label data-i18n="sf.line">Line</label>
-        <select name="line_id" required>{% for l in lines %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}</select></div>
-      <div class="field"><label data-i18n="sf.order">Order</label>
-        <select name="order_id"><option value=""></option>{% for o in orders %}<option value="{{ o.id }}">{{ o.po_no }} · {{ o.style_code }}</option>{% endfor %}</select></div>
-      <div class="field"><label data-i18n="sf.hour">Hour slot</label>
-        <select name="hour_slot">{% for s in slots %}<option>{{ s }}</option>{% endfor %}</select></div>
-      <div class="field"><label data-i18n="sf.operator">Operator</label><input name="operator" autocomplete="off" placeholder="OP-1001"></div>
-      <div class="field"><label data-i18n="sf.target">Target</label><input name="target_qty" type="number" min="0" value="120"></div>
-      <div class="field"><label data-i18n="sf.actual">Actual</label><input name="actual_qty" type="number" min="0" value="110"></div>
-      <div class="field"><label data-i18n="sf.lost">Lost min</label><input name="lost_min" type="number" min="0" value="0"></div>
-      <div class="field" style="display:flex;align-items:flex-end"><button class="btn btn-primary" type="submit" data-i18n="sf.add_entry">Add entry</button></div>
-    </div>
-  </form>
-</div>
-{% endif %}
-
-<div class="panel mt-4">
+  {# No "Showing <date>" here: this table is the most recent 200 hourly rows across
+     EVERY day, not one day, and each row prints its own date. Claiming a single
+     date over a multi-date table is a false statement about the data. #}
   <div class="panel-head"><h3 data-i18n="sf.recent_entries">Recent entries</h3></div>
   <div class="panel-pad" style="overflow-x:auto">
     <table class="tbl">
       <thead><tr>
-        <th data-i18n="sf.line">Line</th><th data-i18n="sf.order">Order</th><th data-i18n="sf.hour">Hour</th>
-        <th data-i18n="sf.target">Target</th><th data-i18n="sf.actual">Actual</th><th data-i18n="sf.eff">Eff%</th><th data-i18n="sf.lost">Lost</th>
+        <th data-i18n="sf.date">Date</th><th data-i18n="sf.line">Line</th><th data-i18n="sf.order">Order</th>
+        <th data-i18n="sf.hour">Hour</th><th data-i18n="sf.target">Target</th><th data-i18n="sf.actual">Actual</th>
+        <th data-i18n="sf.eff">Eff%</th><th data-i18n="sf.reject">Reject</th><th>SMV</th>
       </tr></thead>
       <tbody>
       {% for r in rows %}
-        {% set eff = (100*r.actual_qty/r.target_qty)|round(0,'floor')|int if r.target_qty else 0 %}
         <tr>
+          <td class="muted">{{ r.work_date }}</td>
           <td>{{ r.line_name or r.line_id }}</td><td class="muted">{{ r.po_no or '—' }}</td><td>{{ r.hour_slot }}</td>
           <td>{{ r.target_qty }}</td><td>{{ r.actual_qty }}</td>
-          <td style="color:{{ 'var(--ok)' if eff>=95 else 'var(--warn)' if eff>=80 else 'var(--crit)' }};font-weight:600">{{ eff }}%</td>
-          <td>{{ r.lost_min }}m</td>
+          <td style="color:{{ 'var(--ok)' if r.rag=='green' else 'var(--warn)' if r.rag=='amber' else 'var(--crit)' }};font-weight:600">{{ r.achievement }}%</td>
+          <td>{{ r.reject_qty }}</td><td>{{ r.smv }}</td>
         </tr>
-      {% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_entries">No production entries yet.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="9" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_entries">No production entries yet.</td></tr>{% endfor %}
       </tbody>
     </table>
+    {% set src_href = url_for('mes.entry') %}{% set src_label = '/mes/entry' %}
+    {% include "smartfactory/_source.html" %}
   </div>
 </div>
 {% endblock %}

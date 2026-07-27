@@ -10,6 +10,11 @@
   <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
 </div>
 
+<div class="muted mb-2" style="font-size:12.5px">
+  <span data-i18n="sf.showing">Showing</span> <b>{{ work_date }}</b> —
+  <span data-i18n="sf.showing_note">the last day the floor reported.</span>
+</div>
+
 <div class="sf-floor">
   {% for l in live %}
   <div class="sf-tile {{ l.rag }}">
@@ -21,6 +26,9 @@
   <div class="panel"><div class="panel-pad muted" data-i18n="sf.no_entries">No production entries yet.</div></div>
   {% endfor %}
 </div>
+
+{% set src_href = url_for('mes.board') %}{% set src_label = '/mes/board' %}
+{% include "smartfactory/_source.html" %}
 
 <script>
   // auto-refresh the floor board every 30s

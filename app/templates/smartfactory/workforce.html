@@ -5,7 +5,7 @@
   <div>
     <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
     <h1 data-i18n="sf.workforce">Workforce &amp; efficiency</h1>
-    <div class="sub" data-i18n="sf.workforce_sub">Operator scorecards from live production.</div>
+    <div class="sub" data-i18n="sf.workforce_sub2">Operator scorecards from the piece-rate record — the same earned minutes payroll uses.</div>
   </div>
   <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
 </div>
@@ -15,23 +15,30 @@
   <div class="sf-kpi"><div class="v">{{ count }}</div><div class="l" data-i18n="sf.operators">Operators tracked</div></div>
 </div>
 
+<div class="muted mt-2" style="font-size:12.5px">
+  <span data-i18n="sf.period">Period</span> {{ from_date }} → {{ to_date }} ·
+  <span data-i18n="sf.minute_weighted">efficiency is minute-weighted (earned ÷ worked), not an average of daily percentages.</span>
+</div>
+
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="sf.scorecards">Operator scorecards (lowest first)</h3></div>
   <div class="panel-pad" style="overflow-x:auto">
     <table class="tbl">
-      <thead><tr><th data-i18n="sf.operator">Operator</th><th data-i18n="sf.grade">Grade</th><th data-i18n="sf.hours">Hours</th><th data-i18n="sf.produced">Produced</th><th data-i18n="sf.eff">Eff%</th><th></th></tr></thead>
+      <thead><tr><th data-i18n="sf.operator">Operator</th><th data-i18n="sf.department">Department</th><th data-i18n="sf.hours">Hours</th><th data-i18n="sf.produced">Produced</th><th data-i18n="sf.eff">Eff%</th><th></th></tr></thead>
       <tbody>
       {% for r in rows %}
         {% set c = 'var(--ok)' if r.rag=='green' else 'var(--warn)' if r.rag=='amber' else 'var(--crit)' %}
         <tr>
           <td><b>{{ r.name }}</b> <span class="muted mono">{{ r.code }}</span></td>
-          <td>{{ r.grade }}</td><td>{{ r.hours }}</td><td>{{ r.produced }}</td>
+          <td class="muted">{{ r.grade }}</td><td>{{ r.hours }}</td><td>{{ '{:,}'.format(r.produced) }}</td>
           <td style="color:{{ c }};font-weight:700">{{ r.efficiency }}%</td>
           <td style="width:160px"><div class="sf-bar"><span style="width:{{ r.efficiency if r.efficiency<=100 else 100 }}%;background:{{ c }}"></span></div></td>
         </tr>
       {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_ops">No operator production yet.</td></tr>{% endfor %}
       </tbody>
     </table>
+    {% set src_href = url_for('people.incentive') %}{% set src_label = '/people/incentive' %}
+    {% include "smartfactory/_source.html" %}
   </div>
 </div>
 {% endblock %}

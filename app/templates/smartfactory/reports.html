@@ -5,16 +5,16 @@
   <div>
     <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
     <h1 data-i18n="sf.reports">Reports &amp; exports</h1>
-    <div class="sub" data-i18n="sf.reports_sub">Download production, quality, cost and wash data.</div>
+    <div class="sub" data-i18n="sf.reports_sub2">Production, quality, cost and wash — the live records, exported from one place.</div>
   </div>
 </div>
 
 <div class="grid cols-2">
   {% set cards = [
-    ('production','sf.rep_production','Hourly production — line, order, target, actual, lost time.'),
-    ('quality','sf.rep_quality','Quality checks — inspected, defects, rework, reject by line.'),
-    ('costing','sf.rep_costing','Cost-per-piece — labor, rework, downtime, wash by order.'),
-    ('wash','sf.rep_wash','Wash batches — water, energy, chemical, rewash, shade.')
+    ('production','sf.rep_production','Hourly board — date, line, order, target, actual, reject, operators, SMV.'),
+    ('quality','sf.rep_quality','Inspection register — units, defects, DHU, RFT and the AQL verdict.'),
+    ('costing','sf.rep_costing','Floor conversion cost — produced, scrap, minute rate and cost per piece.'),
+    ('wash','sf.rep_wash','Executed wash lots — load, water, chemicals, heat index and deviations.')
   ] %}
   {% for key,label,desc in cards %}
   <div class="panel">

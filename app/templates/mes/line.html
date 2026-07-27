@@ -57,7 +57,9 @@
           <td style="text-align:right">{{ h.actual_qty }}</td>
           <td style="text-align:right">{{ h.reject_qty }}</td>
           <td style="text-align:right">{{ h.operators }}</td>
-          <td style="text-align:right">{{ h.smv }}</td>
+          <td style="text-align:right">{{ h.smv }}
+            {% if h.smv_differs %}<div><span class="tag" style="background:#b4530918;color:#b45309" data-i18n="smv.differs">SMV differs</span>
+              <span class="muted" style="font-size:11px">{{ h.smv_canonical }}</span></div>{% endif %}</td>
           <td style="text-align:right"><span class="tag" style="background:{{ C.get(h.rag) }}18;color:{{ C.get(h.rag) }}">{{ h.achievement }}%</span></td>
           <td class="muted">{{ h.notes or '—' }}</td></tr>
       {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:16px" data-i18n="mes.empty.hours">No hours recorded for this line on this day.</td></tr>{% endfor %}

@@ -5,7 +5,7 @@
   <div>
     <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
     <h1 data-i18n="sf.costing">Cost per piece</h1>
-    <div class="sub" data-i18n="sf.costing_sub">Labor (SMV × rate) + rework + downtime + wash, per order.</div>
+    <div class="sub" data-i18n="sf.costing_sub2">What the floor did to the price: minutes run, pieces scrapped, utilities consumed.</div>
   </div>
   <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.reports') }}" data-i18n="sf.export">Export</a>
 </div>
@@ -15,21 +15,26 @@
     <table class="tbl">
       <thead><tr>
         <th data-i18n="sf.po">PO</th><th data-i18n="sf.style">Style</th><th data-i18n="sf.produced">Produced</th>
-        <th data-i18n="sf.labor">Labor</th><th data-i18n="sf.rework">Rework</th><th data-i18n="sf.downtime">Downtime</th>
+        <th data-i18n="sf.reject">Reject</th><th>SMV</th><th data-i18n="sf.rate">Rate/min</th>
+        <th data-i18n="sf.labor">Labor</th><th data-i18n="sf.scrap">Scrap</th>
         <th data-i18n="sf.washcost">Wash</th><th data-i18n="sf.total">Total</th><th data-i18n="sf.cpp">Cost/pc</th>
       </tr></thead>
       <tbody>
       {% for r in rows %}
         <tr>
-          <td><b>{{ r.po_no }}</b></td><td class="muted">{{ r.style }}</td><td>{{ '{:,}'.format(r.produced) }}</td>
-          <td>{{ '{:,.0f}'.format(r.labor) }}</td><td>{{ '{:,.0f}'.format(r.rework) }}</td><td>{{ '{:,.0f}'.format(r.downtime) }}</td>
+          <td><b>{{ r.po_no }}</b></td><td class="muted">{{ r.style or '—' }}</td><td>{{ '{:,}'.format(r.produced) }}</td>
+          <td>{{ '{:,}'.format(r.reject) }}</td><td>{{ r.smv or '—' }}</td>
+          <td>{{ r.rate }}{% if not r.priced %} <span class="muted" style="font-size:11px" data-i18n="sf.default_rate">(default)</span>{% endif %}</td>
+          <td>{{ '{:,.0f}'.format(r.labor) }}</td><td>{{ '{:,.0f}'.format(r.rework) }}</td>
           <td>{{ '{:,.0f}'.format(r.wash) }}</td><td><b>{{ '{:,.0f}'.format(r.total) }}</b></td>
           <td style="font-weight:800;color:var(--tc-red)">{{ r.cpp }}</td>
         </tr>
-      {% else %}<tr><td colspan="9" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_cost">No cost data yet.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="11" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_cost">No cost data yet.</td></tr>{% endfor %}
       </tbody>
     </table>
-    <div class="muted mt-2" style="font-size:12px" data-i18n="sf.cost_note">Rates are configurable in code (labor/min, rework/pc, downtime/min, wash utilities). All figures are estimates in the order currency.</div>
+    <div class="muted mt-2" style="font-size:12px" data-i18n="sf.cost_note2">Conversion cost only — the priced cost sheet, the BOM, the booked actuals and the margin live in Costing. The minute rate is the order's own CM rate when it is set; rows marked "(default)" fall back to an internal tariff. Downtime is booked per line and per day, so it is not split across orders here — see Intelligence.</div>
+    {% set src_href = url_for('costing.index') %}{% set src_label = '/costing' %}
+    {% include "smartfactory/_source.html" %}
   </div>
 </div>
 {% endblock %}

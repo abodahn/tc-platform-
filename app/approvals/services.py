@@ -2338,15 +2338,18 @@ def _labels(lang):
 
 
 def _prose_columns(col, texts, limit):
-    """{column: trimmed text} for the languages actually SUBMITTED with content.
+    """{column: trimmed text} for the languages actually SUBMITTED.
 
-    A language that is absent, None or blank is simply not written, so saving one
-    language can never blank another — clearing is done with reset, which is what
-    restores the code default."""
+    A language that was not submitted at all (absent / None) is not written, so
+    saving one language can never blank another. A language submitted EMPTY is
+    written as '' — not skipped and not NULL — because '' is how "the admin
+    cleared this box on purpose" is recorded: readers fall back to the English
+    (see _localise) and the boot seed refuses to refill a non-NULL column (see
+    schema.seed_translations). Reset is still the way back to the code default."""
     out = {}
     for lang, sfx in _SUFFIX.items():
         v = (texts or {}).get(lang)
-        if isinstance(v, str) and v.strip():
+        if isinstance(v, str):
             out[col + sfx] = v.strip()[:limit]
     return out
 
@@ -2370,13 +2373,19 @@ def _localise(row, col, lang, def_en, def_lang):
 
 def _prose(row, col, key, def_en, defaults, lang):
     """One prose field resolved for `lang`, plus the three editable values.
-    `defaults` is a {lang: {key: text}} map from app/approvals/i18n_text.py."""
+    `defaults` is a {lang: {key: text}} map from app/approvals/i18n_text.py.
+
+    The editor shows what is STORED. Only a column that is NULL (never written)
+    is pre-filled with the code default — a column holding '' was cleared on
+    purpose and must render as an empty box, or the next save would silently put
+    the shipped translation back."""
     text, custom = _localise(row, col, lang, def_en, (defaults.get(lang) or {}).get(key))
     edit = {}
     for lg in _LANGS:
-        stored = ((row or {}).get(col + _SUFFIX[lg]) or "").strip()
-        edit[lg] = stored or (def_en if lg == "en"
-                              else (defaults.get(lg) or {}).get(key) or "") or ""
+        stored = (row or {}).get(col + _SUFFIX[lg])
+        edit[lg] = (stored.strip() if isinstance(stored, str)
+                    else (def_en if lg == "en"
+                          else (defaults.get(lg) or {}).get(key) or "") or "")
     return {"text": text, "custom": custom, "edit": edit,
             "updated_by": (row or {}).get("updated_by"),
             "updated_at": (row or {}).get("updated_at")}
@@ -2389,9 +2398,11 @@ def set_stage_meta(stage, roles=None, explanation=None, user=None, ip=None,
     role keys (stored comma-separated). Only role keys that exist on the platform
     are accepted, so an override can never leave a stage unsignable.
 
-    explanation / explanation_ar / explanation_tr are independent: a language
-    submitted blank is left untouched, so editing the Arabic never blanks the
-    English or the Turkish.
+    explanation / explanation_ar / explanation_tr are independent: a language not
+    submitted at all is left untouched, so editing the Arabic never blanks the
+    English or the Turkish. A language submitted EMPTY is stored as '' — the
+    admin cleared it on purpose, its readers fall back to the English, and the
+    boot seed will not refill it.
 
     reset_role / reset_explanation NULL the respective column (the "delete the
     override" case); when both end up empty the row is removed entirely.
@@ -2429,7 +2440,10 @@ def set_stage_meta(stage, roles=None, explanation=None, user=None, ip=None,
             conn.execute(f"INSERT INTO proc_stage_meta (stage, {names}, updated_by, "
                          f"updated_at) VALUES (?,{qs},?,?)",
                          (stage, *vals, uname, now))
-        elif new_role is None and not any(expl.values()):
+        elif new_role is None and all(v is None for v in expl.values()):
+            # Nothing stored at all (reset NULLs every column) -> drop the row and
+            # let the code defaults apply. A column holding '' is a deliberate
+            # clear, NOT an empty row, so it must survive.
             conn.execute("DELETE FROM proc_stage_meta WHERE stage=?", (stage,))
         else:
             sets = ", ".join(f"{c}=?" for c in cols)
@@ -2452,8 +2466,9 @@ def set_stage_meta(stage, roles=None, explanation=None, user=None, ip=None,
 def set_role_meta(role_key, explanation=None, user=None, ip=None, reset=False,
                   explanation_ar=None, explanation_tr=None):
     """Save (or reset) what a role is responsible for, per language. Only the
-    languages submitted with text are written; the others keep what they hold.
-    Returns (ok, msg)."""
+    languages actually submitted are written; the others keep what they hold. A
+    language submitted empty is stored as '' (cleared on purpose -> its readers
+    see the English, and the boot seed leaves it alone). Returns (ok, msg)."""
     role_key = (role_key or "").strip()
     if not role_key or role_key not in set(effective_roles()) | set(C.ROLE_EXPLAIN):
         return False, "unknown_role"
@@ -2500,8 +2515,9 @@ def _doc_default(section):
 def set_doc(section, body=None, user=None, ip=None, reset=False,
             body_ar=None, body_tr=None):
     """Save (or reset) one free-text block, per language. Only the languages
-    submitted with text are written; the others keep what they hold.
-    Returns (ok, msg)."""
+    actually submitted are written; the others keep what they hold. A language
+    submitted empty is stored as '' (cleared on purpose -> its readers see the
+    English, and the boot seed leaves it alone). Returns (ok, msg)."""
     section = (section or "").strip()
     if _doc_default(section) is None:
         return False, "unknown_section"      # only the known blocks are editable

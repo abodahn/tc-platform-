@@ -195,3 +195,9 @@ I18N = {
                          "Henüz reçetesi veya maliyet formu olan sipariş yok — bir sipariş açıp oluşturun."),
     "cst.empty.orders": ("No orders to cost yet.", "لا توجد أوامر لتسعيرها بعد.", "Maliyetlenecek sipariş yok."),
 }
+
+# sheet.html shows every stored SMV for the order and flags a disagreement with the
+# number it was priced on. The tag is shared with planning and the MES line page, so
+# its wording is defined once beside the resolver rather than copied per module.
+from app.services.smv import I18N as _SMV_I18N          # noqa: E402
+I18N.update(_SMV_I18N)

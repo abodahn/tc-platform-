@@ -16,6 +16,15 @@ MAX_PLAN_DAYS = 365
 # Load % above this is an overload — the line is promised more minutes than it has.
 OVERLOAD_PCT = 100
 
+# Window of MES history a line's MEASURED efficiency is averaged over. Two weeks:
+# long enough that one bad shift does not move it, short enough that it still
+# describes the line as it runs today.
+ACTUALS_DAYS = 14
+
+# An order is "ahead"/"behind" only past this much schedule variance. Anything
+# smaller is a rounding of half a shift, not news a planner should act on.
+VARIANCE_DAYS = 0.5
+
 # RBAC — merged into the platform catalogue by app.security._merge_module_rbac.
 PLN_PERMISSIONS = [
     "pln_view",   # see the load board, line capacity and order feasibility

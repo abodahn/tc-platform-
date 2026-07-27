@@ -16,7 +16,10 @@ import math
 from datetime import date, datetime, timedelta
 
 from app.db import get_db
-from .constants import AT_RISK_DAYS, BOARD_DAYS, MAX_PLAN_DAYS, OVERLOAD_PCT
+from app.mes.constants import SLOT_MINUTES
+from app.services.smv import resolve, smv_for, source_of, sources_for_orders
+from .constants import (ACTUALS_DAYS, AT_RISK_DAYS, BOARD_DAYS, MAX_PLAN_DAYS,
+                        OVERLOAD_PCT, VARIANCE_DAYS)
 
 
 def _now():
@@ -172,8 +175,171 @@ def balance_metrics(ops):
             "output_per_hour": out_hr, "line_efficiency": eff, "unmanned_ops": unmanned}
 
 
+# --- what the floor actually did: the MES feedback loop -------------------
+def measured(rows):
+    """Roll mes_hourly rows up into what a line or order ACTUALLY delivered. Pure.
+
+        pieces       = SUM(actual_qty)              every hour, manned or not
+        good         = pieces - SUM(reject_qty)     what can actually be SHIPPED
+        earned_min   = SUM(actual_qty x smv)        MANNED hours only
+        operator_min = SUM(operators x 60)          MANNED hours only
+        efficiency % = earned_min / operator_min x 100
+
+    INVARIANT, the same one balance_metrics keeps: an hour with NO operators
+    earns nothing. It contributes to neither side of the ratio — counting its
+    pieces against a zero denominator is how 5 SMV on 0 operators once read 600%.
+
+    `efficiency` is None, never 0.0, when there is nothing to measure. "No
+    actuals yet" and "the line ran at 0%" are different facts and a planner must
+    never be shown the second when the first is true.
+
+    Planning multiplies theoretical minutes BY this percentage, so the number it
+    hands back is capped at 100: capacity above theoretical does not exist and
+    planning it would promise a buyer minutes the factory does not have.
+    `efficiency_raw` keeps the uncapped figure, because a line genuinely running
+    at 108% of standard is information, not an error.
+    """
+    pieces = rejects = hours = manned = 0
+    earned = op_min = 0.0
+    days = set()
+    for r in rows or []:
+        act = _i(r.get("actual_qty"))
+        ops = _i(r.get("operators"))
+        smv = max(_f(r.get("smv")), 0.0)
+        hours += 1
+        pieces += act
+        rejects += _i(r.get("reject_qty"))
+        if r.get("work_date"):
+            days.add(str(r["work_date"])[:10])
+        if ops > 0:
+            manned += 1
+            earned += act * smv
+            op_min += ops * SLOT_MINUTES
+    raw = round(earned / op_min * 100.0, 1) if op_min > 0 else None
+    return {"has_data": hours > 0, "hours": hours, "manned_hours": manned,
+            "pieces": pieces, "rejects": rejects,
+            # mes_hourly.reject_qty is a SUBSET of actual_qty ("good = actual -
+            # reject", mes/schema.py) and the MES's own OEE already nets it off.
+            # A plan owes SHIPPABLE garments, so schedule progress is measured on
+            # good pieces — crediting a rejected garment against the ship date
+            # reports an order on plan while the buyer is still short.
+            "good": max(pieces - rejects, 0),
+            "earned_min": round(earned, 1), "operator_min": round(op_min, 1),
+            "days": len(days),
+            "efficiency_raw": raw,
+            "efficiency": None if raw is None else round(min(100.0, max(0.0, raw)), 1)}
+
+
+def _mes_rows(conn, order_id=None, line_id=None, since=None, order_ids=None):
+    """Raw hourly rows from the MES. Degrades to [] when the MES module has not
+    created its tables yet (rollback is mandatory: PostgreSQL aborts the whole
+    transaction on a failed statement)."""
+    q = ("SELECT work_date, actual_qty, reject_qty, operators, smv, order_id, line_id "
+         "FROM mes_hourly WHERE 1=1")
+    args = []
+    if order_id is not None:
+        q += " AND order_id=?"; args.append(order_id)
+    if order_ids is not None:
+        # An empty list must match NOTHING, never fall through to the whole table.
+        ids = [_i(i) for i in order_ids if i]
+        if not ids:
+            return []
+        q += " AND order_id IN (%s)" % ",".join("?" * len(ids)); args.extend(ids)
+    if line_id is not None:
+        q += " AND line_id=?"; args.append(line_id)
+    if since:
+        q += " AND work_date>=?"; args.append(str(since))
+    try:
+        return [dict(r) for r in conn.execute(q, args).fetchall()]
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return []
+
+
+def _since(days):
+    return str(date.today() - timedelta(days=max(1, _i(days, ACTUALS_DAYS)) - 1))
+
+
+def _measured_by_line(conn, days=ACTUALS_DAYS):
+    """{production_lines.id: measured(...)} over the window — ONE query for the
+    whole board, never one per line."""
+    by_line = {}
+    for r in _mes_rows(conn, since=_since(days)):
+        by_line.setdefault(r["line_id"], []).append(r)
+    return {lid: measured(rows) for lid, rows in by_line.items()}
+
+
+def order_actuals(order_id):
+    """Everything the floor has ever booked against one order (not windowed: an
+    order runs for weeks and its progress is cumulative)."""
+    conn = get_db()
+    try:
+        return measured(_mes_rows(conn, order_id=_i(order_id)))
+    finally:
+        conn.close()
+
+
+def plan_vs_actual(order, allocs, act, today=None):
+    """Planned vs produced for one order — pure, no DB.
+
+    expected_to_date is what the plan owed by the END OF YESTERDAY: only COMPLETE
+    days count. A shift still running is not a shortfall, and claiming it is would
+    paint every order behind at 9am. Each allocation contributes
+    (its elapsed minutes / its total minutes) x its quantity, so a split order and
+    a part-loaded order both come out right.
+
+    produced_qty is GOOD pieces (actual - reject), because that is what the plan
+    owes: a rejected garment consumed the line's minutes but cannot be shipped.
+
+    Returns status 'no_actuals' when the floor has booked nothing at all — never
+    '0 produced, 100% behind' off no data.
+    """
+    today = today or date.today()
+    planned_qty = round(sum(_f(a.get("qty")) for a in allocs or []), 2)
+    expected = 0.0
+    per_day = 0.0
+    for a in allocs or []:
+        cap = daily_capacity_minutes(a)
+        mins = required_minutes(a.get("qty"), a.get("smv"))
+        spread = spread_minutes(a.get("start_date"), mins, cap)
+        if not spread or mins <= 0:
+            continue                      # zero-capacity / unplannable: owes nothing yet
+        qty = _f(a.get("qty"))
+        elapsed = sum(m for d, m in spread if d < today)
+        expected += min(elapsed / mins, 1.0) * qty
+        per_day += qty / len(spread)      # planned pieces per day on this allocation
+    expected = round(expected, 1)
+    out = {"planned_qty": planned_qty, "expected_qty": expected,
+           "produced_qty": (act or {}).get("good", 0),
+           "pieces_per_day": round(per_day, 2),
+           "efficiency": (act or {}).get("efficiency"),
+           "variance_qty": None, "variance_days": None, "status": "no_actuals"}
+    if not (act or {}).get("has_data"):
+        return out                        # nothing measured — say so, do not compute 0%
+    var_q = round(out["produced_qty"] - expected, 1)
+    if per_day > 0:
+        var_d = round(var_q / per_day, 1)
+        status = ("ahead" if var_d >= VARIANCE_DAYS else
+                  "behind" if var_d <= -VARIANCE_DAYS else "on_plan")
+    else:
+        # No daily rate to convert pieces into days (nothing plannable is loaded —
+        # zero-capacity line, or the floor is running an order nobody planned).
+        # Report the piece variance and keep the days column honestly empty.
+        var_d = None
+        status = "ahead" if var_q > 0 else ("behind" if var_q < 0 else "on_plan")
+    out.update({"variance_qty": var_q, "variance_days": var_d, "status": status})
+    return out
+
+
 # --- lines ----------------------------------------------------------------
-def list_lines(active_only=False):
+def list_lines(active_only=False, days=ACTUALS_DAYS):
+    """Capacity profiles + what the MES says each line ACTUALLY ran over the last
+    `days`. The measured figure is attached, never applied: efficiency_pct is the
+    planner's own input and only the planner may change it (lines.html offers it
+    as a one-click suggestion)."""
     conn = get_db()
     try:
         q = "SELECT * FROM pln_lines"
@@ -181,8 +347,18 @@ def list_lines(active_only=False):
             q += " WHERE active=1"
         q += " ORDER BY section, code, id"
         rows = [dict(r) for r in conn.execute(q).fetchall()]
+        act = _measured_by_line(conn, days)
         for r in rows:
             r["capacity"] = daily_capacity_minutes(r)
+            # pln_lines is a capacity PROFILE; the MES books against the platform's
+            # production_lines. Unlinked profile -> no actuals, not zero actuals.
+            r["actual"] = act.get(r.get("line_id")) or measured([])
+            r["measured_efficiency"] = r["actual"]["efficiency"]
+            r["efficiency_gap"] = (None if r["measured_efficiency"] is None else
+                                   round(r["measured_efficiency"] - _f(r.get("efficiency_pct")), 1))
+            r["capacity_measured"] = (daily_capacity_minutes(
+                {**r, "efficiency_pct": r["measured_efficiency"]})
+                if r["measured_efficiency"] is not None else None)
         return rows
     finally:
         conn.close()
@@ -392,10 +568,15 @@ def create_allocation(data, user):
                         "AND start_date=? AND qty=? AND status!='cancelled'",
                         (order_id, pline_id, str(start), qty)).fetchone():
             return False, "duplicate"
+        # The SMV stays a SNAPSHOT — a later edit must not re-price a committed
+        # plan. All that is added is WHERE this frozen number came from, so the
+        # plan is auditable against the sources it was made from.
+        src = source_of(smv, smv_for(conn, order_id=order_id,
+                                     style_ref=o.get("style_ref"))["sources"])
         cur = conn.execute(
-            "INSERT INTO pln_allocations (order_id,pline_id,qty,smv,start_date,end_date,status,"
-            "notes,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (order_id, pline_id, qty, smv, str(start), end, "planned", data.get("notes"),
+            "INSERT INTO pln_allocations (order_id,pline_id,qty,smv,smv_source,start_date,"
+            "end_date,status,notes,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (order_id, pline_id, qty, smv, src, str(start), end, "planned", data.get("notes"),
              (user or {}).get("username"), _now()))
         aid = cur.lastrowid
         conn.commit()
@@ -534,7 +715,14 @@ def feasibility(order_id):
             a["minutes"] = required_minutes(a["qty"], a["smv"])
             a["capacity"] = daily_capacity_minutes(a)
             a["days"] = required_days(a["minutes"], a["capacity"])
-        return {"order": o, "allocations": allocs,
+        # The canonical SMV and every stored one that disagrees with it. The
+        # order's OWN planning SMV (o["smv"]) is what the plan is priced with and
+        # is deliberately untouched here — this only says where it came from and
+        # what else the factory believes.
+        smv = smv_for(conn, order_id=order_id, style_ref=o.get("style_ref"))
+        act = measured(_mes_rows(conn, order_id=order_id))
+        return {"order": o, "allocations": allocs, "smv": smv, "actual": act,
+                "vs": plan_vs_actual(o, allocs, act),
                 "required_minutes": required_minutes(o.get("qty"), o.get("smv")),
                 **_order_feasibility(o, allocs)}
     finally:
@@ -648,17 +836,32 @@ def dashboard(days=BOARD_DAYS):
             by_order.setdefault(a["order_id"], []).append(a)
         orders = [{**o, **_order_feasibility(o, by_order.get(o["id"], []))}
                   for o in _orders(conn)]
+        # Two bulk passes, never one query per order: what the floor produced, and
+        # every stored SMV that disagrees with the canonical one.
+        ids = [o["id"] for o in orders]
+        act_by_order = {}
+        for r in _mes_rows(conn, order_ids=ids):
+            act_by_order.setdefault(r["order_id"], []).append(r)
+        srcs = sources_for_orders(conn, ids)
+        for o in orders:
+            act = measured(act_by_order.get(o["id"], []))
+            o["actual"] = act
+            o["vs"] = plan_vs_actual(o, by_order.get(o["id"], []), act)
+            o["smv_resolved"] = resolve(srcs.get(o["id"], []))
     finally:
         conn.close()
     late = [o for o in orders if o["status"] == "late"]
     at_risk = [o for o in orders if o["status"] == "at_risk"]
     unplanned = [o for o in orders if o["status"] in ("unplanned", "no_capacity")]
+    behind = [o for o in orders if o["vs"]["status"] == "behind"]
+    conflicts = [o for o in orders if o["smv_resolved"]["conflict"]]
     return {"board": b, "orders": orders, "late": late, "at_risk": at_risk,
-            "unplanned": unplanned,
+            "unplanned": unplanned, "behind": behind, "smv_conflicts": conflicts,
             "kpi": {"lines": len(b["grid"]), "utilisation": b["utilisation"],
                     "overloaded": b["overloaded_cells"],
                     "idle_hours": round(b["idle_minutes"] / 60.0),
-                    "late": len(late), "at_risk": len(at_risk), "unplanned": len(unplanned)}}
+                    "late": len(late), "at_risk": len(at_risk), "unplanned": len(unplanned),
+                    "behind": len(behind), "smv_conflicts": len(conflicts)}}
 
 
 # --- exports --------------------------------------------------------------

@@ -521,9 +521,11 @@ DYNAMIC = {f"pln.status.{s}" for s in
            ("on_time", "at_risk", "late", "unplanned", "no_capacity", "no_ship_date")}
 keys |= DYNAMIC
 check("dynamic pln.status.* keys accounted for", len(DYNAMIC & keys), 6)
-(Path(REPO) / "app" / "planning" / "i18n_keys.txt").write_text(
-    "\n".join(sorted(keys)) + "\n", encoding="utf-8")
-print(f"  ..    {len(keys)} distinct i18n keys required (written to app/planning/i18n_keys.txt)")
+# Dump the key list for inspection — into the temp run dir, never the repo:
+# writing it under app/ makes every test run dirty the working tree.
+_dump = Path(tempfile.gettempdir()) / "pln_i18n_keys.txt"
+_dump.write_text("\n".join(sorted(keys)) + "\n", encoding="utf-8")
+print(f"  ..    {len(keys)} distinct i18n keys required (written to {_dump})")
 
 # ---------------------------------------------------------------- 15
 section(15, "route security audit (decorators, methods, id guards)")
@@ -809,8 +811,8 @@ yes("app/planning/i18n_map.json exists (en/ar/tr for every key)", MAP.exists())
 if MAP.exists():
     import json
     m = json.loads(MAP.read_text(encoding="utf-8"))
-    need = set((Path(REPO) / "app" / "planning" / "i18n_keys.txt")
-               .read_text(encoding="utf-8").split()) | NEW_KEYS
+    # same temp dump section 14 wrote — the repo is not scratch space
+    need = set(_dump.read_text(encoding="utf-8").split()) | NEW_KEYS
     for lang in ("en", "ar", "tr"):
         missing = sorted(need - set(m.get(lang, {})))
         check(f"{lang}: keys missing from the map", missing, [])

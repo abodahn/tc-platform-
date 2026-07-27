@@ -24,6 +24,8 @@
   <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.kpi.late }}</div><div class="l" data-i18n="pln.kpi.late">Orders late</div></div>
   <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.kpi.at_risk }}</div><div class="l" data-i18n="pln.kpi.at_risk">Orders at risk</div></div>
   <div class="sf-kpi"><div class="v">{{ d.kpi.unplanned }}</div><div class="l" data-i18n="pln.kpi.unplanned">Orders unplanned</div></div>
+  <div class="sf-kpi pb-kpi-r"><div class="v">{{ d.kpi.behind }}</div><div class="l" data-i18n="pln.kpi.behind">Orders behind the plan</div></div>
+  <div class="sf-kpi pb-kpi-a"><div class="v">{{ d.kpi.smv_conflicts }}</div><div class="l" data-i18n="pln.kpi.smv_conflicts">SMV disagreements</div></div>
 </div>
 
 <div class="panel mt-4">
@@ -68,6 +70,8 @@
         <th style="text-align:right" data-i18n="pln.field.qty">Qty</th>
         <th style="text-align:right" data-i18n="pln.field.smv">SMV</th>
         <th style="text-align:right" data-i18n="pln.field.planned">Planned</th>
+        <th style="text-align:right" data-i18n="pln.field.produced">Produced</th>
+        <th style="text-align:right" data-i18n="pln.field.variance_days">Variance (days)</th>
         <th data-i18n="pln.field.finish">Projected finish</th>
         <th data-i18n="pln.field.ship">Ship date</th>
         <th data-i18n="pln.field.feasibility">Feasibility</th>
@@ -79,14 +83,18 @@
             <div class="muted" style="font-size:11px">{{ o.buyer or '—' }}</div></td>
           <td>{{ o.style_name or o.style_ref or '—' }}</td>
           <td style="text-align:right">{{ (o.qty or 0)|round(0)|int }}</td>
-          <td style="text-align:right">{% if o.smv %}{{ o.smv }}{% else %}<span class="muted" data-i18n="pln.empty.smv">not set</span>{% endif %}</td>
+          <td style="text-align:right">{% if o.smv %}{{ o.smv }}{% else %}<span class="muted" data-i18n="pln.empty.smv">not set</span>{% endif %}
+            {% if o.smv_resolved.conflict %}<div><span class="tag" style="background:#b4530918;color:#b45309" data-i18n="smv.differs">SMV differs</span>
+              <span class="muted" style="font-size:11px">{{ o.smv_resolved.low.smv }}–{{ o.smv_resolved.high.smv }}</span></div>{% endif %}</td>
           <td style="text-align:right">{{ (o.planned_qty or 0)|round(0)|int }}</td>
+          <td style="text-align:right">{% if o.actual.has_data %}{{ o.vs.produced_qty }}{% else %}<span class="muted" data-i18n="pln.actual.none_short">no actuals</span>{% endif %}</td>
+          <td style="text-align:right">{% if o.vs.variance_days is not none %}<span {% if o.vs.status == 'behind' %}style="color:#be123c;font-weight:700"{% elif o.vs.status == 'ahead' %}style="color:#15803d"{% endif %}>{{ o.vs.variance_days }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
           <td>{{ o.finish or '—' }}</td>
           <td>{{ o.ship_date or '—' }}</td>
           <td>{{ feas(o.status, o.days_late if o.days_late and o.days_late > 0 else 0) }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="8" class="muted" style="text-align:center;padding:16px" data-i18n="pln.empty.orders">No open orders to plan.</td></tr>
+        <tr><td colspan="10" class="muted" style="text-align:center;padding:16px" data-i18n="pln.empty.orders">No open orders to plan.</td></tr>
       {% endfor %}
       </tbody>
     </table>

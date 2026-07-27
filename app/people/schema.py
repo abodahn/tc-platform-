@@ -94,6 +94,17 @@ CREATE INDEX IF NOT EXISTS ix_ppl_pr_order ON ppl_piece_rate(order_id);
 """
 
 
+# Columns added after first release — idempotent ALTERs on every boot so already
+# deployed databases pick them up. try/except + rollback is mandatory: PostgreSQL
+# aborts the whole transaction on a failed DDL.
+_MIGRATIONS = [
+    # WHERE the frozen SMV came from. The piece-rate SMV stays a SNAPSHOT so a paid
+    # incentive is reproducible; this only records its provenance and NEVER takes
+    # part in the calculation — no payable moves.
+    "ALTER TABLE ppl_piece_rate ADD COLUMN smv_source TEXT",
+]
+
+
 def _empty(conn, t):
     try:
         return conn.execute(f"SELECT COUNT(*) AS c FROM {t}").fetchone()["c"] == 0
@@ -139,6 +150,12 @@ def create_and_seed(conn):
     # its worked hours (08:00-17:00 was seeded as 8.0 but books 9.0 on save).
     from .services import _hours, compute_incentive
     conn.executescript(SCHEMA)
+    for _ddl in _MIGRATIONS:
+        try:
+            conn.execute(_ddl)
+            conn.commit()
+        except Exception:
+            conn.rollback()
     today = date.today()
     now = today.strftime("%Y-%m-%d %H:%M:%S")
     emps = _roster(conn)

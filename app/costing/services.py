@@ -357,7 +357,13 @@ def cost_sheet(order_id):
         proc = _procurement(conn, [order])[order_id]
         issued = _wh_value(_wh_issued_fn(), order_id)
         bundle = _summarise(order, lines, sheet, acts, proc, issued)
+        # Every stored SMV for this order, resolved through the one shared source
+        # of truth. DISPLAY ONLY: cm_unit() still prices from the sheet's own SMV,
+        # so no quoted margin moves — the page just stops hiding the disagreement
+        # between the number the order was priced with and the one it is planned with.
+        from app.services.smv import smv_for
         bundle.update({
+            "smv_ref": smv_for(conn, order_id=order_id, style_ref=order.get("style_ref")),
             "order": order, "bom": lines, "sheet": sheet, "proc": proc,
             "issued": issued, "cm_per_unit": cm_unit(sheet),
             "entries": [dict(r) for r in conn.execute(

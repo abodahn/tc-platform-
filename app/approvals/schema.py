@@ -363,9 +363,16 @@ def seed_governance(conn):
 def seed_translations(conn):
     """Fill the Arabic/Turkish prose columns from app/approvals/i18n_text.py.
 
-    Only ever fills a column that is NULL or blank — an admin's translated text
-    is left exactly as it is, on this boot and every later one. Returns the
-    number of columns actually written."""
+    Only ever fills a column that is NULL — an admin's translated text is left
+    exactly as it is, on this boot and every later one. Returns the number of
+    columns actually written.
+
+    NULL and '' are deliberately different: NULL means "never translated" (a
+    database deployed before these columns existed, or a freshly inserted row)
+    and the seed may fill it; '' means an admin emptied that box on purpose so
+    his readers fall back to the English, which is exactly what the editor hint
+    promises. Seeding a blank would give him the shipped translation back on the
+    next Render restart."""
     from app.approvals import i18n_text as T
     filled = 0
     for table, keycol, col, defaults in (
@@ -377,7 +384,7 @@ def seed_translations(conn):
                 try:
                     cur = conn.execute(
                         f"UPDATE {table} SET {col}_{lang}=? WHERE {keycol}=? "
-                        f"AND ({col}_{lang} IS NULL OR {col}_{lang}='')", (text, key))
+                        f"AND {col}_{lang} IS NULL", (text, key))
                     filled += cur.rowcount if (cur.rowcount or 0) > 0 else 0
                 except Exception:
                     conn.rollback()      # column not there yet -> English only

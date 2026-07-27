@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ f.order.order_no }} · plan{% endblock %}
 {% macro feas(s, n) %}{% set c={'on_time':'#15803d','at_risk':'#b45309','late':'#be123c','unplanned':'#6b7280','no_capacity':'#7f1d1d','no_ship_date':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}"><span data-i18n="pln.status.{{ s }}">{{ s|replace('_',' ') }}</span>{% if n %} {{ n }}d{% endif %}</span>{% endmacro %}
+{% macro vs_tag(s) %}{% set c={'ahead':'#15803d','behind':'#be123c','on_plan':'#6b7280','no_actuals':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}" data-i18n="pln.status.{{ s }}">{{ s|replace('_',' ') }}</span>{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -40,6 +41,31 @@
 </div>
 
 <div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="pln.actual.title">Plan vs actual — from the floor</h3>
+    <span class="muted" style="font-size:11px" data-i18n="pln.actual.hint">Measured from the hourly MES record. Only complete days count, so a shift still running is never reported as a shortfall.</span></div>
+  <div class="panel-pad">
+    {% if f.vs.status == 'no_actuals' %}
+      <div class="muted" data-i18n="pln.actual.none">No actuals recorded for this order yet.</div>
+    {% else %}
+      <div class="sf-kpis">
+        <div class="sf-kpi"><div class="v">{{ f.vs.expected_qty|round(0)|int }}</div><div class="l" data-i18n="pln.field.expected">Expected to date</div></div>
+        <div class="sf-kpi"><div class="v">{{ f.vs.produced_qty }}</div><div class="l" data-i18n="pln.field.produced">Produced</div></div>
+        <div class="sf-kpi {{ 'pb-kpi-r' if f.vs.status == 'behind' else ('pb-kpi-g' if f.vs.status == 'ahead' else '') }}">
+          <div class="v">{{ f.vs.variance_qty }}</div><div class="l" data-i18n="pln.field.variance">Variance (pcs)</div></div>
+        <div class="sf-kpi"><div class="v">{% if f.vs.variance_days is not none %}{{ f.vs.variance_days }}{% else %}—{% endif %}</div>
+          <div class="l" data-i18n="pln.field.variance_days">Variance (days)</div></div>
+        <div class="sf-kpi"><div class="v">{% if f.actual.efficiency is not none %}{{ f.actual.efficiency }}%{% else %}—{% endif %}</div>
+          <div class="l" data-i18n="pln.field.eff_measured">Measured efficiency</div></div>
+      </div>
+      <div class="mt-2">{{ vs_tag(f.vs.status) }}
+        <span class="muted">{{ f.actual.good }} pcs · {{ f.actual.hours }} h · {{ f.actual.days }} d</span>
+        {% if f.actual.efficiency is none %}<span class="tag" data-i18n="pln.actual.unmanned">No manned hours recorded — efficiency cannot be measured.</span>{% endif %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="pln.alloc.list">Line allocations</h3>
     {% if can('pln_plan') %}<a class="tag" href="{{ url_for('planning.allocate') }}" data-i18n="pln.action.allocate">Load an order</a>{% endif %}</div>
   <div class="panel-pad">
@@ -61,7 +87,8 @@
           <tr>
             <td>{{ a.line_code or a.line_name }}<div class="muted" style="font-size:11px">{{ a.line_name }}</div></td>
             <td style="text-align:right">{{ (a.qty or 0)|round(0)|int }}</td>
-            <td style="text-align:right">{{ a.smv }}</td>
+            <td style="text-align:right">{{ a.smv }}
+              {% if a.smv_source %}<div class="muted" style="font-size:11px" data-i18n="smv.src.{{ a.smv_source }}">{{ a.smv_source|replace('_',' ') }}</div>{% endif %}</td>
             <td style="text-align:right">{{ a.minutes|round(0)|int }}</td>
             <td style="text-align:right">{{ a.capacity|round(0)|int }}</td>
             <td style="text-align:right">{{ a.days if a.days is not none else '—' }}</td>
@@ -89,8 +116,24 @@
     <div class="panel-head"><h3 data-i18n="pln.smv.title">Standard minute value</h3></div>
     <div class="panel-pad">
       <div class="field"><label data-i18n="pln.field.smv">SMV</label>
-        <input name="smv" type="number" min="0" step="any" value="{{ f.order.smv or '' }}"></div>
+        <input name="smv" type="number" min="0" step="any" value="{{ f.order.smv or f.smv.smv or '' }}"></div>
       <div class="muted mt-2" data-i18n="pln.smv.hint">Minutes of standard work in one garment. Required minutes = quantity × SMV.</div>
+      {% if f.smv.sources %}
+      <div class="mt-2">
+        <span class="muted" data-i18n="smv.source">Source</span>:
+        {% for s in f.smv.sources %}
+          <span class="tag"{% if f.smv.conflict and (s.smv == f.smv.high.smv or s.smv == f.smv.low.smv) %} style="background:#b4530918;color:#b45309"{% endif %}><span data-i18n="{{ s.key }}">{{ s.label }}</span> {{ s.smv }}</span>
+        {% endfor %}
+        {% if f.smv.conflict %}
+          <div class="muted mt-2"><span data-i18n="smv.conflict">These stored SMVs disagree — the plan, the price and the floor are using different numbers. Decide which is right.</span>
+            <strong><span data-i18n="{{ f.smv.high.key }}">{{ f.smv.high.label }}</span> {{ f.smv.high.smv }} ↔ <span data-i18n="{{ f.smv.low.key }}">{{ f.smv.low.label }}</span> {{ f.smv.low.smv }}</strong></div>
+        {% endif %}
+        {% if not f.order.smv and f.smv.smv %}
+          <div class="muted mt-2"><span data-i18n="smv.suggest">No planning SMV set — the field above is pre-filled from</span>
+            <span data-i18n="{{ f.smv.key }}">{{ f.smv.label }}</span>. <span data-i18n="smv.suggest_save">Save it to plan with it.</span></div>
+        {% endif %}
+      </div>
+      {% endif %}
       <div class="flex gap center mt-4"><button class="btn btn-primary" data-i18n="pln.action.save">Save</button></div>
     </div>
   </form>

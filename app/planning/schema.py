@@ -94,6 +94,17 @@ _DEMO_OPS = [
 ]
 
 
+# Columns added after first release — idempotent ALTERs run on every boot so
+# already-deployed databases pick them up. Each is wrapped in try/except with a
+# rollback: PostgreSQL aborts the whole transaction on a failed DDL.
+_MIGRATIONS = [
+    # WHERE the frozen SMV came from ('planning'/'costing'/'style'/'manual'...).
+    # The snapshot VALUE is never rewritten — this only records its provenance, so
+    # a plan committed at 24.5 while costing says 22.0 is auditable after the fact.
+    ("smv_source", "ALTER TABLE pln_allocations ADD COLUMN smv_source TEXT"),
+]
+
+
 def _empty(conn, t):
     try:
         return conn.execute(f"SELECT COUNT(*) AS c FROM {t}").fetchone()["c"] == 0
@@ -116,6 +127,12 @@ def _demo_orders(conn):
 
 def create_and_seed(conn):
     conn.executescript(SCHEMA)
+    for _ddl in (d for _c, d in _MIGRATIONS):
+        try:
+            conn.execute(_ddl)
+            conn.commit()
+        except Exception:
+            conn.rollback()
     today = date.today()
     now = today.strftime("%Y-%m-%d %H:%M:%S")
 

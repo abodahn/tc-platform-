@@ -370,9 +370,23 @@ def line_detail(line_id, work_date=None):
         hours = [dict(r) for r in conn.execute(
             "SELECT * FROM mes_hourly WHERE line_id=? AND work_date=? ORDER BY hour_slot",
             (line_id, work_date)).fetchall()]
+        # mes_hourly.smv is an operational RECORD — what the supervisor says ran
+        # that hour — so it keeps whatever was typed. But an hour booked at 24.5
+        # while the style is defined at 22.0 silently moves earned minutes, and
+        # therefore efficiency and OEE, so the disagreement is shown. One resolve
+        # per distinct order on the day, not one per hour.
+        from app.services.smv import SMV_TOLERANCE, smv_for
+        canon = {}
         for h in hours:
             h["achievement"] = achievement(h["actual_qty"], h["target_qty"])
             h["rag"] = rag_for(h["actual_qty"], h["target_qty"])
+            oid = h.get("order_id")
+            if oid and oid not in canon:
+                canon[oid] = smv_for(conn, order_id=oid)
+            ref = (canon.get(oid) or {}).get("smv")
+            h["smv_canonical"] = ref
+            h["smv_differs"] = bool(ref and _f(h["smv"]) > 0
+                                    and abs(_f(h["smv"]) - ref) > SMV_TOLERANCE)
         losses = sorted([{"reason": d["reason"], "minutes": round(_f(d["m"]), 1), "events": d["n"]}
                          for d in dt], key=lambda x: -x["minutes"])
         # A line that was down all day has losses but NO hourly row, so the roll-up

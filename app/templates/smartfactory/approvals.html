@@ -9,6 +9,14 @@
   </div>
 </div>
 
+<div class="panel mb-2" style="border-color:var(--warn)">
+  <div class="panel-pad muted" style="font-size:12.5px">
+    <b data-i18n="sf.own_data_h">Smart-Factory data only.</b>
+    <span data-i18n="sf.own_data">This page runs on its own /factory approval tables. It is NOT connected to the platform's procurement approval ladder, and a request raised here approves nothing in Procurement. Its order list is the legacy /factory order list for the same reason.</span>
+    <a href="{{ url_for('approvals.index') }}">/procurement</a>
+  </div>
+</div>
+
 <div class="sf-kpis">
   <div class="sf-kpi"><div class="v sf-a">{{ dash.counts.pending }}</div><div class="l" data-i18n="sf.pending">Pending</div></div>
   <div class="sf-kpi"><div class="v sf-g">{{ dash.counts.approved }}</div><div class="l" data-i18n="sf.approved">Approved</div></div>

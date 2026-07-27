@@ -265,10 +265,15 @@ def main():
     before = dict(conn.execute("SELECT explanation, explanation_ar, explanation_tr "
                                "FROM proc_stage_meta WHERE stage='cfo'").fetchone())
     conn.close()
+    # The browser posts ALL THREE boxes, each holding what the editor rendered.
+    # Only the Arabic one was retyped. Posting '' for the other two would mean
+    # "the admin emptied them on purpose", which is a different intent entirely
+    # (see tests_blank_lang.py) — it is not how a one-language edit reaches here.
     r = client.post("/procurement/workflow/stage",
                     data={"_csrf": "tok", "stage": "cfo",
                           "explanation_ar": "نص المسؤول للمرحلة المالية.",
-                          "explanation": "", "explanation_tr": ""})
+                          "explanation": before["explanation"],
+                          "explanation_tr": before["explanation_tr"]})
     ok("POST /procurement/workflow/stage [ar only] -> 302 (raw)", r.status_code == 302)
     conn = get_db()
     after = dict(conn.execute("SELECT explanation, explanation_ar, explanation_tr "
@@ -279,10 +284,14 @@ def main():
        after["explanation"] == before["explanation"])
     ok("Turkish column untouched by the Arabic save",
        after["explanation_tr"] == before["explanation_tr"])
+    conn = get_db()
+    d_before = dict(conn.execute("SELECT body, body_ar FROM proc_doc "
+                                 "WHERE section='three_way_match'").fetchone())
+    conn.close()
     r = client.post("/procurement/workflow/doc",
                     data={"_csrf": "tok", "section": "three_way_match",
                           "body_tr": "Yöneticinin 3'lü mutabakat metni.",
-                          "body": "", "body_ar": ""})
+                          "body": d_before["body"], "body_ar": d_before["body_ar"]})
     ok("POST /procurement/workflow/doc [tr only] -> 302 (raw)", r.status_code == 302)
     conn = get_db()
     row = dict(conn.execute("SELECT body, body_ar, body_tr FROM proc_doc "

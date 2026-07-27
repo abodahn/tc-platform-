@@ -214,9 +214,11 @@ with app.app_context():
        svc.workflow_view("Production", "en")["gates"][2]["body"] == before["body"]
        and svc.workflow_view("Production", "tr")["gates"][2]["body"] == before["body_tr"])
 
-    ok("set_doc with every language blank is refused ('empty')",
-       svc.set_doc("sod", body="  ", body_ar="", body_tr=None, user=admin)
-       == (False, "empty"))
+    # 'empty' now means "no language field was submitted at all" — a malformed
+    # POST. A language submitted BLANK is a deliberate clear and is saved as ''
+    # (see tests_blank_lang.py), so it must not be refused here.
+    ok("set_doc with NO language submitted at all is refused ('empty')",
+       svc.set_doc("sod", user=admin) == (False, "empty"))
     ok("...and the stored Arabic survived the refused save",
        conn.execute("SELECT body_ar FROM proc_doc WHERE section='sod'")
        .fetchone()["body_ar"] == "نص عربي من المسؤول.")
@@ -305,9 +307,15 @@ with app.app_context():
         s["uid"] = 1
         s["ep"] = 0
         s["_csrf_token"] = "tok"
+    # The browser posts all three boxes as the editor rendered them; only the
+    # Arabic was retyped. Posting '' for the others would mean "cleared on
+    # purpose", a different intent covered by tests_blank_lang.py.
+    d0 = dict(conn.execute("SELECT body, body_tr FROM proc_doc "
+                           "WHERE section='budget_gate'").fetchone())
     r = client.post("/procurement/workflow/doc",
                     data={"_csrf": "tok", "section": "budget_gate",
-                          "body_ar": "بوابة الموازنة — نص المسؤول.", "body": "", "body_tr": ""})
+                          "body_ar": "بوابة الموازنة — نص المسؤول.",
+                          "body": d0["body"], "body_tr": d0["body_tr"]})
     ok("POST /procurement/workflow/doc [ar only] -> 302 (raw)", r.status_code == 302)
     row = dict(conn.execute("SELECT body, body_ar, body_tr FROM proc_doc "
                             "WHERE section='budget_gate'").fetchone())
@@ -315,9 +323,12 @@ with app.app_context():
        row["body_ar"] == "بوابة الموازنة — نص المسؤول."
        and row["body"] == C.DOC_SECTIONS["budget_gate"]
        and row["body_tr"] == T.DOC_TR["budget_gate"])
+    s0 = dict(conn.execute("SELECT explanation, explanation_ar FROM proc_stage_meta "
+                           "WHERE stage='finance'").fetchone())
     r = client.post("/procurement/workflow/stage",
                     data={"_csrf": "tok", "stage": "finance", "roles": "finance_manager",
-                          "explanation": "", "explanation_ar": "",
+                          "explanation": s0["explanation"],
+                          "explanation_ar": s0["explanation_ar"],
                           "explanation_tr": "Finans aşaması — yöneticinin metni."})
     ok("POST /procurement/workflow/stage [tr only] -> 302 (raw)", r.status_code == 302)
     row = dict(conn.execute("SELECT role, explanation, explanation_ar, explanation_tr "

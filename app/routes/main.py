@@ -141,6 +141,262 @@ def inject_globals():
 
 
 # --------------------------------------------------------------------------
+# Factory pulse — the cross-module executive risk strip on the front page.
+# --------------------------------------------------------------------------
+# Every string on the strip is COMPUTED here, not looked up in a dictionary, so
+# it is emitted as data-loc-en/ar/tr (the mechanism app.js already swaps for
+# server-produced text). A data-i18n key would render as the literal raw key to
+# every user in every language unless it also exists in app/static/i18n/*.json,
+# and this lane does not own those files.
+def _loc(en, ar, tr):
+    return {"en": en, "ar": ar, "tr": tr}
+
+
+# tone -> (kpi class, badge class, state label). Only classes that already exist
+# in app.css / the badge set are used.
+_PULSE_TONE = {
+    "crit": ("warn", "critical", _loc("Act now", "تحرك الآن", "Şimdi harekete geç")),
+    "warn": ("warn", "warning", _loc("Watch", "راقب", "İzle")),
+    "info": ("info", "info", _loc("Due", "مستحق", "Vadesi geldi")),
+    "good": ("good", "live", _loc("On track", "على المسار", "Yolunda")),
+}
+
+# Every tile label and denominator caption, in the three platform languages.
+_PULSE_TEXT = {
+    "exec.orders_late": _loc("Orders behind schedule", "طلبات متأخرة عن الجدول",
+                             "Programın gerisindeki siparişler"),
+    "exec.orders_week": _loc("Shipping within 7 days", "الشحن خلال 7 أيام",
+                             "7 gün içinde sevkiyat"),
+    "exec.mat_short": _loc("Materials at or below reorder", "مواد عند حد إعادة الطلب أو أقل",
+                           "Yeniden sipariş seviyesindeki malzemeler"),
+    "exec.qc_rate": _loc("Defect rate, last 7 days", "معدل العيوب، آخر 7 أيام",
+                         "Hata oranı, son 7 gün"),
+    "exec.qc_failed": _loc("Lots rejected, last 7 days", "دفعات مرفوضة، آخر 7 أيام",
+                           "Reddedilen partiler, son 7 gün"),
+    "exec.lines_below": _loc("Lines below target", "خطوط أقل من الهدف",
+                             "Hedefin altındaki hatlar"),
+    "exec.spares_out": _loc("Spare parts at zero stock", "قطع غيار برصيد صفر",
+                            "Stoğu sıfır yedek parçalar"),
+    "exec.pr_sign": _loc("Requests waiting for my signature", "طلبات بانتظار توقيعي",
+                         "İmzamı bekleyen talepler"),
+    "exec.certs_expiring": _loc("Certificates expiring within 30 days",
+                                "شهادات تنتهي خلال 30 يومًا",
+                                "30 gün içinde biten sertifikalar"),
+    "exec.scope_orders": _loc("live orders", "طلبات جارية", "aktif sipariş"),
+    "exec.scope_materials": _loc("materials tracked", "مادة متابعة", "izlenen malzeme"),
+    "exec.scope_lots": _loc("lots inspected", "دفعة تم فحصها", "denetlenen parti"),
+    "exec.scope_lines": _loc("lines reporting", "خط منتِج", "raporlayan hat"),
+    "exec.scope_spares": _loc("spare parts", "قطعة غيار", "yedek parça"),
+    "exec.scope_prs": _loc("requests open", "طلب شراء مفتوح", "açık talep"),
+    "exec.scope_certs": _loc("certificates held", "شهادة", "sertifika"),
+}
+
+_PULSE_HEAD = {
+    "title": _loc("Factory pulse — what needs action now",
+                  "نبض المصنع — ما يحتاج إلى إجراء الآن",
+                  "Fabrika nabzı — şimdi aksiyon gerekenler"),
+    "my_work": _loc("My action centre", "مركز مهامي", "Eylem merkezim"),
+    "none": _loc("No factory data has been recorded yet — these indicators appear "
+                 "as the production modules are used.",
+                 "لم تُسجَّل بيانات المصنع بعد — تظهر هذه المؤشرات مع استخدام وحدات الإنتاج.",
+                 "Henüz fabrika verisi kaydedilmedi — bu göstergeler üretim "
+                 "modülleri kullanıldıkça görünür."),
+}
+
+
+def _factory_pulse(user):
+    """One cross-module "what is at risk right now" snapshot for the command center.
+
+    The order page got _order_360 (see app/routes/orders.py); the front page never
+    did, so a director could not see the state of the factory without opening
+    eleven modules. Same defensive contract as _order_360, plus two rules the
+    most-loaded page in the platform needs:
+
+      * every block is permission-gated with the module's OWN view permission, so
+        a user never sees a number from a module they cannot open;
+      * every block is ONE aggregate statement over the whole table — never a
+        query per order — and is independently wrapped: an absent module, a failed
+        query or an empty table drops that ONE tile instead of 500-ing the page.
+        The rollback matters because PostgreSQL aborts the transaction on a failed
+        statement, which would otherwise poison every later block.
+
+    A block with nothing to measure emits NO tile at all: a fabricated "0 defects"
+    on an empty quality table would read as a real measurement.
+
+    Query cost: 6 aggregate statements on one shared connection + up to 3 from the
+    procurement signature queue = 9 max, constant in the number of orders.
+    """
+    tiles = []
+    if not user:
+        return tiles
+    today = _date.today()
+    d_today = today.isoformat()
+    d_week = (today + _timedelta(days=7)).isoformat()
+    d_month = (today + _timedelta(days=30)).isoformat()
+    d_since = (today - _timedelta(days=7)).isoformat()
+
+    try:
+        conn = get_db()
+    except Exception:
+        return tiles
+
+    def tile(k, icon, label, n, url, tone, total=None, scope=None, suffix=""):
+        klass, badge, state = _PULSE_TONE[tone]
+        # label/scope/state are resolved to {en,ar,tr} here and rendered as
+        # data-loc-* — never as data-i18n, which would ship a raw key.
+        return {"k": k, "icon": icon, "label": _PULSE_TEXT[label], "n": n, "url": url,
+                "klass": klass, "badge": badge, "state": state,
+                "total": total, "scope": _PULSE_TEXT.get(scope), "suffix": suffix}
+
+    def block(perm, fn):
+        if not user_has_permission(user, perm):
+            return
+        try:
+            got = fn()
+            if got:
+                tiles.extend(got)
+        except Exception:
+            try:
+                conn.rollback()   # PostgreSQL aborts the whole tx on a failed statement
+            except Exception:
+                pass
+
+    # Orders behind schedule / shipping this week — the two numbers a director
+    # acts on first: a missed T&A milestone is the earliest signal a ship date
+    # will slip, and the 7-day window is this week's actual commitment.
+    def _orders():
+        r = conn.execute(
+            "SELECT COUNT(DISTINCT o.id) AS live, "
+            "COUNT(DISTINCT CASE WHEN m.actual_date IS NULL AND m.planned_date IS NOT NULL "
+            "                    AND m.planned_date < ? THEN o.id END) AS late, "
+            "COUNT(DISTINCT CASE WHEN o.ship_date IS NOT NULL AND o.ship_date >= ? "
+            "                    AND o.ship_date <= ? THEN o.id END) AS wk "
+            "FROM ord_orders o LEFT JOIN ord_milestones m ON m.order_id = o.id "
+            "WHERE o.status NOT IN ('shipped','closed','cancelled')",
+            (d_today, d_today, d_week)).fetchone()
+        live = int(r["live"] or 0)
+        if not live:
+            return None
+        late, wk = int(r["late"] or 0), int(r["wk"] or 0)
+        return [
+            tile("orders_late", "clock", "exec.orders_late", late,
+                 url_for("orders.tna"), "crit" if late else "good",
+                 live, "exec.scope_orders"),
+            tile("orders_week", "rocket", "exec.orders_week", wk,
+                 url_for("orders.listing"), "info" if wk else "good",
+                 live, "exec.scope_orders"),
+        ]
+    block("view_dashboard", _orders)
+
+    # Material at or below reorder level — this is what stops the cutting room.
+    def _material():
+        r = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN (stock_qty - reserved_qty) <= reorder_level THEN 1 ELSE 0 END) AS short "
+            "FROM wh_materials WHERE is_active = 1").fetchone()
+        total = int(r["total"] or 0)
+        if not total:
+            return None
+        short = int(r["short"] or 0)
+        return [tile("mat_short", "boxes", "exec.mat_short", short,
+                     url_for("warehouse.materials"), "crit" if short else "good",
+                     total, "exec.scope_materials")]
+    block("wh_view", _material)
+
+    # Quality over the last 7 days: the defective-unit rate (the trend a director
+    # steers on) and the count of lots actually rejected (the units on hold now).
+    def _quality():
+        r = conn.execute(
+            "SELECT COUNT(*) AS lots, SUM(units_inspected) AS u, SUM(defective_units) AS d, "
+            "SUM(CASE WHEN verdict = 'fail' THEN 1 ELSE 0 END) AS failed "
+            "FROM qc_inspections WHERE inspection_date IS NOT NULL AND inspection_date >= ?",
+            (d_since,)).fetchone()
+        lots = int(r["lots"] or 0)
+        units = float(r["u"] or 0)
+        if not lots or units <= 0:
+            return None      # nothing inspected this week — "0%" would be a lie
+        rate = round(100.0 * float(r["d"] or 0) / units, 1)
+        failed = int(r["failed"] or 0)
+        return [
+            tile("qc_rate", "shield", "exec.qc_rate", rate, url_for("quality.index"),
+                 "crit" if rate >= 2.5 else ("warn" if rate >= 1.0 else "good"),
+                 lots, "exec.scope_lots", suffix="%"),
+            tile("qc_failed", "alert", "exec.qc_failed", failed,
+                 url_for("quality.inspections"), "crit" if failed else "good",
+                 lots, "exec.scope_lots"),
+        ]
+    block("qc_view", _quality)
+
+    # Lines that missed target on the last day production actually reported —
+    # the output gap, before it becomes a late shipment.
+    def _lines():
+        r = conn.execute(
+            "SELECT COUNT(*) AS lines_n, SUM(CASE WHEN a < t THEN 1 ELSE 0 END) AS below FROM ("
+            "SELECT line_id, SUM(actual_qty) AS a, SUM(target_qty) AS t FROM mes_hourly "
+            "WHERE work_date = (SELECT MAX(work_date) FROM mes_hourly) "
+            "GROUP BY line_id HAVING SUM(target_qty) > 0) q").fetchone()
+        n = int(r["lines_n"] or 0)
+        if not n:
+            return None
+        below = int(r["below"] or 0)
+        return [tile("lines_below", "factory", "exec.lines_below", below,
+                     url_for("mes.board"), "warn" if below else "good",
+                     n, "exec.scope_lines")]
+    block("mes_view", _lines)
+
+    # Spare parts at zero stock — the direct cause of a machine standing idle.
+    def _spares():
+        r = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN stock_qty <= 0 THEN 1 ELSE 0 END) AS zero_n "
+            "FROM mnt_spare_parts WHERE is_active = 1").fetchone()
+        total = int(r["total"] or 0)
+        if not total:
+            return None
+        zero_n = int(r["zero_n"] or 0)
+        return [tile("spares_out", "settings", "exec.spares_out", zero_n,
+                     url_for("maintenance.spares"), "crit" if zero_n else "good",
+                     total, "exec.scope_spares")]
+    block("maint_view", _spares)
+
+    # Purchase requests blocked on THIS user's signature — the one number on the
+    # page only this user can clear.
+    def _sign():
+        from app.approvals import services as proc
+        r = conn.execute("SELECT COUNT(*) AS total FROM pr_requests WHERE is_active = 1").fetchone()
+        total = int(r["total"] or 0)
+        if not total:
+            return None
+        mine = len(proc.my_queue(user) or [])
+        return [tile("pr_sign", "check", "exec.pr_sign", mine,
+                     url_for("approvals.index"), "crit" if mine else "good",
+                     total, "exec.scope_prs")]
+    block("proc_view", _sign)
+
+    # Certificates lapsing inside 30 days — an expired cert stops a shipment at
+    # the buyer, long after the goods are made.
+    def _certs():
+        r = conn.execute(
+            "SELECT COUNT(*) AS total, SUM(CASE WHEN expiry_date IS NOT NULL "
+            "AND expiry_date <= ? THEN 1 ELSE 0 END) AS soon "
+            "FROM cmp_certs WHERE status <> 'revoked'", (d_month,)).fetchone()
+        total = int(r["total"] or 0)
+        if not total:
+            return None
+        soon = int(r["soon"] or 0)
+        return [tile("certs_expiring", "book", "exec.certs_expiring", soon,
+                     url_for("compliance.certs"), "crit" if soon else "good",
+                     total, "exec.scope_certs")]
+    block("cmp_view", _certs)
+
+    try:
+        conn.close()
+    except Exception:
+        pass
+    return tiles
+
+
+# --------------------------------------------------------------------------
 # Command Center (executive dashboard)
 # --------------------------------------------------------------------------
 @bp.route("/")
@@ -208,6 +464,7 @@ def dashboard():
     briefing = executive_summary()
     return render_template("dashboard.html",
                            systems=systems, statuses=statuses, kpis=kpis, briefing=briefing,
+                           pulse=_factory_pulse(current_user()), pulse_head=_PULSE_HEAD,
                            roadmap=sc.ROADMAP, active="command_center")
 
 

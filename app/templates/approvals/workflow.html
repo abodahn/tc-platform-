@@ -16,8 +16,10 @@
   {% else %}<span class="tag" data-i18n="pwf.src.default">Code default</span>{% endif %}
 {% endmacro %}
 
-{#- Three textareas, one per language. A box left empty keeps whatever that
-    language already holds; Reset clears all three back to the built-in text. -#}
+{#- Three textareas, one per language, pre-filled with what is STORED. Emptying a
+    box stores '' for that language, so its readers fall back to the English and
+    the boot seed never refills it; Reset puts all three back to the built-in
+    text. A language whose box is untouched keeps what it holds. -#}
 {% macro prose(name, edit, rows) %}
   {% for lg, sfx, uikey in prose_langs %}
   <div class="field">

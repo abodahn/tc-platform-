@@ -5,52 +5,43 @@
   <div>
     <div class="eyebrow" data-i18n="sf.eyebrow">Smart Factory · MES</div>
     <h1 data-i18n="sf.wash">Laundry &amp; wash</h1>
-    <div class="sub" data-i18n="sf.wash_sub">Denim wash batches, recipes and sustainability per piece.</div>
+    <div class="sub" data-i18n="sf.wash_sub2">Executed wash lots against their recipe version — water, chemicals and heat per kg of goods.</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+  <div class="flex gap">
+    <a class="btn btn-primary btn-sm" href="{{ url_for('wash.batches') }}" data-i18n="sf.record_batch">Record batch</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('smartfactory.command_center') }}" data-i18n="sf.back_cc">← Command Center</a>
+  </div>
 </div>
 
 <div class="sf-kpis">
-  <div class="sf-kpi"><div class="v">{{ agg.water_pc }}<span style="font-size:13px;color:var(--muted)"> L</span></div><div class="l" data-i18n="sf.water_pc">Water / pc</div></div>
-  <div class="sf-kpi"><div class="v">{{ agg.energy_pc }}<span style="font-size:13px;color:var(--muted)"> kWh</span></div><div class="l" data-i18n="sf.energy_pc">Energy / pc</div></div>
-  <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(agg.chem) }}<span style="font-size:13px;color:var(--muted)"> kg</span></div><div class="l" data-i18n="sf.chem_total">Chemical (total)</div></div>
-  <div class="sf-kpi"><div class="v {{ 'sf-a' if agg.rewash else 'sf-g' }}">{{ agg.rewash }}</div><div class="l" data-i18n="sf.rewash">Rewash</div></div>
+  <div class="sf-kpi"><div class="v">{{ agg.water_per_kg }}<span style="font-size:13px;color:var(--muted)"> L</span></div><div class="l" data-i18n="sf.water_kg">Water / kg</div></div>
+  <div class="sf-kpi"><div class="v">{{ agg.heat_per_kg }}<span style="font-size:13px;color:var(--muted)"> L·K</span></div><div class="l" data-i18n="sf.heat_kg">Heat index / kg</div></div>
+  <div class="sf-kpi"><div class="v">{{ agg.chem_per_kg }}<span style="font-size:13px;color:var(--muted)"> g</span></div><div class="l" data-i18n="sf.chem_kg">Chemical / kg</div></div>
+  <div class="sf-kpi"><div class="v {{ 'sf-a' if agg.deviations else 'sf-g' }}">{{ agg.deviations }}</div><div class="l" data-i18n="sf.deviations">Batches off recipe</div></div>
 </div>
 
-{% if can('manage_production') %}
 <div class="panel mt-4">
-  <div class="panel-head"><h3 data-i18n="sf.new_batch">New wash batch</h3></div>
-  <form method="post" action="{{ url_for('smartfactory.wash_add') }}">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <div class="panel-pad grid cols-4">
-      <div class="field"><label data-i18n="sf.order">Order</label>
-        <select name="order_id"><option value=""></option>{% for o in orders %}<option value="{{ o.id }}">{{ o.po_no }}</option>{% endfor %}</select></div>
-      <div class="field"><label data-i18n="sf.recipe">Recipe</label><input name="recipe" value="Stone + Enzyme"></div>
-      <div class="field"><label data-i18n="sf.shade">Shade</label><input name="shade" value="Light Blue"></div>
-      <div class="field"><label data-i18n="sf.pieces">Pieces</label><input name="pieces" type="number" min="0" value="500"></div>
-      <div class="field"><label data-i18n="sf.water">Water (L)</label><input name="water_l" type="number" min="0" value="4200"></div>
-      <div class="field"><label data-i18n="sf.energy">Energy (kWh)</label><input name="energy_kwh" type="number" min="0" value="310"></div>
-      <div class="field"><label data-i18n="sf.chemical">Chemical (kg)</label><input name="chemical_kg" type="number" min="0" value="46"></div>
-      <div class="field"><label data-i18n="sf.rewash">Rewash</label><input name="rewash" type="number" min="0" value="0"></div>
-    </div>
-    <div class="panel-pad" style="padding-top:0"><button class="btn btn-primary" type="submit" data-i18n="sf.record_batch">Record batch</button></div>
-  </form>
-</div>
-{% endif %}
-
-<div class="panel mt-4">
-  <div class="panel-head"><h3 data-i18n="sf.batches">Wash batches</h3></div>
+  <div class="panel-head"><h3 data-i18n="sf.batches">Wash batches</h3>
+    <span class="muted" style="font-size:12px">{{ agg.batches }} · {{ '{:,.0f}'.format(agg.load_kg) }} kg</span></div>
   <div class="panel-pad" style="overflow-x:auto">
     <table class="tbl">
-      <thead><tr><th>Batch</th><th data-i18n="sf.order">Order</th><th data-i18n="sf.recipe">Recipe</th><th>Water L</th><th>Energy kWh</th><th>Chem kg</th><th data-i18n="sf.pieces">Pcs</th><th data-i18n="sf.shade">Shade</th><th data-i18n="sf.rewash">Rewash</th></tr></thead>
+      <thead><tr><th>Batch</th><th data-i18n="sf.order">Order</th><th data-i18n="sf.recipe">Recipe</th>
+        <th data-i18n="sf.load_kg">Load kg</th><th>Water L</th><th data-i18n="sf.chemical">Chem kg</th>
+        <th data-i18n="sf.heat">Heat L·K</th><th data-i18n="sf.shade">Shade</th><th data-i18n="sf.deviation">Deviation</th></tr></thead>
       <tbody>
       {% for w in rows %}
-        <tr><td class="mono"><b>{{ w.batch_no }}</b></td><td class="muted">{{ w.po_no or '—' }}</td><td>{{ w.recipe }}</td>
-          <td>{{ '{:,.0f}'.format(w.water_l) }}</td><td>{{ '{:,.0f}'.format(w.energy_kwh) }}</td><td>{{ '{:,.0f}'.format(w.chemical_kg) }}</td>
-          <td>{{ w.pieces }}</td><td>{{ w.shade }}</td><td style="color:{{ 'var(--warn)' if w.rewash else 'var(--muted)' }}">{{ w.rewash }}</td></tr>
+        <tr><td class="mono"><b>{{ w.batch_no }}</b></td><td class="muted">{{ w.po_no }}</td><td>{{ w.recipe }}</td>
+          <td>{{ '{:,.0f}'.format(w.load_kg) }}</td>
+          <td>{{ '{:,.0f}'.format(w.water_l) }}{% if not w.water_metered %} <span class="muted" style="font-size:11px" data-i18n="sf.from_recipe">(recipe)</span>{% endif %}</td>
+          <td>{{ '{:,.1f}'.format(w.chem_kg) }}</td><td>{{ '{:,.0f}'.format(w.heat_lk) }}</td>
+          <td>{{ w.shade or '—' }}</td>
+          <td style="color:{{ 'var(--warn)' if w.deviation else 'var(--muted)' }}">{{ w.deviation or '—' }}</td></tr>
       {% else %}<tr><td colspan="9" class="muted" style="text-align:center;padding:18px" data-i18n="sf.no_batches">No wash batches yet.</td></tr>{% endfor %}
       </tbody>
     </table>
+    <div class="muted mt-2" style="font-size:12px" data-i18n="sf.wash_note">Water is the metered figure when the machine reported one, otherwise the recipe version's bath total scaled to the load that ran. Heat is an index (litre-kelvin), not kWh.</div>
+    {% set src_href = url_for('wash.batches') %}{% set src_label = '/wash/batches' %}
+    {% include "smartfactory/_source.html" %}
   </div>
 </div>
 {% endblock %}

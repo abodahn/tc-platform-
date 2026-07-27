@@ -210,3 +210,9 @@ I18N = {
                               "الاكتمال يأتي من سجل المسح وليس يدوياً.",
                               "Tamamlanma, el ile değil okutma kaydından gelir."),
 }
+
+# line.html flags an hour booked at an SMV that disagrees with the style's defined
+# one. The tag is shared with planning and costing, so its wording is defined once
+# beside the resolver rather than copied per module.
+from app.services.smv import I18N as _SMV_I18N          # noqa: E402
+I18N.update(_SMV_I18N)

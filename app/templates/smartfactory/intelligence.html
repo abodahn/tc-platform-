@@ -14,15 +14,17 @@
   <div class="panel-head"><h3 data-i18n="sf.bridge">Efficiency bridge — why aren't we at 100%?</h3>
     <span class="tag">{{ bridge.efficiency }}% → 100%</span></div>
   <div class="panel-pad">
-    <div class="muted mb-2" style="font-size:13px">{{ bridge.gap_pcs }} <span data-i18n="sf.pcs_short">pcs</span> short · <b style="color:var(--crit)">{{ '{:,.0f}'.format(bridge.total_money) }} EGP</b> <span data-i18n="sf.left_floor">left on the floor</span></div>
+    <div class="muted mb-2" style="font-size:13px">{{ bridge.work_date }} · {{ bridge.gap_pcs }} <span data-i18n="sf.pcs_short">pcs</span> short · <b style="color:var(--crit)">{{ '{:,.0f}'.format(bridge.total_money) }} EGP</b> <span data-i18n="sf.left_floor">left on the floor</span></div>
     {% set maxm = (bridge.components|map(attribute='minutes')|max) if bridge.components else 1 %}
     {% for c in bridge.components %}
     <div class="sf-par">
-      <div style="width:200px">{{ c.name }}</div>
+      <div style="width:200px" data-i18n="{{ c.key }}">{{ c.name }}</div>
       <div class="track"><span style="width:{{ (100*c.minutes/maxm)|round(0,'floor') if maxm else 0 }}%"></span></div>
       <div style="width:130px;text-align:end;font-variant-numeric:tabular-nums">{{ '{:,}'.format(c.minutes) }} min · <b style="color:var(--crit)">{{ '{:,.0f}'.format(c.money) }}</b></div>
     </div>
     {% endfor %}
+    {% set src_href = url_for('mes.board') %}{% set src_label = '/mes/board' %}
+    {% include "smartfactory/_source.html" %}
   </div>
 </div>
 
@@ -34,18 +36,19 @@
       <div class="sf-kpis" style="margin-bottom:14px">
         <div class="sf-kpi"><div class="v sf-r">{{ '{:,.0f}'.format(bank.total) }}</div><div class="l" data-i18n="sf.total_loss">Total loss (EGP)</div></div>
         <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(bank.breakdown.idle) }}</div><div class="l" data-i18n="sf.idle_cost">Idle</div></div>
-        <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(bank.breakdown.rework) }}</div><div class="l" data-i18n="sf.rework">Rework</div></div>
-        <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(bank.breakdown.reject) }}</div><div class="l" data-i18n="sf.reject">Reject</div></div>
+        <div class="sf-kpi"><div class="v">{{ '{:,.0f}'.format(bank.breakdown.reject) }}</div><div class="l" data-i18n="sf.scrap">Scrap</div></div>
       </div>
       <table class="tbl">
-        <thead><tr><th data-i18n="sf.line">Line</th><th>Lost min</th><th data-i18n="sf.idle_cost">Idle</th><th data-i18n="sf.rework">Rework</th><th data-i18n="sf.reject">Reject</th><th data-i18n="sf.total">Total</th></tr></thead>
+        <thead><tr><th data-i18n="sf.line">Line</th><th>Lost min</th><th data-i18n="sf.reject">Reject</th><th data-i18n="sf.idle_cost">Idle</th><th data-i18n="sf.scrap">Scrap</th><th data-i18n="sf.total">Total</th></tr></thead>
         <tbody>
         {% for r in bank.rows %}
-          <tr><td>{{ r.line }}</td><td>{{ r.lost_min }}</td><td>{{ '{:,}'.format(r.idle) }}</td><td>{{ '{:,}'.format(r.rework) }}</td>
+          <tr><td>{{ r.line }}</td><td>{{ r.lost_min }}</td><td>{{ r.reject_pcs }}</td><td>{{ '{:,}'.format(r.idle) }}</td>
             <td>{{ '{:,}'.format(r.reject) }}</td><td style="font-weight:700;color:var(--crit)">{{ '{:,}'.format(r.total) }}</td></tr>
         {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:16px" data-i18n="sf.no_loss">No losses recorded.</td></tr>{% endfor %}
         </tbody>
       </table>
+      {% set src_href = url_for('mes.index') %}{% set src_label = '/mes' %}
+      {% include "smartfactory/_source.html" %}
     </div>
   </div>
 
@@ -63,6 +66,8 @@
       </div>
       {% else %}<div class="muted" data-i18n="sf.no_ship">No quality data yet.</div>{% endfor %}
       <div class="muted mt-2" style="font-size:12px" data-i18n="sf.ship_note">Estimated probability an order passes the buyer's AQL from live DHU — act before the inspection is booked.</div>
+      {% set src_href = url_for('quality.inspections') %}{% set src_label = '/quality/inspections' %}
+      {% include "smartfactory/_source.html" %}
     </div>
   </div>
 </div>

@@ -737,11 +737,17 @@ def add_piece_rate(data, user):
                 "AND pieces=? AND minutes_worked=?",
                 (emp, str(wd), op or "", order_id or 0, pieces, mw)).fetchone():
             return False, "duplicate_entry"
+        # Provenance only. The SMV stays the SNAPSHOT that was typed, every figure
+        # in `c` was already computed from it above, and nothing here can move a
+        # payable — it just records whether that number came from the operation
+        # bulletin or straight off a supervisor's head.
+        from app.services.smv import smv_for, source_of
+        src = source_of(smv, smv_for(conn, order_id=order_id, operation=op)["sources"])
         cur = conn.execute(
             "INSERT INTO ppl_piece_rate (employee_id,work_date,operation,order_id,pieces,smv,"
-            "minutes_worked,rate_per_minute,threshold_pct,earned_minutes,efficiency_pct,incentive,"
-            "created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (emp, str(wd), op, order_id, pieces, smv, mw,
+            "smv_source,minutes_worked,rate_per_minute,threshold_pct,earned_minutes,efficiency_pct,"
+            "incentive,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (emp, str(wd), op, order_id, pieces, smv, src, mw,
              c["rate_per_minute"], c["threshold_pct"],
              c["earned_minutes"], c["efficiency_pct"], c["incentive"],
              (user or {}).get("username"), _now()))

@@ -224,8 +224,9 @@ DOC_TEXT = {
 # --- the same prose in Arabic and Turkish ----------------------------------
 # Translated from the English rows above, which were written off what the code
 # actually enforces; the sense of every financial / stock control is kept exact.
-# Seeded into the *_ar / *_tr columns ONLY where they are still empty, so an
-# admin's own wording is never overwritten (see ensure()).
+# Seeded into the *_ar / *_tr columns ONLY where they are still NULL (never
+# translated), so neither an admin's own wording nor a box he emptied on purpose
+# is ever overwritten (see ensure()).
 STATUS_TEXT_AR = {
     "draft": "محفوظة ولم تُرسَل بعد. لا يُبلَّغ أحد، وفحص خرق SLA يتجاهل المسودات.",
     "submitted": "تم رفع التذكرة وإبلاغ مدير الصيانة. بدأ عدّاد SLA للاستجابة والإصلاح من "
@@ -524,7 +525,12 @@ def ensure(conn):
     """Create the workflow tables, add the per-language columns and seed the default
     text in all three languages. Idempotent: INSERT OR IGNORE never overwrites text
     an admin has since edited, and a translation is only written into a column that
-    is still NULL or blank."""
+    is still NULL.
+
+    NULL and '' are deliberately different: NULL means "never translated" and the
+    seed may fill it, '' means an admin emptied that box on purpose so his readers
+    fall back to the English (what the editor hint promises). Seeding a blank would
+    hand him the shipped translation back on the next restart."""
     try:
         conn.executescript(WF_SCHEMA)
         conn.commit()
@@ -549,8 +555,8 @@ def ensure(conn):
             for k, v in texts_.items():
                 try:
                     conn.execute(
-                        "UPDATE %s SET %s=? WHERE %s=? AND (%s IS NULL OR %s='')"
-                        % (table, col, keycol, col, col), (v, k))
+                        "UPDATE %s SET %s=? WHERE %s=? AND %s IS NULL"
+                        % (table, col, keycol, col), (v, k))
                 except Exception:
                     conn.rollback()  # column missing (ALTER failed) -> English only
     conn.commit()
