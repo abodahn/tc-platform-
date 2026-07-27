@@ -571,10 +571,10 @@ missing = {k for k in keys if k not in en}
 print("        %d distinct keys in the cut room templates" % len(keys))
 for k in sorted(missing):
     print("        MISSING from en.json: %s  (%s)" % (k, ", ".join(sorted(keys[k]))))
-# app/static/** is owned by another agent: these two are reported upstream with
-# real EN/AR/TR instead of being patched here.
-check("J1 the only i18n gaps are the 2 export keys reported upstream",
-      missing == {"cut.action.export", "cut.action.export_rolls"})
+# The two export keys this once tolerated (cut.action.export, cut.action.export_rolls)
+# were reported upstream and have since landed in en/ar/tr, so the tolerance is gone:
+# every cut room key must resolve, or a missing one renders as its own raw key.
+check("J1 every cut room i18n key exists in en.json", not missing)
 
 print("\n%d/%d checks passed" % (sum(1 for _, o in OK if o), len(OK)))
 sys.exit(0 if all(o for _, o in OK) else 1)
