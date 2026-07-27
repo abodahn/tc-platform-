@@ -79,7 +79,16 @@ def _order_exists(order_id):
         return conn.execute("SELECT id FROM ord_orders WHERE id=?",
                             (order_id,)).fetchone() is not None
     except Exception:
-        return False          # orders module absent -> do not block the warehouse
+        # No ord_orders table at all -> refuse; the guard fails CLOSED (an
+        # untraceable reservation is worse than a blocked one). A TRANSIENT fault
+        # (lock, dropped connection) lands here too and the user is told
+        # "order_not_found" about an order that does exist, so log it: staying
+        # closed is right, staying silent is not. Deliberately not narrowed to
+        # specific messages — those differ between SQLite and PostgreSQL, and
+        # guessing wrong would turn a refusal into a 500.
+        log.warning("order-exists check failed for order_id=%r; refusing",
+                    order_id, exc_info=True)
+        return False
     finally:
         conn.close()
 

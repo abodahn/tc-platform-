@@ -230,6 +230,21 @@ with app.app_context():
     check("negative counts refused at creation",
           mk(units_inspected="-10", defective_units="-3"), ("ValueError", "negative"))
     check("NaN counts refused at creation", mk(units_inspected="nan"), ("ValueError", "bad_number"))
+    # inf passes every < / > guard. One inf lot SUMs into every roll-up: the whole
+    # factory's DHU reads 0.0 and RFT reads nan (inf/inf), and the JSON export then
+    # emits the literal NaN / Infinity, which is not valid JSON for any consumer.
+    for bad_inf in ("inf", "-inf", "Infinity", "1e400"):
+        check(f"an infinite units_inspected ({bad_inf}) is refused at creation",
+              mk(units_inspected=bad_inf), ("ValueError", "bad_number"))
+    check("an infinite defective_units is refused at creation",
+          mk(units_inspected="200", defective_units="inf"), ("ValueError", "bad_number"))
+    check("an infinite units_inspected is refused on update too",
+          svc.record_result(1, "inf", "0", None), (False, "bad_number"))
+    # ...and if one ever got in by hand, no roll-up may report nan
+    m_inf = svc.metrics(float("inf"), 5, 10)
+    check("metrics() on a hand-edited inf row returns zeros, never nan",
+          (m_inf["dhu"], m_inf["rft"], m_inf["defect_rate"], m_inf["units"]),
+          (0.0, 0.0, 0.0, 0.0))
     check("infinite lot refused at creation", mk(lot_size="inf")[0], "ValueError")
     check("unsupported AQL refused at creation", mk(aql="6.5")[0], "ValueError")
     check("off-list stage refused (the roll-ups group on it)",
@@ -353,6 +368,35 @@ with app.app_context():
     warn2 = conn.execute("SELECT COUNT(*) c FROM notifications WHERE module='quality' "
                          "AND severity='warning'").fetchone()["c"]
     check("the DHU sweep does not re-bell the same section the same day", warn2, warn1)
+
+    # The dedup must key off the SAME clock the bell is written with, not the
+    # local date: in any timezone ahead of UTC the two disagree for the first
+    # hours of the local day and the sweep re-belled on every dashboard load.
+    # Pin the clock away from today so this cannot pass by accident of the date.
+    def _warns():
+        return conn.execute("SELECT COUNT(*) c FROM notifications WHERE module='quality' "
+                            "AND severity='warning'").fetchone()["c"]
+
+    # `created_at >= today` is an open-ended range, so the pinned day must sit in
+    # the PAST of the real clock for this to discriminate: a sweep that dedups off
+    # date.today() then looks for rows dated 2026+ and never sees its own 2019 row.
+    _real_now = svc._now
+    try:
+        conn.execute("DELETE FROM notifications WHERE module='quality' AND severity='warning'")
+        conn.commit()
+        svc._now = lambda: "2019-03-04 22:45:00"     # UTC still the 4th, local already the 5th
+        svc.dhu_sweep()
+        svc.dhu_sweep()
+        svc.dhu_sweep()
+        day1 = _warns()
+        ctrue("a pinned-clock sweep bells the over-limit section", day1 > 0, f"(got {day1})")
+        check("three sweeps on one pinned UTC day bell that section exactly once", day1, 1)
+        svc._now = lambda: "2019-03-05 00:05:00"     # next UTC day, minutes later
+        svc.dhu_sweep()
+        svc.dhu_sweep()
+        check("the next UTC day bells again (dedup is per-day, not forever)", _warns(), day1 + 1)
+    finally:
+        svc._now = _real_now
     conn.close()
 
 # ============================================================ 12. routes
@@ -413,8 +457,7 @@ check("ar/tr are not English copies", same, [])
 # A template that PARSES can still 500 at render time (an undefined filter, a
 # url_for that does not resolve), so drive every route through the test client.
 print("== 14. every route rendered for real ==")
-app2 = create_app()
-app2.register_blueprint(qroutes.bp)                           # not spliced into app/__init__ yet
+app2 = create_app()                                           # create_app() already registers qroutes.bp
 with app2.app_context():
     from app.db import get_db as _gdb                         # noqa: E402
     c = _gdb()

@@ -13,6 +13,7 @@ The formulas, stated once because every KPI below derives from them:
                      ranked by qty descending
 Because one unit can carry several defects, DHU >= defective rate always.
 """
+import math
 from datetime import date, datetime
 
 from app.db import get_db
@@ -38,7 +39,11 @@ def counts_of(units_inspected, defective_units):
         defective = float(defective_units or 0)
     except (TypeError, ValueError):
         raise ValueError("bad_number")
-    if units != units or defective != defective:            # NaN
+    # NaN *and* infinity. float("inf") passes every < / > guard below, and one
+    # inf lot poisons every roll-up that SUMs it: the factory DHU reads 0.0 and
+    # RFT reads nan (inf/inf), which the JSON export then emits as the literal
+    # NaN / Infinity — not valid JSON for anything downstream.
+    if not (math.isfinite(units) and math.isfinite(defective)):
         raise ValueError("bad_number")
     if units < 0 or defective < 0:
         raise ValueError("negative")
@@ -53,7 +58,7 @@ def metrics(units_inspected, defective_units, total_defects):
     zeros — an inspection exists before anything has been counted, and a KPI
     strip must not be a ZeroDivisionError."""
     u = float(units_inspected or 0)
-    if u <= 0:
+    if not (0 < u < math.inf):        # <=0, NaN and inf: no usable denominator
         return {"units": 0.0, "defects": float(total_defects or 0), "dhu": 0.0,
                 "defect_rate": 0.0, "rft": 0.0}
     # Defectives are validated on write, but a rate is meaningless outside 0..100%
@@ -162,7 +167,8 @@ def create_inspection(data, user):
     v = aql_verdict(p["accept"], p["sample_size"], units, defective)
     conn = get_db()
     try:
-        oid = int(data.get("order_id")) if (data.get("order_id") or "").isdigit() else None
+        # str(): a non-route caller passing order_id as an int must not AttributeError
+        oid = int(data.get("order_id")) if str(data.get("order_id") or "").isdigit() else None
         # Never store a link to an order that does not exist: the register renders
         # it as a hyperlink and by_order() would silently drop the inspection.
         if oid and not conn.execute("SELECT id FROM ord_orders WHERE id=?", (oid,)).fetchone():
@@ -454,7 +460,11 @@ def dhu_sweep():
     except Exception:
         return
     try:
-        today = str(date.today())
+        # Same clock as _bell writes with (UTC). date.today() is LOCAL: in any
+        # timezone ahead of UTC the local date rolls over first, so for those
+        # hours every sweep looked for rows dated "tomorrow", found none, and
+        # re-belled every section on every dashboard load.
+        today = _now()[:10]
         for s in by_section():
             if s["dhu"] <= DHU_ACTION_LIMIT or not s["section"]:
                 continue

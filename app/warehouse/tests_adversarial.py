@@ -123,6 +123,22 @@ with app.app_context():
     MID = {r["code"]: r["id"] for r in rows("SELECT id,code FROM wh_materials")}
     FAB, NVY, BTN, THR = MID["FAB-JER-WHT"], MID["FAB-JER-NVY"], MID["TRM-BTN-18L"], MID["TRM-THR-40"]
 
+    # reserve_for_order()/fg_move() refuse an order id that is not a real ord_orders row
+    # ("order_not_found") — a reservation against a ghost order strands its cost where
+    # costing, which only walks real orders, can never report it. So the orders this
+    # suite deliberately trades against have to EXIST, or every attack below would stop
+    # at that guard instead of testing the warehouse. Order 5 is left out on purpose:
+    # the B5 route fuzz uses it as a ghost and must write nothing.
+    ORDERS = (9001, 9101, 9102, 9201, 9202, 9301, 9401, 9501, 9601, 9602, 9603)
+    c = get_db()
+    for oid in ORDERS:
+        c.execute("INSERT INTO ord_orders (id,order_no,buyer,status,created_at) "
+                  "VALUES (?,?,?,?,?)", (oid, f"SO-ADV-{oid}", "Adversary", "confirmed",
+                                         "2026-01-01"))
+    c.commit(); c.close()
+    ck(q("SELECT COUNT(*) FROM ord_orders WHERE id IN (%s)" % ",".join(map(str, ORDERS)))
+       == len(ORDERS), "the orders this suite trades against are real rows")
+
     # ------------------------------------------------- A1 raced batch reserve
     head("A1: a partly-reserved batch must strand nothing")
     real_try = svc._try_reserve
@@ -206,14 +222,19 @@ with app.app_context():
        q("SELECT COUNT(*) FROM wh_fg WHERE style_code='STY-X'") == 0,
        "an order-less pack is refused (NULL order_id defeats ux_wh_fg_sku)", str(m1))
     ck(not svc.fg_move(0, "STY-X", "W", "M", 100, "pack", U)[0], "order_id 0 refused")
-    svc.fg_move(9001, "STY-A", "Navy", "L", 500, "pack", U)
-    svc.fg_move(9001, "STY-A", "Navy", "L", 200, "ship", U)
+    # a refused pack leaves NO row: report that as a failed check, never a crash on None
+    def fg_row():
+        return q("SELECT packed_qty p, shipped_qty s FROM wh_fg WHERE order_id=9001 "
+                 "AND size='L'") or {"p": None, "s": None}
+
+    ck(svc.fg_move(9001, "STY-A", "Navy", "L", 500, "pack", U)[0], "500 pcs packed")
+    ck(svc.fg_move(9001, "STY-A", "Navy", "L", 200, "ship", U)[0], "200 pcs shipped")
     ok, msg = svc.fg_move(9001, "STY-A", "Navy", "L", 301, "ship", U)
-    fg = q("SELECT packed_qty p, shipped_qty s FROM wh_fg WHERE order_id=9001 AND size='L'")
+    fg = fg_row()
     ck(not ok and _f(fg["p"]) == 500 and _f(fg["s"]) == 200,
-       "shipping more than packed is refused, nothing written", f"{msg}")
+       "shipping more than packed is refused, nothing written", f"{msg} {fg}")
     ok, msg = svc.fg_move(9001, "STY-A", "Navy", "L", 300, "ship", U)
-    fg = q("SELECT packed_qty p, shipped_qty s FROM wh_fg WHERE order_id=9001 AND size='L'")
+    fg = fg_row()
     ck(ok and _f(fg["p"]) - _f(fg["s"]) == 0, "shipping exactly the balance lands on zero")
     ck(not svc.fg_move(9001, "STY-A", "Navy", "L", "nan", "ship", U)[0], "FG 'nan' refused")
     ck(not svc.fg_move(9001, "STY-A", "Navy", "L", 5, "delete", U)[0], "unknown FG action refused")
@@ -538,6 +559,19 @@ with app.app_context():
                    f"reserve(order={oid!r}) refused cleanly", str(r[1]))
             except Exception as e:                           # noqa: BLE001
                 ck(False, f"reserve(order={oid!r}) raised", repr(e))
+    # ...and an order id that is well-formed but is not a real order at all
+    GHOST = 977001
+    mv0 = q("SELECT COUNT(*) FROM wh_movements")
+    g_ok, g_msg, _gp = svc.reserve_for_order(GHOST, FAB, 50, U)
+    ck(g_ok is False and g_msg == "order_not_found",
+       "reserving against an order that does not exist is refused", str(g_msg))
+    ck(q("SELECT COUNT(*) FROM wh_allocations WHERE order_id=?", (GHOST,)) == 0
+       and q("SELECT COUNT(*) FROM wh_movements") == mv0
+       and _f(q("SELECT COALESCE(SUM(reserved_m),0) FROM wh_rolls WHERE material_id=?",
+                (FAB,))) == 0
+       and svc.fg_move(GHOST, "STY-G", "Navy", "L", 10, "pack", U)[1] == "order_not_found"
+       and q("SELECT COUNT(*) FROM wh_fg WHERE order_id=?", (GHOST,)) == 0,
+       "...and writes nothing: no allocation, no movement, no reserved metres, no FG row")
 
     # ------------------------------- B4 the reservation counter must reach zero
     head("B4: a fractional reservation strands nothing on the counter")
