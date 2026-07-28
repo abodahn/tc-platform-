@@ -217,6 +217,18 @@ CREATE TABLE IF NOT EXISTS proc_role_meta (
     updated_by TEXT, updated_at TEXT
 );
 
+-- Escalation chain: who signs one level up when the ONLY person eligible for a
+-- rung is the requester (nobody ever approves their own request). Seeded once
+-- with constants.DEFAULT_ESCALATION via INSERT OR IGNORE, so an owner edit is
+-- never overwritten on a later boot. A role with no row, or a blank
+-- superior_role, means "nobody above".
+CREATE TABLE IF NOT EXISTS proc_escalations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role_key TEXT UNIQUE NOT NULL,
+    superior_role TEXT,
+    updated_by TEXT, updated_at TEXT
+);
+
 -- Free-text blocks: 'overview', one per gate, and 'status.<pr_status>'.
 CREATE TABLE IF NOT EXISTS proc_doc (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -235,6 +247,14 @@ _STEP_MIGRATIONS = [
     # Level-2 escalation stamp (step older than 2x the stage SLA): set once by
     # run_escalations, doubles as its own dedupe flag like escalated_at above.
     ("escalated2_at", "ALTER TABLE pr_steps ADD COLUMN escalated2_at TEXT"),
+    # SoD escalation (a DIFFERENT thing from the SLA escalation above, which is
+    # about a stage sitting too long): the requester was the only person eligible
+    # for this rung, so it was re-pointed one level up the org chart at
+    # ladder-build time. esc_role = the role(s) that sign it now (blank string =
+    # the climb found nobody, i.e. it needs a delegation or an admin);
+    # esc_from = the role(s) it was escalated FROM. Both NULL = a normal rung.
+    ("esc_role", "ALTER TABLE pr_steps ADD COLUMN esc_role TEXT"),
+    ("esc_from", "ALTER TABLE pr_steps ADD COLUMN esc_from TEXT"),
 ]
 
 # Columns added to pr_requests after first release (tax + goods receipt + PO email
@@ -339,8 +359,24 @@ def seed_governance(conn):
     Runs on EVERY boot — before the sample-data guard below — so an already
     deployed database picks the text up without being re-seeded from scratch."""
     from app.approvals.constants import (STAGE_EXPLAIN, ROLE_EXPLAIN,
-                                         DOC_SECTIONS, STATUS_MEANING)
+                                         DOC_SECTIONS, STATUS_MEANING,
+                                         DEFAULT_ESCALATION)
     n = 0
+    # Escalation chain: seeded ONCE, then ONE statement per boot instead of 8
+    # no-op INSERTs — gunicorn runs --preload, so every boot statement is a
+    # round trip on a slow external PostgreSQL link. Rows are never deleted (an
+    # owner expresses "nobody above" as a BLANK superior, not a missing row), so
+    # a non-empty table means the seed has run and no owner edit is restored.
+    # Guarded + rollback: a failed statement aborts the whole PostgreSQL
+    # transaction, which would take the rest of the seed down with it.
+    try:
+        if not conn.execute("SELECT 1 FROM proc_escalations LIMIT 1").fetchone():
+            for role, superior in DEFAULT_ESCALATION.items():
+                conn.execute("INSERT OR IGNORE INTO proc_escalations "
+                             "(role_key, superior_role) VALUES (?,?)", (role, superior))
+                n += 1
+    except Exception:
+        conn.rollback()
     for stage, text in STAGE_EXPLAIN.items():
         conn.execute("INSERT OR IGNORE INTO proc_stage_meta (stage, explanation) VALUES (?,?)",
                      (stage, text))

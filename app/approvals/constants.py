@@ -179,6 +179,33 @@ SLA_WARN_HOURS = 24            # amber "due soon" threshold
 SOD_ADMIN_EXEMPT = True
 
 
+# --- SoD escalation chain (one level up the org chart) ----------------------
+# Rule (a) above creates a deadlock the moment the requester is the ONLY person
+# eligible to sign a rung: the Warehouse Manager raises a request, the warehouse
+# rung is his, and nobody else holds a warehouse role -> the request waits for a
+# signature that can never legally arrive. The engine then escalates that rung
+# ONE LEVEL UP: the superior of the blocked role signs it instead.
+#
+# Seeded into proc_escalations (INSERT OR IGNORE) so a Procurement admin can edit
+# the chain afterwards without a code change. A role with NO row, or a row whose
+# superior_role is blank, means "nobody above" — the terminal case.
+DEFAULT_ESCALATION = {
+    "storekeeper": "warehouse_manager",
+    "warehouse_manager": "factory_manager",
+    "factory_manager": "ceo",
+    "purchasing_manager": "cfo",
+    "finance_user": "finance_manager",
+    "finance_manager": "cfo",
+    "cfo": "ceo",
+    "ceo": "",                       # the top of the chart: nobody above
+}
+
+# Hard stop on the climb. An admin can configure a cycle (A -> B -> A); the
+# resolver already carries a visited-set, and this bound is the second belt so a
+# pathological chain can never spin on a money path.
+ESCALATION_MAX_DEPTH = 8
+
+
 # --- Permissions (added to platform RBAC) ----------------------------------
 PROC_PERMISSIONS = [
     "proc_view",       # see the module, lists, own requests
@@ -372,6 +399,23 @@ DOC_SECTIONS = {
         "“admins exempt” is on, super_admin and any role holding Procurement-admin bypass "
         "both rules so a small team can still walk a request through the whole ladder; "
         "switch it off for strict mode, where admins are bound exactly like everyone else."),
+    "sod_escalation": (
+        "Nobody ever approves their own request — but when the requester is the ONLY person "
+        "who may sign a rung, that rung would wait for a signature that can never legally "
+        "arrive. The engine then escalates it ONE LEVEL UP the org chart: the superior of the "
+        "blocked role signs that rung instead. It fires only when there is genuinely nobody "
+        "else — if a second holder of the role exists, that colleague signs and nothing about "
+        "the request changes. The climb never lands on the requester: when the superior is the "
+        "originator too it keeps going up, and a chain an admin has configured into a loop is "
+        "detected and treated as “nobody above”. An escalated rung is stamped on the request, "
+        "shown in the approval trail and printed on the PR and PO documents, so an auditor sees "
+        "the deviation without opening the app. When the climb runs out — the CEO raising a "
+        "request that needs the CEO signature — the request is REFUSED at submit with a clear "
+        "reason and Procurement admins are notified, so a delegation or an admin override can "
+        "be arranged instead of the request quietly rotting in a queue. Which stages exist, "
+        "their order, the amount thresholds and every gate are untouched by this: escalation "
+        "only changes WHO signs a rung. The chain itself is editable per role in Procurement "
+        "settings; a role with no superior configured means nobody above it."),
     "budget_gate": (
         "Issuing the Purchase Order is blocked when the department has an explicit budget "
         "row for the current year AND its committed spend already exceeds it. Committed "

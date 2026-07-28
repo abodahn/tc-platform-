@@ -419,15 +419,51 @@ def pr_pdf(bundle):
     return buf.read()
 
 
+def _role_names(csv):
+    """'storekeeper,warehouse_manager' -> 'Storekeeper, Warehouse Manager'."""
+    keys = [k.strip() for k in str(csv or "").split(",") if k.strip()]
+    try:
+        from app.security import role_label
+        return ", ".join(role_label(k) for k in sorted(keys))
+    except Exception:
+        return ", ".join(sorted(keys))
+
+
+def _esc_lines(steps):
+    """One printed line per rung the SoD escalation moved, so the deviation is on
+    the paper an auditor reads and not only inside the app."""
+    out = []
+    for s in steps:
+        frm = s.get("esc_from")
+        if not frm:
+            continue
+        to = s.get("esc_role")
+        stage = s.get("stage") or ""
+        label = str(stage).replace("_", " ").title()
+        out.append(
+            f"• {label}: escalated from {_role_names(frm)} to {_role_names(to)} — "
+            f"the requester holds the normal signing role." if to else
+            f"• {label}: the requester is its only eligible signer and no superior "
+            f"role is configured — needs a delegation or a Procurement admin.")
+    return out
+
+
 def _signature_grid(c, w, h, cm, y, pr, steps, pn):
     c.setFont("Helvetica-Bold", 10)
     c.drawString(1.5 * cm, y, "Approval signatures")
     y -= 0.35 * cm
+    for line in _esc_lines(steps):
+        c.setFont("Helvetica-Oblique", 7.4)
+        c.setFillColorRGB(0.62, 0.18, 0.08)
+        c.drawString(1.5 * cm, y, _clip(c, line, "Helvetica-Oblique", 7.4, w - 3 * cm))
+        c.setFillColorRGB(0, 0, 0)
+        y -= 0.3 * cm
     blocks = [{"role": "Requester", "name": pr.get("requester_name") or pr.get("requester"),
                "sig": None, "date": (pr.get("submitted_at") or pr.get("request_date") or "")[:10],
                "status": "originator"}]
     for s in steps:
-        blocks.append({"role": s.get("approver_role") or s.get("stage"),
+        blocks.append({"role": (s.get("approver_role") or s.get("stage") or "")
+                       + (" (ESCALATED)" if s.get("esc_from") else ""),
                        "name": s.get("approver_name"), "sig": s.get("sig_png"),
                        "date": (s.get("acted_at") or "")[:10], "status": s.get("status"),
                        "code": s.get("verify_code")})
@@ -564,6 +600,22 @@ def po_pdf(bundle):
                      f"EGP equivalent: {_fmt(egp_eq)} EGP (@ {fx:g} EGP / {cur or 'unit'})")
         c.setFillColorRGB(0, 0, 0)
         y -= 0.45 * cm
+
+    # Approval deviations carried over from the request: a rung whose normal
+    # signer was the originator was signed one level up. An auditor holding only
+    # the PO must be able to see that without opening the app.
+    esc = _esc_lines(bundle.get("steps") or [])
+    if esc:
+        c.setFont("Helvetica-Bold", 8.2)
+        c.setFillColorRGB(0.62, 0.18, 0.08)
+        c.drawString(1.5 * cm, y, "Approval deviations (segregation of duties):")
+        y -= 0.34 * cm
+        for line in esc:
+            c.setFont("Helvetica-Oblique", 7.4)
+            c.drawString(1.5 * cm, y, _clip(c, line, "Helvetica-Oblique", 7.4, w - 3 * cm))
+            y -= 0.3 * cm
+        c.setFillColorRGB(0, 0, 0)
+        y -= 0.15 * cm
 
     c.setFont("Helvetica", 8.5)
     c.setFillColorRGB(0.4, 0.4, 0.4)

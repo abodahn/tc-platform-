@@ -99,6 +99,53 @@
   </div>
 </div>
 
+<!-- Escalation chain: who signs one level up when the requester is the only
+     eligible signer for a rung. Role names and the wording here are resolved
+     SERVER-SIDE (L.*) — the static i18n dictionary this module does not own has
+     no keys for them, and app.js prints an unknown key raw in every language. -->
+<div class="panel mt-3">
+  <form method="post" action="{{ url_for('approvals.save_escalation') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="department" value="{{ department }}">
+    <div class="panel-head"><h3>{{ L.ui.esc_title }}</h3></div>
+    <div class="panel-pad" style="overflow-x:auto">
+      <div class="muted" style="font-size:12.5px">{{ L.ui.esc_sub }}</div>
+      <table class="tbl mt-2">
+        <thead><tr>
+          <th>{{ L.ui.esc_role }}</th>
+          <th>{{ L.ui.esc_signs }}</th>
+          <th>{{ L.ui.esc_superior }}</th>
+        </tr></thead>
+        <tbody>
+        {% for r in chain %}
+          <tr>
+            <td><b>{{ r.label }}</b>
+              <div class="muted" style="font-size:11px">{{ r.role_key }}</div>
+              <input type="hidden" name="role_key" value="{{ r.role_key }}"></td>
+            <td class="muted">{% for s in r.signs %}<span class="tag">{{ s }}</span> {% endfor %}</td>
+            <td>
+              <select name="sup_{{ r.role_key }}" style="min-width:220px">
+                <option value="" {{ 'selected' if not r.superior }}>{{ L.ui.esc_none }}</option>
+                {#- a role with no approval permission cannot sign a rung, so it is
+                    marked: escalating onto it would land the rung nowhere. -#}
+                {% for c in role_choices %}{% if c.key != r.role_key %}
+                <option value="{{ c.key }}" {{ 'selected' if r.superior == c.key }}
+                        {% if not c.can_approve %}title="{{ L.ui.no_approve_opt }}"{% endif %}
+                        >{{ c.label }}{% if not c.can_approve %} — {{ L.ui.no_approve_opt }}{% endif %}</option>
+                {% endif %}{% endfor %}
+              </select>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="flex gap mt-3">
+        <button class="btn btn-primary" type="submit">{{ L.ui.esc_save }}</button>
+      </div>
+    </div>
+  </form>
+</div>
+
 <!-- Add a new department -->
 <div class="panel mt-3">
   <form method="post">

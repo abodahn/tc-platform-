@@ -233,7 +233,10 @@ def create():
     # priced=None -> inferred from the total: a requester's locked (zero-value)
     # request is 'unpriced' and routed to the pricing gate; a Purchasing-priced
     # one is 'priced'.
-    pr_id, pr_no = svc.create_pr(header, items, _u(), ip=_ip(), submit=submit)
+    # Submitted separately (below) so a refusal — e.g. the requester is the only
+    # possible signer of a rung and nothing sits above that role — reaches them
+    # as a message instead of leaving a silent draft.
+    pr_id, pr_no = svc.create_pr(header, items, _u(), ip=_ip(), submit=False)
     # Cross-module mesh: a PR raised from a maintenance ticket keeps a
     # persistent two-way link (ticket page lists it; goods receipt notifies
     # the ticket). The hidden from_ticket field is set by the prefill flow.
@@ -253,7 +256,19 @@ def create():
     n = _save_attachments(pr_id, _u())
     flash(f"Purchase request {pr_no} created." + (f" {n} file(s) attached." if n else ""),
           "success")
+    if submit:
+        ok, msg = svc.submit_pr(pr_id, _u(), ip=_ip())
+        if not ok:
+            flash(_submit_error(msg), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+def _submit_error(msg):
+    """Human-readable reason a submit was refused, in the reader's language for the
+    one case the reader has to act on (no superior above their own role)."""
+    if msg == "no_eligible_approver":
+        return svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]["esc_blocked_flash"]
+    return f"Could not submit ({msg})."
 
 
 @bp.route("/pr/<int:pr_id>/edit", methods=["GET"])
@@ -307,8 +322,9 @@ def edit_save(pr_id):
         return redirect(url_for("approvals.edit", pr_id=pr_id))
     _save_attachments(pr_id, _u())
     if request.form.get("action") != "draft":
-        svc.submit_pr(pr_id, _u(), ip=_ip())
-        flash("Saved and submitted for approval.", "success")
+        ok, msg = svc.submit_pr(pr_id, _u(), ip=_ip())
+        flash("Saved and submitted for approval." if ok else _submit_error(msg),
+              "success" if ok else "error")
     else:
         flash("Draft saved.", "success")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
@@ -326,6 +342,16 @@ def detail(pr_id):
         abort(404)
     user = _u()
     pr = bundle["pr"]
+    # Escalation stamp -> one readable sentence per step, in the reader's language
+    # (the stored value is a role-key list, so it cannot use data-i18n).
+    _lang = (user or {}).get("lang_pref") or "en"
+    _ui = svc.labels(_lang)["ui"]
+    for s in bundle["steps"]:
+        if s.get("esc_from"):
+            s["esc_why"] = (_ui["esc_from_to"] % {
+                "from": svc.role_names(s["esc_from"], _lang),
+                "to": svc.role_names(s["esc_role"], _lang)}) \
+                if s.get("esc_role") else _ui["esc_stuck"]
     # The current rung may hold several parallel steps; find the one this user
     # can act on (if any), and the labels of everyone currently on the rung.
     actionable = None
@@ -334,13 +360,14 @@ def detail(pr_id):
         cur = [s for s in bundle["steps"]
                if s["seq"] == pr["current_seq"] and s["status"] == "pending"]
         current_stages = [s["stage"] for s in cur]
-        actionable = next((s for s in cur if svc.can_act(user, s["stage"])), None)
+        # can_act_step, not can_act: an escalated rung is signed by the superior.
+        actionable = next((s for s in cur if svc.can_act_step(user, s)), None)
     # Later approver waiting their turn (can't act until earlier rungs finish)?
     queued = False
     if pr["status"] == "pending" and not actionable:
         for s in bundle["steps"]:
             if s["status"] == "pending" and s["seq"] != pr["current_seq"] \
-               and svc.can_act(user, s["stage"]):
+               and svc.can_act_step(user, s):
                 queued = True
                 break
     has_sig = bool((user or {}).get("sig_png"))
@@ -397,6 +424,9 @@ def detail(pr_id):
                            rfq_locked=(pr["status"] in ("approved", "po_issued", "partially_received",
                                                         "received", "closed", "cancelled")),
                            spare_live=spare_live, source_link=source_link,
+                           # Escalation stamps are DB-stored role keys: their names
+                           # and the explanatory sentences are resolved server-side.
+                           L=svc.labels(_lang),
                            is_owner=(pr["requester"] == (user or {}).get("username")))
 
 
@@ -640,7 +670,7 @@ def submit(pr_id):
     if bundle["pr"]["requester"] != (_u() or {}).get("username") and not user_can("proc_admin"):
         abort(403)
     ok, msg = svc.submit_pr(pr_id, _u(), ip=_ip())
-    flash("Submitted for approval." if ok else f"Could not submit ({msg}).",
+    flash("Submitted for approval." if ok else _submit_error(msg),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
@@ -963,12 +993,17 @@ def create_vendor():
 def settings():
     depts = svc.list_departments()
     dept = request.args.get("department") or (depts[0] if depts else "")
+    lang = (_u() or {}).get("lang_pref") or "en"
     return render_template("approvals/settings.html", active="procurement",
                            departments=depts, department=dept,
                            matrix=svc.get_dept_matrix(dept), ladder=C.LADDER,
                            stage_labels=C.STAGE_LABELS, default_matrix=C.APPROVAL_MATRIX,
                            is_builtin=(dept in C.DEPARTMENTS),
-                           has_custom=(dept in svc.all_dept_matrices()))
+                           has_custom=(dept in svc.all_dept_matrices()),
+                           # Escalation chain: role names and the section's own
+                           # wording are resolved server-side (see svc.labels).
+                           L=svc.labels(lang), chain=svc.escalation_rows(lang),
+                           role_choices=svc.role_choices(lang))
 
 
 @bp.route("/settings", methods=["POST"])
@@ -996,6 +1031,36 @@ def save_settings():
     flash(f"Responsibility matrix saved for {dept}." if ok else f"Could not save ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("approvals.settings", department=dept))
+
+
+@bp.route("/settings/escalation", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def save_escalation():
+    """Save the escalation chain (who signs one level up when the requester is the
+    only eligible signer for a rung). POST-only, proc_admin, audited per row like
+    every other governance edit. A blank superior means 'nobody above'."""
+    f = request.form
+    dept = (f.get("department") or "").strip()
+    saved, errs = 0, []
+    for role_key in f.getlist("role_key"):
+        ok, msg = svc.set_escalation(role_key, f.get("sup_" + role_key),
+                                     user=_u(), ip=_ip())
+        if ok:
+            saved += 1
+        else:
+            errs.append(f"{role_key}: {_ESC_ERRORS.get(msg, msg)}")
+    if errs:
+        flash(" ".join(errs), "error")
+    else:
+        flash(f"Escalation chain saved ({saved} role(s)).", "success")
+    return redirect(url_for("approvals.settings", department=dept or None))
+
+
+_ESC_ERRORS = {
+    "self_superior": "a role cannot be its own superior.",
+    "unknown_role": "unknown role.",
+}
 
 
 @bp.route("/settings/delete", methods=["POST"])

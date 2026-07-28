@@ -240,6 +240,49 @@
   </div>
 </div>
 
+<!-- SoD escalation: the rule, plus the chain exactly as it is configured now -->
+<div class="panel mt-3">
+  <div class="panel-head"><h3>{{ v.L.ui.esc_title }}</h3>{{ src(v.escalation.custom) }}</div>
+  <div class="panel-pad">
+    <p class="mt-2" style="margin:0;line-height:1.7">{{ v.escalation.body }}</p>
+    {{ stamp(v.escalation.updated_by, v.escalation.updated_at) }}
+    <div class="mt-3" style="overflow-x:auto">
+      <table class="tbl">
+        <thead><tr>
+          <th>{{ v.L.ui.esc_role }}</th>
+          <th>{{ v.L.ui.esc_signs }}</th>
+          <th>{{ v.L.ui.esc_superior }}</th>
+        </tr></thead>
+        <tbody>
+        {% for r in v.escalation.chain %}
+          <tr>
+            <td><b>{{ r.label }}</b><div class="muted" style="font-size:11px">{{ r.role_key }}</div></td>
+            <td>{% for s in r.signs %}<span class="tag">{{ s }}</span> {% endfor %}</td>
+            <td>{% if r.superior %}{{ r.superior_label }}{% else %}<span class="muted">{{ v.L.ui.esc_none }}</span>{% endif %}
+              {{ src(not r.is_default) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="muted mt-2" style="font-size:12px">{{ v.L.ui.esc_sub }}</div>
+    {% if can_edit %}
+    <details class="mt-2"><summary class="muted" style="cursor:pointer;font-size:12px" data-i18n="pwf.edit">Edit</summary>
+      <form method="post" action="{{ url_for('approvals.workflow_doc') }}" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="department" value="{{ v.department }}">
+        <input type="hidden" name="section" value="sod_escalation">
+        {{ prose('body', v.escalation.edit, 7) }}
+        <div class="flex gap">
+          <button class="btn btn-primary btn-sm" type="submit" data-i18n="pwf.save">Save</button>
+          <button class="btn btn-ghost btn-sm" type="submit" name="reset" value="1" data-i18n="pwf.reset">Reset to default</button>
+        </div>
+      </form>
+    </details>
+    {% endif %}
+  </div>
+</div>
+
 <!-- Configurable rules -->
 <div class="panel mt-3">
   <div class="panel-head"><h3 data-i18n="pwf.settings">Configurable rules</h3></div>

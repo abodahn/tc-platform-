@@ -70,6 +70,11 @@
             {% else %}{{ s.seq }}{% endif %}
           </div>
           <span class="slabel">{{ stage_label(s.stage) }}</span>
+          {#- an escalated rung: the requester is its only normal signer, so the
+              superior signs. esc_role '' = the climb found nobody at all. -#}
+          {% if s.esc_from %}
+          <span class="tag" title="{{ s.esc_why }}">{{ L.ui.esc_tag if s.esc_role else L.ui.esc_stuck }}</span>
+          {% endif %}
           <span class="sname">{{ s.approver_name or ('…' if s.status=='pending' else '—') }}</span>
           {% if s.age_hours is defined %}
           <span class="sname" style="font-weight:700;color:{{ 'var(--crit)' if s.overdue else ('var(--warn)' if s.due_soon else 'var(--muted)') }}">
@@ -78,6 +83,17 @@
         </div>
       {% endfor %}
     </div>
+    {#- Why a rung moved: visible on the request itself, not only in the audit log. -#}
+    {% if steps|selectattr('esc_from')|list %}
+    <div class="muted mt-3" style="font-size:12.5px;line-height:1.6">
+      {{ L.ui.esc_note }}
+      <ul style="margin:6px 0 0 18px">
+        {% for s in steps if s.esc_from %}
+        <li>{{ stage_label(s.stage) }} — {{ s.esc_why }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
   </div>
 </div>
 
@@ -595,6 +611,7 @@
               {% else %}<span class="waiting">{{ s.approver_name or '—' }}</span>{% endif %}
             </div>
             <div class="smeta">{{ s.approver_name or '' }}{% if s.acted_at %} · {{ s.acted_at[:16] }}{% endif %}</div>
+            {% if s.esc_from %}<div class="smeta" style="color:var(--warn)">{{ s.esc_why }}</div>{% endif %}
           </div>
           {% endfor %}
         </div>

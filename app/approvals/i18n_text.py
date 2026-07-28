@@ -196,6 +196,25 @@ DOC_AR = {
         "يحمل صلاحية مسؤول المشتريات كلتا القاعدتين حتى يستطيع فريق صغير أن يسير "
         "بالطلب في السلسلة كاملة؛ أوقِف الخيار للوضع الصارم، حيث يلتزم المسؤولون "
         "بالقواعد تمامًا كأي شخص آخر."),
+    "sod_escalation": (
+        "لا يوافق أحد أبدًا على طلبه هو — لكن إذا كان مُقدّم الطلب هو الشخص الوحيد "
+        "الذي يجوز له التوقيع على إحدى مراحل السلسلة، فستنتظر تلك المرحلة توقيعًا لا "
+        "يمكن أن يأتي قانونيًا أبدًا. لذلك يصعّد النظام تلك المرحلة درجة واحدة أعلى "
+        "في الهيكل التنظيمي: يوقّعها الرئيس المباشر للدور المُعطَّل بدلًا منه. ولا "
+        "يحدث ذلك إلا عندما لا يوجد فعلًا أي شخص آخر — فإن وُجد زميل ثانٍ يحمل نفس "
+        "الدور فهو الذي يوقّع، ولا يتغيّر أي شيء في الطلب. والصعود لا ينتهي أبدًا عند "
+        "مُقدّم الطلب: إذا كان الرئيس المباشر هو نفسه مُقدّم الطلب يواصل النظام "
+        "الصعود لأعلى، وإذا ضبط المسؤول السلسلة في حلقة مغلقة يكتشف النظام ذلك "
+        "ويعتبرها «لا يوجد أحد أعلى». وكل مرحلة تم تصعيدها تُوسَم على الطلب، وتظهر في "
+        "سجل الموافقات، وتُطبَع على مستندي طلب الشراء وأمر الشراء، حتى يرى المراجع "
+        "الاستثناء دون فتح النظام. وإذا انتهى الصعود دون العثور على أحد — كأن يرفع "
+        "الرئيس التنفيذي (CEO) طلبًا يحتاج توقيع الرئيس التنفيذي — يُرفَض الطلب عند "
+        "الإرسال بسبب واضح، ويُبلَّغ مسؤولو المشتريات ليُدبَّر تفويض أو تدخّل من "
+        "مسؤول، بدلًا من أن يبقى الطلب معلّقًا في الصفّ بلا نهاية. ولا يمسّ ذلك "
+        "المراحل الموجودة ولا ترتيبها ولا الحدود المالية ولا أي بوابة: التصعيد يغيّر "
+        "«مَن يوقّع» المرحلة فقط. والسلسلة نفسها قابلة للتعديل لكل دور من إعدادات "
+        "المشتريات؛ والدور الذي لم يُحدَّد له رئيس مباشر يعني أنه لا يوجد أحد أعلى "
+        "منه."),
     "budget_gate": (
         "يُمنع إصدار أمر الشراء إذا كان للقسم سطر موازنة محدّد للسنة الحالية وكان "
         "إنفاقه الملتزم به قد تجاوزها بالفعل. ويُحسب الإنفاق الملتزم به من "
@@ -267,6 +286,27 @@ DOC_TR = {
         "kuralı atlar; böylece küçük bir ekip bir talebi zincirin tamamında "
         "yürütebilir. Katı mod için bunu kapatın; o zaman yöneticiler de tam "
         "olarak herkes gibi bu kurallara bağlıdır."),
+    "sod_escalation": (
+        "Hiç kimse kendi talebini onaylamaz — ancak bir basamağı imzalayabilecek TEK "
+        "kişi talep sahibinin kendisiyse, o basamak hukuken hiçbir zaman gelemeyecek "
+        "bir imzayı bekler. Bu durumda motor o basamağı organizasyon şemasında BİR "
+        "SEVİYE YUKARI yükseltir: engellenen rolün üst yöneticisi basamağı onun "
+        "yerine imzalar. Bu yalnızca gerçekten başka hiç kimse yokken devreye girer — "
+        "rolü taşıyan ikinci bir kişi varsa o meslektaş imzalar ve talepte hiçbir şey "
+        "değişmez. Tırmanma asla talep sahibinde durmaz: üst yönetici de talebi açan "
+        "kişiyse yukarı çıkmaya devam eder; bir yöneticinin döngü hâline getirdiği "
+        "zincir tespit edilip «üstte kimse yok» olarak değerlendirilir. Yükseltilen "
+        "bir basamak talebin üzerine damgalanır, onay izinde gösterilir ve satın alma "
+        "talebi ile satın alma emri belgelerine yazdırılır; böylece denetçi sapmayı "
+        "uygulamayı açmadan görür. Tırmanma tükendiğinde — CEO imzası gerektiren bir "
+        "talebi CEO'nun kendisinin açması gibi — talep gönderim anında açık bir "
+        "gerekçeyle REDDEDİLİR ve Satın Alma yöneticileri bilgilendirilir; böylece "
+        "talep kuyrukta sessizce beklemek yerine bir vekâlet ya da yönetici "
+        "müdahalesi ayarlanabilir. Hangi aşamaların var olduğu, sıraları, tutar "
+        "eşikleri ve bütün kapılar bundan etkilenmez: yükseltme yalnızca bir basamağı "
+        "KİMİN imzalayacağını değiştirir. Zincirin kendisi Satın Alma ayarlarında rol "
+        "bazında düzenlenebilir; üst yöneticisi tanımlanmamış bir rol, üstünde kimse "
+        "olmadığı anlamına gelir."),
     "budget_gate": (
         "Departmanın cari yıl için tanımlı bir bütçe satırı varsa VE taahhüt "
         "edilen harcaması bunu zaten aşmışsa, Satın alma emrinin açılması "
@@ -488,6 +528,30 @@ UI = {
                      "language's readers see the English text instead — it stays "
                      "empty. Reset puts all three back to the built-in wording.",
         "no_approve_opt": "No approve permission",
+        # --- SoD escalation (chain editor + the stamp on a request) ---
+        "esc_title": "Escalation chain — one level up",
+        "esc_sub": "Used only when the requester is the only person who could sign a "
+                   "rung. The superior signs instead; the deviation is recorded on the "
+                   "request. A role with no superior means nobody above it.",
+        "esc_role": "Role",
+        "esc_superior": "Escalates to",
+        "esc_none": "— nobody above —",
+        "esc_signs": "Signs",
+        "esc_save": "Save chain",
+        "esc_self_err": "A role cannot be its own superior.",
+        "esc_tag": "Escalated",
+        "esc_from_to": "Escalated from %(from)s to %(to)s — the originator holds the "
+                       "normal signing role.",
+        "esc_stuck": "No superior available — this rung needs a delegation or a "
+                     "Procurement admin.",
+        "esc_note": "One or more rungs of this request were escalated one level up the "
+                    "org chart because the requester is the only person who normally "
+                    "signs them. Nobody approves their own request.",
+        "esc_blocked_flash": "This request cannot be submitted: you are the only person "
+                             "who could sign one of its approval stages, and nobody above "
+                             "that role is free to sign it instead. Procurement admins "
+                             "have been notified — a delegation, a second holder of the "
+                             "role, or an admin override is needed.",
     },
     "ar": {
         "text_en": "النص (بالإنجليزية)", "text_ar": "النص (بالعربية)",
@@ -496,6 +560,30 @@ UI = {
                      "الإنجليزي بدلًا منه، ويبقى الحقل فارغًا. و«إعادة التعيين» تُرجع "
                      "اللغات الثلاث إلى الصياغة المدمجة.",
         "no_approve_opt": "لا يحمل صلاحية الموافقة",
+        "esc_title": "سلسلة التصعيد — درجة واحدة أعلى",
+        "esc_sub": "تُستخدم فقط عندما يكون مُقدّم الطلب هو الشخص الوحيد الذي يمكنه "
+                   "التوقيع على إحدى المراحل. فيوقّع الرئيس المباشر بدلًا منه، ويُسجَّل "
+                   "هذا الاستثناء على الطلب. والدور الذي لا رئيس مباشر له يعني أنه لا "
+                   "يوجد أحد أعلى منه.",
+        "esc_role": "الدور",
+        "esc_superior": "يُصعَّد إلى",
+        "esc_none": "— لا يوجد أحد أعلى —",
+        "esc_signs": "يوقّع",
+        "esc_save": "حفظ سلسلة التصعيد",
+        "esc_self_err": "لا يمكن أن يكون الدور رئيسًا مباشرًا لنفسه.",
+        "esc_tag": "تم التصعيد",
+        "esc_from_to": "تم التصعيد من %(from)s إلى %(to)s — لأن مُقدّم الطلب هو صاحب "
+                       "الدور الموقّع المعتاد.",
+        "esc_stuck": "لا يوجد رئيس مباشر متاح — هذه المرحلة تحتاج تفويضًا أو تدخّل "
+                     "مسؤول المشتريات.",
+        "esc_note": "تم تصعيد مرحلة أو أكثر من مراحل هذا الطلب درجة واحدة أعلى في "
+                    "الهيكل التنظيمي، لأن مُقدّم الطلب هو الشخص الوحيد الذي يوقّعها "
+                    "عادةً. ولا يوافق أحد على طلبه هو.",
+        "esc_blocked_flash": "لا يمكن إرسال هذا الطلب: أنت الشخص الوحيد الذي يمكنه "
+                             "التوقيع على إحدى مراحل الموافقة، ولا يوجد أحد أعلى من ذلك "
+                             "الدور متفرّغ للتوقيع بدلًا منك. وقد أُبلِغ مسؤولو المشتريات "
+                             "— المطلوب تفويض أو إضافة شخص ثانٍ لهذا الدور أو تدخّل من "
+                             "مسؤول.",
     },
     "tr": {
         "text_en": "Metin (İngilizce)", "text_ar": "Metin (Arapça)",
@@ -504,5 +592,30 @@ UI = {
                      "dilin okuyucuları İngilizce metni görür ve kutu boş kalır. "
                      "Sıfırla, üç dilin hepsini yerleşik metne döndürür.",
         "no_approve_opt": "Onay yetkisi yok",
+        "esc_title": "Yükseltme zinciri — bir seviye yukarı",
+        "esc_sub": "Yalnızca bir basamağı imzalayabilecek tek kişi talep sahibi "
+                   "olduğunda kullanılır. Onun yerine üst yönetici imzalar ve bu sapma "
+                   "talebe kaydedilir. Üst yöneticisi olmayan bir rol, üstünde kimse "
+                   "olmadığı anlamına gelir.",
+        "esc_role": "Rol",
+        "esc_superior": "Şuraya yükseltilir",
+        "esc_none": "— üstte kimse yok —",
+        "esc_signs": "İmzaladığı aşamalar",
+        "esc_save": "Zinciri kaydet",
+        "esc_self_err": "Bir rol kendisinin üst yöneticisi olamaz.",
+        "esc_tag": "Yükseltildi",
+        "esc_from_to": "%(from)s aşamasından %(to)s aşamasına yükseltildi — normal imza "
+                       "rolü talep sahibinin kendisinde.",
+        "esc_stuck": "Uygun bir üst yönetici yok — bu basamak bir vekâlet ya da Satın "
+                     "Alma yöneticisi müdahalesi gerektiriyor.",
+        "esc_note": "Bu talebin bir veya daha fazla basamağı, normalde onları imzalayan "
+                    "tek kişi talep sahibinin kendisi olduğu için organizasyon "
+                    "şemasında bir seviye yukarı yükseltildi. Hiç kimse kendi talebini "
+                    "onaylamaz.",
+        "esc_blocked_flash": "Bu talep gönderilemez: onay aşamalarından birini "
+                             "imzalayabilecek tek kişi sizsiniz ve o rolün üstünde onun "
+                             "yerine imzalayabilecek uygun kimse yok. Satın Alma "
+                             "yöneticileri bilgilendirildi — bir vekâlet, rolü taşıyan "
+                             "ikinci bir kişi ya da yönetici müdahalesi gerekiyor.",
     },
 }

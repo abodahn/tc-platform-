@@ -196,12 +196,13 @@ def stage_role(stage):
     return stage_roles_map().get(stage, set())
 
 
-def eligible_approvers(conn, stage):
-    """Usernames allowed to act on a stage: everyone holding a qualifying role,
-    plus anyone with an active delegation from such a person."""
-    roles = stage_roles_map(conn).get(stage, set())
+def role_holders(conn, roles):
+    """Usernames who may sign on behalf of any of `roles`: everyone actively
+    holding one, plus anyone with an active delegation from such a person.
+    Two queries regardless of how many roles are passed."""
+    roles = {r for r in (roles or ()) if r}
     if not roles:
-        return []
+        return set()
     ph = ",".join(["?"] * len(roles))
     out = {r["username"] for r in conn.execute(
         f"SELECT username FROM users WHERE is_active=1 AND role IN ({ph})",
@@ -212,7 +213,30 @@ def eligible_approvers(conn, stage):
            f"AND (d.from_date IS NULL OR d.from_date<=?) AND (d.to_date IS NULL OR d.to_date>=?)")
     for r in conn.execute(sql, tuple(roles) + (today, today)).fetchall():
         out.add(r["u"])
-    return list(out)
+    return out
+
+
+def eligible_approvers(conn, stage, roles=None):
+    """Usernames allowed to act on a stage: everyone holding a qualifying role,
+    plus anyone with an active delegation from such a person.
+
+    `roles` overrides the stage's configured roles — pass a step's escalated role
+    set so a notification reaches whoever actually has to sign that rung."""
+    return list(role_holders(conn, roles if roles is not None
+                             else stage_roles_map(conn).get(stage, set())))
+
+
+def _proc_admins(conn):
+    """Usernames who can act on any stage / fix a stuck ladder: super_admin plus
+    every role holding the proc_admin permission."""
+    roles = [k for k in effective_roles()
+             if k == "super_admin" or has_permission(k, "proc_admin")]
+    if not roles:
+        return []
+    ph = ",".join(["?"] * len(roles))
+    return [r["username"] for r in conn.execute(
+        f"SELECT username FROM users WHERE is_active=1 AND role IN ({ph})",
+        tuple(roles)).fetchall()]
 
 
 def _pr_link(pr_id):
@@ -263,6 +287,158 @@ def can_act(user, stage, _deleg=None, _roles=None):
     if _deleg is None:
         _deleg = active_delegator_roles(user.get("username"))
     return bool(allowed & _deleg)
+
+
+# --------------------------------------------------------------------------
+# Segregation-of-duties escalation: WHO signs a rung whose only eligible
+# signer is the originator. Nothing here changes WHICH rungs exist, their
+# order, the amount thresholds or any gate.
+# --------------------------------------------------------------------------
+def escalation_map(conn=None):
+    """{role_key: superior_role} as CONFIGURED. proc_escalations is authoritative:
+    a role with no row (or a blank superior) has nobody above it. Only a database
+    that predates the table falls back to constants.DEFAULT_ESCALATION, so an
+    owner who deliberately blanked a superior is never second-guessed."""
+    own = conn is None
+    if own:
+        conn = get_db()
+    try:
+        rows = conn.execute("SELECT role_key, superior_role FROM proc_escalations").fetchall()
+    except Exception:
+        # MANDATORY rollback: PostgreSQL aborts the whole transaction on a failed
+        # statement, and this runs on submit_pr's shared connection — without it a
+        # pre-migration database would fail every later write of the submit too.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return dict(C.DEFAULT_ESCALATION)     # pre-migration database
+    finally:
+        if own:
+            conn.close()
+    return {r["role_key"]: (r["superior_role"] or "").strip() for r in rows}
+
+
+def _sole_signers(holders, requester, skip=None):
+    """Usernames who are the ONLY person able to sign some OTHER rung of the same
+    ladder (`holders` = {stage: eligible usernames}).
+
+    An escalation must not land on one of them: they would sign the escalated
+    rung and the dual-role rule would then refuse them their own, which just
+    moves the same deadlock one rung down instead of clearing it."""
+    out = set()
+    for stage, people in (holders or {}).items():
+        if stage == skip:
+            continue
+        free = set(people) - {requester}
+        if len(free) == 1:
+            out |= free
+    return out
+
+
+def can_sign_role(role_key):
+    """Can a holder of this role sign an approval rung AT ALL? An escalation that
+    lands on a role without proc_approve produces a rung whose "new signer" is
+    refused ("forbidden") by can_act — a silent permanent deadlock, exactly what
+    this feature exists to prevent — so such a role is never a candidate. Mirrors
+    can_act's own predicate."""
+    return (role_key == "super_admin" or has_permission(role_key, "proc_admin")
+            or has_permission(role_key, "proc_approve"))
+
+
+def resolve_escalation(conn, stage, requester, _roles=None, _chain=None,
+                       _holders=None, _busy=()):
+    """Decide who signs `stage` on a request raised by `requester`.
+
+    Returns (roles, reason):
+      (None, "")             nothing changes — either somebody OTHER than the
+                             requester can already sign this stage, or nobody at
+                             all is eligible for it (an unstaffed stage: exactly
+                             today's behaviour, an admin signs or it waits);
+      ({roles}, "escalated") nobody who normally signs the stage may sign it on
+                             THIS request (they are the requester, or `_busy` — they
+                             already signed another rung and the dual-role rule
+                             refuses them), so the rung climbs one or more levels up;
+      (set(), "no_superior") same, and the climb ran out — nobody can sign this rung.
+
+    The climb never resolves to the requester at any depth, and a cycle an admin
+    configured (A -> B -> A) is broken by the visited set and the depth bound.
+
+    `_holders` ({stage: eligible usernames} for the whole ladder) and `_busy`
+    (people who already signed a rung of this request) keep the climb off anyone
+    the DUAL-ROLE rule would then refuse — a candidate is only accepted if it has
+    an eligible person who is neither the requester nor spoken for elsewhere on
+    the same ladder. Without that, warehouse_manager -> factory_manager hands the
+    warehouse rung to the sole factory manager, who is then refused his own rung
+    ("dual_role") and the request is stuck exactly as before.
+    """
+    roles = set((_roles if _roles is not None else stage_roles_map(conn)).get(stage) or ())
+    if not roles:
+        return None, ""
+    people = (_holders or {}).get(stage)
+    if people is None:
+        people = role_holders(conn, roles)
+    if not people:
+        return None, ""                       # nobody eligible at all: unchanged
+    if people - {requester} - set(_busy):
+        return None, ""                       # a colleague can sign: unchanged
+    # Nobody who normally signs this rung is allowed to: they are the originator,
+    # or they already signed another rung of THIS request and the dual-role rule
+    # will refuse them. `_busy` is empty on a fresh submit, so that path behaves
+    # exactly as before; it is only non-empty for a value rung appended after
+    # pricing, which is where the collision an earlier escalation created shows up.
+    busy = set(_busy) | _sole_signers(_holders, requester, skip=stage)
+    chain = escalation_map(conn) if _chain is None else _chain
+    seen, level = set(roles), set(roles)
+    for _ in range(C.ESCALATION_MAX_DEPTH):
+        nxt = {chain.get(r) or "" for r in level} - {""} - seen
+        if not nxt:
+            break
+        found = {r for r in nxt if can_sign_role(r)
+                 and role_holders(conn, {r}) - {requester} - busy}
+        if found:
+            return found, "escalated"
+        seen |= nxt
+        level = nxt
+    return set(), "no_superior"
+
+
+def _csv_set(value):
+    return {x.strip() for x in str(value or "").split(",") if x.strip()}
+
+
+def step_roles(step, _roles=None):
+    """Effective signing roles for ONE ladder step: the escalated superior role(s)
+    when the rung was escalated, else the stage's configured roles. A step whose
+    esc_role is the empty string (the climb found nobody) keeps the stage's own
+    roles, so an admin can still sign it."""
+    esc = _csv_set(_pr_field(step, "esc_role"))
+    if esc:
+        return esc
+    stage = _pr_field(step, "stage")
+    return set((_roles if _roles is not None else stage_roles_map()).get(stage) or ())
+
+
+def can_act_step(user, step, _deleg=None, _roles=None):
+    """can_act for a CONCRETE ladder step — identical to can_act except that an
+    escalated rung is signed by the superior role instead of the stage's own."""
+    stage = _pr_field(step, "stage")
+    esc = _csv_set(_pr_field(step, "esc_role"))
+    if not esc:
+        return can_act(user, stage, _deleg=_deleg, _roles=_roles)
+    roles = dict(_roles if _roles is not None else stage_roles_map())
+    roles[stage] = esc
+    return can_act(user, stage, _deleg=_deleg, _roles=roles)
+
+
+def _esc_columns(conn, stage, requester, _roles, _chain, _holders=None, _busy=()):
+    """(esc_role, esc_from, reason) to store on a new pr_steps row for `stage`."""
+    found, why = resolve_escalation(conn, stage, requester, _roles=_roles, _chain=_chain,
+                                    _holders=_holders, _busy=_busy)
+    if not why:
+        return None, None, ""
+    origin = ",".join(sorted((_roles or {}).get(stage) or ()))
+    return ",".join(sorted(found)), origin, why
 
 
 def _user_sig(username):
@@ -400,8 +576,8 @@ def my_queue(user):
     out = []
     for pr in prs:
         cur = [s for s in by_pr.get(pr["id"], []) if s["seq"] == pr["current_seq"]]
-        mine = next((s for s in cur if can_act(user, s["stage"], _deleg=deleg,
-                                               _roles=roles_map)), None)
+        mine = next((s for s in cur if can_act_step(user, s, _deleg=deleg,
+                                                    _roles=roles_map)), None)
         if mine:
             pr = dict(pr)
             pr["_stage"] = mine["stage"]
@@ -727,20 +903,82 @@ def submit_pr(pr_id, user, ip=None):
             return False, "not_found"
         if pr["status"] not in ("draft", "rejected"):
             return False, "not_submittable"
-        # clear any prior steps (resubmit after rejection)
-        conn.execute("DELETE FROM pr_steps WHERE pr_id=?", (pr_id,))
         # Department-aware ladder: use the department's responsibility matrix if
         # it has one, else the global default. Each rung = parallel stages.
         # Thresholds are EGP-based, so a foreign-currency PR routes on its
         # EGP-equivalent total (total * fx_rate), never the raw foreign figure.
         rungs = rungs_from_stages(dept_ladder(conn, pr["department"], egp_total(pr)))
+        # SoD escalation, resolved BEFORE anything is written: a rung whose only
+        # eligible signer is the requester climbs one level up the org chart. A
+        # rung with nobody above it can never be signed, so the request is refused
+        # here rather than parked in a queue forever.
+        _roles = stage_roles_map(conn)
+        _chain = escalation_map(conn)
+        flat_stages = [s for rung in rungs for s in rung]
+        # Who may sign each rung of THIS ladder, resolved once (2 queries a stage):
+        # the climb reads it so an escalation never lands on the only person able
+        # to sign another rung — signing two rungs is refused by the dual-role
+        # rule, so that would just move the deadlock one rung down.
+        _holders = {s: role_holders(conn, _roles.get(s) or ()) for s in flat_stages}
+        esc, blocked = {}, []
+        for stage in flat_stages:
+            e_role, e_from, why = _esc_columns(conn, stage, pr["requester"], _roles,
+                                               _chain, _holders=_holders)
+            if why == "escalated":
+                esc[stage] = (e_role, e_from)
+            elif why == "no_superior":
+                blocked.append(stage)
+        if blocked:
+            # A rung the climb cannot resolve is PARKED, not a reason to refuse the
+            # whole submit. Refusing looked tidy but was far worse in practice: on a
+            # one-holder-per-role chart — and with no active cfo/ceo user, which is
+            # the live roster — it stopped senior staff raising ANY request at all.
+            # That trades one stuck rung for a person who cannot work, which is not
+            # a trade worth making.
+            #
+            # Parking keeps every guarantee that matters: the rung is written with
+            # esc_role='' so step_roles() falls back to the stage's own roles, which
+            # means the REQUESTER is still refused by the self-approval check and only
+            # an admin (or a delegate, once one exists) can clear it. Nothing is
+            # silently stuck either — every proc_admin gets a CRITICAL alert naming
+            # the rung and the three ways to unblock it. This is exactly what
+            # _reconcile_value_ladder already does for a value rung that joins after
+            # pricing, so submit and reconcile now behave the same way.
+            labels = ", ".join(stage_label(s) for s in blocked)
+            for s in blocked:
+                esc.setdefault(s, ("", ""))
+            audit(conn, pr_id, user.get("username") if user else "system",
+                  "escalation_parked",
+                  f"Submitted with {labels} parked: the requester is the only eligible "
+                  f"signer for it, and no superior above that role has anyone free to "
+                  f"sign it (either nobody is configured above it, or every superior is "
+                  f"the requester or the only possible signer of another rung of this "
+                  f"same request). An admin or a delegate must clear that rung.", ip)
+            notify_users(conn, _proc_admins(conn), "critical",
+                         "Approval rung needs a signer",
+                         f"{pr['pr_no']} is circulating, but {labels} has no one who may "
+                         f"sign it: {pr['requester']} raised the request and is the only "
+                         f"eligible signer. Delegate the authority, add a second role "
+                         f"holder, or sign as admin.",
+                         link=_pr_link(pr_id))
+        # clear any prior steps (resubmit after rejection)
+        conn.execute("DELETE FROM pr_steps WHERE pr_id=?", (pr_id,))
         now = _now()
         for i, rung in enumerate(rungs, start=1):
             for stage in rung:
+                e_role, e_from = esc.get(stage, (None, None))
                 conn.execute(
-                    """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, activated_at, created_at)
-                       VALUES (?,?,?,?,?,?,?)""",
-                    (pr_id, i, stage, "pending", stage_label(stage), now if i == 1 else None, now))
+                    """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role,
+                       activated_at, created_at, esc_role, esc_from)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (pr_id, i, stage, "pending", stage_label(stage),
+                     now if i == 1 else None, now, e_role, e_from))
+                if e_role:
+                    audit(conn, pr_id, user.get("username") if user else "system",
+                          "escalated_stage",
+                          f"{stage_label(stage)}: signing escalated from "
+                          f"{e_from or '—'} to {e_role} — the requester holds the "
+                          f"normal signing role.", ip)
         conn.execute(
             "UPDATE pr_requests SET status='pending', current_seq=1, submitted_at=?, "
             "rejection_reason=NULL WHERE id=?", (now, pr_id))
@@ -749,10 +987,14 @@ def submit_pr(pr_id, user, ip=None):
         audit(conn, pr_id, uname, "submitted",
               f"Routed through {len(flat)} approvals: "
               f"{' -> '.join(' + '.join(stage_label(s) for s in rung) for rung in rungs)}", ip)
-        # Notify every approver on the first rung that a request needs signing.
+        # Notify every approver on the first rung that a request needs signing —
+        # the ESCALATED role when that rung was re-pointed, so the notification
+        # reaches whoever actually has to sign it.
         targets = set()
         for stage in rungs[0]:
-            targets |= set(eligible_approvers(conn, stage))
+            e_role = (esc.get(stage) or (None, None))[0]
+            targets |= set(eligible_approvers(conn, stage,
+                                              roles=_csv_set(e_role) or None))
         first_label = " + ".join(stage_label(s) for s in rungs[0])
         notify_users(conn, list(targets), "warning", "New request to sign",
                      f"{pr['pr_no']} ({pr['title'] or ''}) needs your {first_label} approval.",
@@ -773,7 +1015,7 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     qualify. Never touches steps that are approved, rejected, or currently active,
     so an in-flight approval is never disturbed."""
     row = conn.execute(
-        "SELECT current_seq, currency, fx_rate FROM pr_requests WHERE id=?",
+        "SELECT current_seq, currency, fx_rate, requester, pr_no FROM pr_requests WHERE id=?",
         (pr_id,)).fetchone()
     cur_seq = (row["current_seq"] or 0) if row else 0
     # Thresholds are EGP-based: convert `total` (PR currency) to its EGP
@@ -787,8 +1029,8 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     # Reuse the tested department-aware ladder, keep only the value stages.
     target = [s for s in dept_ladder(conn, department, total_egp) if s in VALUE_STAGES]
     existing = conn.execute(
-        "SELECT id, seq, stage, status FROM pr_steps WHERE pr_id=? ORDER BY seq",
-        (pr_id,)).fetchall()
+        "SELECT id, seq, stage, status, esc_role, approver_user FROM pr_steps "
+        "WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()
     have = {r["stage"] for r in existing}
     max_seq = max([r["seq"] for r in existing] or [0])
     now = _now()
@@ -798,13 +1040,55 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
            and r["status"] == "pending" and r["seq"] > cur_seq:
             conn.execute("DELETE FROM pr_steps WHERE id=?", (r["id"],))
     # 2) append any newly-required value rungs (in ladder order) after the last seq
+    #    — with the same SoD escalation the submit-time ladder gets, because a
+    #    value rung that only the requester could sign would deadlock identically.
+    #    A rung the climb cannot resolve is still appended (removing it would drop
+    #    a required financial approval) but stamped esc_role='' and reported to the
+    #    Procurement admins, who can delegate or sign it.
     nxt = max_seq
+    requester = row["requester"] if row else None
+    _roles = stage_roles_map(conn)
+    _chain = escalation_map(conn)
+    # Same dual-role guard the submit-time climb uses, over the ladder as it will
+    # stand: the rungs that survive above plus the ones being appended. `_busy`
+    # adds whoever ALREADY signed a rung of this request — the dual-role rule can
+    # never let them sign another one, so escalating onto them would deadlock.
+    _live = [r["stage"] for r in existing
+             if not (r["stage"] in VALUE_STAGES and r["stage"] not in target
+                     and r["status"] == "pending" and r["seq"] > cur_seq)]
+    _esc = {r["stage"]: r["esc_role"] for r in existing}
+    _holders = {s: role_holders(conn, _csv_set(_esc.get(s)) or _roles.get(s) or ())
+                for s in dict.fromkeys(_live + list(target))}
+    _busy = {r["approver_user"] for r in existing
+             if r["status"] in ("approved", "rejected") and r["approver_user"]}
     for s in target:
         if s not in have:
             nxt += 1
+            e_role, e_from, why = _esc_columns(conn, s, requester, _roles, _chain,
+                                               _holders=_holders, _busy=_busy)
             conn.execute(
-                "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at) "
-                "VALUES (?,?,?,?,?,?)", (pr_id, nxt, s, "pending", stage_label(s), now))
+                "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, "
+                "created_at, esc_role, esc_from) VALUES (?,?,?,?,?,?,?,?)",
+                (pr_id, nxt, s, "pending", stage_label(s), now,
+                 "" if why == "no_superior" else e_role, e_from))
+            if why == "escalated":
+                audit(conn, pr_id, "system", "escalated_stage",
+                      f"{stage_label(s)}: signing escalated from {e_from or '—'} to "
+                      f"{e_role} — nobody who normally signs it may on this request "
+                      f"(the originator, or they already signed another rung).")
+            elif why == "no_superior":
+                audit(conn, pr_id, "system", "escalation_blocked",
+                      f"{stage_label(s)} joined the ladder after pricing, but nobody who "
+                      f"normally signs it may on this request (the originator, or they "
+                      f"already signed another rung) and no superior above that role has "
+                      f"anyone free to sign it — a delegation or an admin is needed.")
+                notify_users(conn, _proc_admins(conn), "critical",
+                             "Approval stage cannot be signed",
+                             f"{(row['pr_no'] if row else pr_id)}: {stage_label(s)} was "
+                             f"added by pricing, but nobody who normally signs it may on "
+                             f"this request ({requester} raised it, or the signer already "
+                             f"signed another rung) and no superior above that role has "
+                             f"anyone free to sign it.", link=_pr_link(pr_id))
 
 
 def price_pr(pr_id, prices, meta, user, ip=None):
@@ -963,7 +1247,9 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         if not cur_steps:
             return False, "no_active_step"
         _roles = stage_roles_map(conn)     # reuse this transaction's connection
-        step = next((s for s in cur_steps if can_act(user, s["stage"], _roles=_roles)), None)
+        # can_act_step, not can_act: a rung the ladder escalated (because the
+        # requester is its only normal signer) is signed by the superior role.
+        step = next((s for s in cur_steps if can_act_step(user, s, _roles=_roles)), None)
         if not step:
             return False, "forbidden"
 
@@ -1058,11 +1344,13 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (nxt_seq, pr_id))
             conn.execute("UPDATE pr_steps SET activated_at=? WHERE pr_id=? AND seq=?",
                          (now, pr_id, nxt_seq))
-            nxt_stages = [r["stage"] for r in conn.execute(
-                "SELECT stage FROM pr_steps WHERE pr_id=? AND seq=?", (pr_id, nxt_seq)).fetchall()]
+            nxt_rows = conn.execute(
+                "SELECT * FROM pr_steps WHERE pr_id=? AND seq=?", (pr_id, nxt_seq)).fetchall()
+            nxt_stages = [r["stage"] for r in nxt_rows]
             targets = set()
-            for s in nxt_stages:
-                targets |= set(eligible_approvers(conn, s))
+            for r in nxt_rows:
+                targets |= set(eligible_approvers(
+                    conn, r["stage"], roles=_csv_set(_pr_field(r, "esc_role")) or None))
             notify_users(conn, list(targets), "warning", "New request to sign",
                          f"{pr['pr_no']} needs your "
                          f"{' + '.join(stage_label(s) for s in nxt_stages)} approval.",
@@ -1992,7 +2280,9 @@ def run_escalations():
                              (_now(), step["id"]))
                 audit(conn, pr["id"], "system", "escalated",
                       f"{stage_label(step['stage'])} overdue ({round(hrs)}h)")
-                targets = eligible_approvers(conn, step["stage"]) or [pr["requester"]]
+                targets = eligible_approvers(
+                    conn, step["stage"],
+                    roles=_csv_set(_pr_field(step, "esc_role")) or None) or [pr["requester"]]
                 notify_users(conn, targets, "warning", "Approval overdue",
                              f"{pr['pr_no']} has waited {round(hrs)}h at {stage_label(step['stage'])}.",
                              link=_pr_link(pr["id"]))
@@ -2006,7 +2296,9 @@ def run_escalations():
                 admins = [r["username"] for r in conn.execute(
                     "SELECT username FROM users WHERE is_active=1 AND role='super_admin'"
                 ).fetchall()]
-                targets = set(eligible_approvers(conn, step["stage"])) | set(admins)
+                targets = set(eligible_approvers(
+                    conn, step["stage"],
+                    roles=_csv_set(_pr_field(step, "esc_role")) or None)) | set(admins)
                 bell(conn, "critical", "Approval overdue (level 2)",
                      f"{pr['pr_no']} stuck {round(hrs)}h at {stage_label(step['stage'])} — "
                      f"more than twice the stage SLA.", link=_pr_link(pr["id"]))
@@ -2288,6 +2580,91 @@ def reset_setting(key, user=None, ip=None):
         conn.close()
 
 
+def escalation_rows(lang="en"):
+    """The escalation chain as the settings editor renders it: one row per role
+    that signs somewhere in the ladder (plus any role already configured), with
+    its superior resolved and labelled for `lang`."""
+    conn = get_db()
+    try:
+        chain = escalation_map(conn)
+        roles_map = stage_roles_map(conn)
+    finally:
+        conn.close()
+    L = _labels(lang if lang in _LANGS else "en")
+    keys = set(chain)
+    for v in roles_map.values():
+        keys |= set(v)
+    out = []
+    for k in sorted(keys):
+        sup = chain.get(k) or ""
+        out.append({
+            "role_key": k, "label": L["role"].get(k, k),
+            "superior": sup, "superior_label": L["role"].get(sup, sup),
+            "is_default": sup == (C.DEFAULT_ESCALATION.get(k) or ""),
+            "signs": [L["stage"].get(s, s) for s in LADDER if k in roles_map.get(s, set())],
+        })
+    return out
+
+
+def role_names(csv, lang="en"):
+    """'storekeeper,warehouse_manager' -> the readable role names for `lang`.
+    Used for the escalation stamp, whose value is a stored role key list."""
+    L = labels(lang)
+    return ", ".join(L["role"].get(r, r) for r in sorted(_csv_set(csv)))
+
+
+def role_choices(lang="en"):
+    """[{key, label, can_approve}] for every real platform role, labelled for
+    `lang` — the superior dropdown on the settings page. `can_approve` is False for
+    a role that may not sign an approval rung at all: picking it as a superior
+    would make the escalation land nowhere, so the option is marked (and the
+    resolver skips it — see can_sign_role)."""
+    L = labels(lang)
+    return sorted(({"key": k, "label": L["role"].get(k) or v.get("label") or k,
+                    "can_approve": can_sign_role(k)}
+                   for k, v in effective_roles().items()),
+                  key=lambda r: r["label"].lower())
+
+
+def set_escalation(role_key, superior_role, user=None, ip=None):
+    """Store one rung of the escalation chain. Returns (ok, msg).
+
+    Refuses an unknown role on either side and a role set as its own superior. A
+    blank superior is legitimate and means "nobody above" — that is how the top of
+    the chart is expressed, and it makes the terminal case explicit rather than
+    silently climbing somewhere unexpected."""
+    role_key = (role_key or "").strip()
+    superior_role = (superior_role or "").strip()
+    known = effective_roles()
+    if role_key not in known:
+        return False, "unknown_role"
+    if superior_role and superior_role not in known:
+        return False, "unknown_role"
+    if superior_role and superior_role == role_key:
+        return False, "self_superior"
+    conn = get_db()
+    try:
+        now, uname = _now(), (user or {}).get("username")
+        old = conn.execute("SELECT superior_role FROM proc_escalations WHERE role_key=?",
+                           (role_key,)).fetchone()
+        if old is None:
+            conn.execute("INSERT INTO proc_escalations (role_key, superior_role, "
+                         "updated_by, updated_at) VALUES (?,?,?,?)",
+                         (role_key, superior_role, uname, now))
+        else:
+            conn.execute("UPDATE proc_escalations SET superior_role=?, updated_by=?, "
+                         "updated_at=? WHERE role_key=?",
+                         (superior_role, uname, now, role_key))
+        _wf_audit(conn, uname, "wf_escalation",
+                  f"escalation {role_key}: "
+                  f"{(old['superior_role'] if old else None) or 'none'} -> "
+                  f"{superior_role or 'none'}", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
 def _stage_meta_row(conn, stage):
     try:
         row = conn.execute("SELECT * FROM proc_stage_meta WHERE stage=?",
@@ -2335,6 +2712,14 @@ def _labels(lang):
         "role": roles,
         "ui": dict(T.UI["en"], **(T.UI.get(lang) or {})),
     }
+
+
+def labels(lang="en"):
+    """Public alias for _labels: every short stage / role / status / UI string
+    resolved SERVER-SIDE for one reader. Used by the PR page and the settings page
+    for text that has no data-i18n key in app/static/i18n (which this module does
+    not own) — app.js prints an unknown key raw, in every language."""
+    return _labels(lang if lang in _LANGS else "en")
 
 
 def _prose_columns(col, texts, limit):
@@ -2676,6 +3061,9 @@ def workflow_view(department=None, lang="en"):
         "gates": [_doc(s) for s in ("pricing_gate", "rfq", "sod",
                                     "budget_gate", "three_way_match", "payment_cap")],
         "statuses": [dict(_doc("status." + s), key=s) for s in PR_STATUSES],
+        # SoD escalation: the prose plus the chain exactly as configured, so the
+        # page documents the rule AND the live wiring rather than a drawing.
+        "escalation": dict(_doc("sod_escalation"), chain=escalation_rows(lang)),
         "role_choices": sorted(
             ({"key": k, "label": L["role"].get(k) or v["label"],
               "can_approve": has_permission(k, "proc_approve")}
