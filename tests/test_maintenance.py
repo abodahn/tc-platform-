@@ -63,6 +63,68 @@ def _ticket(tid):
     return dict(row)
 
 
+def _new_ticket(data, user):
+    """create_ticket returns (ticket_id, err) -- err carries 'description_required'
+    or the duplicate-open guard's 'duplicate_open:<ticket_no>'. Assert the create
+    actually succeeded instead of carrying a tuple into the next call."""
+    tid, err = svc.create_ticket(data, user)
+    assert err == "" and tid, f"create_ticket refused: {err!r}"
+    return tid
+
+
+def _open_ticket_no(machine_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT ticket_no FROM mnt_tickets WHERE machine_id=? AND is_active=1 "
+        "AND status IN (%s) ORDER BY id DESC LIMIT 1"
+        % ",".join("?" * len(svc.OPEN_TICKET_STATUSES)),
+        (machine_id, *svc.OPEN_TICKET_STATUSES)).fetchone()
+    conn.close()
+    return row["ticket_no"] if row else None
+
+
+def test_duplicate_open_ticket_guard(app_ctx):
+    """The seed leaves M-001 with an open ticket (status 'diagnosis'), so a second
+    report for the same machine is refused and points back at the existing one.
+    data['allow_duplicate'] is the only documented way past the guard."""
+    tech = _user("tech")
+    m1 = _machine("M-001")
+    seed_no = _open_ticket_no(m1["id"])
+    assert seed_no, "seed should leave one open ticket on M-001"
+    data = {"machine_id": m1["id"], "machine_code": "M-001",
+            "description": "same fault reported twice", "priority": "high"}
+    tid, err = svc.create_ticket(dict(data), tech)
+    assert tid is None
+    assert err == "duplicate_open:%s" % seed_no
+    # explicit override -> allowed, and the guard reported the real ticket_no
+    tid, err = svc.create_ticket(dict(data, allow_duplicate=True), tech)
+    assert err == "" and tid
+    assert _ticket(tid)["status"] == "submitted"
+
+
+def test_services_refuse_wrong_ticket_id_type(app_ctx):
+    """create_ticket / create_request return an (id, err) TUPLE. Handing that tuple
+    on to a sibling service must refuse with a reason code, not travel into the
+    driver as a bind parameter ("type 'tuple' is not supported")."""
+    mgr = _user("maint")
+    bad = (4, "")
+    assert svc.close_ticket(bad, mgr) == (False, "bad_ticket_id")
+    assert svc.review_assign(bad, "Technician A", None, None, None, mgr) == (False, "bad_ticket_id")
+    assert svc.add_diagnosis(bad, {"fault_found": "x"}, mgr) == (False, "bad_ticket_id")
+    assert svc.repair_proof(bad, {}, mgr) == (False, "bad_ticket_id")
+    assert svc.record_test(bad, {}, mgr) == (False, "bad_ticket_id")
+    assert svc.reopen_ticket(bad, mgr) == (False, "bad_ticket_id")
+    assert svc.reject_ticket(bad, "a reason", mgr) == (False, "bad_ticket_id")
+    assert svc.create_request(bad, [{"spare_id": _spare("SP-003")["id"], "qty": 1}],
+                              "r", "normal", mgr) == (None, "bad_ticket_id")
+    conn = get_db()
+    try:
+        assert svc.set_ticket_status(conn, bad, "closed", mgr) == (False, "bad_ticket_id")
+        assert svc.set_ticket_status(conn, None, "closed", mgr) == (False, "bad_ticket_id")
+    finally:
+        conn.close()
+
+
 def test_full_workflow_end_to_end(app_ctx):
     supervisor = _user("supervisor")
     manager = _user("maint")
@@ -73,10 +135,13 @@ def test_full_workflow_end_to_end(app_ctx):
     stock_before = sp["stock_qty"]
 
     # 1-2: supervisor reports a problem on M-001 -> manager receives (submitted)
-    tid = svc.create_ticket({
+    # allow_duplicate: the seed already leaves an open ticket on M-001 and the
+    # duplicate-open guard would (correctly) refuse a second one -- the guard
+    # itself is asserted in test_duplicate_open_ticket_guard above.
+    tid = _new_ticket({
         "machine_id": m1["id"], "machine_code": "M-001", "department": "Production",
         "description": "Skipped stitches and noise", "priority": "high",
-        "production_stopped": True,
+        "production_stopped": True, "allow_duplicate": True,
     }, supervisor)
     assert _ticket(tid)["status"] == "submitted"
 
@@ -146,8 +211,8 @@ def test_issue_blocked_before_approval(app_ctx):
     manager, tech, store = _user("maint"), _user("tech"), _user("supervisor")
     m = _machine("M-002")
     sp = _spare("SP-003")
-    tid = svc.create_ticket({"machine_id": m["id"], "machine_code": "M-002",
-                             "description": "belt issue", "priority": "medium"}, tech)
+    tid = _new_ticket({"machine_id": m["id"], "machine_code": "M-002",
+                       "description": "belt issue", "priority": "medium"}, tech)
     svc.review_assign(tid, "Technician A", None, None, None, manager)
     svc.add_diagnosis(tid, {"fault_found": "belt", "root_cause": "wear_tear", "spare_needed": True}, tech)
     rid, _ = svc.create_request(tid, [{"spare_id": sp["id"], "qty": 1}], "belt", "normal", tech)
@@ -160,8 +225,8 @@ def test_rejection_requires_justification(app_ctx):
     manager, tech = _user("maint"), _user("tech")
     m = _machine("M-002")
     sp = _spare("SP-003")
-    tid = svc.create_ticket({"machine_id": m["id"], "machine_code": "M-002",
-                             "description": "belt", "priority": "low"}, tech)
+    tid = _new_ticket({"machine_id": m["id"], "machine_code": "M-002",
+                       "description": "belt", "priority": "low"}, tech)
     svc.review_assign(tid, "Technician A", None, None, None, manager)
     svc.add_diagnosis(tid, {"fault_found": "belt", "root_cause": "wear_tear", "spare_needed": True}, tech)
     rid, _ = svc.create_request(tid, [{"spare_id": sp["id"], "qty": 1}], "belt", "normal", tech)
@@ -185,8 +250,11 @@ def test_out_of_stock_scenario(app_ctx):
     manager, tech = _user("maint"), _user("tech")
     m = _machine("M-003")
     sp = _spare("SP-005")   # blade, stock 3
-    tid = svc.create_ticket({"machine_id": m["id"], "machine_code": "M-003",
-                             "description": "blade dull", "priority": "critical"}, tech)
+    # allow_duplicate: the seed already has an open ticket on M-003 (see
+    # test_duplicate_open_ticket_guard); this test is about the stock path.
+    tid = _new_ticket({"machine_id": m["id"], "machine_code": "M-003",
+                       "description": "blade dull", "priority": "critical",
+                       "allow_duplicate": True}, tech)
     svc.review_assign(tid, "Technician A", None, None, None, manager)
     svc.add_diagnosis(tid, {"fault_found": "blade", "root_cause": "wear_tear", "spare_needed": True}, tech)
     rid, _ = svc.create_request(tid, [{"spare_id": sp["id"], "qty": 99}], "blade", "urgent", tech)

@@ -539,6 +539,20 @@ noar = [k for k, v in I18N.items()
         if k not in CODE_ONLY and not _re2.search(r"[؀-ۿ]", v[1])]
 ck(not noar, "every Arabic value really is Arabic script %s" % (noar[:5] or ""))
 
+# app.js does t(k) { return DICT[k] || k }, so the catalogue app.js actually loads is
+# app/static/i18n/*.json — a key in a template but not there renders as the raw string
+# "shp.foo" on screen. The two checks above pin I18N == the template keys exactly, so
+# asserting I18N is a subset of every language file closes the chain template -> screen.
+# Presence only, not text: the map and the JSON word several strings differently, and
+# reconciling that wording is a translation decision, not a test's business.
+import json as _json                                  # noqa: E402
+for _lang in ("en", "ar", "tr"):
+    _d = _json.loads((REPO / "app" / "static" / "i18n" / ("%s.json" % _lang))
+                     .read_text(encoding="utf-8"))
+    _gap = sorted(set(I18N) - set(_d))
+    ck(not _gap, "every shipping key exists in %s.json — nothing renders raw %s"
+       % (_lang, _gap[:5] or ""))
+
 # ======================================================================
 # SECOND PASS — ground the first pass did not cover: join fan-out across
 # several shipments on one order, legacy NULL rows, whole-piece packing,

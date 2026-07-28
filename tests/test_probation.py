@@ -11,20 +11,30 @@ Run:  pytest tests/test_probation.py -q
 import os
 import re
 import tempfile
+from pathlib import Path
 
 import pytest
 
 os.environ.setdefault("TC_ENV", "development")
 os.environ.setdefault("TC_ADMIN_PASSWORD", "Test@1234")
 
+# db.py seeds the super-admin from Config.ADMIN_*, and Config reads the env at
+# class-body time (i.e. at import — which conftest.py already triggered before
+# this module was imported). So take the credentials from Config rather than
+# hardcoding them, or the admin logins here 302 whenever the harness exported a
+# different TC_ADMIN_PASSWORD.
+from config import Config as _Cfg   # noqa: E402
+ADMIN_USER, ADMIN_PASSWORD = _Cfg.ADMIN_USER, _Cfg.ADMIN_PASSWORD
+
 
 @pytest.fixture(scope="module")
 def app():
-    tmp = os.path.join(tempfile.gettempdir(), "prob_pytest.db")
-    if os.path.exists(tmp):
-        os.remove(tmp)
     import config as cfg
-    cfg.Config.DB_PATH = tmp
+    original_db_path = cfg.Config.DB_PATH
+    # A Path, not a str: routes/main.py health() calls Config.DB_PATH.exists(),
+    # so a str here 500s /health for every later test in the same process. Fresh
+    # dir per run so a leftover locked file can't break collection either.
+    cfg.Config.DB_PATH = Path(tempfile.mkdtemp(prefix="prob_pytest_")) / "platform.db"
     from app import create_app
     application = create_app()
     # a low-privilege user (role lacks prob_view)
@@ -36,7 +46,10 @@ def app():
                   "VALUES (?,?,?,?,datetime('now'))",
                   ("low", generate_password_hash("Low@1234"), "Low", "normal_user"))
         c.commit(); c.close()
-    return application
+    yield application
+    # Config is process-global: leave it as we found it so the suites that run
+    # after this one in the same pytest process still hit their own database.
+    cfg.Config.DB_PATH = original_db_path
 
 
 def _csrf(client):
@@ -66,7 +79,7 @@ def test_permission_denied_for_low_priv(app):
 
 
 def test_all_pages_render_for_admin(app):
-    c = app.test_client(); _login(c, "admin", "Test@1234")
+    c = app.test_client(); _login(c, ADMIN_USER, ADMIN_PASSWORD)
     for p in ["/", "/cases", "/mine", "/initiate", "/review", "/reminders",
               "/reports", "/import", "/settings"]:
         r = c.get("/hr/probation" + p)
@@ -76,7 +89,7 @@ def test_all_pages_render_for_admin(app):
 
 # ------------------------------------------------------------------ workflow
 def test_full_workflow_confirm(app):
-    c = app.test_client(); _login(c, "admin", "Test@1234")
+    c = app.test_client(); _login(c, ADMIN_USER, ADMIN_PASSWORD)
     with app.app_context():
         from app.db import get_db
         conn = get_db()
@@ -126,24 +139,87 @@ def test_scoring_and_thresholds(app):
 
 # --------------------------------------------------------------------- scope
 def test_manager_scope_isolation(app):
+    """The real scope rule for a line/department manager (services.can_view_case):
+
+        visible  =  case.department == my scope_department
+                 OR case.section    == my scope_section
+                 OR I am the case's named direct_manager
+                 OR I am the case's named section_head
+
+    Anything else is invisible. Named-manager access is deliberate (a manager
+    evaluates the people who report to them even when payroll files them under
+    another department), so the isolation half has to be proven with a case that
+    names SOMEONE ELSE as both manager and section head.
+    """
     from app.probation import services as svc
     with app.app_context():
         HR = {"id": 1, "username": "admin", "role": "super_admin"}
         MGR = {"id": 9, "username": "kn", "full_name": "Khaled Nasser",
                "role": "department_manager", "scope_department": "Sewing", "scope_section": None}
-        assert len(svc.list_employees(MGR)) < len(svc.list_employees(HR))
-        # a manager cannot view a case outside scope
-        for e in svc.list_employees(HR):
-            if e["department"] != "Sewing":
-                cid, _ = svc.create_case(HR, e["id"])
-                case = svc.get_case_full(cid)
-                assert svc.can_view_case(MGR, case) is False
-                break
+        everyone = svc.list_employees(HR)
+        mine = svc.list_employees(MGR)
+        assert len(mine) < len(everyone)
+        # the manager is a manager, not HR/admin/report-viewer — otherwise the
+        # scope branches below are never even reached
+        assert svc.is_hr(MGR) is False and svc.is_admin(MGR) is False
+        assert svc.can_report(MGR) is False
+
+        by_code = {e["employee_code"]: e for e in everyone}
+
+        def case_for(code):
+            cid, err = svc.create_case(HR, by_code[code]["id"])
+            assert cid and not err, (code, err)
+            return svc.get_case_full(cid)
+
+        # (1) in my department -> visible
+        own = case_for("TC-1001")
+        assert own["department"] == MGR["scope_department"]
+        assert svc.can_view_case(MGR, own) is True
+
+        # (2) another department, but I am the named direct_manager -> visible
+        reports_to_me = case_for("TC-1003")
+        assert reports_to_me["department"] != MGR["scope_department"]
+        assert reports_to_me["direct_manager"] == MGR["full_name"]
+        assert svc.can_view_case(MGR, reports_to_me) is True
+
+        # (3) another department, I am the named section_head -> visible
+        under_my_section = dict(reports_to_me, department="Finishing", section="Packing",
+                                direct_manager="Mona Sabry", section_head=MGR["full_name"])
+        assert svc.can_view_case(MGR, under_my_section) is True
+
+        # (4) THE ISOLATION HALF — the assertion with the security value.
+        # Another department, another named manager, another named section head:
+        # this manager must NOT see the case, and it must never appear in their
+        # employee list either. Do not relax this.
+        theirs = case_for("TC-1002")
+        assert theirs["department"] != MGR["scope_department"]
+        assert theirs["section"] not in (MGR["scope_section"], MGR["scope_department"])
+        assert theirs["direct_manager"] != MGR["full_name"]
+        assert theirs["section_head"] != MGR["full_name"]
+        assert svc.can_view_case(MGR, theirs) is False
+        assert by_code["TC-1002"]["id"] not in {e["id"] for e in mine}
+
+        # (4b) the scope_section leg, both directions: a manager scoped to a
+        # SECTION (no department, name matches nobody) sees the case in that
+        # section and only that one. No seed row needed — can_view_case reads
+        # department/section/direct_manager/section_head and nothing else.
+        SEC_MGR = dict(MGR, id=11, username="sm", full_name="Nobody At All",
+                       scope_department=None, scope_section=theirs["section"])
+        assert own["section"] != theirs["section"]
+        assert svc.can_view_case(SEC_MGR, theirs) is True
+        assert svc.can_view_case(SEC_MGR, own) is False
+
+        # (5) a manager whose name matches nothing and whose scope matches
+        # nothing sees nothing at all
+        OUTSIDER = dict(MGR, id=10, username="zz", full_name="Nobody At All",
+                        scope_department="Warehouse", scope_section=None)
+        for case in (own, reports_to_me, under_my_section, theirs):
+            assert svc.can_view_case(OUTSIDER, case) is False
 
 
 # --------------------------------------------------------------- regression
 def test_existing_modules_still_work(app):
-    c = app.test_client(); _login(c, "admin", "Test@1234")
+    c = app.test_client(); _login(c, ADMIN_USER, ADMIN_PASSWORD)
     assert c.get("/").status_code == 200
     assert c.get("/factory/").status_code in (200, 308)
     assert c.get("/maintenance/").status_code in (200, 308)

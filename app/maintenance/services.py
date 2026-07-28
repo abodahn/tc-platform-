@@ -94,7 +94,26 @@ def can_transition(current, target):
     return target in TICKET_TRANSITIONS.get(current, set())
 
 
+def _as_ticket_id(value):
+    """Coerce a ticket id to int, or None when it isn't one.
+
+    These services are called cross-module, and create_ticket / create_request
+    return a (id, err) TUPLE. Handing that whole tuple on used to travel all the
+    way into the driver as a bind parameter and surface as the meaningless
+    "Error binding parameter 1: type 'tuple' is not supported". A shared service
+    given the wrong type must refuse with a reason code like every other refusal
+    here. Only the type is checked -- no status, stock or approval rule changes.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def set_ticket_status(conn, ticket_id, target, user, ip=None, force=False, comment=None):
+    ticket_id = _as_ticket_id(ticket_id)
+    if ticket_id is None:
+        return False, "bad_ticket_id"
     row = conn.execute("SELECT status FROM mnt_tickets WHERE id=?", (ticket_id,)).fetchone()
     if not row:
         return False, "ticket_not_found"
@@ -229,6 +248,8 @@ def create_ticket(data, user, ip=None, submit=True):
 
 
 def review_assign(ticket_id, technician, priority, response_due, resolution_due, user, ip=None):
+    if (ticket_id := _as_ticket_id(ticket_id)) is None:
+        return False, "bad_ticket_id"
     conn = get_db()
     try:
         ok, msg = set_ticket_status(conn, ticket_id, "assigned", user, ip, force=True)
@@ -263,6 +284,8 @@ def _release_ticket_reservations(conn, ticket_id):
 def reject_ticket(ticket_id, reason, user, ip=None):
     if not (reason or "").strip():
         return False, "reason_required"
+    if (ticket_id := _as_ticket_id(ticket_id)) is None:
+        return False, "bad_ticket_id"
     conn = get_db()
     try:
         conn.execute("UPDATE mnt_tickets SET rejection_reason=? WHERE id=?", (reason, ticket_id))
@@ -276,6 +299,8 @@ def reject_ticket(ticket_id, reason, user, ip=None):
 
 
 def add_diagnosis(ticket_id, d, user, ip=None):
+    if (ticket_id := _as_ticket_id(ticket_id)) is None:
+        return False, "bad_ticket_id"
     conn = get_db()
     try:
         conn.execute(
@@ -329,6 +354,8 @@ def create_request(ticket_id, items, reason, urgency, user, ip=None):
     """items: list of dicts {spare_id, qty, notes}."""
     if not items:
         return None, "no_items"
+    if (ticket_id := _as_ticket_id(ticket_id)) is None:
+        return None, "bad_ticket_id"
     conn = get_db()
     try:
         t = conn.execute("SELECT machine_id,machine_code,work_order_no FROM mnt_tickets WHERE id=?",
@@ -606,6 +633,8 @@ def confirm_receiving(request_id, user, ip=None):
 
 # --- repair / test / close -------------------------------------------------
 def repair_proof(ticket_id, d, user, ip=None):
+    if (ticket_id := _as_ticket_id(ticket_id)) is None:
+        return False, "bad_ticket_id"
     conn = get_db()
     try:
         conn.execute(
@@ -625,6 +654,8 @@ def repair_proof(ticket_id, d, user, ip=None):
 
 
 def record_test(ticket_id, d, user, ip=None):
+    if (ticket_id := _as_ticket_id(ticket_id)) is None:
+        return False, "bad_ticket_id"
     conn = get_db()
     try:
         conn.execute("UPDATE mnt_tickets SET test_result=?, safety_check=?, machine_running=? WHERE id=?",
@@ -642,6 +673,8 @@ def record_test(ticket_id, d, user, ip=None):
 
 
 def close_ticket(ticket_id, user, ip=None):
+    if (ticket_id := _as_ticket_id(ticket_id)) is None:
+        return False, "bad_ticket_id"
     conn = get_db()
     try:
         t = conn.execute("SELECT status,machine_id,created_at,cost,production_stopped,machine_rolled "
@@ -684,6 +717,8 @@ def close_ticket(ticket_id, user, ip=None):
 
 
 def reopen_ticket(ticket_id, user, ip=None):
+    if (ticket_id := _as_ticket_id(ticket_id)) is None:
+        return False, "bad_ticket_id"
     conn = get_db()
     try:
         ok, msg = set_ticket_status(conn, ticket_id, "reopened", user, ip, force=True)

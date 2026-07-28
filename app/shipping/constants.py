@@ -68,6 +68,13 @@ I18N = {
     "shp.action.print": ("Print", "طباعة", "Yazdır"),
     "shp.action.back": ("Back", "رجوع", "Geri"),
     "shp.action.cancel": ("Cancel", "إلغاء", "İptal"),
+    # Wording is copied verbatim from app/static/i18n/{en,ar,tr}.json — that is what
+    # app.js actually renders, so the two must not say different things.
+    "shp.action.export": ("Export CSV", "تصدير CSV", "CSV dışa aktar"),
+    "shp.action.export_packing": ("Packing list CSV", "قائمة التعبئة CSV",
+                                  "Paket listesi CSV"),
+    "shp.action.export_invoice": ("Invoice lines CSV", "بنود الفاتورة CSV",
+                                  "Fatura satırları CSV"),
 
     "shp.dash.sub": ("What actually left the factory — cartons, packing lists, commercial "
                      "invoices and ordered-vs-shipped.",

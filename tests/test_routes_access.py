@@ -6,11 +6,16 @@ Guarantees:
     like a bad url_for or an undefined name).
   * Unauthenticated users are redirected to /login on protected routes.
   * super_admin can reach every route (200/302, never 403/500).
-  * permission-guarded routes return 403 for roles lacking the permission.
+  * permission-guarded routes return 403 for roles lacking the permission,
+    EXCEPT for scope-locked roles (see SCOPE_OPEN_BLUEPRINTS below), which are
+    redirected off an out-of-scope blueprint before the route ever runs.
 """
-import pytest
+from urllib.parse import urlparse
 
-from app.security import ROLES, has_permission
+import pytest
+from werkzeug.routing import RequestRedirect
+
+from app.security import ROLES, has_permission, system_scope
 from _support import login_as, login_admin
 
 # Public GET routes (no auth needed).
@@ -39,6 +44,24 @@ PERM = [
 
 ALL_GET = PUBLIC + LOGIN + [p for p, _ in PERM]
 ROLE_KEYS = sorted(ROLES.keys())
+
+# The ONLY blueprints a scope-locked role (security.ROLE_SYSTEM_SCOPE, e.g.
+# itsm_user) may reach: infra + the routes that launch their own system.
+# routes/main._enforce_system_scope bounces them off everything else with a
+# redirect, BEFORE the route's own permission_required can answer. Duplicated
+# here on purpose: if the product ever widens that set, this test goes red.
+SCOPE_OPEN_BLUEPRINTS = {None, "main", "auth", "sso", "accounts", "api", "garamento"}
+
+
+def _blueprint_of(app, path):
+    """Blueprint name that owns `path` (None for app-level routes)."""
+    urls = app.url_map.bind("localhost")
+    target = urlparse(path).path
+    try:
+        endpoint, _ = urls.match(target, method="GET")
+    except RequestRedirect as rr:                       # strict-slash variant
+        endpoint, _ = urls.match(urlparse(rr.new_url).path, method="GET")
+    return endpoint.rsplit(".", 1)[0] if "." in endpoint else None
 
 
 # ---------------- Unauthenticated ----------------
@@ -74,10 +97,23 @@ def test_role_access_matrix(client, app, role):
         assert r.status_code != 500, f"role={role} GET {path} -> 500"
         assert r.status_code in (200, 302, 403), f"role={role} GET {path} -> {r.status_code}"
     # permission routes: precise enforcement
+    scope = system_scope({"role": role})    # None => unrestricted role
     for path, perm in PERM:
         r = client.get(path, follow_redirects=False)
         assert r.status_code != 500, f"role={role} GET {path} -> 500"
-        if has_permission(role, perm):
+        if scope is not None and _blueprint_of(app, path) not in SCOPE_OPEN_BLUEPRINTS:
+            # Scope-locked role on an out-of-scope blueprint: the scope guard
+            # must redirect them AWAY before the route runs. Exact 302 on
+            # purpose — a 200 means they reached the page, and even a 403 would
+            # mean the scope guard stopped firing and only RBAC saved us.
+            assert r.status_code == 302, \
+                f"role={role} is scope-locked to {sorted(scope)}; GET {path} " \
+                f"must be redirected off the blueprint, got {r.status_code}"
+            dest = urlparse(r.headers.get("Location", "")).path or "/"
+            prefix = urlparse(path).path.rstrip("/") or "/"
+            assert not dest.startswith(prefix), \
+                f"role={role} GET {path} redirected back into the blueprint ({dest})"
+        elif has_permission(role, perm):
             assert r.status_code in (200, 302), \
                 f"role={role} HAS {perm} but GET {path} -> {r.status_code}"
         else:

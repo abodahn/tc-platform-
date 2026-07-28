@@ -48,32 +48,121 @@ def test_index_and_seeded_demo(app_client):
     assert b"PR-DEMO-13849" in r.data or b"Repair forklift battery" in r.data
 
 
+ADMIN = {"username": "admin", "role": "super_admin"}
+
+
+def _gate_and_price(svc, pid, user, unit_price=48000.0):
+    """Purchasing stage is the active rung. Assert BOTH purchasing gates fire,
+    then satisfy them the way the product intends.
+
+    Gate 1 — pricing: a requester never enters money (routes._can_price() is
+    hardcoded False), so the request arrives unpriced and the purchasing stage
+    cannot be signed (act_on_step -> 'needs_pricing').
+    Gate 2 — RFQ: once priced at 48,000 EGP the total is >= RFQ_VALUE_THRESHOLD
+    (25,000), so RFQ_QUOTE_MIN (2) quotes from DISTINCT vendors are required
+    (act_on_step -> 'needs_quotes')."""
+    assert svc.act_on_step(pid, user, "approve") == (False, "needs_pricing")
+    item_id = svc.get_pr(pid)["items"][0]["id"]
+    assert svc.price_pr(pid, {item_id: unit_price}, {"tax_rate": 0}, user)[0] is True
+    assert svc.act_on_step(pid, user, "approve") == (False, "needs_quotes")
+    svc.add_quote(pid, {"vendor": "High Trak", "amount": unit_price}, user)
+    svc.add_quote(pid, {"vendor": "Delta", "amount": unit_price + 4000}, user)
+
+
 def test_full_cycle_create_sign_po(app_client):
+    """Route-driven walk of the CURRENT contract: a requester raises an UNPRICED
+    request (the commercial lockout strips any price they POST), so it routes the
+    three demand stages only. Purchasing prices it at 48,000, which appends the
+    value rungs, and the ladder then completes at 5 signatures.
+
+    Threshold arithmetic (constants.APPROVAL_MATRIX, EGP):
+      qty 1 x 48,000 = 48,000
+      warehouse 0 / factory_manager 0 / purchasing 0  -> always required
+      finance 10,000  -> 48,000 >= 10,000  -> required
+      cfo     25,000  -> 48,000 >= 25,000  -> required
+      ceo    100,000  -> 48,000 <  100,000 -> NOT required
+    => warehouse, factory_manager, purchasing, finance, cfo = 5 approvers
+       + the requester's own submission = the 6 signatures on the paper form."""
     a, c = app_client
-    r = _new_pr(c)
+    r = _new_pr(c)                       # POSTs unit_price 48000 — it must be stripped
     assert r.status_code == 200
     # find the created PR id from the DB
     with a.app_context():
         from app.approvals import services as svc
+        from app.approvals import constants as C
         prs = svc.list_prs(status="pending")
         target = [p for p in prs if p["title"] == "Repair battery"]
         assert target, "PR was not created/submitted"
         pr_id = target[0]["id"]
         bundle = svc.get_pr(pr_id)
-        stages = [s["stage"] for s in bundle["steps"]]
-        assert stages == ["warehouse", "factory_manager", "purchasing", "finance", "cfo"]
+        # the requester price lockout: nothing commercial survived the POST
+        assert bundle["pr"]["pricing_status"] == "unpriced"
+        assert float(bundle["pr"]["total"] or 0) == 0.0
+        assert float(bundle["items"][0]["unit_price"] or 0) == 0.0
+        # an unpriced request routes the demand stages only
+        assert [s["stage"] for s in bundle["steps"]] == \
+            ["warehouse", "factory_manager", "purchasing"] == C.DEMAND_STAGES
 
-    # walk every stage as admin (super_admin may act on any stage)
-    for _ in range(len(stages)):
+    # demand stages sign first (admin is super_admin -> may act on any stage)
+    for stage in ("warehouse", "factory_manager"):
         tok = get_csrf(c)
         c.post(f"/procurement/pr/{pr_id}/approve", data={"_csrf": tok, "comment": "ok"},
                follow_redirects=True)
+        with a.app_context():
+            from app.approvals import services as svc
+            st = {s["stage"]: s["status"] for s in svc.get_pr(pr_id)["steps"]}
+            assert st[stage] == "approved", stage
+
+    # PRICING GATE — the route refuses the purchasing signature while unpriced
+    tok = get_csrf(c)
+    c.post(f"/procurement/pr/{pr_id}/approve", data={"_csrf": tok}, follow_redirects=True)
+    with a.app_context():
+        from app.approvals import services as svc
+        b = svc.get_pr(pr_id)
+        assert b["pr"]["status"] == "pending"
+        assert {s["stage"]: s["status"] for s in b["steps"]}["purchasing"] == "pending"
+        assert svc.act_on_step(pr_id, ADMIN, "approve") == (False, "needs_pricing")
+        item_id = b["items"][0]["id"]
+
+    # Purchasing enters the value through the pricing route -> value rungs join
+    tok = get_csrf(c)
+    c.post(f"/procurement/pr/{pr_id}/price",
+           data={"_csrf": tok, f"price_{item_id}": "48000", "tax_rate": "0"},
+           follow_redirects=True)
+    with a.app_context():
+        from app.approvals import services as svc
+        from app.approvals import constants as C
+        b = svc.get_pr(pr_id)
+        assert b["pr"]["pricing_status"] == "priced"
+        assert float(b["pr"]["total"]) == 48000.0
+        assert [s["stage"] for s in b["steps"]] == \
+            ["warehouse", "factory_manager", "purchasing", "finance", "cfo"] \
+            == C.build_ladder(48000)
+        # RFQ GATE at 48,000 (>= 25,000) with no quotes yet
+        assert svc.act_on_step(pr_id, ADMIN, "approve") == (False, "needs_quotes")
+
+    # two DISTINCT vendor quotes satisfy the RFQ rule
+    for vendor, amt in (("High Trak", "48000"), ("Delta", "52000")):
+        c.post(f"/procurement/pr/{pr_id}/quote",
+               data={"_csrf": get_csrf(c), "vendor": vendor, "amount": amt},
+               content_type="multipart/form-data", follow_redirects=True)
+
+    # purchasing + the two value stages now sign
+    for stage in ("purchasing", "finance", "cfo"):
+        tok = get_csrf(c)
+        c.post(f"/procurement/pr/{pr_id}/approve", data={"_csrf": tok, "comment": "ok"},
+               follow_redirects=True)
+        with a.app_context():
+            from app.approvals import services as svc
+            st = {s["stage"]: s["status"] for s in svc.get_pr(pr_id)["steps"]}
+            assert st[stage] == "approved", stage
 
     with a.app_context():
         from app.approvals import services as svc
         b = svc.get_pr(pr_id)
         assert b["pr"]["status"] == "approved"
         assert b["pr"]["po_no"]
+        assert len(b["steps"]) == 5
         assert all(s["status"] == "approved" for s in b["steps"])
 
     # PDFs render
@@ -270,7 +359,11 @@ def test_pdf_layout_renders(app_client):
 
 
 # ---------------- Strict sequential approval (all the cases) ----------------
-# Ladder for 48,000: warehouse -> factory_manager -> purchasing -> finance -> cfo
+# A route-raised request is UNPRICED, so it starts with the three demand stages
+# (warehouse -> factory_manager -> purchasing). Purchasing prices it at 48,000
+# EGP at the pricing gate, which appends the value rungs finance (>= 10,000) and
+# cfo (>= 25,000) — ceo (>= 100,000) stays out. Full ladder once priced:
+#   warehouse -> factory_manager -> purchasing -> finance -> cfo
 _USERS = {
     "warehouse": {"username": "store", "role": "storekeeper"},
     "factory_manager": {"username": "factory", "role": "factory_manager"},
@@ -299,20 +392,37 @@ def test_out_of_turn_approver_is_blocked(app_client):
 
 
 def test_strict_sequence_advances_one_by_one(app_client):
+    """The strict-sequence invariant, walked end to end across the pricing gate:
+    at every rung nobody further down the ladder can act, and the rung that CAN
+    act advances the request by exactly one step."""
     a, c = app_client
     pid = _make_pr(a, c, "Seq2")
     order = ["warehouse", "factory_manager", "purchasing", "finance", "cfo"]
     with a.app_context():
         from app.approvals import services as svc
+        from app.approvals import constants as C
+        # the request starts unpriced: only the demand rungs exist
+        assert [s["stage"] for s in svc.get_pr(pid)["steps"]] == C.DEMAND_STAGES
         for i, stage in enumerate(order):
-            # nobody further down the ladder can act yet
+            # nobody further down the ladder can act yet (whether or not their
+            # rung exists yet — an unbuilt value rung is 'forbidden' too)
             for later in order[i + 1:]:
                 assert svc.act_on_step(pid, _USERS[later], "approve")[1] == "forbidden"
+            if stage == "purchasing":
+                # pricing + RFQ gates fire here; satisfying pricing is what
+                # appends finance + cfo to the ladder
+                _gate_and_price(svc, pid, _USERS["purchasing"])
+                assert [s["stage"] for s in svc.get_pr(pid)["steps"]] == order \
+                    == C.build_ladder(48000)
+                # ...and the later rungs are STILL out of turn now they exist
+                for later in order[i + 1:]:
+                    assert svc.act_on_step(pid, _USERS[later], "approve")[1] == "forbidden"
             ok, msg = svc.act_on_step(pid, _USERS[stage], "approve")
             assert ok is True
             assert msg == ("approved" if stage == order[-1] else "advanced")
         b = svc.get_pr(pid)
         assert b["pr"]["status"] == "approved" and b["pr"]["po_no"]
+        assert all(s["status"] == "approved" for s in b["steps"])
 
 
 def test_reject_at_first_stage_bounces_to_requester(app_client):
@@ -328,14 +438,19 @@ def test_reject_at_first_stage_bounces_to_requester(app_client):
 
 
 def test_reject_at_later_stage_after_some_approved(app_client):
-    """Warehouse+Factory+Purchasing approve, then Finance rejects -> whole PR
-    rejected; earlier signatures kept, later stage (CFO) never reached."""
+    """Warehouse+Factory+Purchasing approve (Purchasing through the pricing and
+    RFQ gates), then Finance rejects -> whole PR rejected; earlier signatures
+    kept, later stage (CFO) never reached."""
     a, c = app_client
     pid = _make_pr(a, c, "RejLate")
     with a.app_context():
         from app.approvals import services as svc
-        for stage in ("warehouse", "factory_manager", "purchasing"):
+        for stage in ("warehouse", "factory_manager"):
             assert svc.act_on_step(pid, _USERS[stage], "approve")[1] == "advanced"
+        # purchasing cannot sign an unpriced request, and once priced at 48,000
+        # cannot sign without competitive quotes; both gates asserted here
+        _gate_and_price(svc, pid, _USERS["purchasing"])
+        assert svc.act_on_step(pid, _USERS["purchasing"], "approve")[1] == "advanced"
         ok, msg = svc.act_on_step(pid, _USERS["finance"], "reject", comment="too costly")
         assert ok and msg == "rejected"
         b = svc.get_pr(pid)

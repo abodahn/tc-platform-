@@ -11,20 +11,29 @@ Run:  pytest tests/test_accounts.py -q
 import os
 import re
 import tempfile
+from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("TC_ENV", "development")
-os.environ.setdefault("TC_ADMIN_PASSWORD", "Test@1234")
+from config import Config
+
+# The super-admin password is whatever config resolved at import time (env var
+# TC_ADMIN_PASSWORD if set, else the packaged default). Do NOT try to force it
+# from here with os.environ: config.Config reads the environment at CLASS-BODY
+# time and conftest.py has already imported it, so a setdefault here is a no-op
+# and every admin login silently comes back 200 (re-rendered /login) instead of
+# 302. Read the real value instead of guessing one.
+ADMIN_PW = Config.ADMIN_PASSWORD
 
 CAP = {}
 
 
 @pytest.fixture(scope="module")
 def app():
-    tmp = os.path.join(tempfile.gettempdir(), "acc_pytest.db")
-    if os.path.exists(tmp):
-        os.remove(tmp)
+    # per-run dir: a fixed filename in %TEMP% collides with a concurrent run.
+    # Must be a Path, not a str: /health does Config.DB_PATH.exists(), so a str
+    # here 500s that page for every suite that runs after this module.
+    tmp = Path(tempfile.mkdtemp(prefix="acc_pytest_")) / "platform.db"
     import config as cfg
     cfg.Config.DB_PATH = tmp
     from app import create_app
@@ -76,7 +85,8 @@ def test_signup_success_then_verify_then_approve_then_login(app):
         cc.close()
     assert row["account_status"] == "pending_approval"
     # admin approves
-    ac = app.test_client(); _login(ac, "admin", "Test@1234")
+    ac = app.test_client()
+    assert _login(ac, Config.ADMIN_USER, ADMIN_PW).status_code == 302, "admin login must succeed"
     ac.post("/admin/registrations/%d/approve" % row["id"],
             data={"role": "normal_user", "_csrf": _tok(ac, "/admin/registrations")})
     with app.app_context():
@@ -150,7 +160,7 @@ def test_csrf_and_open_redirect(app):
     c = app.test_client()
     assert c.post("/signup", data={"first_name": "x"}).status_code in (400, 403)
     oc = app.test_client()
-    r = oc.post("/login", data={"username": "admin", "password": "Test@1234",
+    r = oc.post("/login", data={"username": Config.ADMIN_USER, "password": ADMIN_PW,
                                 "_csrf": _tok(oc), "next": "https://evil.example.com"})
     assert r.status_code == 302 and "evil.example.com" not in (r.headers.get("Location") or "")
 
@@ -172,5 +182,5 @@ def test_permission_enforced_on_admin(app):
 # --------------------------------------------------------------- regression
 def test_existing_username_login_unbroken(app):
     c = app.test_client()
-    r = _login(c, "admin", "Test@1234")
+    r = _login(c, Config.ADMIN_USER, ADMIN_PW)
     assert r.status_code == 302 and c.get("/").status_code == 200
