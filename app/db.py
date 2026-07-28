@@ -143,6 +143,38 @@ class _PGCursor:
         return (self._wrap(r) for r in self._raw)
 
 
+def _pg_session_guards(raw):
+    """Stop a statement from waiting on a lock forever.
+
+    ALTER TABLE ... ADD COLUMN takes an ACCESS EXCLUSIVE lock, and PostgreSQL
+    waits for it INDEFINITELY by default. Render does zero-downtime deploys, so
+    while a new instance boots the OLD one is still serving and holding
+    transactions on those same tables. gunicorn runs with --preload, meaning
+    create_app() -> init_db() -> the guarded ALTERs execute BEFORE the port is
+    bound: one blocked ALTER and the process never binds, Render sees "no open
+    ports detected" and kills the deploy, with no traceback to explain it
+    because nothing crashed — it was waiting.
+
+    lock_timeout makes such a statement fail fast instead. Every migration site
+    already wraps its DDL in try/except + rollback and treats failure as
+    "already applied", so a timed-out ALTER is skipped and boot continues.
+
+    Deliberately NOT statement_timeout: that would also kill legitimate long
+    reads (report exports), which is a different problem with a different answer.
+    SQLite is untouched — it has no such lock semantics here.
+    """
+    try:
+        cur = raw.cursor()
+        cur.execute("SET lock_timeout = '5s'")
+        cur.close()
+        raw.commit()
+    except Exception:
+        try:
+            raw.rollback()
+        except Exception:
+            pass
+
+
 class _PGConn:
     """sqlite3-compatible wrapper around a psycopg2 connection.
 
@@ -155,6 +187,7 @@ class _PGConn:
         self._c = conn
         self._pooled = pooled
         self._closed = False
+        _pg_session_guards(conn)
 
     def execute(self, sql, params=()):
         import psycopg2.extras
