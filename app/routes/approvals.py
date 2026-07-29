@@ -1205,3 +1205,8 @@ def workflow_setting():
 def verify_signature(code):
     ev, pr = svc.verify_sign_code(code)
     return render_template("approvals/verify.html", ev=ev, pr=pr), (200 if ev else 404)
+
+
+# Report declarations for the shared reporting engine (/reporting). Imported for
+# its import-time side effect: it registers the specs and touches no database.
+from app.approvals import reports as _reports  # noqa: E402,F401

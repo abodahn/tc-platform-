@@ -244,3 +244,8 @@ def api_json(key):
     if resp is None:
         abort(404)
     return resp
+
+
+# Report declarations for the shared engine (app/services/reporting.py) — see the
+# note in app/routes/warehouse.py. Plain dicts, no database work at import.
+from app.trace import reports as _reports  # noqa: E402,F401

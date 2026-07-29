@@ -11,6 +11,14 @@
   <div class="flex gap center">
     <a class="btn btn-primary btn-sm" href="{{ url_for('trace.passports') }}" data-i18n="trc.nav.passports">Product passports</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.certs') }}" data-i18n="trc.nav.certs">Material certificates</a>
+    {# The report hub (endpoint reports_hub.hub, app/routes/reports_hub.py). The path is
+       literal on purpose: url_for() on a blueprint the orchestrator has not registered yet
+       raises BuildError and would take this whole dashboard down with it. A dead link 404s;
+       a dead dashboard is an outage.
+       data-loc-*, not data-i18n: app.js swaps these in place, so the label can never render
+       as a raw key while a new dictionary entry is still in flight. #}
+    <a class="btn btn-ghost btn-sm" href="/reporting/"
+       data-loc-en="Reports" data-loc-ar="التقارير" data-loc-tr="Raporlar">Reports</a>
   </div>
 </div>
 

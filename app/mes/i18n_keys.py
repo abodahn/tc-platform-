@@ -120,6 +120,11 @@ I18N = {
     "mes.action.board": ("Hourly board", "لوحة الساعات", "Saatlik pano"),
     "mes.action.bundles": ("Bundles & WIP", "الحزم والإنتاج تحت التشغيل", "Demetler ve Yarı Mamul"),
     "mes.action.dashboard": ("Dashboard", "لوحة المعلومات", "Gösterge paneli"),
+    # The dashboard's link into the shared reporting hub reuses the PLATFORM key
+    # (already in app/static/i18n/*.json with exactly these three strings) rather
+    # than minting a mes.* duplicate. Listed here only so this module's own
+    # coverage test sees every key its templates emit; the splice is a no-op.
+    "reports.title": ("Reports", "التقارير", "Raporlar"),
     "mes.action.back": ("Back", "رجوع", "Geri"),
     "mes.action.save": ("Save hour", "حفظ الساعة", "Saati kaydet"),
     "mes.action.log": ("Log downtime", "تسجيل التوقف", "Duruş kaydet"),

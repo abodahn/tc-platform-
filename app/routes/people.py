@@ -216,3 +216,8 @@ def api_json(key):
     if resp is None:
         abort(404)
     return resp
+
+
+# Declares this module's reports with the shared reporting engine. Import only —
+# it runs no query and touches no database (see app/people/reports.py).
+from app.people import reports as _reports        # noqa: E402,F401

@@ -10,6 +10,7 @@
   </div>
   <div class="flex gap center">
     {% if can('cut_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('cutroom.lay_new') }}" data-i18n="cut.action.new_lay">Record lay</a>{% endif %}
+    <a class="btn btn-ghost btn-sm" href="/reporting/cutroom_utilisation" data-i18n="reports.title">Reports</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('cutroom.export_csv', key='order-summary') }}" data-i18n="cut.action.export">Export CSV</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('cutroom.lays') }}" data-i18n="cut.nav.lays">Lays</a>
   </div>

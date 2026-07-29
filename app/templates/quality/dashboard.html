@@ -12,6 +12,7 @@
   <div class="flex gap center">
     {% if can('qc_inspect') %}<a class="btn btn-primary btn-sm" href="{{ url_for('quality.new') }}" data-i18n="qc.action.new">New inspection</a>{% endif %}
     <a class="btn btn-ghost btn-sm" href="{{ url_for('quality.inspections') }}" data-i18n="qc.nav.inspections">Inspections</a>
+    <a class="btn btn-ghost btn-sm" href="/reporting/quality_stage_dhu" data-i18n="reports.title">Reports</a>
   </div>
 </div>
 

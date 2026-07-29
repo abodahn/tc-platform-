@@ -206,3 +206,8 @@ def op_delete(op_id):
     svc.delete_op(_pk(op_id))
     flash("Operation removed.", "success")
     return redirect(_referrer_or(url_for("planning.index")))
+
+
+# Report declarations for the shared reporting engine (/reporting). Imported for
+# its import-time side effect: it registers the specs and touches no database.
+from app.planning import reports as _reports  # noqa: E402,F401

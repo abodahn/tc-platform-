@@ -153,3 +153,8 @@ def defect(inspection_id):
     else:
         flash("Defect recorded.", "success")
     return redirect(url_for("quality.detail", inspection_id=inspection_id))
+
+
+# Report declarations for the shared reporting engine (/reporting). Imported for
+# its import-time side effect: it registers this module's reports and touches no DB.
+from app.quality import reports as _reports  # noqa: E402,F401

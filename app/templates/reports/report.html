@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% block title %}{{ spec.title }}{% endblock %}
+{% block content %}
+{% set r = result %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow">
+      <a href="{{ url_for('reports_hub.hub') }}" data-i18n="rpt.back">Report Center</a> ·
+      <span data-loc-en="{{ spec.module_label }}" data-loc-ar="{{ spec.module_label_ar }}" data-loc-tr="{{ spec.module_label_tr }}">{{ spec.module_label }}</span>
+    </div>
+    <h1><span data-loc-en="{{ spec.title }}" data-loc-ar="{{ spec.title_ar }}" data-loc-tr="{{ spec.title_tr }}">{{ spec.title }}</span></h1>
+    <div class="sub"><span data-loc-en="{{ spec.desc }}" data-loc-ar="{{ spec.desc_ar }}" data-loc-tr="{{ spec.desc_tr }}">{{ spec.desc }}</span></div>
+  </div>
+</div>
+
+{# ---------- filters ---------- #}
+<div class="panel">
+  <form method="get" action="{{ url_for('reports_hub.view', key=spec.key) }}">
+    <input type="hidden" name="sort" value="{{ r.sort }}">
+    <input type="hidden" name="dir" value="{{ r.dir }}">
+    <div class="panel-pad" style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">
+
+      {% if spec.date_col %}
+      <div class="field" style="margin:0;min-width:160px">
+        <label data-i18n="rpt.period">Period</label>
+        <select name="period" class="input">
+          <option value="all"     {% if r.period.preset=='all'     %}selected{% endif %} data-i18n="rpt.p_all">All dates</option>
+          <option value="today"   {% if r.period.preset=='today'   %}selected{% endif %} data-i18n="rpt.p_today">Today</option>
+          <option value="week"    {% if r.period.preset=='week'    %}selected{% endif %} data-i18n="rpt.p_week">This week</option>
+          <option value="month"   {% if r.period.preset=='month'   %}selected{% endif %} data-i18n="rpt.p_month">This month</option>
+          <option value="quarter" {% if r.period.preset=='quarter' %}selected{% endif %} data-i18n="rpt.p_quarter">This quarter</option>
+          <option value="year"    {% if r.period.preset=='year'    %}selected{% endif %} data-i18n="rpt.p_year">This year</option>
+          <option value="custom"  {% if r.period.preset=='custom'  %}selected{% endif %} data-i18n="rpt.p_custom">Custom range</option>
+        </select>
+      </div>
+      <div class="field" style="margin:0;min-width:150px">
+        <label data-i18n="rpt.from">From</label>
+        <input type="date" name="from" class="input" value="{{ args.get('from','') }}">
+      </div>
+      <div class="field" style="margin:0;min-width:150px">
+        <label data-i18n="rpt.to">To</label>
+        <input type="date" name="to" class="input" value="{{ args.get('to','') }}">
+      </div>
+      {% endif %}
+
+      {% for f in spec.filters %}
+      <div class="field" style="margin:0;min-width:170px">
+        <label><span data-loc-en="{{ f.en }}" data-loc-ar="{{ f.ar }}" data-loc-tr="{{ f.tr }}">{{ f.en }}</span></label>
+        {% if f.kind == 'select' %}
+          <select name="{{ f.name }}" class="input">
+            <option value="" {% if not args.get(f.name) %}selected{% endif %} data-i18n="reports.all">All</option>
+            {% for opt in f.options %}
+              {% if opt is string %}
+                <option value="{{ opt }}" {% if args.get(f.name)==opt %}selected{% endif %}>{{ opt|replace('_',' ')|title }}</option>
+              {% else %}
+                <option value="{{ opt[0] }}" {% if args.get(f.name)==opt[0] %}selected{% endif %}
+                        data-loc-en="{{ opt[1] }}" data-loc-ar="{{ opt[2] }}" data-loc-tr="{{ opt[3] }}">{{ opt[1] }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        {% elif f.kind == 'date' %}
+          <input type="date" name="{{ f.name }}" class="input" value="{{ args.get(f.name,'') }}">
+        {% elif f.kind == 'num' %}
+          <input type="number" step="any" name="{{ f.name }}" class="input" value="{{ args.get(f.name,'') }}">
+        {% else %}
+          <input type="text" name="{{ f.name }}" class="input" value="{{ args.get(f.name,'') }}" autocomplete="off">
+        {% endif %}
+      </div>
+      {% endfor %}
+
+      <button class="btn btn-primary" type="submit"><span data-i18n="rpt.apply">Apply</span></button>
+      <a class="btn btn-ghost" href="{{ url_for('reports_hub.view', key=spec.key) }}" data-i18n="rpt.reset">Reset</a>
+    </div>
+  </form>
+</div>
+
+{# ---------- error state ---------- #}
+{% if r.error %}
+<div class="panel mt-3">
+  <div class="panel-pad">
+    {% if r.error == 'inverted_range' %}
+      <strong data-i18n="rpt.err_inverted_t">The From date is after the To date.</strong>
+      <div class="muted mt-2" data-i18n="rpt.err_inverted_h">Swap the two dates, or pick a preset period, then apply again.</div>
+    {% else %}
+      <strong data-i18n="rpt.err_date_t">That date could not be read.</strong>
+      <div class="muted mt-2" data-i18n="rpt.err_date_h">Use the date picker (YYYY-MM-DD), then apply again.</div>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+
+{# ---------- KPIs ---------- #}
+{% if r.kpis %}
+<div class="grid cols-{{ 4 if r.kpis|length > 3 else r.kpis|length }} mt-3">
+  {% for k in r.kpis %}
+  <div class="kpi">
+    <div class="ktop">
+      <div class="klabel"><span data-loc-en="{{ k.en }}" data-loc-ar="{{ k.ar }}" data-loc-tr="{{ k.tr }}">{{ k.en }}</span></div>
+      {% if k.has_prior and k.delta is not none %}
+        <span class="ktrend tag" dir="ltr">{{ '%+.1f'|format(k.delta) }}%</span>
+      {% endif %}
+    </div>
+    <div class="kval" dir="ltr">{{ k.display }}</div>
+    <div class="klabel">
+      {% if not k.has_prior %}
+        <span data-i18n="rpt.no_prior">No prior period</span>
+      {% else %}
+        <span data-i18n="rpt.vs_prior">vs previous period</span>
+        <span dir="ltr">{{ r.period.prev_from }} → {{ r.period.prev_to }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ---------- chart ---------- #}
+{% if r.chart %}
+<div class="panel mt-3">
+  <div class="panel-head">
+    <h3><span data-loc-en="{{ r.chart.en }}" data-loc-ar="{{ r.chart.ar }}" data-loc-tr="{{ r.chart.tr }}">{{ r.chart.en }}</span></h3>
+  </div>
+  <div class="panel-pad"><div style="height:280px"><canvas id="rptChart"></canvas></div></div>
+</div>
+<script id="rpt-chart-data" type="application/json">{{ r.chart|tojson }}</script>
+{% endif %}
+
+{# ---------- table ---------- #}
+<div class="panel mt-3">
+  <div class="panel-head">
+    <h3 data-i18n="rpt.results">Results</h3>
+    <div class="flex gap center">
+      <span class="muted"><span dir="ltr">{{ r.total }}</span> <span data-i18n="reports.rows">rows</span></span>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.export', key=spec.key, fmt='csv') }}{% if r.qs %}?{{ r.qs }}{% endif %}">CSV</a>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.export', key=spec.key, fmt='xlsx') }}{% if r.qs %}?{{ r.qs }}{% endif %}">Excel</a>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.export', key=spec.key, fmt='pdf') }}{% if r.qs %}?{{ r.qs }}{% endif %}">PDF</a>
+    </div>
+  </div>
+  <div class="panel-pad" style="overflow-x:auto">
+    {% if r.rows %}
+    <table class="tbl">
+      <thead><tr>
+        {% for c in r.columns %}
+        <th{% if c.kind == 'num' %} style="text-align:end"{% endif %}>
+          <a href="?{{ c.sort_qs }}" class="muted" style="text-decoration:none">
+            <span data-loc-en="{{ c.en }}" data-loc-ar="{{ c.ar }}" data-loc-tr="{{ c.tr }}">{{ c.en }}</span>{% if c.sorted == 'asc' %} ▲{% elif c.sorted == 'desc' %} ▼{% endif %}
+          </a>
+        </th>
+        {% endfor %}
+      </tr></thead>
+      <tbody>
+        {% for row in r.rows %}
+        <tr>
+          {% for c in r.columns %}
+          <td{% if c.kind == 'num' %} dir="ltr" style="text-align:end"{% elif c.kind == 'date' %} dir="ltr"{% endif %}>{{ row[c.key] }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if r.totals_display %}
+      <tfoot><tr>
+        {% for c in r.columns %}
+        <td{% if c.kind == 'num' %} dir="ltr" style="text-align:end"{% endif %}><strong>{% if loop.first %}<span data-i18n="rpt.total_row">Total</span>{% else %}{{ r.totals_display.get(c.key,'') }}{% endif %}</strong></td>
+        {% endfor %}
+      </tr></tfoot>
+      {% endif %}
+    </table>
+    {% if r.capped %}
+    <div class="muted mt-2" style="font-size:12.5px">
+      <span data-i18n="rpt.showing">Showing the first</span> <span dir="ltr">{{ r.rows|length }}</span>
+      <span data-i18n="rpt.of">of</span> <span dir="ltr">{{ r.total }}</span>
+      <span data-i18n="rpt.capped_hint">rows — export to get the full data set.</span>
+    </div>
+    {% endif %}
+    {% else %}
+    <strong data-i18n="rpt.empty_t">No records match these filters.</strong>
+    <div class="muted mt-2" data-i18n="rpt.empty_h">Widen the period, or clear one filter, then apply again.</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ---------- saved views ---------- #}
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="rpt.saved_views">Saved views</h3></div>
+  <div class="panel-pad">
+    {% if views %}
+    <div class="flex gap center" style="flex-wrap:wrap;margin-bottom:12px">
+      {% for v in views %}
+      <span class="tag">
+        <a href="{{ url_for('reports_hub.view', key=spec.key) }}{% if v.qs %}?{{ v.qs }}{% endif %}">{{ v.name }}</a>
+        <form method="post" action="{{ url_for('reports_hub.delete_view', key=spec.key, vid=v.id) }}" style="display:inline">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button class="btn btn-ghost btn-sm" type="submit" title="Delete">×</button>
+        </form>
+      </span>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="muted" data-i18n="rpt.no_views">No saved views yet — set your filters above, then save them here.</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('reports_hub.save_view', key=spec.key) }}"
+          class="flex gap center" style="flex-wrap:wrap;margin-top:10px">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="qs" value="{{ r.qs }}">
+      <div class="field" style="margin:0;min-width:220px">
+        <label><span data-i18n="rpt.view_name">View name</span> *</label>
+        <input type="text" name="name" class="input" maxlength="60" required autocomplete="off">
+      </div>
+      <button class="btn btn-primary btn-sm" type="submit" data-i18n="rpt.save_view">Save this view</button>
+    </form>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if result.chart %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  var el = document.getElementById('rpt-chart-data');
+  var cv = document.getElementById('rptChart');
+  if (!el || !cv || typeof Chart === 'undefined') return;
+  var d = JSON.parse(el.textContent);
+  var ds = [{
+    type: d.kind === 'trend' ? 'line' : 'bar',
+    label: d.en, data: d.values,
+    borderColor: '#C8102E', backgroundColor: 'rgba(200,16,46,.55)',
+    tension: .3, fill: d.kind === 'trend', borderWidth: 2, yAxisID: 'y'
+  }];
+  if (d.cumulative) {
+    ds.push({ type: 'line', label: '%', data: d.cumulative, yAxisID: 'y2',
+              borderColor: '#0B1222', borderWidth: 2, pointRadius: 2, fill: false });
+  }
+  var scales = { y: { beginAtZero: true, ticks: { precision: 0 } } };
+  if (d.cumulative) scales.y2 = { position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } };
+  new Chart(cv.getContext('2d'), {
+    data: { labels: d.labels, datasets: ds },
+    options: { responsive: true, maintainAspectRatio: false,
+               plugins: { legend: { display: !!d.cumulative } }, scales: scales }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

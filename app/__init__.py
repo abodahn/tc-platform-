@@ -142,6 +142,15 @@ def create_app():
     app.register_blueprint(shipping_bp)
     app.register_blueprint(people_bp)
 
+    # Cross-cutting surfaces: the shared reporting hub (every module's reports are
+    # served by these six generic routes) and the governance matrix. Both import
+    # cleanly with no database work, so they add nothing to boot time — which
+    # matters here, because --preload runs create_app() before the port is bound.
+    from app.routes.reports_hub import bp as reports_hub_bp
+    from app.routes.governance import bp as governance_bp
+    app.register_blueprint(reports_hub_bp)
+    app.register_blueprint(governance_bp)
+
     # --- Error handlers ---
     from flask import render_template
 

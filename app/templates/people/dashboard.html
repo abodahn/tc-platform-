@@ -12,6 +12,11 @@
     {% if can('ppl_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('people.attendance') }}" data-i18n="ppl.action.mark_day">Mark today</a>{% endif %}
     <a class="btn btn-ghost btn-sm" href="{{ url_for('people.leave') }}" data-i18n="ppl.nav.leave">Leave</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('people.skills') }}" data-i18n="ppl.nav.skills">Skill matrix</a>
+    {# data-loc-* (not data-i18n) and a literal path on purpose: the link can never
+       render as a raw i18n key, and it cannot break this page if the shared report
+       hub blueprint is not mounted. #}
+    <a class="btn btn-ghost btn-sm" href="/reporting/people_attendance"
+       data-loc-en="Reports" data-loc-ar="التقارير" data-loc-tr="Raporlar">Reports</a>
   </div>
 </div>
 

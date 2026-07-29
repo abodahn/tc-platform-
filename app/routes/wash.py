@@ -242,3 +242,8 @@ def api_json(key):
     if resp is None:
         abort(404)
     return resp
+
+
+# Report declarations for the shared reporting engine (/reporting). Imported for
+# its import-time side effect: it registers this module's reports and touches no DB.
+from app.wash import reports as _reports  # noqa: E402,F401

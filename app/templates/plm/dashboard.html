@@ -12,6 +12,11 @@
     {% if can('plm_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('plm.style_new') }}" data-i18n="plm.action.new_style">New style</a>{% endif %}
     <a class="btn btn-ghost btn-sm" href="{{ url_for('plm.export_csv', key='summary') }}" data-i18n="plm.action.export">Export CSV</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('plm.styles') }}" data-i18n="plm.nav.styles">Styles</a>
+    {# data-loc-* (not data-i18n) and a literal path on purpose: the link can never
+       render as a raw i18n key, and it cannot break this page if the shared report
+       hub blueprint is not mounted. #}
+    <a class="btn btn-ghost btn-sm" href="/reporting/plm_sample_pass"
+       data-loc-en="Reports" data-loc-ar="التقارير" data-loc-tr="Raporlar">Reports</a>
   </div>
 </div>
 

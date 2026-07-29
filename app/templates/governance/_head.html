@@ -1,0 +1,33 @@
+{# Shared page head + tab strip for every /governance view.
+   `tab` is set by the route; `exports` is an optional list of dataset keys the
+   current view can export. #}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="gov.eyebrow">Governance</div>
+    <h1 data-i18n="gov.title">Responsibility, Permissions &amp; Rules</h1>
+    <div class="sub" data-i18n="gov.sub">Who can do what on this platform, which rules the modules enforce, and where the authorisation model has holes. Read-only — nothing on these pages changes a permission.</div>
+  </div>
+  {% if exports %}
+  <div class="flex gap center wrap">
+    {% for key in exports %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('governance.export_csv', key=key) }}">
+      <span data-i18n="gov.export.csv">CSV</span></a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('governance.export_pdf', key=key) }}">
+      <span data-i18n="gov.export.pdf">PDF</span></a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="flex gap center wrap mt-2" style="margin-bottom:18px">
+  <a class="btn btn-sm {{ 'btn-primary' if tab == 'matrix' else 'btn-ghost' }}"
+     href="{{ url_for('governance.index') }}" data-i18n="gov.tab.matrix">Permission matrix</a>
+  <a class="btn btn-sm {{ 'btn-primary' if tab == 'users' else 'btn-ghost' }}"
+     href="{{ url_for('governance.users_view') }}" data-i18n="gov.tab.users">Per-user grants</a>
+  <a class="btn btn-sm {{ 'btn-primary' if tab == 'responsibility' else 'btn-ghost' }}"
+     href="{{ url_for('governance.responsibility_view') }}" data-i18n="gov.tab.responsibility">Responsibility matrix</a>
+  <a class="btn btn-sm {{ 'btn-primary' if tab == 'rules' else 'btn-ghost' }}"
+     href="{{ url_for('governance.rules_view') }}" data-i18n="gov.tab.rules">Rules &amp; ladders</a>
+  <a class="btn btn-sm {{ 'btn-primary' if tab == 'findings' else 'btn-ghost' }}"
+     href="{{ url_for('governance.findings_view') }}" data-i18n="gov.tab.findings">Findings</a>
+</div>

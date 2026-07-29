@@ -440,11 +440,16 @@ for f in sorted(tpl_dir.glob("*.html")):
         if "_csrf" not in body:
             fails.append(f"{f.name}: a POST form has no _csrf")
             print(f"  FAIL  {f.name}: POST form without _csrf")
-check("every data-i18n key uses the qc. prefix", sorted(k for k in keys if not k.startswith("qc.")), [])
+# Platform-level keys the quality templates may legitimately reuse: they already
+# live in app/static/i18n/{en,ar,tr}.json, so reusing one adds no new key and
+# cannot render raw; a qc.* duplicate for "Reports" could.
+SHARED_OK = {"reports.title"}
+check("every data-i18n key uses the qc. prefix (or is a shared platform key)",
+      sorted(k for k in keys if not k.startswith("qc.") and k not in SHARED_OK), [])
 print(f"  ..  {len(keys)} i18n keys used by the templates")
 
 from app.quality.i18n_keys import I18N, UNTRANSLATED         # noqa: E402
-check("every template key has a translation", sorted(keys - set(I18N)), [])
+check("every template key has a translation", sorted(keys - set(I18N) - SHARED_OK), [])
 check("no unused translations shipped", sorted(set(I18N) - keys), [])
 bad_tr = sorted(k for k, v in I18N.items()
                 if len(v) != 3 or not all(str(x).strip() for x in v))

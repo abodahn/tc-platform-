@@ -733,8 +733,13 @@ section("P. i18n key inventory")
 KEYS = set()
 for p in sorted((REPO / "app" / "templates" / "wash").glob("*.html")):
     KEYS |= set(re.findall(r'data-i18n="([^"]+)"', p.read_text(encoding="utf-8")))
-ck(KEYS and all(k.startswith("wsh.") for k in KEYS),
-   "all %d data-i18n keys are namespaced under wsh." % len(KEYS))
+# Platform-level keys the wash templates may legitimately reuse. They already
+# live in app/static/i18n/{en,ar,tr}.json, so reusing one adds no new key and
+# cannot render raw; minting a wsh.* duplicate for "Reports" would.
+SHARED_OK = {"reports.title"}
+ck(KEYS and all(k.startswith("wsh.") or k in SHARED_OK for k in KEYS),
+   "all %d data-i18n keys are namespaced under wsh. (or a shared platform key)"
+   % len(KEYS))
 print("  keys: " + " ".join(sorted(KEYS)))
 
 # ===========================================================================

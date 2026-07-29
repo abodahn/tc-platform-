@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Governance &mdash; Findings{% endblock %}
+{% block content %}
+{% set exports = ['findings'] %}
+{% include "governance/_head.html" %}
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ f.unheld|length }}</div><div class="l" data-i18n="gov.find.k_unheld">Unheld permissions</div></div>
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ f.star_only|length }}</div><div class="l" data-i18n="gov.find.k_star_only">Held only by an all-permissions account</div></div>
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ f.empty_roles|length }}</div><div class="l" data-i18n="gov.find.k_empty">Empty roles</div></div>
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ f.dead|length }}</div><div class="l" data-i18n="gov.find.k_dead">Unenforced permissions</div></div>
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ f.open_routes|length }}</div><div class="l" data-i18n="gov.find.k_open">Unguarded routes</div></div>
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ f.escalations|length }}</div><div class="l" data-i18n="gov.find.k_extra">Users above their role</div></div>
+</div>
+
+{# ---- 1. granted but held by nobody --------------------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.find.unheld">Permissions granted by a role but held by no active user</h3>
+    <span class="muted" dir="ltr">{{ f.unheld|length }}</span></div>
+  {% if f.unheld %}
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="gov.col.perm">Permission</th><th data-i18n="gov.col.roles">Granted by</th></tr></thead>
+    <tbody>{% for x in f.unheld %}
+      <tr><td>{{ x.perm }}<div class="muted" style="font-size:11px">{{ x.label }}</div></td>
+        <td>{% for r in x.roles %}<span class="tag">{{ r }}</span> {% endfor %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
+</div>
+
+{# ---- 1b. held only through a blanket '*' grant ---------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.find.star_only">Permissions whose only holder is an all-permissions account</h3>
+    <span class="muted" dir="ltr">{{ f.star_only|length }}</span></div>
+  <div class="panel-pad"><div class="muted" style="font-size:12.5px" data-i18n="gov.find.star_note">Somebody can technically do these, but only because they hold every permission. No business role holder exists, so there is nobody to name as accountable and nobody to cover the work if the root account is unavailable.</div></div>
+  {% if f.star_only %}
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="gov.col.perm">Permission</th><th data-i18n="gov.col.holders">Holders</th><th data-i18n="gov.col.roles">Granted by</th></tr></thead>
+    <tbody>{% for x in f.star_only %}
+      <tr><td>{{ x.perm }}<div class="muted" style="font-size:11px">{{ x.label }}</div></td>
+        <td dir="ltr"><span class="badge b-warning">{{ x.holders }}</span></td>
+        <td>{% if x.roles %}{% for r in x.roles %}<span class="tag">{{ r }}</span> {% endfor %}
+            {% else %}<span class="muted" data-i18n="gov.find.no_named_role">No role names it</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
+</div>
+
+{# ---- 2. roles with no holders --------------------------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.find.empty_roles">Roles with no active users</h3>
+    <span class="muted" dir="ltr">{{ f.empty_roles|length }}</span></div>
+  {% if f.empty_roles %}
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="gov.col.role">Role</th><th data-i18n="gov.col.perm_count">Permissions granted</th><th data-i18n="gov.col.type">Type</th></tr></thead>
+    <tbody>{% for x in f.empty_roles %}
+      <tr><td><b>{{ x.label }}</b><div class="muted" style="font-size:11px">{{ x.key }}</div></td>
+        <td dir="ltr">{{ x.perms }}</td>
+        <td>{% if x.custom %}<span class="tag" data-i18n="gov.tag.custom">Custom role</span>{% else %}<span class="tag" data-i18n="gov.tag.builtin">Built-in</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
+</div>
+
+{# ---- 3. single-holder continuity risk ------------------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.find.single_roles">Roles with a single holder (continuity risk)</h3>
+    <span class="muted" dir="ltr">{{ f.single_roles|length }}</span></div>
+  {% if f.single_roles %}
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="gov.col.role">Role</th><th data-i18n="gov.col.user">User</th></tr></thead>
+    <tbody>{% for x in f.single_roles %}
+      <tr><td><b>{{ x.label }}</b><div class="muted" style="font-size:11px">{{ x.key }}</div></td><td>{{ x.user }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
+</div>
+
+{# ---- 4. dead authority ----------------------------------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.find.dead">Permissions no route enforces</h3>
+    <span class="muted" dir="ltr">{{ f.dead|length }}</span></div>
+  <div class="panel-pad"><div class="muted" style="font-size:12.5px" data-i18n="gov.find.scan_note">Static scan of the source of every registered route, looking for the permission decorator and the in-handler guards. A permission enforced only inside a service the route calls therefore appears here — that is deliberate: enforcement an auditor cannot see on the route is enforcement they cannot sign off.</div></div>
+  {% if f.dead %}
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="gov.col.perm">Permission</th><th data-i18n="gov.col.roles">On roles</th><th data-i18n="gov.col.detail">Detail</th></tr></thead>
+    <tbody>{% for x in f.dead %}
+      <tr><td>{{ x.perm }}<div class="muted" style="font-size:11px">{{ x.label }}</div></td>
+        <td dir="ltr">{{ x.roles }}</td>
+        <td>{% if x.mentioned %}<span class="tag" data-i18n="gov.find.mentioned">Referenced elsewhere in the code</span>
+            {% else %}<span class="badge b-critical" data-i18n="gov.find.unreferenced">Not referenced anywhere</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
+</div>
+
+{# ---- 5. unguarded routes --------------------------------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.find.open_routes">Routes with no permission check</h3>
+    <span class="muted" dir="ltr">{{ f.open_routes|length }} / {{ f.route_total }}</span></div>
+  <div class="panel-pad"><div class="muted" style="font-size:12.5px">
+    <span data-i18n="gov.find.open_note">Every registered route that carries no permission guard in its own source. Some are legitimately public (sign-in, health, static assets); the ones that are not are the most serious finding on this page.</span>
+    <span data-i18n="gov.find.indirect_note">Routes that hand their check to a helper in the same module are counted as guarded and excluded here:</span>
+    <span dir="ltr">{{ f.indirect_routes|length }}</span>.</div></div>
+  {% if f.open_routes %}
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="gov.col.route">Route</th><th data-i18n="gov.col.endpoint">Endpoint</th><th data-i18n="gov.col.methods">Methods</th><th data-i18n="gov.col.login">Login required</th></tr></thead>
+    <tbody>{% for x in f.open_routes %}
+      <tr><td dir="ltr">{{ x.rule }}</td><td dir="ltr">{{ x.endpoint }}</td><td dir="ltr">{{ x.methods }}</td>
+        <td>{% if x.login %}<span class="tag" data-i18n="gov.yes">Yes</span>
+            {% else %}<span class="badge b-critical" data-i18n="gov.no">No</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
+</div>
+
+{# ---- 6. extra_perms above the role ----------------------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.find.escalations">Users whose extra permissions exceed their role</h3>
+    <span class="muted" dir="ltr">{{ f.escalations|length }}</span></div>
+  {% if f.escalations %}
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="gov.col.user">User</th><th data-i18n="gov.col.role">Role</th><th data-i18n="gov.col.beyond">Beyond the role</th></tr></thead>
+    <tbody>{% for x in f.escalations %}
+      <tr><td><b>{{ x.full_name or x.username }}</b><div class="muted" style="font-size:11px">{{ x.username }}</div></td>
+        <td>{{ x.role_label }}<div class="muted" style="font-size:11px">{{ x.role }}</div></td>
+        <td>{% for p in x.beyond %}<span class="badge b-warning">{{ p }}</span> {% endfor %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
+</div>
+{% endblock %}

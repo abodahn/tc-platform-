@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}Governance &mdash; Rules &amp; Ladders{% endblock %}
+{% block content %}
+{% set exports = ['holders'] %}
+{% include "governance/_head.html" %}
+
+{# ---------------- Segregation of duties: the state an auditor must see ------ #}
+<div class="panel">
+  <div class="panel-head">
+    <h3 data-i18n="gov.rules.sod">Segregation of duties</h3>
+    {% if proc.ok %}
+      {% if proc.sod_live %}<span class="badge b-warning" data-i18n="gov.rules.exempt_on">Admins exempt: ON</span>
+      {% else %}<span class="badge b-active" data-i18n="gov.rules.exempt_off">Admins exempt: OFF (strict)</span>{% endif %}
+    {% endif %}
+  </div>
+  <div class="panel-pad">
+    {% if not proc.ok %}
+    <div class="muted" data-i18n="gov.rules.unavailable">Not available in this build.</div>
+    {% else %}
+    <ul style="font-size:13px;line-height:1.7;padding-inline-start:18px;margin:0">
+      <li data-i18n="gov.rules.sod_self">Self-approval: the person who raised a purchase request may never sign any of its approval stages — raising it is already their signature.</li>
+      <li data-i18n="gov.rules.sod_dual">Dual role: one person may not sign two different stages of the same request, not even when a delegation makes them eligible for both.</li>
+    </ul>
+    <div class="mt-3" style="font-size:13px">
+      {% if proc.sod_live %}
+      <span class="badge b-warning" data-i18n="gov.rules.warning">Warning</span>
+      <span data-i18n="gov.rules.sod_warn">While "admins exempt" is on, super_admin and every role holding Procurement admin bypass BOTH rules and can walk a request through the whole ladder alone. This materially weakens segregation of duties. Turn it off in Procurement settings for strict mode.</span>
+      {% else %}
+      <span data-i18n="gov.rules.sod_strict">Strict mode: administrators are bound by both independence rules exactly like everyone else.</span>
+      {% endif %}
+    </div>
+    <div class="muted mt-2" style="font-size:12px">
+      <span data-i18n="gov.rules.code_default">Code default</span>:
+      <span dir="ltr">{{ 'ON' if proc.sod_constant else 'OFF' }}</span>
+      {% if proc.sod_overridden %}&nbsp;<span class="tag" data-i18n="gov.rules.overridden">Overridden in settings</span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ---------------- Procurement ladder + thresholds --------------------------- #}
+{% if proc.ok %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.rules.proc">Procurement approval ladder</h3>
+    <span class="muted" data-i18n="gov.rules.currency">EGP-equivalent</span></div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="gov.rules.stage">Stage</th>
+        <th data-i18n="gov.rules.kind">Type</th>
+        <th data-i18n="gov.rules.threshold">Joins the ladder from</th>
+        <th data-i18n="gov.rules.signers">Signing roles</th>
+        <th data-i18n="gov.col.holders">Holders</th>
+      </tr></thead>
+      <tbody>
+        {% for s in proc.stages %}
+        <tr>
+          <td><b>{{ s.label }}</b><div class="muted" style="font-size:11px">{{ s.stage }}</div></td>
+          <td>{% if s.kind == 'demand' %}<span class="tag" data-i18n="gov.rules.demand">Always required</span>
+              {% else %}<span class="tag" data-i18n="gov.rules.value">Value-gated</span>{% endif %}</td>
+          <td dir="ltr">{{ '{:,.0f}'.format(s.threshold) }}</td>
+          <td>{% for r in s.roles %}<span class="tag">{{ r }}</span> {% endfor %}
+              {% if not s.roles %}<span class="muted">&mdash;</span>{% endif %}</td>
+          <td dir="ltr">
+            {% set total = namespace(v=0) %}
+            {% for r in s.roles %}{% set total.v = total.v + holders.get(r, 0) %}{% endfor %}
+            {% if total.v == 0 %}<span class="badge b-critical">0</span>
+            {% elif total.v == 1 %}<span class="badge b-warning">1</span>
+            {% else %}{{ total.v }}{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel-pad">
+    <div class="muted" style="font-size:12.5px" data-i18n="gov.rules.examples">Signatures required by request value</div>
+    <div class="mt-2" style="font-size:13px">
+      {% for amount, stages in proc.examples %}
+      <div class="mt-2"><span dir="ltr"><b>{{ '{:,.0f}'.format(amount) }}</b></span> &rarr;
+        <span dir="ltr">{{ stages|length + 1 }}</span> <span data-i18n="gov.rules.signatures">signatures</span>:
+        {% for s in stages %}<span class="tag">{{ s }}</span> {% endfor %}</div>
+      {% endfor %}
+    </div>
+    <div class="muted mt-3" style="font-size:12.5px">
+      <span data-i18n="gov.rules.rfq">Competitive quotation gate</span>:
+      <span dir="ltr">{{ proc.rfq_min }}</span> <span data-i18n="gov.rules.rfq_quotes">quotes from distinct vendors at or above</span>
+      <span dir="ltr">{{ '{:,.0f}'.format(proc.rfq_threshold) }}</span>,
+      <span data-i18n="gov.rules.rfq_waiver">unless Purchasing records a single-source justification.</span>
+      &nbsp;&middot;&nbsp;
+      <span data-i18n="gov.rules.sla">Stage SLA</span>: <span dir="ltr">{{ proc.sla_hours }}h</span>
+    </div>
+  </div>
+</div>
+
+{# ---------------- SoD escalation chain ------------------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.rules.escalation">Segregation-of-duties escalation chain</h3>
+    <span class="muted">{{ proc.escalation_source }}</span></div>
+  <div class="panel-pad">
+    <div class="muted" style="font-size:13px" data-i18n="gov.rules.escalation_sub">When the requester is the only person who may sign a rung, that rung would wait for a signature that can never legally arrive. It is escalated one level up the org chart instead. A role with no superior configured means nobody above it, and the request is refused at submit rather than left to rot.</div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="gov.col.role">Role</th>
+        <th data-i18n="gov.rules.superior">Escalates to</th>
+        <th data-i18n="gov.col.holders">Holders</th>
+      </tr></thead>
+      <tbody>
+        {% for role, superior in proc.escalation|dictsort %}
+        <tr>
+          <td>{{ role }}</td>
+          <td>{% if superior %}{{ superior }}
+              {% else %}<span class="badge b-critical" data-i18n="gov.rules.nobody">Nobody above</span>{% endif %}</td>
+          <td dir="ltr">
+            {% set n = holders.get(role, 0) %}
+            {% if n == 0 %}<span class="badge b-critical">0</span>{% else %}{{ n }}{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ---------------- Maintenance ladder --------------------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.rules.maint">Maintenance approval ladder</h3></div>
+  {% if maint %}
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="gov.rules.name">Rule</th>
+        <th data-i18n="gov.rules.criticality">Part criticality</th>
+        <th data-i18n="gov.rules.threshold">Joins the ladder from</th>
+        <th data-i18n="gov.rules.levels">Approver roles, in order</th>
+        <th data-i18n="gov.rules.escalation_hours">Escalates after</th>
+      </tr></thead>
+      <tbody>
+        {% for r in maint %}
+        <tr>
+          <td><b>{{ r.name }}</b><div class="muted" style="font-size:11px">{{ r.request_type }}</div>
+            {% if not r.active %}<span class="tag" data-i18n="gov.rules.inactive">Inactive</span>{% endif %}</td>
+          <td>{{ r.criticality }}</td>
+          <td dir="ltr">{{ '{:,.0f}'.format(r.threshold or 0) }}</td>
+          <td>{% for lv in r.levels %}<span class="tag">{{ lv }}</span> {% endfor %}</td>
+          <td dir="ltr">{{ r.escalation_hours }}h</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty" data-i18n="gov.rules.unavailable">Not available in this build.</div>
+  {% endif %}
+</div>
+
+{# ---------------- Who holds each role right now ---------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.rules.holders">Who holds each role right now</h3>
+    <span class="muted" data-i18n="gov.rules.holders_sub">A role with no holder is a governance hole; a role with one holder is a continuity risk.</span></div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="gov.col.role">Role</th>
+        <th data-i18n="gov.col.holders">Holders</th>
+        <th data-i18n="gov.col.risk">Risk</th>
+      </tr></thead>
+      <tbody>
+        {% for r in roles %}
+        {% set n = holders.get(r.key, 0) %}
+        <tr>
+          <td><b>{{ r.label }}</b><div class="muted" style="font-size:11px">{{ r.key }}</div>
+            {% if r.custom %}<span class="tag" data-i18n="gov.tag.custom">Custom role</span>{% endif %}</td>
+          <td dir="ltr">{{ n }}</td>
+          <td>
+            {% if n == 0 %}<span class="badge b-critical" data-i18n="gov.rules.no_holder">No holder</span>
+            {% elif n == 1 %}<span class="badge b-warning" data-i18n="gov.rules.single">Single holder</span>
+              <span class="muted" style="font-size:11px">{{ first_holder.get(r.key, '') }}</span>
+            {% else %}<span class="badge b-active" data-i18n="gov.rules.ok">Covered</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

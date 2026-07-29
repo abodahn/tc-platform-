@@ -199,3 +199,8 @@ def sample_verdict(sample_id):
                               request.form.get("comments"), _u())
     flash("plm.msg." + err if not ok else "Verdict recorded.", "error" if not ok else "success")
     return redirect(_referrer_or(url_for("plm.index")))
+
+
+# Declares this module's reports with the shared reporting engine. Import only —
+# it runs no query and touches no database (see app/plm/reports.py).
+from app.plm import reports as _reports           # noqa: E402,F401

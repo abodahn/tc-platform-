@@ -7,12 +7,15 @@
     <h1 data-i18n="proc.title">Procurement &amp; Approvals</h1>
     <div class="sub" data-i18n="proc.sub">Raise a purchase request, route it through the approval ladder, sign digitally, and issue the PO — no paper.</div>
   </div>
+  <div class="flex gap center">
+  <a class="btn btn-ghost btn-sm" href="/reporting/"><span data-loc-en="Reports Center" data-loc-ar="مركز التقارير" data-loc-tr="Raporlar Merkezi">Reports Center</span></a>
   {% if can_create %}
   <a class="btn btn-primary" href="{{ url_for('approvals.new') }}">
     <svg class="ico"><use href="#i-report"></use></svg>
     <span data-i18n="proc.new">New Request</span>
   </a>
   {% endif %}
+  </div>
 </div>
 
 <div class="grid cols-4">

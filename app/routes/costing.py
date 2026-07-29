@@ -171,3 +171,8 @@ def link_pr(order_id):
            "no_procurement": "Procurement module is not available."}
           .get(msg, "Could not link the purchase requisition."), "success" if ok else "error")
     return _back(order_id)
+
+
+# Report declarations for the shared reporting engine (/reporting). Imported for
+# its import-time side effect: it registers the specs and touches no database.
+from app.costing import reports as _reports  # noqa: E402,F401

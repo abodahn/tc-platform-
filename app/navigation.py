@@ -132,7 +132,8 @@ NAV = [
         ("cmp_audits", "nav.cmp_audits", "check", "compliance.audits", "cmp_view"),
         ("cmp_certs", "nav.cmp_certs", "book", "compliance.certs", "cmp_view"),
         ("reports", "nav.reports", "report", "main.reports", "view_reports"),
-        ("governance", "nav.governance", "map", "main.module", "open_module"),
+        ("reporting", "nav.reporting", "chart", "reports_hub.hub", "view_reports"),
+        ("governance", "nav.governance", "map", "governance.index", "access_admin"),
         ("health", "nav.health", "pulse", "main.health", "view_system_health"),
         ("roadmap", "nav.roadmap", "map", "main.roadmap", "view_dashboard"),
     ]},
@@ -147,4 +148,4 @@ NAV = [
 # They are HIDDEN for normal users and shown to admins under an "In Progress"
 # group instead of their normal sections. Move a key out of here the moment its
 # module becomes real.
-WIP_KEYS = {"ai_hub", "finance", "automation", "hr", "saplite", "kb", "governance"}
+WIP_KEYS = {"ai_hub", "finance", "automation", "hr", "saplite", "kb"}

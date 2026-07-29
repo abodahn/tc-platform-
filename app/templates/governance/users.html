@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Governance &mdash; Per-user Grants{% endblock %}
+{% block content %}
+{% set exports = ['extra_perms'] %}
+{% include "governance/_head.html" %}
+
+<div class="panel">
+  <div class="panel-head">
+    <h3 data-i18n="gov.users.title">Per-user extra permissions</h3>
+    <span class="muted" dir="ltr">{{ rows|length }} / {{ n_users }}</span>
+  </div>
+  <div class="panel-pad">
+    <div class="muted" style="font-size:13px" data-i18n="gov.users.sub">A permission granted directly on a user account sits outside every role. It is what an auditor asks about first and the only place on the platform where it is visible.</div>
+  </div>
+  {% if rows %}
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th data-i18n="gov.col.user">User</th>
+          <th data-i18n="gov.col.role">Role</th>
+          <th data-i18n="gov.col.beyond">Beyond the role</th>
+          <th data-i18n="gov.col.redundant">Already in the role</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in rows %}
+        <tr>
+          <td><b>{{ u.full_name or u.username }}</b><div class="muted" style="font-size:11px">{{ u.username }}</div></td>
+          <td>{{ u.role_label }}<div class="muted" style="font-size:11px">{{ u.role }}</div></td>
+          <td>
+            {% if u.beyond %}{% for p in u.beyond %}<span class="badge b-warning" title="{{ perm_label(p) }}">{{ p }}</span> {% endfor %}
+            {% else %}<span class="muted">&mdash;</span>{% endif %}
+          </td>
+          <td>
+            {% if u.redundant %}{% for p in u.redundant %}<span class="tag" title="{{ perm_label(p) }}">{{ p }}</span> {% endfor %}
+            {% else %}<span class="muted">&mdash;</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty" data-i18n="gov.empty.extra">No active user carries a per-user permission grant. Every permission on this platform comes from a role.</div>
+  {% endif %}
+</div>
+{% endblock %}

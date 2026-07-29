@@ -159,3 +159,8 @@ def bundle_move(bundle_id):
 def bundle_status(bundle_id):
     _flash(svc.set_bundle_status(bundle_id, request.form.get("status") or "", _u()))
     return redirect(_back(url_for("mes.bundles")))
+
+
+# Report declarations for the shared reporting engine (/reporting). Imported for
+# its import-time side effect: it registers this module's reports and touches no DB.
+from app.mes import reports as _reports  # noqa: E402,F401

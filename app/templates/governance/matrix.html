@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Governance &mdash; Permission Matrix{% endblock %}
+{% block content %}
+{% set exports = ['matrix'] %}
+{% include "governance/_head.html" %}
+
+<div class="sf-kpis">
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ n_roles }}</div><div class="l" data-i18n="gov.kpi.roles">Roles</div></div>
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ n_perms }}</div><div class="l" data-i18n="gov.kpi.perms">Permissions</div></div>
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ all_groups|length }}</div><div class="l" data-i18n="gov.kpi.groups">Permission groups</div></div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.filter.title">Filter</h3>
+    <span class="muted"><span data-i18n="gov.legend.star">Granted via *</span> &nbsp;&middot;&nbsp;
+      <span data-i18n="gov.legend.granted">Granted</span> &nbsp;&middot;&nbsp;
+      <span data-i18n="gov.legend.none">Not granted</span></span></div>
+  <div class="panel-pad">
+    <form method="get" class="flex gap wrap center">
+      <div class="field" style="margin:0;min-width:220px">
+        <label><span data-i18n="gov.filter.group">Permission group</span></label>
+        <select name="group">
+          <option value="" data-i18n="gov.filter.all">All</option>
+          {% for g in all_groups %}<option value="{{ g }}"{% if g == f_group %} selected{% endif %}>{{ g }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field" style="margin:0;min-width:220px">
+        <label><span data-i18n="gov.filter.role">Role</span></label>
+        <select name="role">
+          <option value="" data-i18n="gov.filter.all">All</option>
+          {% for r in roles %}<option value="{{ r.key }}"{% if r.key == f_role %} selected{% endif %}>{{ r.label }} ({{ r.key }})</option>{% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-primary btn-sm" data-i18n="gov.filter.apply">Apply</button>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('governance.index') }}" data-i18n="gov.filter.clear">Clear</a>
+    </form>
+  </div>
+</div>
+
+{% if not shown %}
+<div class="panel mt-4"><div class="empty" data-i18n="gov.empty.roles">No role matches this filter.</div></div>
+{% endif %}
+
+{% for group, items in groups %}
+<div class="panel mt-4">
+  <div class="panel-head">
+    <h3>{{ group }}</h3>
+    <span class="muted" dir="ltr">{{ items|length }} &times; {{ shown|length }}</span>
+  </div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th style="position:sticky;inset-inline-start:0;z-index:3;background:var(--panel)" data-i18n="gov.col.role">Role</th>
+          <th data-i18n="gov.col.holders">Holders</th>
+          {% for key, label, desc in items %}
+          <th style="text-align:center" title="{{ label }}{% if desc %} — {{ desc }}{% endif %}">{{ key }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in shown %}
+        <tr>
+          <td style="position:sticky;inset-inline-start:0;z-index:1;background:var(--panel)">
+            <b>{{ r.label }}</b>
+            <div class="muted" style="font-size:11px">{{ r.key }}</div>
+            {% if r.custom %}<span class="tag" data-i18n="gov.tag.custom">Custom role</span>{% endif %}
+            {% if r.star %}<span class="tag" data-i18n="gov.tag.star">All permissions</span>{% endif %}
+          </td>
+          <td dir="ltr">
+            {% set n = holders.get(r.key, 0) %}
+            {% if n == 0 %}<span class="badge b-critical">0</span>
+            {% elif n == 1 %}<span class="badge b-warning">1</span>
+            {% else %}{{ n }}{% endif %}
+          </td>
+          {% for key, label, desc in items %}
+          {% set c = cell(r, key) %}
+          <td style="text-align:center">
+            {% if c == 'star' %}<span class="badge b-active">&lowast;</span>
+            {% elif c == 'yes' %}<span class="badge b-active">&check;</span>
+            {% else %}<span class="muted">&middot;</span>{% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,430 @@
+"""Procurement & Approvals — report declarations for the shared reporting engine.
+
+Declaration ONLY: plain dicts built at import time, no DB access here (gunicorn
+runs --preload, so anything that queries at import runs before the port binds).
+The engine composes the SQL, binds every user value as a parameter, renders the
+page, exports CSV/XLSX/PDF and enforces `proc_view` on all four surfaces.
+
+Money notes, because a report with a quietly wrong number is worse than none:
+  * `grand` is total + tax, the SAME formula as services.pr_amounts().
+  * `egp` is the GROSS (grand) converted with the SAME currency rules as
+    services.egp_total(): a PR already in EGP is never multiplied by fx_rate, and
+    a non-positive rate falls back to 1:1. It is the only figure that may be
+    SUMmed across a mixed-currency data set, so every grouped/aggregated report
+    works in EGP and says so in its labels. It is deliberately gross where
+    egp_total() is net — egp_total() exists to route the approval ladder on the
+    order value, these reports exist to state what the money is.
+  * the 3-way-match tolerance is max(1, grand * 1%), the SAME rule as
+    services.three_way_match(). Exceptions are reported as AMOUNTS, not as
+    English words, so they need no translation and can be sorted and totalled.
+  * "committed" is the SAME status set as services.budget_status(): approved and
+    beyond. A request still in the approval ladder has committed nothing yet —
+    proc_waiting is where the pipeline is reported.
+"""
+from app.services import reporting as R
+
+MODULE = "procurement"
+LABEL_EN, LABEL_AR, LABEL_TR = "Procurement", "المشتريات", "Satın Alma"
+PERM = "proc_view"
+
+# --- shared SQL fragments (module-authored; never touched by user input) -----
+_SUB = "COALESCE(p.total,0)"
+_GRAND = f"({_SUB} * (1 + COALESCE(p.tax_rate,0)/100.0))"
+# The two guards services.egp_total() applies, in SQL. Both are load-bearing:
+#   * a PR repriced from USD back to EGP keeps the fx_rate of the currency it
+#     used to be in (services.price_pr never resets it), so a bare
+#     `grand * fx_rate` reported a 2,000 EGP request as 60,000 EGP;
+#   * a zero/negative rate must fall back to 1:1, not annihilate the value —
+#     COALESCE alone only catches NULL.
+_IS_EGP = "UPPER(TRIM(COALESCE(p.currency,'EGP'))) = 'EGP'"
+_FX = "(CASE WHEN COALESCE(p.fx_rate,1) > 0 THEN COALESCE(p.fx_rate,1) ELSE 1 END)"
+_EGP = f"(CASE WHEN {_IS_EGP} THEN {_GRAND} ELSE {_GRAND} * {_FX} END)"
+_PAID_EGP = (f"(CASE WHEN {_IS_EGP} THEN COALESCE(p.paid_amount,0) "
+             f"ELSE COALESCE(p.paid_amount,0) * {_FX} END)")
+# max(1, grand * 1%) — three_way_match's tolerance, expressed without a MAX()
+# aggregate (SQLite's MAX(a,b) scalar form does not exist on PostgreSQL).
+_TOL = f"(CASE WHEN {_GRAND}*0.01 > 1.0 THEN {_GRAND}*0.01 ELSE 1.0 END)"
+
+# Statuses that represent real money the company has committed to spend. EXACTLY
+# the set services.budget_status() gates a new request against — a request still
+# climbing the ladder has committed nothing, and a report that said otherwise
+# would disagree with the budget check that actually blocks a submission.
+_COMMITTED = ("'approved','po_issued','partially_received','received','closed'")
+
+_STATUS_OPTS = [
+    ("draft", "Draft", "مسودة", "Taslak"),
+    ("pending", "Pending", "قيد الاعتماد", "Beklemede"),
+    ("approved", "Approved", "معتمد", "Onaylandı"),
+    ("rejected", "Rejected", "مرفوض", "Reddedildi"),
+    ("po_issued", "PO issued", "صدر أمر الشراء", "Sipariş verildi"),
+    ("partially_received", "Partially received", "مستلم جزئياً", "Kısmen teslim"),
+    ("received", "Received", "مستلم", "Teslim alındı"),
+    ("closed", "Closed", "مغلق", "Kapandı"),
+    ("cancelled", "Cancelled", "ملغي", "İptal"),
+]
+
+_STAGE_OPTS = [
+    ("warehouse", "Warehouse", "المخازن", "Depo"),
+    ("factory_manager", "Factory Manager", "مدير المصنع", "Fabrika Müdürü"),
+    ("purchasing", "Purchasing", "المشتريات", "Satın Alma"),
+    ("finance", "Finance", "المالية", "Finans"),
+    ("cfo", "CFO", "المدير المالي", "Mali İşler Direktörü"),
+    ("ceo", "CEO", "الرئيس التنفيذي", "Genel Müdür"),
+]
+
+_PAY_OPTS = [
+    ("unpaid", "Unpaid", "غير مدفوع", "Ödenmedi"),
+    ("partial", "Partly paid", "مدفوع جزئياً", "Kısmi ödendi"),
+    ("paid", "Paid", "مدفوع", "Ödendi"),
+]
+
+
+def _common(**kw):
+    kw.setdefault("module", MODULE)
+    kw.setdefault("module_label", LABEL_EN)
+    kw.setdefault("module_label_ar", LABEL_AR)
+    kw.setdefault("module_label_tr", LABEL_TR)
+    kw.setdefault("perm", PERM)
+    return kw
+
+
+# ---------------------------------------------------------------------------
+# 1. Purchase requests & spend — the register, and spend by supplier
+# ---------------------------------------------------------------------------
+R.register(**_common(
+    key="proc_requests",
+    title="Purchase requests & spend",
+    title_ar="طلبات الشراء والإنفاق",
+    title_tr="Satın alma talepleri ve harcama",
+    desc="Every purchase request with its value. 'Value (EGP)' is the GROSS "
+         "amount — net + tax, then converted (gross x FX rate) — so "
+         "mixed-currency requests add up honestly.",
+    desc_ar="كل طلب شراء بقيمته. «القيمة (ج.م)» هي الإجمالي شاملاً الضريبة "
+            "(الصافي + الضريبة) ثم محوّلاً (الإجمالي × سعر الصرف)، حتى تُجمع "
+            "الطلبات متعددة العملات بصدق.",
+    desc_tr="Her satın alma talebi ve değeri. 'Değer (EGP)' KDV DAHİL tutardır "
+            "(net + vergi), sonra çevrilir (brüt x kur); böylece farklı para "
+            "birimleri doğru toplanır.",
+    select=(
+        "p.pr_no AS pr_no, p.title AS title, p.department AS department, "
+        "p.vendor AS vendor, p.status AS status, p.currency AS currency, "
+        f"{_SUB} AS subtotal, {_GRAND} AS grand, {_EGP} AS egp, "
+        "p.request_date AS request_date"
+    ),
+    frm="pr_requests p",
+    base_where=["COALESCE(p.is_active,1) = 1"],
+    order="p.id DESC",
+    date_col="p.created_at",
+    columns=[
+        R.col("pr_no", "PR No", "رقم الطلب", "Talep No"),
+        R.col("title", "Title", "العنوان", "Başlık"),
+        R.col("department", "Department", "الإدارة", "Departman"),
+        R.col("vendor", "Supplier", "المورد", "Tedarikçi"),
+        R.col("status", "Status", "الحالة", "Durum"),
+        R.col("currency", "Currency", "العملة", "Para birimi"),
+        R.col("subtotal", "Net", "الصافي", "Net", "num"),
+        R.col("grand", "Gross", "الإجمالي مع الضريبة", "KDV dahil", "num"),
+        R.col("egp", "Value (EGP)", "القيمة (ج.م)", "Değer (EGP)", "num",
+              total=f"SUM({_EGP})"),
+        R.col("request_date", "Requested", "تاريخ الطلب", "Talep tarihi", "date"),
+    ],
+    filters=[
+        R.filt("status", "Status", "الحالة", "Durum", "p.status", "select", "=",
+               _STATUS_OPTS),
+        R.filt("department", "Department", "الإدارة", "Departman", "p.department"),
+        R.filt("vendor", "Supplier", "المورد", "Tedarikçi", "p.vendor"),
+        R.filt("currency", "Currency", "العملة", "Para birimi", "p.currency",
+               "text", "="),
+    ],
+    kpis=[
+        R.kpi("n", "Requests", "عدد الطلبات", "Talep sayısı", "COUNT(*)"),
+        R.kpi("value", "Total value (EGP)", "إجمالي القيمة (ج.م)",
+              "Toplam değer (EGP)", f"SUM({_EGP})"),
+        R.kpi("committed", "Committed (EGP)", "المرتبط به (ج.م)",
+              "Taahhüt (EGP)",
+              f"SUM(CASE WHEN p.status IN ({_COMMITTED}) THEN {_EGP} ELSE 0 END)"),
+        R.kpi("waiting", "Awaiting approval", "بانتظار الاعتماد", "Onay bekleyen",
+              "SUM(CASE WHEN p.status = 'pending' THEN 1 ELSE 0 END)",
+              better="down"),
+    ],
+    chart=R.chart("pareto", "p.vendor", f"SUM({_EGP})", "p.vendor",
+                  "Spend by supplier (EGP)", "الإنفاق حسب المورد (ج.م)",
+                  "Tedarikçiye göre harcama (EGP)"),
+))
+
+
+# ---------------------------------------------------------------------------
+# 2. Budget vs committed vs spent, per department and year
+# ---------------------------------------------------------------------------
+_DEPT = "COALESCE(p.department,'')"
+_PERIOD = "substr(COALESCE(p.request_date, p.created_at), 1, 4)"
+_COMMIT_SUM = (f"SUM(CASE WHEN p.status IN ({_COMMITTED}) THEN {_EGP} ELSE 0 END)")
+_SPENT_SUM = f"SUM({_PAID_EGP})"
+
+# EVERY (department, year) that either holds a budget or carries a request. The
+# obvious `pr_requests LEFT JOIN budgets` cannot be used: it silently drops a
+# department that has a budget and has not spent it, which is the single most
+# important row on a budget report and made the "Budget (EGP)" headline read
+# 1.65M against 6.09M actually allocated. Neither side may drive, so the KEYS
+# drive and both sides hang off them.
+# COALESCE on department, not the raw column: NULL = NULL is false in SQL, so a
+# request with no department would otherwise fall out of its own report.
+_KEYS = (
+    "(SELECT COALESCE(department,'') AS department, COALESCE(period,'') AS period "
+    "FROM proc_budgets GROUP BY COALESCE(department,''), COALESCE(period,'') "
+    "UNION "
+    "SELECT COALESCE(department,''), "
+    "substr(COALESCE(request_date, created_at), 1, 4) "
+    "FROM pr_requests WHERE COALESCE(is_active,1) = 1 "
+    "GROUP BY COALESCE(department,''), "
+    "substr(COALESCE(request_date, created_at), 1, 4)) k"
+)
+# proc_budgets has no unique key: two rows for the same department+year must add
+# up once, not multiply every PR row through the join.
+_BUDGETS = ("(SELECT COALESCE(department,'') AS department, "
+            "COALESCE(period,'') AS period, SUM(COALESCE(amount,0)) AS amount "
+            "FROM proc_budgets GROUP BY COALESCE(department,''), "
+            "COALESCE(period,'')) b")
+
+R.register(**_common(
+    key="proc_budget",
+    title="Budget vs committed vs spent",
+    title_ar="الموازنة مقابل المرتبط والمنصرف",
+    title_tr="Bütçe / taahhüt / harcama",
+    desc="Per department and year: the annual budget, what approved requests "
+         "have committed against it, and what has actually been paid. EGP. A "
+         "department that holds a budget and has spent nothing is listed too.",
+    desc_ar="لكل إدارة وسنة: الموازنة السنوية، وما ارتبطت به الطلبات المعتمدة، "
+            "وما تم دفعه فعلياً. بالجنيه المصري. وتظهر أيضاً الإدارة التي لديها "
+            "موازنة ولم تنفق منها شيئاً.",
+    desc_tr="Departman ve yıl bazında: yıllık bütçe, onaylı taleplerle "
+            "taahhüt edilen tutar ve fiilen ödenen tutar. EGP. Bütçesi olup "
+            "hiç harcamamış departman da listelenir.",
+    select=(
+        "k.department AS department, "
+        "k.period AS period, "
+        "MAX(COALESCE(b.amount,0)) AS budget, "
+        "COUNT(p.id) AS requests, "
+        f"{_COMMIT_SUM} AS committed, "
+        f"{_SPENT_SUM} AS spent, "
+        f"MAX(COALESCE(b.amount,0)) - {_COMMIT_SUM} AS remaining"
+    ),
+    frm=(f"{_KEYS} "
+         f"LEFT JOIN {_BUDGETS} ON b.department = k.department "
+         "AND b.period = k.period "
+         "LEFT JOIN pr_requests p ON " + _DEPT + " = k.department "
+         f"AND {_PERIOD} = k.period AND COALESCE(p.is_active,1) = 1"),
+    group="k.department, k.period",
+    order="2 DESC, 5 DESC",
+    # No date range on purpose. The grain is a YEAR; a window that cut a year in
+    # half would shrink `committed` while `budget` stayed annual, and the report
+    # would read as an overspend that is not there. Filter by the Year column.
+    date_col=None,
+    columns=[
+        R.col("department", "Department", "الإدارة", "Departman"),
+        R.col("period", "Year", "السنة", "Yıl"),
+        R.col("budget", "Budget (EGP)", "الموازنة (ج.م)", "Bütçe (EGP)", "num",
+              total="SUM(budget)"),
+        R.col("requests", "Requests", "عدد الطلبات", "Talep", "num",
+              total="SUM(requests)"),
+        R.col("committed", "Committed (EGP)", "المرتبط (ج.م)", "Taahhüt (EGP)",
+              "num", total="SUM(committed)"),
+        R.col("spent", "Paid (EGP)", "المدفوع (ج.م)", "Ödenen (EGP)", "num",
+              total="SUM(spent)"),
+        R.col("remaining", "Remaining (EGP)", "المتبقي (ج.م)", "Kalan (EGP)",
+              "num", total="SUM(remaining)"),
+    ],
+    filters=[
+        R.filt("department", "Department", "الإدارة", "Departman", "k.department"),
+        # Named "year", not "period": `period` is the engine's own date-preset
+        # query parameter and the two would fight over the same query string.
+        R.filt("year", "Year", "السنة", "Yıl", "k.period", "text", "="),
+    ],
+    kpis=[
+        R.kpi("budget", "Budget (EGP)", "الموازنة (ج.م)", "Bütçe (EGP)",
+              "SUM(budget)"),
+        R.kpi("committed", "Committed (EGP)", "المرتبط (ج.م)", "Taahhüt (EGP)",
+              "SUM(committed)", better="down"),
+        R.kpi("spent", "Paid (EGP)", "المدفوع (ج.م)", "Ödenen (EGP)",
+              "SUM(spent)"),
+        R.kpi("remaining", "Remaining (EGP)", "المتبقي (ج.م)", "Kalan (EGP)",
+              "SUM(remaining)"),
+    ],
+    chart=R.chart("bar", "k.department", _COMMIT_SUM, "k.department",
+                  "Committed by department (EGP)", "المرتبط حسب الإدارة (ج.م)",
+                  "Departmana göre taahhüt (EGP)"),
+))
+
+
+# ---------------------------------------------------------------------------
+# 3. Where requests are waiting — the live approval queue, oldest first
+# ---------------------------------------------------------------------------
+R.register(**_common(
+    key="proc_waiting",
+    title="Approvals waiting",
+    title_ar="الاعتمادات المعلقة",
+    title_tr="Bekleyen onaylar",
+    desc="Every approval step that is active and unsigned, oldest first, with "
+         "the value it is holding up. Sort by 'Waiting since' to see the queue.",
+    desc_ar="كل خطوة اعتماد مفعّلة ولم تُوقّع بعد، الأقدم أولاً، مع القيمة "
+            "المحتجزة. رتّب حسب «معلق منذ» لرؤية الطابور.",
+    desc_tr="Etkin ve imzalanmamış her onay adımı, en eskisi başta, beklettiği "
+            "tutarla birlikte. Sırayı görmek için 'Bekliyor' sütununa göre sırala.",
+    select=(
+        "p.pr_no AS pr_no, p.title AS title, p.department AS department, "
+        "s.seq AS seq, s.stage AS stage, s.approver_role AS approver_role, "
+        "p.currency AS currency, "
+        f"{_GRAND} AS grand, {_EGP} AS egp, "
+        "s.activated_at AS activated_at"
+    ),
+    frm="pr_steps s JOIN pr_requests p ON p.id = s.pr_id",
+    base_where=["s.status = 'pending'", "s.activated_at IS NOT NULL",
+                "p.status = 'pending'", "COALESCE(p.is_active,1) = 1"],
+    order="s.activated_at ASC, s.id ASC",
+    date_col="s.activated_at",
+    columns=[
+        R.col("pr_no", "PR No", "رقم الطلب", "Talep No"),
+        R.col("title", "Title", "العنوان", "Başlık"),
+        R.col("department", "Department", "الإدارة", "Departman"),
+        R.col("seq", "Step", "الخطوة", "Adım", "num"),
+        R.col("stage", "Stage", "المرحلة", "Aşama"),
+        R.col("approver_role", "Approver", "المعتمد", "Onaylayan"),
+        R.col("currency", "Currency", "العملة", "Para birimi"),
+        R.col("grand", "Value", "القيمة", "Tutar", "num"),
+        R.col("egp", "Value (EGP)", "القيمة (ج.م)", "Değer (EGP)", "num",
+              total=f"SUM({_EGP})"),
+        R.col("activated_at", "Waiting since", "معلق منذ", "Bekliyor", "date"),
+    ],
+    filters=[
+        R.filt("stage", "Stage", "المرحلة", "Aşama", "s.stage", "select", "=",
+               _STAGE_OPTS),
+        R.filt("department", "Department", "الإدارة", "Departman", "p.department"),
+    ],
+    kpis=[
+        R.kpi("steps", "Steps waiting", "خطوات معلقة", "Bekleyen adım",
+              "COUNT(*)", better="down"),
+        R.kpi("value", "Value held up (EGP)", "القيمة المحتجزة (ج.م)",
+              "Bekleyen tutar (EGP)", f"SUM({_EGP})", better="down"),
+        R.kpi("prs", "Requests affected", "طلبات متأثرة", "Etkilenen talep",
+              "COUNT(DISTINCT p.id)", better="down"),
+    ],
+    chart=R.chart("bar", "s.stage", "COUNT(*)", "s.stage",
+                  "Waiting steps by stage", "الخطوات المعلقة حسب المرحلة",
+                  "Aşamaya göre bekleyen adım"),
+))
+
+
+# ---------------------------------------------------------------------------
+# 4. Receipts, invoices, payments — 3-way-match exposure and what is unpaid
+# ---------------------------------------------------------------------------
+_INV = ("LEFT JOIN (SELECT pr_id, "
+        "SUM(COALESCE(amount,0)+COALESCE(tax,0)) AS inv_gross, "
+        "SUM(COALESCE(amount,0)) AS inv_net "
+        "FROM pr_invoices GROUP BY pr_id) i ON i.pr_id = p.id")
+_ITM = ("LEFT JOIN (SELECT pr_id, SUM(COALESCE(qty,0)) AS ord_qty, "
+        "SUM(COALESCE(received_qty,0)) AS rcv_qty, "
+        "SUM(COALESCE(received_qty,0)*COALESCE(unit_price,0)) AS rcv_val "
+        "FROM pr_items GROUP BY pr_id) t ON t.pr_id = p.id")
+
+_OVER_BILLED = (f"CASE WHEN COALESCE(i.inv_gross,0) > {_GRAND} + {_TOL} "
+                f"THEN COALESCE(i.inv_gross,0) - {_GRAND} ELSE 0 END")
+_OVER_RECEIVED = (f"CASE WHEN COALESCE(i.inv_net,0) > COALESCE(t.rcv_val,0) + {_TOL} "
+                  "THEN COALESCE(i.inv_net,0) - COALESCE(t.rcv_val,0) ELSE 0 END")
+_SHORT_QTY = ("CASE WHEN COALESCE(t.rcv_qty,0) < COALESCE(t.ord_qty,0) "
+              "THEN COALESCE(t.ord_qty,0) - COALESCE(t.rcv_qty,0) ELSE 0 END")
+_OUTSTANDING = f"({_GRAND} - COALESCE(p.paid_amount,0))"
+# Exposure only. An OVERPAID request has a negative outstanding, which is a real
+# fact in the column, but feeding it to a pareto produced a cumulative % that ran
+# past 100 and then came back down — an invented number. The chart sums what is
+# still owed; the column keeps the sign.
+_EXPOSURE = f"(CASE WHEN {_OUTSTANDING} > 0 THEN {_OUTSTANDING} ELSE 0 END)"
+# A 3-way match needs three documents. With no invoice on file, services
+# .three_way_match() returns status 'pending', NOT 'mismatch' — a PO issued this
+# morning with nothing received yet is not an exception, it is an open order.
+# Without this guard the KPI counted every open PO and read as "everything is
+# broken".
+_HAS_INVOICE = "i.pr_id IS NOT NULL"
+
+R.register(**_common(
+    key="proc_payables",
+    title="Receipts, invoices & payment exposure",
+    title_ar="الاستلام والفواتير والمكشوف من السداد",
+    title_tr="Mal kabul, fatura ve ödeme riski",
+    desc="Ordered vs received vs invoiced vs paid, for orders that reached PO "
+         "stage. Over-billed and short-delivered are shown as amounts, using "
+         "the same 1% (min 1) tolerance as the 3-way match on the PR page.",
+    desc_ar="المطلوب مقابل المستلم مقابل المفوتر مقابل المدفوع، للطلبات التي "
+            "وصلت لأمر الشراء. الزيادة في الفوترة والنقص في التوريد تظهر كمبالغ "
+            "بنفس سماحية ١٪ (بحد أدنى ١) المستخدمة في المطابقة الثلاثية.",
+    desc_tr="Sipariş / teslim / fatura / ödeme karşılaştırması, sipariş "
+            "aşamasına gelen talepler için. Fazla faturalama ve eksik teslimat "
+            "tutar olarak, 3'lü mutabakattaki %1 (en az 1) toleransıyla.",
+    select=(
+        "p.pr_no AS pr_no, p.vendor AS vendor, p.department AS department, "
+        "p.status AS status, p.currency AS currency, "
+        f"{_GRAND} AS grand, "
+        "COALESCE(i.inv_gross,0) AS invoiced, "
+        "COALESCE(t.rcv_val,0) AS received_value, "
+        "COALESCE(p.paid_amount,0) AS paid, "
+        f"{_OUTSTANDING} AS outstanding, "
+        f"{_OVER_BILLED} AS over_billed, "
+        f"{_OVER_RECEIVED} AS over_received, "
+        f"{_SHORT_QTY} AS short_qty, "
+        "p.payment_status AS payment_status, p.due_date AS due_date"
+    ),
+    frm=f"pr_requests p {_INV} {_ITM}",
+    base_where=["COALESCE(p.is_active,1) = 1",
+                "p.status IN ('po_issued','partially_received','received','closed')"],
+    order="p.due_date ASC, p.id DESC",
+    date_col="p.created_at",
+    columns=[
+        R.col("pr_no", "PR No", "رقم الطلب", "Talep No"),
+        R.col("vendor", "Supplier", "المورد", "Tedarikçi"),
+        R.col("department", "Department", "الإدارة", "Departman"),
+        R.col("status", "Status", "الحالة", "Durum"),
+        R.col("currency", "Currency", "العملة", "Para birimi"),
+        R.col("grand", "Ordered", "المطلوب", "Sipariş", "num",
+              total=f"SUM({_GRAND})"),
+        R.col("received_value", "Received value", "قيمة المستلم", "Teslim değeri",
+              "num", total="SUM(COALESCE(t.rcv_val,0))"),
+        R.col("invoiced", "Invoiced", "المفوتر", "Faturalanan", "num",
+              total="SUM(COALESCE(i.inv_gross,0))"),
+        R.col("paid", "Paid", "المدفوع", "Ödenen", "num",
+              total="SUM(COALESCE(p.paid_amount,0))"),
+        R.col("outstanding", "Outstanding", "المتبقي للسداد", "Bakiye", "num",
+              total=f"SUM({_OUTSTANDING})"),
+        R.col("over_billed", "Over-billed", "زيادة فوترة", "Fazla fatura", "num",
+              total=f"SUM({_OVER_BILLED})"),
+        R.col("over_received", "Invoiced over receipt", "مفوتر أكثر من المستلم",
+              "Teslimden fazla fatura", "num", total=f"SUM({_OVER_RECEIVED})"),
+        R.col("short_qty", "Short qty", "نقص الكمية", "Eksik miktar", "num",
+              total=f"SUM({_SHORT_QTY})"),
+        R.col("payment_status", "Payment", "حالة السداد", "Ödeme"),
+        R.col("due_date", "Due", "تاريخ الاستحقاق", "Vade", "date"),
+    ],
+    filters=[
+        R.filt("payment_status", "Payment status", "حالة السداد", "Ödeme durumu",
+               "p.payment_status", "select", "=", _PAY_OPTS),
+        R.filt("vendor", "Supplier", "المورد", "Tedarikçi", "p.vendor"),
+        R.filt("due_before", "Due on or before", "مستحق حتى", "Vadesi şu tarihe kadar",
+               "p.due_date", "date", "<="),
+        R.filt("currency", "Currency", "العملة", "Para birimi", "p.currency",
+               "text", "="),
+    ],
+    kpis=[
+        R.kpi("ordered", "Ordered", "المطلوب", "Sipariş", f"SUM({_GRAND})"),
+        R.kpi("invoiced", "Invoiced", "المفوتر", "Faturalanan",
+              "SUM(COALESCE(i.inv_gross,0))"),
+        R.kpi("paid", "Paid", "المدفوع", "Ödenen", "SUM(COALESCE(p.paid_amount,0))"),
+        R.kpi("outstanding", "Outstanding", "المتبقي للسداد", "Bakiye",
+              f"SUM({_OUTSTANDING})", better="down"),
+        R.kpi("exceptions", "Match exceptions", "استثناءات المطابقة",
+              "Mutabakat istisnası",
+              f"SUM(CASE WHEN {_HAS_INVOICE} AND ({_OVER_BILLED} > 0 "
+              f"OR {_OVER_RECEIVED} > 0 OR {_SHORT_QTY} > 0) THEN 1 ELSE 0 END)",
+              better="down"),
+    ],
+    chart=R.chart("pareto", "p.vendor", f"SUM({_EXPOSURE})", "p.vendor",
+                  "Outstanding by supplier", "المتبقي حسب المورد",
+                  "Tedarikçiye göre bakiye"),
+))

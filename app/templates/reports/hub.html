@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Report Center{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="rpt.eyebrow">Reporting</div>
+    <h1 data-i18n="rpt.hub_title">Report Center</h1>
+    <div class="sub" data-i18n="rpt.hub_sub">Every module's reports — filter, compare, chart and export.</div>
+  </div>
+</div>
+
+{% if not groups %}
+<div class="panel">
+  <div class="panel-pad">
+    <div class="muted" data-i18n="rpt.none">No reports are available for your role.</div>
+    <div class="muted mt-2" style="font-size:12.5px" data-i18n="rpt.none_hint">Ask an administrator for access to a module — its reports appear here automatically.</div>
+  </div>
+</div>
+{% endif %}
+
+{% for g in groups %}
+<div class="panel mt-3">
+  <div class="panel-head">
+    <h3><span data-loc-en="{{ g.en }}" data-loc-ar="{{ g.ar }}" data-loc-tr="{{ g.tr }}">{{ g.en }}</span></h3>
+    <span class="muted">{{ g.reports|length }} <span data-i18n="rpt.reports">reports</span></span>
+  </div>
+  <div class="panel-pad">
+    <div class="grid cols-3">
+      {% for r in g.reports %}
+      <div class="app-card">
+        <div class="ac-top">
+          <div class="ac-icon"><svg class="ico" style="width:24px;height:24px"><use href="#{{ r.icon }}"></use></svg></div>
+          {% if r.chart %}<span class="tag" data-i18n="rpt.chart">Chart</span>{% endif %}
+        </div>
+        <h3><span data-loc-en="{{ r.title }}" data-loc-ar="{{ r.title_ar }}" data-loc-tr="{{ r.title_tr }}">{{ r.title }}</span></h3>
+        <div class="ac-desc"><span data-loc-en="{{ r.desc }}" data-loc-ar="{{ r.desc_ar }}" data-loc-tr="{{ r.desc_tr }}">{{ r.desc }}</span></div>
+        <div class="ac-actions">
+          <a class="btn btn-primary btn-sm" style="flex:1;justify-content:center"
+             href="{{ url_for('reports_hub.view', key=r.key) }}">
+            <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="rpt.open">Open</span></a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+{% endblock %}

@@ -140,3 +140,8 @@ def cert_renew(cert_id):
     svc.renew_cert(cert_id, request.form.get("expiry_date"), _u())
     flash("Certificate renewed.", "success")
     return redirect(url_for("compliance.certs"))
+
+
+# Declares this module's reports with the shared reporting engine. Import only —
+# it runs no query and touches no database (see app/compliance/reports.py).
+from app.compliance import reports as _reports    # noqa: E402,F401

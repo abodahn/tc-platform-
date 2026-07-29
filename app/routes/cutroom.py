@@ -136,3 +136,8 @@ def order(order_id):
         abort(404)
     return render_template("cutroom/order.html", active="cutroom", s=s,
                            eff_good=MARKER_EFF_GOOD, var_alert=FABRIC_VARIANCE_ALERT_PCT)
+
+
+# Report declarations for the shared reporting engine (/reporting). Imported for
+# its import-time side effect: it registers this module's reports and touches no DB.
+from app.cutroom import reports as _reports  # noqa: E402,F401

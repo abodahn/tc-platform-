@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Governance &mdash; Responsibility Matrix{% endblock %}
+{% block content %}
+{% set exports = ['responsibility'] %}
+{% include "governance/_head.html" %}
+
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="gov.tab.responsibility">Responsibility matrix</h3></div>
+  <div class="panel-pad">
+    <div class="muted" style="font-size:13px" data-i18n="gov.raci.sub">Derived from the permission names themselves (_view / _manage / _approve / _admin), never from a hand-maintained list, so this cannot drift away from the code. Permissions whose name does not follow the convention are listed separately below instead of being guessed.</div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th style="position:sticky;inset-inline-start:0;z-index:3;background:var(--panel)" data-i18n="gov.col.module">Module</th>
+          <th data-i18n="gov.col.view">Can view</th>
+          <th data-i18n="gov.col.change">Can change</th>
+          <th data-i18n="gov.col.approve">Can approve</th>
+          <th data-i18n="gov.col.admin">Can administer</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in modules %}
+        <tr>
+          <td style="position:sticky;inset-inline-start:0;z-index:1;background:var(--panel)">
+            <b>{{ m.module }}</b>
+            <div class="muted" style="font-size:11px" dir="ltr">{{ m.perms|length }}</div>
+          </td>
+          {% for kind in ['view', 'change', 'approve', 'admin'] %}
+          <td>
+            {% if m[kind] %}{% for key, label in m[kind] %}<span class="tag" title="{{ key }}">{{ label }}</span> {% endfor %}
+            {% else %}<span class="muted">&mdash;</span>{% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% if m.unclassified %}
+        <tr>
+          <td style="position:sticky;inset-inline-start:0;z-index:1;background:var(--panel)"></td>
+          <td colspan="4">
+            <span class="badge b-warning" data-i18n="gov.raci.unclassified">Not classifiable from the name</span>
+            {% for p in m.unclassified %}<span class="tag">{{ p }}</span> {% endfor %}
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head">
+    <h3 data-i18n="gov.raci.exceptions">Where the naming convention does not hold</h3>
+    <span class="muted" dir="ltr">{{ exceptions|length }}</span>
+  </div>
+  <div class="panel-pad">
+    <div class="muted" style="font-size:13px" data-i18n="gov.raci.exceptions_sub">These permission names do not end in _view, _manage, _approve or _admin. Each one is either mapped by an explicit exception recorded in the code, or left unclassified. Nothing here is inferred silently.</div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th data-i18n="gov.col.perm">Permission</th>
+          <th data-i18n="gov.col.module">Module</th>
+          <th data-i18n="gov.col.mapped">Mapped to</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in exceptions %}
+        <tr>
+          <td>{{ e.perm }}</td>
+          <td>{{ e.module }}</td>
+          <td>
+            {% if e.kind %}<span class="tag">{{ e.kind }}</span>
+            {% else %}<span class="badge b-warning" data-i18n="gov.raci.unclassified">Not classifiable from the name</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

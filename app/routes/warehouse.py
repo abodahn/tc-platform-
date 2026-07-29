@@ -244,3 +244,9 @@ def api_json(key):
     if resp is None:
         abort(404)
     return resp
+
+
+# Report declarations for the shared engine (app/services/reporting.py). Imported
+# here, at the bottom, purely so importing this blueprint registers them; the
+# module builds plain dicts and touches no database at import time.
+from app.warehouse import reports as _reports  # noqa: E402,F401

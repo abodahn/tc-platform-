@@ -11,6 +11,11 @@
   <div class="flex gap center">
     {% if can('cmp_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('compliance.audit_new') }}" data-i18n="cmp.action.new_audit">Record audit</a>{% endif %}
     <a class="btn btn-ghost btn-sm" href="{{ url_for('compliance.certs') }}" data-i18n="cmp.nav.certs">Certificates</a>
+    {# data-loc-* (not data-i18n) and a literal path on purpose: the link can never
+       render as a raw i18n key, and it cannot break this page if the shared report
+       hub blueprint is not mounted. #}
+    <a class="btn btn-ghost btn-sm" href="/reporting/compliance_findings"
+       data-loc-en="Reports" data-loc-ar="التقارير" data-loc-tr="Raporlar">Reports</a>
   </div>
 </div>
 
