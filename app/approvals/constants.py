@@ -30,7 +30,12 @@ PAYMENT_STATUSES = ["unpaid", "partial", "paid"]
 STEP_STATUSES = ["pending", "approved", "rejected", "skipped"]
 
 CURRENCIES = ["EGP", "USD", "EUR", "TRY"]
-UNITS = ["Pcs", "Set", "Box", "Roll", "Meter", "Kg", "Liter", "Service", "Lot"]
+# APPENDED, never reordered: 'Pcs' stays the first entry and the default, so
+# every existing PR line is untouched. The tail comes from the ERP item master
+# (Cone for 2,205 thread items, Yard, Packet, Sheet, Carton, Drum, Barrel) —
+# mangling those into 'Pcs' would put a wrong unit on a purchase order.
+UNITS = ["Pcs", "Set", "Box", "Roll", "Meter", "Kg", "Liter", "Service", "Lot",
+         "Cone", "Yard", "Packet", "Sheet", "Carton", "Drum", "Barrel"]
 PAYMENT_CONDITIONS = ["Advanced Payment", "On Delivery", "Net 15", "Net 30",
                       "Net 60", "Cash", "Cheque", "Installments"]
 DELIVERY_CONDITIONS = ["T&C Warehouse", "On-site / Factory floor", "Vendor premises",

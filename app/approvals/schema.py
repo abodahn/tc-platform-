@@ -236,6 +236,30 @@ CREATE TABLE IF NOT EXISTS proc_doc (
     body TEXT,
     updated_by TEXT, updated_at TEXT
 );
+
+-- ===== Procurement item catalogue (the ERP item master) =====
+-- Shipped EMPTY and NEVER seeded: gunicorn runs --preload, so create_and_seed
+-- happens before the port binds over a slow external PostgreSQL link. The
+-- 19k rows arrive later, once, through the admin upload screen or the CLI.
+CREATE TABLE IF NOT EXISTS proc_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE NOT NULL,        -- opaque key from the ERP; never parsed
+    name TEXT,
+    unit TEXT,
+    category_code TEXT, category_name TEXT,
+    cost_price REAL DEFAULT 0,
+    has_cost INTEGER DEFAULT 0,       -- 0 = no price on file (never render 0.00)
+    source TEXT,
+    active INTEGER DEFAULT 1,
+    updated_by TEXT, updated_at TEXT
+);
+-- ONE index. A second one on (name) was measured and dropped: every search
+-- matches the name with a LEADING wildcard (`%q%`), which no b-tree can serve,
+-- so EXPLAIN never chose it — it only cost write time on a 19k import. This one
+-- carries category_name as a third column purely so the category list the PR
+-- form loads on every render is an index-ONLY scan (29 ms -> 13 ms).
+CREATE INDEX IF NOT EXISTS ix_proc_items_cat
+    ON proc_items(active, category_code, category_name);
 """
 
 # Columns added to pr_steps after first release — applied as idempotent ALTERs
@@ -346,6 +370,9 @@ _ITEM_MIGRATIONS = [
     # the goods receipt posts the received quantity straight into that spare's
     # stock at the line's unit price — for ANY PR, not only bridge auto-PRs.
     ("spare_id", "ALTER TABLE pr_items ADD COLUMN spare_id INTEGER"),
+    # Catalogue mesh: a PR line may reference a proc_items row. OPTIONAL — a
+    # free-text line leaves it NULL and behaves exactly as it always has.
+    ("item_id", "ALTER TABLE pr_items ADD COLUMN item_id INTEGER"),
 ]
 
 

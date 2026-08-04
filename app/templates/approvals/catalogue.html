@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Item catalogue{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="proc.settings_eyebrow">Procurement</div>
+    <h1 data-i18n="cat.title">Item catalogue</h1>
+    <div class="sub" data-i18n="cat.sub">Load the ERP item master so requesters can pick a real item instead of typing it. Picking one stays optional — a free-text line still works.</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="cat.on_file">On file</h3></div>
+  <div class="panel-pad">
+    <div class="grid cols-2">
+      <div>
+        <div><span class="tag">{{ stats.total }}</span> <span data-i18n="cat.items">items</span></div>
+        <div class="muted mt-2" style="font-size:12.5px">
+          <span class="tag">{{ stats.priced }}</span> <span data-i18n="cat.with_price">with a cost on file</span>
+          &nbsp;·&nbsp;
+          <span class="tag">{{ stats.unpriced }}</span> <span data-i18n="cat.no_price">no price on file</span>
+        </div>
+      </div>
+      <div>
+        {% if stats.categories %}
+        <div class="muted" style="font-size:12.5px" data-i18n="cat.categories">Categories</div>
+        <div class="mt-2" style="max-height:160px;overflow:auto">
+          {% for code, name, n in stats.categories %}
+            <div style="font-size:12.5px">{{ code }} {{ name }} <span class="muted">({{ n }})</span></div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="muted" style="font-size:12.5px" data-i18n="cat.empty">The catalogue is empty. Import the ERP export below.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="cat.import_h">Import items</h3>
+    <span class="muted" style="font-size:12px" data-i18n="cat.import_hint">Excel (.xls / .xlsx) or CSV export with Code, Item Name, Unit and Cost Price columns. Items are matched by code: new codes are added, changed ones updated, and a blank cell never overwrites a value edited here.</span>
+  </div>
+  <form method="post" action="{{ url_for('approvals.catalogue_import') }}" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-pad">
+      <div class="field"><label data-i18n="cat.file">File</label>
+        <input type="file" name="file" accept=".xls,.xlsx,.csv" required></div>
+      <div class="flex gap wrap mt-3">
+        <button class="btn btn-primary" type="submit" data-i18n="cat.run">Import</button>
+        <a class="btn btn-ghost" href="{{ url_for('approvals.settings') }}" data-i18n="cat.back">Back to settings</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="cat.result">Import result</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="cat.added">Added</th><th data-i18n="cat.updated">Updated</th>
+        <th data-i18n="cat.unchanged">Unchanged</th><th data-i18n="cat.rejected">Rejected</th>
+      </tr></thead>
+      <tbody><tr>
+        <td>{{ result.added }}</td><td>{{ result.updated }}</td>
+        <td>{{ result.unchanged }}</td>
+        <td>{{ (parsed.rejects|length if parsed else 0) + result.rejected }}</td>
+      </tr></tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if parsed and parsed.unmapped_units %}
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="cat.unmapped_h">Units that could not be mapped</h3>
+    <span class="muted" style="font-size:12px" data-i18n="cat.unmapped_hint">These rows were NOT imported. A guessed unit becomes a wrong quantity on a purchase order, so they are reported instead.</span></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr><th data-i18n="cat.unit">Unit</th><th data-i18n="cat.rows">Rows</th></tr></thead>
+      <tbody>
+      {% for unit, n in parsed.unmapped_units.items() %}
+        <tr><td>{{ unit }}</td><td>{{ n }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if parsed and parsed.rejects %}
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="cat.rejects_h">Rejected rows</h3>
+    <span class="muted" style="font-size:12px">{{ parsed.rejects|length }} <span data-i18n="cat.rejects_hint">rows were skipped, each with its reason. Nothing is dropped silently.</span></span></div>
+  <div class="panel-pad" style="max-height:340px;overflow:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="cat.row">Row</th><th data-i18n="cat.code">Code</th>
+        <th data-i18n="cat.reason">Reason</th>
+      </tr></thead>
+      <tbody>
+      {% for r in parsed.rejects[:200] %}
+        <tr><td>{{ r.row }}</td><td>{{ r.code }}</td><td>{{ r.reason }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

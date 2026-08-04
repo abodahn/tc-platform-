@@ -169,7 +169,21 @@
           <tr>
             <td>{{ loop.index }}</td>
             <td><div style="font-weight:600">{{ it.item }}</div>
-                <div class="muted" style="font-size:12px">{{ it.description }}</div></td>
+                <div class="muted" style="font-size:12px">{{ it.description }}</div>
+                {% set ref = item_costs.get(it.item_id) if it.item_id else None %}
+                {% if ref %}
+                <div class="muted" style="font-size:12px;margin-top:3px">
+                  <span class="tag">{{ ref.code }}</span>
+                  {% if ref.has_cost %}
+                    <span data-i18n="cat.last_cost">Last known catalogue cost</span>:
+                    <b style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(ref.cost) }}</b>
+                    <span data-i18n="cat.ref_only">— reference only, not an approved price. Type the real value.</span>
+                  {% else %}
+                    <span data-i18n="cat.no_price">no price on file</span>
+                  {% endif %}
+                </div>
+                {% endif %}
+            </td>
             <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}</td>
             <td>
               <div style="display:flex;gap:6px;align-items:center">

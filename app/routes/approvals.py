@@ -127,6 +127,7 @@ def new():
                            matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
+                           item_categories=svc.item_categories(),
                            can_price=_can_price())
 
 
@@ -168,6 +169,7 @@ def _parse_items(f, can_price=False):
     units = f.getlist("unit[]"); qtys = f.getlist("qty[]")
     stocks = f.getlist("current_stock[]"); prices = f.getlist("unit_price[]")
     notes = f.getlist("item_notes[]"); spares = f.getlist("spare_id[]")
+    item_ids = f.getlist("item_id[]")
     for i in range(len(names)):
         if not (names[i] or "").strip():
             continue
@@ -184,6 +186,9 @@ def _parse_items(f, can_price=False):
             # cross-module mesh: the picked spare part (mnt_spare_parts.id) —
             # its goods receipt will post straight back into that spare's stock
             "spare_id": spares[i] if i < len(spares) else "",
+            # OPTIONAL catalogue link (proc_items.id). Blank on a free-text line,
+            # which stays a first-class way to raise a request.
+            "item_id": item_ids[i] if i < len(item_ids) else "",
         })
     return items
 
@@ -217,6 +222,94 @@ def api_spares():
         "low": (float(r["stock_qty"] or 0) - float(r["reserved_qty"] or 0))
                <= float(r["reorder_level"] or 0),
     } for r in rows]})
+
+
+@bp.route("/api/items")
+@login_required
+@permission_required("proc_view")
+def api_items():
+    """Type-ahead over the procurement item catalogue for the PR line picker.
+
+    Returns code / name / unit / category ONLY. There is no cost field here and
+    there must never be one: a requester can call this endpoint, and the
+    commercial value enters the platform exactly once, at the Purchasing pricing
+    gate. Capped and paginated — 19k rows never leave in one response."""
+    results, has_more = svc.search_items(
+        request.args.get("q"), request.args.get("cat"),
+        offset=request.args.get("offset", 0, type=int) or 0)
+    return jsonify({"results": results, "has_more": has_more})
+
+
+# --------------------------------------------------------------------------
+# Item catalogue — admin import (front door A; the CLI is front door B)
+# --------------------------------------------------------------------------
+@bp.route("/catalogue", methods=["GET"])
+@login_required
+@permission_required("proc_admin")
+def catalogue():
+    from app.db import get_db
+    from app.approvals.catalogue import catalogue_stats
+    conn = get_db()
+    try:
+        stats = catalogue_stats(conn)
+    finally:
+        conn.close()
+    return render_template("approvals/catalogue.html", active="procurement",
+                           stats=stats, result=None, parsed=None)
+
+
+@bp.route("/catalogue/import", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def catalogue_import():
+    """Upload an ERP item export and upsert it. Same parser + same upsert as
+    scripts/import_items.py, so the two front doors cannot drift."""
+    from app.db import get_db
+    from app.approvals.catalogue import parse_workbook, upsert_items, catalogue_stats
+    file = request.files.get("file")
+    result = parsed = None
+    if not file or not file.filename:
+        flash("Choose a file to import.", "error")
+    else:
+        try:
+            items, parsed = parse_workbook(io.BytesIO(file.read()))
+        except Exception as exc:
+            items, parsed = [], {"error": f"{type(exc).__name__}: {exc}", "rejects": [],
+                                 "unmapped_units": {}}
+        if parsed.get("error"):
+            flash(parsed["error"], "error")
+        else:
+            conn = get_db()
+            try:
+                result = upsert_items(conn, items, _u(),
+                                      source=file.filename[:120])
+            except Exception as exc:
+                # A second import running at the same time (a double-clicked
+                # Import button is enough) hits the UNIQUE on code and raises.
+                # On PostgreSQL that failure also aborts the transaction, so
+                # roll back and say so instead of returning a 500 page: the
+                # upsert is by code, so simply running the import again
+                # reconciles whatever landed before the error.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                result = None
+                flash(f"Import failed part-way ({type(exc).__name__}). Nothing was "
+                      f"corrupted — run the import again to finish it.", "error")
+            finally:
+                conn.close()
+            if result is not None:
+                flash(f"{result['added']} added, {result['updated']} updated, "
+                      f"{result['unchanged']} unchanged, "
+                      f"{len(parsed.get('rejects') or [])} rejected.", "success")
+    conn = get_db()
+    try:
+        stats = catalogue_stats(conn)
+    finally:
+        conn.close()
+    return render_template("approvals/catalogue.html", active="procurement",
+                           stats=stats, result=result, parsed=parsed)
 
 
 @bp.route("/new", methods=["POST"])
@@ -298,6 +391,7 @@ def edit(pr_id):
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
                            editing=pr, edit_items=bundle["items"],
+                           item_categories=svc.item_categories(),
                            can_price=_can_price())
 
 
@@ -404,6 +498,11 @@ def detail(pr_id):
             elif kind == "spare":
                 source_link = {"label": f"Spare part #{sid} (auto-reorder)",
                                "url": url_for("maintenance.spare_profile", sid=int(sid))}
+    # Catalogue cost REFERENCE for the pricing gate — Purchasing only. Built
+    # solely when the reader holds proc_purchasing, so it never reaches a
+    # requester's render context at all.
+    item_costs = (svc.item_costs([it.get("item_id") for it in bundle["items"]])
+                  if can_purchasing else {})
     # Purchasing can enter pricing while the PR is still being decided.
     needs_pricing = (can_purchasing and not is_priced
                      and pr["status"] in ("draft", "rejected", "pending"))
@@ -424,6 +523,7 @@ def detail(pr_id):
                            rfq_locked=(pr["status"] in ("approved", "po_issued", "partially_received",
                                                         "received", "closed", "cancelled")),
                            spare_live=spare_live, source_link=source_link,
+                           item_costs=item_costs,
                            # Escalation stamps are DB-stored role keys: their names
                            # and the explanatory sentences are resolved server-side.
                            L=svc.labels(_lang),

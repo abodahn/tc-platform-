@@ -82,6 +82,18 @@
         <span data-i18n="proc.requester_no_price">Just tell us what you need — item, quantity and any spec. Pricing is added later by Purchasing; you don't enter any cost.</span>
       </div>
       {% endif %}
+      {% if item_categories %}
+      <div class="flex gap center wrap" style="margin-bottom:12px">
+        <div class="field" style="margin:0;min-width:260px">
+          <label data-i18n="cat.filter">Catalogue category</label>
+          <select id="catFilter">
+            <option value="" data-i18n="cat.all">All categories</option>
+            {% for code, name in item_categories %}<option value="{{ code }}">{{ code }} {{ name }}</option>{% endfor %}
+          </select>
+        </div>
+        <span class="muted" style="font-size:12.5px" data-i18n="cat.pick_hint">Start typing an item code or name to pick from the catalogue — or just type what you need, exactly as before.</span>
+      </div>
+      {% endif %}
       <div class="li-head {{ '' if can_price else 'no-price' }}">
         <span data-i18n="proc.item">Item</span><span data-i18n="proc.desc">Description</span>
         <span data-i18n="proc.unit">Unit</span><span data-i18n="proc.qty">Qty</span>
@@ -175,6 +187,7 @@
     return '<div class="li-row' + (CAN_PRICE ? '' : ' no-price') + '">'
       + '<div class="li-item" style="position:relative"><input name="item[]" placeholder="Item" autocomplete="off" data-ac>'
       + '<input name="spare_id[]" type="hidden">'
+      + '<input name="item_id[]" type="hidden">'
       + '<div class="sp-drop" style="display:none;position:absolute;z-index:40;top:100%;left:0;right:0;background:var(--panel,#fff);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow:auto"></div>'
       + research + '</div>'
       + '<input name="description[]" placeholder="Description" autocomplete="off" data-ac>'
@@ -386,6 +399,10 @@
     // delivered quantity back into that spare's stock (silent inventory loss).
     var sp = r.querySelector('[name="spare_id[]"]');
     if (sp) sp.value = (it.spare_id != null ? it.spare_id : '');
+    // Same story for the OPTIONAL catalogue link — losing it on a re-render
+    // would drop the Purchasing cost reference at the pricing gate.
+    var ci = r.querySelector('[name="item_id[]"]');
+    if (ci) ci.value = (it.item_id != null ? it.item_id : '');
   }
 
   // Editing an existing draft: render all its line items.
@@ -426,26 +443,50 @@
     var row = input.closest('.li-row'); if (!row) return;
     var hid = row.querySelector('[name="spare_id[]"]');
     if (hid) hid.value = '';                       // typing breaks the link
+    var cid = row.querySelector('[name="item_id[]"]');
+    if (cid) cid.value = '';                       // ...and the catalogue link
     var d = drop(input); if (!d) return;
     var q = input.value.trim();
     clearTimeout(timer);
     if (q.length < 2) { d.style.display = 'none'; return; }
     timer = setTimeout(function () {
-      fetch('{{ url_for("approvals.api_spares") }}?q=' + encodeURIComponent(q))
-        .then(function (r) { return r.json(); })
-        .then(function (j) {
-          var res = (j && j.results) || [];
-          if (!res.length) { d.style.display = 'none'; return; }
-          d.innerHTML = res.map(function (s) {
+      // Two sources, ONE dropdown: the maintenance spare-parts warehouse (live
+      // stock) and the procurement item catalogue. Picking either is optional —
+      // typing a free-text item and ignoring the list works exactly as before.
+      var catSel = document.getElementById('catFilter');
+      var catUrl = '{{ url_for("approvals.api_items") }}?q=' + encodeURIComponent(q)
+                 + (catSel && catSel.value ? '&cat=' + encodeURIComponent(catSel.value) : '');
+      function grab(url) {
+        return fetch(url).then(function (r) { return r.json(); })
+                         .catch(function () { return { results: [] }; });
+      }
+      Promise.all([grab('{{ url_for("approvals.api_spares") }}?q=' + encodeURIComponent(q)),
+                   grab(catUrl)])
+        .then(function (both) {
+          var spares = (both[0] && both[0].results) || [];
+          var cat = (both[1] && both[1].results) || [];
+          if (!spares.length && !cat.length) { d.style.display = 'none'; return; }
+          var html = spares.map(function (s) {
             return '<div class="sp-opt" style="padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px" '
-              + 'data-id="' + s.id + '" data-code="' + esc(s.code) + '" data-name="' + esc(s.name)
+              + 'data-kind="spare" data-id="' + s.id + '" data-code="' + esc(s.code) + '" data-name="' + esc(s.name)
               + '" data-unit="' + esc(s.unit) + '" data-avail="' + s.available + '">'
               + '<span><b>' + esc(s.code) + '</b> — ' + esc(s.name) + '</span>'
               + '<span class="muted" style="white-space:nowrap">' + (s.low ? '⚠️ ' : '')
               + s.available + ' ' + esc(s.unit) + '</span></div>';
           }).join('');
+          html += cat.map(function (c) {
+            return '<div class="sp-opt" style="padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px" '
+              + 'data-kind="item" data-id="' + c.id + '" data-code="' + esc(c.code) + '" data-name="' + esc(c.name)
+              + '" data-unit="' + esc(c.unit) + '">'
+              + '<span><b>' + esc(c.code) + '</b> — ' + esc(c.name) + '</span>'
+              + '<span class="muted" style="white-space:nowrap">' + esc(c.category)
+              + ' · ' + esc(c.unit) + '</span></div>';
+          }).join('');
+          if ((both[1] || {}).has_more)
+            html += '<div class="muted" style="padding:6px 10px;font-size:12px" data-i18n="cat.more">More matches — refine the search or pick a category.</div>';
+          d.innerHTML = html;
           d.style.display = 'block';
-        }).catch(function () { d.style.display = 'none'; });
+        });
     }, 250);
   });
   document.addEventListener('mousedown', function (e) {
@@ -454,8 +495,13 @@
     e.preventDefault();
     var row = opt.closest('.li-row'); if (!row) return;
     row.querySelector('[name="item[]"]').value = opt.dataset.code + ' — ' + opt.dataset.name;
-    var hid = row.querySelector('[name="spare_id[]"]'); if (hid) hid.value = opt.dataset.id;
-    var stock = row.querySelector('[name="current_stock[]"]'); if (stock) stock.value = opt.dataset.avail;
+    var isItem = opt.dataset.kind === 'item';
+    var hid = row.querySelector('[name="spare_id[]"]');
+    if (hid) hid.value = isItem ? '' : opt.dataset.id;
+    var cid = row.querySelector('[name="item_id[]"]');
+    if (cid) cid.value = isItem ? opt.dataset.id : '';
+    var stock = row.querySelector('[name="current_stock[]"]');
+    if (stock && !isItem) stock.value = opt.dataset.avail;   // catalogue holds no stock
     var unitSel = row.querySelector('[name="unit[]"]');
     if (unitSel) {
       var u = (opt.dataset.unit || '').toLowerCase();

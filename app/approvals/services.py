@@ -786,13 +786,14 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
             conn.execute(
                 """INSERT INTO pr_items
                    (pr_id, seq, item, description, unit, qty, current_stock, vendor,
-                    unit_price, est_cost, notes, spare_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    unit_price, est_cost, notes, spare_id, item_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pr_id, i, it.get("item"), it.get("description"), it.get("unit") or "Pcs",
                  float(it.get("qty") or 0), float(it.get("current_stock") or 0),
                  it.get("vendor") or header.get("vendor"),
                  float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes"),
-                 int(it["spare_id"]) if str(it.get("spare_id") or "").strip().isdigit() else None))
+                 int(it["spare_id"]) if str(it.get("spare_id") or "").strip().isdigit() else None,
+                 int(it["item_id"]) if str(it.get("item_id") or "").strip().isdigit() else None))
         try:
             conn.execute("UPDATE pr_requests SET tax_rate=?, pricing_status=? WHERE id=?",
                          (float(header.get("tax_rate") or 0),
@@ -869,13 +870,14 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
         for i, it in enumerate(items, start=1):
             conn.execute(
                 """INSERT INTO pr_items (pr_id, seq, item, description, unit, qty,
-                   current_stock, vendor, unit_price, est_cost, notes, spare_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   current_stock, vendor, unit_price, est_cost, notes, spare_id, item_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pr_id, i, it.get("item"), it.get("description"), it.get("unit") or "Pcs",
                  float(it.get("qty") or 0), float(it.get("current_stock") or 0),
                  it.get("vendor") or header.get("vendor"),
                  float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes"),
-                 int(it["spare_id"]) if str(it.get("spare_id") or "").strip().isdigit() else None))
+                 int(it["spare_id"]) if str(it.get("spare_id") or "").strip().isdigit() else None,
+                 int(it["item_id"]) if str(it.get("item_id") or "").strip().isdigit() else None))
         audit(conn, pr_id, user.get("username") if user else "system", "edited",
               f"Draft updated (total {total})", ip)
         conn.commit()
@@ -1924,6 +1926,85 @@ def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
 # --------------------------------------------------------------------------
 # vendors
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Item catalogue (proc_items) — read side
+# --------------------------------------------------------------------------
+_ITEM_PAGE = 20        # hard cap: 19k rows must never be serialised in one go
+
+
+def search_items(q, category=None, limit=_ITEM_PAGE, offset=0):
+    """Type-ahead over the catalogue. Returns (results, has_more).
+
+    COMMERCIAL LOCKOUT: cost_price is deliberately NOT selected here. Any
+    requester can reach this, and a requester states WHAT they need, never what
+    it costs — the cost reference is Purchasing-only, at the pricing gate.
+    """
+    q = (q or "").strip()
+    cat = (category or "").strip()
+    if len(q) < 2 and not cat:
+        return [], False
+    limit = max(1, min(int(limit or _ITEM_PAGE), _ITEM_PAGE))
+    offset = max(0, int(offset or 0))
+    where, params = ["active=1"], []
+    if q:
+        # code matches from the START (it is an opaque key people type in full);
+        # name matches anywhere, which is how a human searches a description.
+        where.append("(code LIKE ? OR name LIKE ?)")
+        params += [q + "%", "%" + q + "%"]
+    if cat:
+        where.append("category_code=?")
+        params.append(cat)
+    sql = ("SELECT id, code, name, unit, category_code, category_name FROM proc_items "
+           "WHERE " + " AND ".join(where) + " ORDER BY code LIMIT ? OFFSET ?")
+    conn = get_db()
+    try:
+        rows = conn.execute(sql, tuple(params) + (limit + 1, offset)).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    has_more = len(rows) > limit
+    return [{"id": r["id"], "code": r["code"], "name": r["name"] or "",
+             "unit": r["unit"] or "Pcs", "category_code": r["category_code"] or "",
+             "category": r["category_name"] or ""} for r in rows[:limit]], has_more
+
+
+def item_categories():
+    """[(code, name)] for the picker's category filter. Empty until an import."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT category_code cc, category_name cn FROM proc_items WHERE active=1 "
+            "GROUP BY category_code, category_name ORDER BY category_code").fetchall()
+        return [(r["cc"] or "", r["cn"] or "") for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def item_costs(item_ids):
+    """{pr_items.item_id: {'cost': float, 'has_cost': int, 'code': str}} — the last
+    known catalogue cost, for the Purchasing pricing gate ONLY. Callers must gate
+    this on proc_purchasing; it is never handed to a requester."""
+    ids = [int(i) for i in (item_ids or []) if str(i).strip().isdigit()]
+    if not ids:
+        return {}
+    conn = get_db()
+    try:
+        ph = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT id, code, cost_price, has_cost FROM proc_items WHERE id IN ({ph})",
+            tuple(ids)).fetchall()
+        return {r["id"]: {"cost": float(r["cost_price"] or 0),
+                          "has_cost": int(r["has_cost"] or 0),
+                          "code": r["code"]} for r in rows}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
 def list_vendors(active_only=True):
     conn = get_db()
     try:
