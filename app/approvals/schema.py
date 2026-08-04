@@ -260,6 +260,28 @@ CREATE TABLE IF NOT EXISTS proc_items (
 -- form loads on every render is an index-ONLY scan (29 ms -> 13 ms).
 CREATE INDEX IF NOT EXISTS ix_proc_items_cat
     ON proc_items(active, category_code, category_name);
+
+-- ===== New-item requests — the ONE door into the catalogue from the floor ====
+-- Without this the master decays: an item nobody catalogued was typed as free
+-- text and never came back. The requester asks; PURCHASING approve and type the
+-- ERP code (nothing here generates one). NEVER seeded, and no price column of
+-- any kind: a requester states WHAT they need, and the commercial value enters
+-- exactly once, at the Purchasing pricing gate.
+CREATE TABLE IF NOT EXISTS proc_item_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER, line_no INTEGER,   -- SOFT links: the PR is usually still
+                                      -- being typed, so both are normally NULL,
+                                      -- and a deleted PR leaves no broken row
+    name TEXT NOT NULL,
+    unit TEXT, category_code TEXT, category_name TEXT,
+    reason TEXT,
+    requested_by TEXT, requested_at TEXT,
+    status TEXT DEFAULT 'pending',    -- pending | approved | rejected
+    decided_by TEXT, decided_at TEXT, decision_note TEXT,
+    assigned_code TEXT,               -- the ERP code the approver typed
+    item_id INTEGER                   -- proc_items.id created on approval
+);
+CREATE INDEX IF NOT EXISTS ix_proc_item_req ON proc_item_requests(status, id);
 """
 
 # Columns added to pr_steps after first release — applied as idempotent ALTERs

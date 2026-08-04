@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Request a new item{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="proc.settings_eyebrow">Procurement</div>
+    <h1 data-i18n="nir.title">Request a new item</h1>
+    <div class="sub" data-i18n="nir.sub">Not in the catalogue? Describe what you need. Purchasing check it against the master and add it with its ERP code. Your purchase request is not held up — carry on and submit it, the line stays as you typed it.</div>
+  </div>
+</div>
+
+{% if sent %}
+<div class="panel">
+  <div class="panel-pad">
+    <span class="tag" data-i18n="nir.pending">Pending</span>
+    <span data-i18n="nir.sent">Request sent to Purchasing. Close this tab and carry on with your purchase request.</span>
+  </div>
+</div>
+{% endif %}
+
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="nir.ask">Request a new item</h3>
+    <span class="muted" style="font-size:12px" data-i18n="nir.no_price">A new-item request carries no price. You say what you need; Purchasing add the value later.</span>
+  </div>
+  <form method="post" action="{{ url_for('approvals.item_request_create') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="pr_id" value="{{ prefill.pr_id }}">
+    <input type="hidden" name="line_no" value="{{ prefill.line_no }}">
+    <div class="panel-pad">
+      <div class="field">
+        <label><span data-i18n="nir.name">Item name</span> *</label>
+        <input name="name" value="{{ prefill.name }}" maxlength="200" required autofocus>
+        <span class="muted" style="font-size:12px" data-i18n="nir.name_hint">Exactly as you typed it on the request line.</span>
+      </div>
+      <div class="grid cols-2">
+        <div class="field">
+          <label data-i18n="nir.unit">Unit</label>
+          <select name="unit">
+            {% for u in units %}<option{% if u == prefill.unit %} selected{% endif %}>{{ u }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label data-i18n="nir.category">Category</label>
+          <select name="category_code">
+            <option value=""></option>
+            {% for code, name in item_categories %}<option value="{{ code }}">{{ code }} {{ name }}</option>{% endfor %}
+          </select>
+          <span class="muted" style="font-size:12px" data-i18n="nir.category_hint">Where it belongs in the master, if you know.</span>
+        </div>
+      </div>
+      <div class="field">
+        <label><span data-i18n="nir.reason">Why it is needed</span> *</label>
+        <textarea name="reason" rows="3" maxlength="2000" required></textarea>
+        <span class="muted" style="font-size:12px" data-i18n="nir.reason_hint">What it is for and any spec, model or size. No prices — Purchasing price it later.</span>
+      </div>
+      <div class="flex gap wrap mt-3">
+        <button class="btn btn-primary" type="submit" data-i18n="nir.send">Send request</button>
+        <a class="btn btn-ghost" href="{{ url_for('approvals.new') }}" data-i18n="nir.back">Back</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+{% if mine %}
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="nir.mine">My recent new-item requests</h3></div>
+  <div class="panel-pad" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="nir.name">Item name</th>
+        <th data-i18n="nir.status">Status</th>
+        <th data-i18n="nir.code">ERP code</th>
+        <th data-i18n="nir.decided">Decision</th>
+      </tr></thead>
+      <tbody>
+      {% for r in mine %}
+        <tr>
+          <td>{{ r.name }}</td>
+          <td><span class="tag" data-i18n="nir.{{ r.status }}">{{ r.status }}</span></td>
+          <td>{{ r.assigned_code or '' }}</td>
+          <td class="muted">{{ r.decision_note or '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

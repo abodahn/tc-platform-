@@ -168,6 +168,13 @@
   var ITEM_BROWSE = {{ (pick_i18n.browse if pick_i18n else 'Browse the item catalogue')               | tojson }};
   var ITEM_HINT   = {{ (pick_i18n.hint   if pick_i18n else 'Type at least 2 letters, or choose a category to browse.') | tojson }};
   var ITEM_NONE   = {{ (pick_i18n.none   if pick_i18n else 'No match in the catalogue — you can type your own item.')  | tojson }};
+  // The catalogue decays unless somebody can ASK for what is missing. This link
+  // is the only entry point to that path, and it opens in a NEW TAB on purpose:
+  // this request is not saved yet, and losing a half-typed PR to a navigation is
+  // worse than no link at all. Nothing here gates the PR — the line stays free
+  // text and submits exactly as it always has.
+  var ITEM_ASK    = {{ (pick_i18n.ask    if pick_i18n else 'Request a new item') | tojson }};
+  var ASK_URL     = {{ url_for('approvals.item_request_new') | tojson }};
   var UNITS = {{ units|tojson }};
   var MATRIX = {{ matrix|tojson }};              // global default: stage -> threshold
   var LADDER = {{ ladder|tojson }};               // ordered stage keys
@@ -451,6 +458,12 @@
   var rows = document.getElementById('liRows') || document.querySelector('.li-rows') ||
              document.getElementById('rows') || document;
   var timer = null;
+  // Results keyed by "<category>|<lowercased query>". Only complete sets (the
+  // server said has_more=false) are reusable, because a truncated list is not a
+  // sound basis for filtering a longer query. Per page load — a fresh form
+  // always asks the server, so an item imported meanwhile is never missed.
+  var CACHE = {};
+  var ABORT = null;
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function drop(input){ return input.parentElement.querySelector('.sp-drop'); }
@@ -506,6 +519,26 @@
       } else { d.style.display = 'none'; }
       return;
     }
+    // PREFIX CACHE — the reason this used to feel slow. The database is quick
+    // (a full scan of 19k rows costs ~14ms); the cost is the ROUND TRIP to
+    // Frankfurt, and typing "needle" fired one per keystroke. If a shorter
+    // query already returned a COMPLETE set (has_more false), every longer
+    // query is a subset of it, so it can be filtered here with NO request at
+    // all. Typing now costs one round trip instead of five.
+    var ck = (hasCat ? catSel0.value : '') + '|';
+    for (var L = q.length - 1; L >= 2; L--) {
+      var hit = CACHE[ck + q.slice(0, L).toLowerCase()];
+      if (hit && !hit.more) {
+        var ql = q.toLowerCase();
+        render(input, d,
+          hit.spares.filter(function (s) {
+            return (s.code + ' ' + s.name).toLowerCase().indexOf(ql) >= 0; }),
+          hit.cat.filter(function (c) {
+            return (c.code + ' ' + c.name).toLowerCase().indexOf(ql) >= 0; }),
+          false);
+        return;
+      }
+    }
     timer = setTimeout(function () {
       // Two sources, ONE dropdown: the maintenance spare-parts warehouse (live
       // stock) and the procurement item catalogue. Picking either is optional —
@@ -513,46 +546,65 @@
       var catSel = document.getElementById('catFilter');
       var catUrl = '{{ url_for("approvals.api_items") }}?q=' + encodeURIComponent(q)
                  + (catSel && catSel.value ? '&cat=' + encodeURIComponent(catSel.value) : '');
+      // Abandon a request the moment a newer keystroke supersedes it: it saves
+      // the server work and stops a slow early reply overwriting a fast later
+      // one, which showed up as the list flickering back to stale matches.
+      if (ABORT) { try { ABORT.abort(); } catch (e) {} }
+      ABORT = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var sig = ABORT ? ABORT.signal : undefined;
       function grab(url) {
-        return fetch(url).then(function (r) { return r.json(); })
+        return fetch(url, { signal: sig }).then(function (r) { return r.json(); })
                          .catch(function () { return { results: [] }; });
       }
       Promise.all([grab('{{ url_for("approvals.api_spares") }}?q=' + encodeURIComponent(q)),
                    grab(catUrl)])
         .then(function (both) {
-          var spares = (both[0] && both[0].results) || [];
-          var cat = (both[1] && both[1].results) || [];
-          if (!spares.length && !cat.length) {
-            // Silence here is what made people think the catalogue was empty.
-            // Saying "nothing matched, type your own" is also the moment a
-            // requester learns free text is still allowed.
-            d.innerHTML = '<div class="muted" style="padding:9px 10px;font-size:12.5px">'
-              + (ITEM_NONE || 'No match in the catalogue — you can type your own item.') + '</div>';
-            d.style.display = 'block';
-            return;
-          }
-          var html = spares.map(function (s) {
-            return '<div class="sp-opt" style="padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px" '
-              + 'data-kind="spare" data-id="' + s.id + '" data-code="' + esc(s.code) + '" data-name="' + esc(s.name)
-              + '" data-unit="' + esc(s.unit) + '" data-avail="' + s.available + '">'
-              + '<span><b>' + esc(s.code) + '</b> — ' + esc(s.name) + '</span>'
-              + '<span class="muted" style="white-space:nowrap">' + (s.low ? '⚠️ ' : '')
-              + s.available + ' ' + esc(s.unit) + '</span></div>';
-          }).join('');
-          html += cat.map(function (c) {
-            return '<div class="sp-opt" style="padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px" '
-              + 'data-kind="item" data-id="' + c.id + '" data-code="' + esc(c.code) + '" data-name="' + esc(c.name)
-              + '" data-unit="' + esc(c.unit) + '">'
-              + '<span><b>' + esc(c.code) + '</b> — ' + esc(c.name) + '</span>'
-              + '<span class="muted" style="white-space:nowrap">' + esc(c.category)
-              + ' · ' + esc(c.unit) + '</span></div>';
-          }).join('');
-          if ((both[1] || {}).has_more)
-            html += '<div class="muted" style="padding:6px 10px;font-size:12px" data-i18n="cat.more">More matches — refine the search or pick a category.</div>';
-          d.innerHTML = html;
-          d.style.display = 'block';
+          CACHE[ck + q.toLowerCase()] = {
+            spares: (both[0] && both[0].results) || [],
+            cat: (both[1] && both[1].results) || [],
+            more: !!((both[1] || {}).has_more)
+          };
+          render(input, d, (both[0] && both[0].results) || [],
+                 (both[1] && both[1].results) || [], !!((both[1] || {}).has_more), q);
         });
-    }, browsing ? 0 : 250);   // a deliberate click should not wait out the debounce
+    }, browsing ? 0 : 320);   // a deliberate click should not wait out the debounce
+  }
+
+  // ONE renderer for both paths — the network reply and the cache hit — so a
+  // cached result can never look or behave differently from a fetched one.
+  function render(input, d, spares, cat, more, q) {
+    q = q || input.value.trim();
+    if (!spares.length && !cat.length) {
+      // Silence here is what made people think the catalogue was empty. Saying
+      // "nothing matched, type your own" is also the moment a requester learns
+      // free text is still allowed — and where they ask for a new item.
+      d.innerHTML = '<div class="muted" style="padding:9px 10px;font-size:12.5px">'
+        + (ITEM_NONE || 'No match in the catalogue — you can type your own item.')
+        + ' <a href="' + ASK_URL + '?name=' + encodeURIComponent(q)
+        + '" target="_blank" rel="noopener">' + esc(ITEM_ASK) + '</a></div>';
+      d.style.display = 'block';
+      return;
+    }
+    var html = spares.map(function (s) {
+      return '<div class="sp-opt" style="padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px" '
+        + 'data-kind="spare" data-id="' + s.id + '" data-code="' + esc(s.code) + '" data-name="' + esc(s.name)
+        + '" data-unit="' + esc(s.unit) + '" data-avail="' + s.available + '">'
+        + '<span><b>' + esc(s.code) + '</b> — ' + esc(s.name) + '</span>'
+        + '<span class="muted" style="white-space:nowrap">' + (s.low ? '⚠️ ' : '')
+        + s.available + ' ' + esc(s.unit) + '</span></div>';
+    }).join('');
+    html += cat.map(function (c) {
+      return '<div class="sp-opt" style="padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px" '
+        + 'data-kind="item" data-id="' + c.id + '" data-code="' + esc(c.code) + '" data-name="' + esc(c.name)
+        + '" data-unit="' + esc(c.unit) + '">'
+        + '<span><b>' + esc(c.code) + '</b> — ' + esc(c.name) + '</span>'
+        + '<span class="muted" style="white-space:nowrap">' + esc(c.category)
+        + ' · ' + esc(c.unit) + '</span></div>';
+    }).join('');
+    if (more)
+      html += '<div class="muted" style="padding:6px 10px;font-size:12px" data-i18n="cat.more">More matches — refine the search or pick a category.</div>';
+    d.innerHTML = html;
+    d.style.display = 'block';
   }
   document.addEventListener('mousedown', function (e) {
     var opt = e.target.closest('.sp-opt');

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}New-item requests{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="proc.settings_eyebrow">Procurement</div>
+    <h1 data-i18n="nir.queue">New-item requests</h1>
+    <div class="sub" data-i18n="nir.queue_sub">Items the floor asked for that are not in the master. Approve one by typing the code the ERP issued — the platform never invents a code.</div>
+  </div>
+  <div class="flex gap wrap">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.view', key='proc_off_catalogue') }}" data-i18n="nir.off_cat">Bought off-catalogue</a>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="nir.status">Status</h3>
+    <span class="flex gap wrap">
+      <a class="btn btn-ghost btn-sm" href="?status=pending"><span data-i18n="nir.pending">Pending</span> <span class="tag">{{ counts.get('pending', 0) }}</span></a>
+      <a class="btn btn-ghost btn-sm" href="?status=approved"><span data-i18n="nir.approved">Approved</span> <span class="tag">{{ counts.get('approved', 0) }}</span></a>
+      <a class="btn btn-ghost btn-sm" href="?status=rejected"><span data-i18n="nir.rejected">Rejected</span> <span class="tag">{{ counts.get('rejected', 0) }}</span></a>
+      <a class="btn btn-ghost btn-sm" href="?status=all" data-i18n="nir.filter_all">All</a>
+    </span>
+  </div>
+
+  {% if refused %}
+  <div class="panel-pad">
+    <div class="field" style="margin:0">
+      <b data-i18n="nir.dupe_code">That code is already in the catalogue. Nothing was created.</b>
+      <div class="muted mt-2" style="font-size:12.5px" data-i18n="nir.dupe_existing">Item already on that code</div>
+      {# Show the code AS IT IS ON FILE, not as it was typed: the refusal also
+         fires on a code that differs only in case, and "ab-100" sitting next to
+         someone else's item reads like a bug until you see it is really AB-100. #}
+      <div class="mt-2"><span class="tag">{{ (refused.item and refused.item.code) or refused.code }}</span>
+        {% if refused.item %}{{ refused.item.name }} · {{ refused.item.unit }} · {{ refused.item.category_name }}{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="panel-pad" style="overflow-x:auto">
+    {% if not requests %}
+      <div class="muted" data-i18n="nir.empty">Nothing waiting. Requests raised from the purchase-request form land here.</div>
+    {% else %}
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="nir.name">Item name</th>
+        <th data-i18n="nir.unit">Unit</th>
+        <th data-i18n="nir.category">Category</th>
+        <th data-i18n="nir.reason">Why it is needed</th>
+        <th data-i18n="nir.requested_by">Requested by</th>
+        <th data-i18n="nir.status">Status</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+      {% for r in requests %}
+        <tr>
+          <td>
+            <b>{{ r.name }}</b>
+            {% if r.also and r.also > 0 %}
+              <div class="muted" style="font-size:12px" data-i18n="nir.also_asked">Also requested by someone else — decide once.</div>
+            {% endif %}
+            {% if r.similar %}
+              <div class="muted mt-2" style="font-size:12px" data-i18n="nir.similar">Possible duplicate — similar items are already in the catalogue. Your call: approve anyway, or reject and tell the requester which code to use.</div>
+              {% for s in r.similar %}
+                <div style="font-size:12px"><span class="tag">{{ s.code }}</span> {{ s.name }}</div>
+              {% endfor %}
+            {% endif %}
+          </td>
+          <td>{{ r.unit or '' }}</td>
+          <td>{{ r.category_code or '' }} {{ r.category_name or '' }}</td>
+          <td class="muted">{{ r.reason or '' }}</td>
+          <td>{{ r.requested_by or '' }}<div class="muted" style="font-size:12px">{{ (r.requested_at or '')[:10] }}</div></td>
+          <td><span class="tag" data-i18n="nir.{{ r.status }}">{{ r.status }}</span>
+            {% if r.assigned_code %}<div style="font-size:12px">{{ r.assigned_code }}</div>{% endif %}
+            {% if r.status == 'rejected' and r.decision_note %}<div class="muted" style="font-size:12px">{{ r.decision_note }}</div>{% endif %}
+          </td>
+          <td>
+            {% if r.status == 'pending' %}
+            <form method="post" action="{{ url_for('approvals.item_request_approve', req_id=r.id) }}" class="flex gap wrap">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <div class="field" style="margin:0;min-width:150px">
+                <label><span data-i18n="nir.code">ERP code</span> *</label>
+                <input name="code" maxlength="80" required>
+              </div>
+              <button class="btn btn-primary btn-sm" type="submit" data-i18n="nir.approve">Approve</button>
+            </form>
+            <div class="muted" style="font-size:12px" data-i18n="nir.code_hint">Type the code from the ERP. There is no auto-generated code — the ERP stays the single source of truth.</div>
+            <form method="post" action="{{ url_for('approvals.item_request_reject', req_id=r.id) }}" class="flex gap wrap mt-2">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <div class="field" style="margin:0;min-width:150px">
+                <label><span data-i18n="nir.note">Reason</span> *</label>
+                <input name="note" maxlength="2000" required>
+              </div>
+              <button class="btn btn-ghost btn-sm" type="submit" data-i18n="nir.reject">Reject</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

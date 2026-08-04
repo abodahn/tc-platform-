@@ -120,15 +120,18 @@ _PICK_I18N = {
     "en": {"ph": "Search item or type your own",
            "browse": "Browse the item catalogue",
            "hint": "Type at least 2 letters, or choose a category to browse.",
-           "none": "No match in the catalogue — you can type your own item."},
+           "none": "No match in the catalogue — you can type your own item.",
+           "ask": "Request a new item"},
     "ar": {"ph": "ابحث عن صنف أو اكتب صنفك",
            "browse": "استعرض كتالوج الأصناف",
            "hint": "اكتب حرفين على الأقل، أو اختر فئة للاستعراض.",
-           "none": "لا يوجد صنف مطابق في الكتالوج — يمكنك كتابة صنفك."},
+           "none": "لا يوجد صنف مطابق في الكتالوج — يمكنك كتابة صنفك.",
+           "ask": "طلب صنف جديد"},
     "tr": {"ph": "Kalem ara veya kendi kalemini yaz",
            "browse": "Kalem kataloğuna göz at",
            "hint": "En az 2 harf yazın veya göz atmak için bir kategori seçin.",
-           "none": "Katalogda eşleşme yok — kendi kaleminizi yazabilirsiniz."},
+           "none": "Katalogda eşleşme yok — kendi kaleminizi yazabilirsiniz.",
+           "ask": "Yeni kalem talebi"},
 }
 
 
@@ -260,6 +263,112 @@ def api_items():
         request.args.get("q"), request.args.get("cat"),
         offset=request.args.get("offset", 0, type=int) or 0)
     return jsonify({"results": results, "has_more": has_more})
+
+
+# --------------------------------------------------------------------------
+# New-item requests — the missing door into the catalogue
+#
+# WHY A SEPARATE PAGE AND NOT A PANEL ON THE PR FORM: the requester is half way
+# through typing a purchase request that has NO id yet — it exists only in the
+# browser. Any POST from that form (or a navigation to a request form) throws
+# the draft away, and an in-page modal means re-implementing a form, its
+# validation and its error states in JavaScript. So the picker's "no match"
+# message links here with target="_blank": the draft sits untouched in its own
+# tab, the request is a normal server-rendered form that works with no JS at
+# all, and the requester closes the tab and carries on. The PR line stays free
+# text and submits exactly as it does today — this path never gates anything.
+# --------------------------------------------------------------------------
+@bp.route("/item-request", methods=["GET"])
+@login_required
+@permission_required("proc_create")
+def item_request_new():
+    from app.approvals import item_requests as ir
+    u = _u() or {}
+    return render_template("approvals/item_request_new.html", active="procurement",
+                           units=C.UNITS, item_categories=svc.item_categories(),
+                           prefill={"name": (request.args.get("name") or "")[:200],
+                                    "unit": (request.args.get("unit") or "")[:40],
+                                    "pr_id": request.args.get("pr", ""),
+                                    "line_no": request.args.get("line", "")},
+                           sent=request.args.get("sent") == "1",
+                           mine=ir.my_requests(u.get("username")))
+
+
+@bp.route("/item-request", methods=["POST"])
+@login_required
+@permission_required("proc_create")
+def item_request_create():
+    """A requester asks for an item. NO price is read from this form and none is
+    stored — proc_item_requests has no price column, so a POSTed one is ignored."""
+    from app.approvals import item_requests as ir
+    cat = (request.form.get("category_code") or "").strip()
+    names = dict(svc.item_categories())
+    data = dict(request.form)
+    data["category_name"] = names.get(cat, "")
+    req_id, err = ir.create_item_request(data, _u(), ip=_ip())
+    if err:
+        flash("Type the name of the item you need.", "error")
+        return redirect(url_for("approvals.item_request_new",
+                                name=request.form.get("name", "")))
+    return redirect(url_for("approvals.item_request_new", sent=1))
+
+
+@bp.route("/item-requests", methods=["GET"])
+@login_required
+@permission_required("proc_purchasing")
+def item_requests():
+    from app.approvals import item_requests as ir
+    status = request.args.get("status", "pending")
+    return render_template("approvals/item_requests.html", active="procurement",
+                           status=status, requests=ir.list_requests(status),
+                           counts=ir.counts(), refused=None)
+
+
+def _queue(refused=None, code=200):
+    from app.approvals import item_requests as ir
+    status = request.args.get("status", "pending")
+    return render_template("approvals/item_requests.html", active="procurement",
+                           status=status, requests=ir.list_requests(status),
+                           counts=ir.counts(), refused=refused), code
+
+
+@bp.route("/item-requests/<int:req_id>/approve", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def item_request_approve(req_id):
+    """Approve by TYPING the ERP code. Refuses a code the catalogue already
+    holds and re-renders the queue showing the item that holds it — nothing is
+    written. A similar NAME only warns: telling one part from another is the
+    judgement Purchasing are here to make, not something a LIKE query decides."""
+    from app.approvals import item_requests as ir
+    ok, msg, existing = ir.approve_item_request(
+        req_id, request.form.get("code"), _u(), ip=_ip())
+    if not ok:
+        if msg == "duplicate_code":
+            return _queue(refused={"code": (request.form.get("code") or "").strip(),
+                                   "item": existing, "req_id": req_id})
+        flash({"code_required": "Type the ERP code before approving.",
+               "not_pending": "That request has already been decided.",
+               "not_found": "That request no longer exists."}.get(msg, msg), "error")
+        return redirect(url_for("approvals.item_requests"))
+    flash("Item added to the catalogue." + (
+        "  Similar items were already on file — check it is not the same part "
+        "under another name." if msg == "approved_similar" else ""), "success")
+    return redirect(url_for("approvals.item_requests"))
+
+
+@bp.route("/item-requests/<int:req_id>/reject", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def item_request_reject(req_id):
+    from app.approvals import item_requests as ir
+    ok, msg = ir.reject_item_request(req_id, request.form.get("note"), _u(), ip=_ip())
+    flash({"reason_required": "Give a reason so the requester knows what to do next.",
+           "not_pending": "That request has already been decided.",
+           "not_found": "That request no longer exists.",
+           "rejected": "Request rejected. The purchase-request line is untouched."
+           }.get(msg, msg), "success" if ok else "error")
+    return redirect(url_for("approvals.item_requests"))
 
 
 # --------------------------------------------------------------------------

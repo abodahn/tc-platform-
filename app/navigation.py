@@ -119,6 +119,7 @@ NAV = [
         ("proc_vendors", "nav.proc_vendors", "boxes", "approvals.vendors", "proc_view"),
         ("proc_budgets", "nav.proc_budgets", "wallet", "approvals.budgets", "proc_view"),
         ("proc_delegations", "nav.proc_delegations", "users", "approvals.delegations", "proc_view"),
+        ("proc_item_requests", "nir.queue", "boxes", "approvals.item_requests", "proc_purchasing"),
         ("proc_workflow", "nav.proc_workflow", "map", "approvals.workflow", "proc_view"),
         ("proc_settings", "nav.proc_settings", "settings", "approvals.settings", "proc_admin"),
     ]},

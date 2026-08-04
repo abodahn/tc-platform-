@@ -428,3 +428,86 @@ R.register(**_common(
                   "Outstanding by supplier", "المتبقي حسب المورد",
                   "Tedarikçiye göre bakiye"),
 ))
+
+
+# ---------------------------------------------------------------------------
+# 6. Bought off-catalogue — the list that keeps the item master alive
+#
+# Every PR line with NO catalogue link, grouped by the TEXT people typed, so the
+# same part typed six ways reads as six rows of six lines rather than 36 lines
+# of noise. `Asked about` counts the new-item requests already raised for that
+# text: a row with a high line count and 0 asked about is exactly what should be
+# turned into a request and given an ERP code, and it is invisible without this.
+#
+# NO money column on purpose. This is a data-hygiene report, it runs on the
+# module's own `proc_view`, and a requester holds that — showing what the floor
+# buys is fine, showing what it costs is the pricing gate's business.
+# ---------------------------------------------------------------------------
+_OFF_KEY = "LOWER(TRIM(i.item))"
+_RAISED = ("MAX((SELECT COUNT(*) FROM proc_item_requests r "
+           f"WHERE LOWER(TRIM(r.name)) = {_OFF_KEY}))")
+
+R.register(**_common(
+    key="proc_off_catalogue",
+    title="Bought off-catalogue",
+    title_ar="المشتَرى خارج الكتالوج",
+    title_tr="Katalog dışı alınanlar",
+    desc="Request lines that are NOT linked to a catalogue item, grouped by the "
+         "text people typed. The master decays through this list: a text bought "
+         "again and again with nothing asked about it is an item missing its ERP "
+         "code. Raise a new-item request from the request form to close it.",
+    desc_ar="سطور الطلبات غير المرتبطة بصنف في الكتالوج، مجمّعة حسب النص الذي "
+            "كتبه المستخدمون. من هنا تتآكل قائمة الأصناف: نص يتكرر شراؤه ولم "
+            "يُرفع بشأنه أي طلب يعني صنفاً بلا كود ERP. ارفع طلب صنف جديد من "
+            "نموذج الطلب لإغلاقه.",
+    desc_tr="Katalog kalemine bağlı OLMAYAN talep satırları, kullanıcıların "
+            "yazdığı metne göre gruplanır. Ana liste buradan aşınır: tekrar "
+            "tekrar alınan ama hakkında hiç talep açılmamış bir metin, ERP kodu "
+            "olmayan bir kalemdir. Talep formundan yeni kalem talebi açarak "
+            "kapatın.",
+    select=(
+        "MAX(i.item) AS item_text, "
+        "MAX(COALESCE(i.unit,'')) AS unit, "
+        "COUNT(*) AS lines, "
+        "COUNT(DISTINCT i.pr_id) AS requests, "
+        "SUM(COALESCE(i.qty,0)) AS qty, "
+        "COUNT(DISTINCT COALESCE(p.department,'')) AS departments, "
+        f"{_RAISED} AS raised, "
+        "MAX(COALESCE(p.request_date, p.created_at)) AS last_seen"
+    ),
+    frm="pr_items i JOIN pr_requests p ON p.id = i.pr_id",
+    base_where=["i.item_id IS NULL",
+                "COALESCE(p.is_active,1) = 1",
+                "TRIM(COALESCE(i.item,'')) <> ''"],
+    group=_OFF_KEY,
+    order="3 DESC, 4 DESC",
+    date_col="p.created_at",
+    columns=[
+        R.col("item_text", "Item as typed", "الصنف كما كُتب", "Yazıldığı hâliyle kalem"),
+        R.col("unit", "Unit", "الوحدة", "Birim"),
+        R.col("lines", "Lines", "عدد السطور", "Satır", "num", total="SUM(lines)"),
+        R.col("requests", "Requests", "عدد الطلبات", "Talep", "num",
+              total="SUM(requests)"),
+        R.col("qty", "Qty", "الكمية", "Miktar", "num", total="SUM(qty)"),
+        R.col("departments", "Departments", "عدد الإدارات", "Departman", "num"),
+        R.col("raised", "Asked about", "طلبات إضافته", "Hakkında talep", "num",
+              total="SUM(raised)"),
+        R.col("last_seen", "Last asked for", "آخر مرة طُلب", "Son talep", "date"),
+    ],
+    filters=[
+        R.filt("item", "Item text", "نص الصنف", "Kalem metni", "i.item"),
+        R.filt("department", "Department", "الإدارة", "Departman", "p.department"),
+    ],
+    kpis=[
+        R.kpi("texts", "Distinct item texts", "نصوص أصناف مختلفة",
+              "Farklı kalem metni", "COUNT(*)", better="down"),
+        R.kpi("lines", "Off-catalogue lines", "سطور خارج الكتالوج",
+              "Katalog dışı satır", "SUM(lines)", better="down"),
+        R.kpi("never_asked", "Never asked about", "لم يُطلب إضافتها إطلاقاً",
+              "Hiç talep açılmamış",
+              "SUM(CASE WHEN raised = 0 THEN 1 ELSE 0 END)", better="down"),
+    ],
+    chart=R.chart("bar", "MAX(i.item)", "COUNT(*)", _OFF_KEY,
+                  "Most-typed off-catalogue items", "أكثر الأصناف كتابةً خارج الكتالوج",
+                  "En çok yazılan katalog dışı kalemler"),
+))
