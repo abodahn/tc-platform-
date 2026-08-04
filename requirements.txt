@@ -5,7 +5,10 @@ Flask==3.0.3
 requests==2.32.3
 python-dotenv==1.0.1
 Werkzeug==3.0.3
-openpyxl==3.1.5           # Excel import/template (pure-python)
+openpyxl==3.1.5           # .xlsx import/template (pure-python)
+xlrd==2.0.2               # .xls (legacy OLE2) — the ERP item master exports this
+                          # format and openpyxl CANNOT read it. xlrd 2.x is
+                          # .xls-only by design, so the two do not overlap.
 qrcode==7.4.2            # machine/spare/ticket QR codes (pure-python)
 Pillow>=10.4             # QR rendering + logo/icon processing (unpinned: wheels vary by Python)
 reportlab>=4.0          # PDF reports (unpinned: wheels vary by Python)
