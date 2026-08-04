@@ -112,6 +112,26 @@ def listing():
 # --------------------------------------------------------------------------
 # New request
 # --------------------------------------------------------------------------
+# Picker copy for the request form. The item rows are built by JavaScript AFTER
+# app.js has swapped every data-i18n attribute, so a data-i18n here would never
+# be translated — these are resolved server-side from the reader's language,
+# the same approach the Workflow & Governance page uses for its prose.
+_PICK_I18N = {
+    "en": {"ph": "Search item or type your own",
+           "browse": "Browse the item catalogue",
+           "hint": "Type at least 2 letters, or choose a category to browse.",
+           "none": "No match in the catalogue — you can type your own item."},
+    "ar": {"ph": "ابحث عن صنف أو اكتب صنفك",
+           "browse": "استعرض كتالوج الأصناف",
+           "hint": "اكتب حرفين على الأقل، أو اختر فئة للاستعراض.",
+           "none": "لا يوجد صنف مطابق في الكتالوج — يمكنك كتابة صنفك."},
+    "tr": {"ph": "Kalem ara veya kendi kalemini yaz",
+           "browse": "Kalem kataloğuna göz at",
+           "hint": "En az 2 harf yazın veya göz atmak için bir kategori seçin.",
+           "none": "Katalogda eşleşme yok — kendi kaleminizi yazabilirsiniz."},
+}
+
+
 @bp.route("/new", methods=["GET"])
 @login_required
 @permission_required("proc_create")
@@ -128,6 +148,8 @@ def new():
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
                            item_categories=svc.item_categories(),
+                           pick_i18n=_PICK_I18N.get(
+                               ((_u() or {}).get("lang_pref") or "en"), _PICK_I18N["en"]),
                            can_price=_can_price())
 
 

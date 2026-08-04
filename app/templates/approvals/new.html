@@ -160,6 +160,14 @@
 <script>
 (function () {
   var CAN_PRICE = {{ 'true' if can_price else 'false' }};  // only Purchasing sees pricing
+  // Picker copy. These strings are BUILT INTO the row markup by JS, which runs
+  // after app.js has already swapped data-i18n, so a data-i18n attribute here
+  // would never be translated. Resolve them server-side instead — the same
+  // reason the Workflow page renders its prose server-side.
+  var ITEM_PH     = {{ (pick_i18n.ph     if pick_i18n else 'Search item or type your own')            | tojson }};
+  var ITEM_BROWSE = {{ (pick_i18n.browse if pick_i18n else 'Browse the item catalogue')               | tojson }};
+  var ITEM_HINT   = {{ (pick_i18n.hint   if pick_i18n else 'Type at least 2 letters, or choose a category to browse.') | tojson }};
+  var ITEM_NONE   = {{ (pick_i18n.none   if pick_i18n else 'No match in the catalogue — you can type your own item.')  | tojson }};
   var UNITS = {{ units|tojson }};
   var MATRIX = {{ matrix|tojson }};              // global default: stage -> threshold
   var LADDER = {{ ladder|tojson }};               // ordered stage keys
@@ -185,7 +193,17 @@
       ? '<button type="button" class="li-research" title="Market price research" aria-label="Market price research">🔎</button>'
       : '';
     return '<div class="li-row' + (CAN_PRICE ? '' : ' no-price') + '">'
-      + '<div class="li-item" style="position:relative"><input name="item[]" placeholder="Item" autocomplete="off" data-ac>'
+      // The field is a PICKER over the item catalogue, not a plain text box. It
+      // used to look identical to every other input and only reacted to typing,
+      // so nobody knew a list of 19,000 items was behind it. The caret button
+      // makes it visibly a dropdown and opens it without typing anything.
+      + '<div class="li-item" style="position:relative">'
+      + '<input name="item[]" placeholder="' + (ITEM_PH || 'Search item or type your own') + '" '
+      +   'autocomplete="off" data-ac style="padding-inline-end:26px">'
+      + '<button type="button" class="li-pick" tabindex="-1" '
+      +   'title="' + (ITEM_BROWSE || 'Browse the item catalogue') + '" '
+      +   'style="position:absolute;inset-inline-end:4px;top:5px;width:20px;height:22px;'
+      +   'border:0;background:none;cursor:pointer;opacity:.55;line-height:1;font-size:11px">▼</button>'
       + '<input name="spare_id[]" type="hidden">'
       + '<input name="item_id[]" type="hidden">'
       + '<div class="sp-drop" style="display:none;position:absolute;z-index:40;top:100%;left:0;right:0;background:var(--panel,#fff);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow:auto"></div>'
@@ -445,10 +463,49 @@
     if (hid) hid.value = '';                       // typing breaks the link
     var cid = row.querySelector('[name="item_id[]"]');
     if (cid) cid.value = '';                       // ...and the catalogue link
+    runSearch(input);
+  });
+
+  // Opening the list must not require typing. With a category chosen the server
+  // browses that category on an empty query, so picking "05 Spare Parts" and
+  // clicking the caret lists them — which is how someone who does not know the
+  // code actually finds an item.
+  function openPicker(input) {
+    if (!input || input.name !== 'item[]') return;
+    input.focus();
+    runSearch(input, true);
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('.li-pick');
+    if (!btn) return;
+    e.preventDefault();
+    var row = btn.closest('.li-row'); if (!row) return;
+    var input = row.querySelector('[name="item[]"]');
+    var d = input && drop(input);
+    if (d && d.style.display === 'block') { d.style.display = 'none'; return; }
+    openPicker(input);
+  });
+  document.addEventListener('focusin', function (e) {
+    if (e.target && e.target.name === 'item[]' && !e.target.value.trim()) openPicker(e.target);
+  });
+
+  function runSearch(input, browsing) {
+    var row = input.closest('.li-row'); if (!row) return;
     var d = drop(input); if (!d) return;
     var q = input.value.trim();
+    var catSel0 = document.getElementById('catFilter');
+    var hasCat = !!(catSel0 && catSel0.value);
     clearTimeout(timer);
-    if (q.length < 2) { d.style.display = 'none'; return; }
+    // Empty box and no category: say what to do instead of showing nothing at
+    // all, which is what made the picker feel like a dead text field.
+    if (q.length < 2 && !hasCat) {
+      if (browsing) {
+        d.innerHTML = '<div class="muted" style="padding:9px 10px;font-size:12.5px">'
+          + (ITEM_HINT || 'Type at least 2 letters, or choose a category to browse.') + '</div>';
+        d.style.display = 'block';
+      } else { d.style.display = 'none'; }
+      return;
+    }
     timer = setTimeout(function () {
       // Two sources, ONE dropdown: the maintenance spare-parts warehouse (live
       // stock) and the procurement item catalogue. Picking either is optional —
@@ -465,7 +522,15 @@
         .then(function (both) {
           var spares = (both[0] && both[0].results) || [];
           var cat = (both[1] && both[1].results) || [];
-          if (!spares.length && !cat.length) { d.style.display = 'none'; return; }
+          if (!spares.length && !cat.length) {
+            // Silence here is what made people think the catalogue was empty.
+            // Saying "nothing matched, type your own" is also the moment a
+            // requester learns free text is still allowed.
+            d.innerHTML = '<div class="muted" style="padding:9px 10px;font-size:12.5px">'
+              + (ITEM_NONE || 'No match in the catalogue — you can type your own item.') + '</div>';
+            d.style.display = 'block';
+            return;
+          }
           var html = spares.map(function (s) {
             return '<div class="sp-opt" style="padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px" '
               + 'data-kind="spare" data-id="' + s.id + '" data-code="' + esc(s.code) + '" data-name="' + esc(s.name)
@@ -487,8 +552,8 @@
           d.innerHTML = html;
           d.style.display = 'block';
         });
-    }, 250);
-  });
+    }, browsing ? 0 : 250);   // a deliberate click should not wait out the debounce
+  }
   document.addEventListener('mousedown', function (e) {
     var opt = e.target.closest('.sp-opt');
     if (!opt) { if (!e.target.closest('.sp-drop')) hideAll(); return; }
