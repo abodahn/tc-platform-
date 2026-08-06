@@ -36,7 +36,7 @@
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <div class="panel-pad">
       <div class="field"><label data-i18n="cat.file">File</label>
-        <input type="file" name="file" accept=".csv" required></div>
+        <input type="file" name="file" accept=".csv,.xlsx,.xls" required></div>
       <div class="flex gap wrap mt-3">
         <button class="btn btn-primary" type="submit" data-i18n="cat.run">Import</button>
         <a class="btn btn-ghost" href="{{ url_for('maintenance.settings') }}" data-i18n="nav.maint_settings">Settings</a>

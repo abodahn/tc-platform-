@@ -40,6 +40,7 @@ NAV = [
         ("maint_calendar", "nav.maint_calendar", "clock", "maintenance.calendar", "maint_view"),
         ("maint_stock", "nav.maint_stock", "server", "maintenance.stock", "maint_view"),
         ("maint_reports", "nav.maint_reports", "chart", "maintenance.reports", "maint_view"),
+        ("maint_import", "nav.maint_import", "boxes", "maintenance.import_page", "maint_admin"),
         ("maint_workflow", "nav.maint_workflow", "map", "maintenance.workflow", "maint_view"),
         ("maint_settings", "nav.maint_settings", "settings", "maintenance.settings", "maint_admin"),
     ]},

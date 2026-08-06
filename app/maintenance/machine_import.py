@@ -183,18 +183,67 @@ def _norm_header(h):
     return _ALIAS.get(h, h)
 
 
+def _sniff(raw):
+    """Format from CONTENT, not the file name. Someone exporting from Excel gets
+    .xlsx by default and will upload that — refusing it, or worse reading it as
+    text and importing mojibake, is not an acceptable answer."""
+    if raw[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return "xls"          # legacy OLE2
+    if raw[:2] == b"PK":
+        return "xlsx"         # zip container
+    return "csv"
+
+
+def _rows_from_workbook(raw, kind):
+    """Every used cell of the FIRST sheet as strings, so the CSV path downstream
+    is unchanged. A number Excel stored as 12345.0 becomes '12345', because a
+    serial number that arrives as a float matches nothing."""
+    def cell(v):
+        if v is None:
+            return ""
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
+        return str(v)
+
+    if kind == "xls":
+        import xlrd
+        sh = xlrd.open_workbook(file_contents=raw).sheet_by_index(0)
+        return [[cell(sh.cell_value(r, c)) for c in range(sh.ncols)]
+                for r in range(sh.nrows)]
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    try:
+        return [[cell(v) for v in row] for row in wb[wb.sheetnames[0]].iter_rows(values_only=True)]
+    finally:
+        wb.close()
+
+
 def _reader(path_or_stream):
-    """Path / bytes / bytes-stream / text-stream -> csv rows. utf-8-sig strips the
-    BOM that Excel writes; errors='replace' means one bad byte never kills a
-    5,000-row load."""
+    """Path / bytes / stream -> rows, accepting .csv, .xlsx AND .xls.
+
+    utf-8-sig strips the BOM that Excel writes; errors='replace' means one bad
+    byte never kills a 5,000-row load. Spreadsheets are detected by their magic
+    bytes and flattened to the same row shape, so everything after this point
+    stays a single code path.
+    """
     src = path_or_stream
     if isinstance(src, (str, os.PathLike)):
-        return csv.reader(io.open(src, encoding="utf-8-sig", newline="", errors="replace"))
-    if isinstance(src, bytes):
-        src = io.BytesIO(src)
-    if hasattr(src, "read") and not hasattr(src, "encoding"):
-        src = io.TextIOWrapper(src, encoding="utf-8-sig", newline="", errors="replace")
-    return csv.reader(src)
+        with io.open(src, "rb") as fh:
+            raw = fh.read()
+    elif isinstance(src, bytes):
+        raw = src
+    elif hasattr(src, "read"):
+        raw = src.read()
+        if isinstance(raw, str):
+            raw = raw.encode("utf-8")
+    else:
+        raw = b""
+
+    kind = _sniff(raw)
+    if kind in ("xls", "xlsx"):
+        return iter(_rows_from_workbook(raw, kind))
+    text = raw.decode("utf-8-sig", errors="replace")
+    return csv.reader(io.StringIO(text, newline=""))
 
 
 def compose_remarks(base, parts):
