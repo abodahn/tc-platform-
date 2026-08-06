@@ -1079,7 +1079,14 @@ def import_run(kind):
     if not spec:
         abort(404)
     f = request.files.get("file")
-    if not f or not (f.filename or "").lower().endswith(".xlsx"):
+    name = (f.filename or "").lower() if f else ""
+    if not name.endswith(".xlsx"):
+        # A machine register (.csv / .xls) landed on a template tab. Don't just
+        # refuse — that is what happened the first time anyone used this page.
+        # Send them to the tab that DOES read their file, and say why.
+        if kind == "machines" and name.endswith((".csv", ".xls")):
+            flash("m_import_wrong_tab", "error")
+            return redirect(url_for("maintenance.import_page", kind="register"))
         flash("m_import_bad_file", "error")
         return redirect(url_for("maintenance.import_page", kind=kind))
     import openpyxl

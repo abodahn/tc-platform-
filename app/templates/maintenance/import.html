@@ -9,9 +9,12 @@
 </div>
 
 <div class="seg" style="width:max-content;margin-bottom:18px">
-  <a class="{{ 'on' if kind=='machines' }}" href="{{ url_for('maintenance.import_page', kind='machines') }}" data-i18n="nav.maint_machines" style="padding:8px 14px">Machines</a>
-  <a class="{{ 'on' if kind=='spares' }}" href="{{ url_for('maintenance.import_page', kind='spares') }}" data-i18n="nav.maint_spares" style="padding:8px 14px">Spare parts</a>
-  <a class="{{ 'on' if kind=='register' }}" href="{{ url_for('maintenance.import_page', kind='register') }}" data-i18n="m.reg_tab" style="padding:8px 14px">Machine register (CSV)</a>
+  {# Two of these tabs used to be called "Machines" and "Machine register", which is
+     one word apart and sent the first real user to the wrong one. Name each tab by
+     the FILE it takes, not by the thing it loads. #}
+  <a class="{{ 'on' if kind=='machines' }}" href="{{ url_for('maintenance.import_page', kind='machines') }}" data-i18n="m.imp_tab_machines" style="padding:8px 14px">Add machines · Excel template</a>
+  <a class="{{ 'on' if kind=='spares' }}" href="{{ url_for('maintenance.import_page', kind='spares') }}" data-i18n="m.imp_tab_spares" style="padding:8px 14px">Add spare parts · Excel template</a>
+  <a class="{{ 'on' if kind=='register' }}" href="{{ url_for('maintenance.import_page', kind='register') }}" data-i18n="m.reg_tab" style="padding:8px 14px">Machine register · CSV or Excel</a>
 </div>
 
 {% if kind == 'register' %}
