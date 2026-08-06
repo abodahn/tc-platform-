@@ -40,6 +40,32 @@ bp = Blueprint("backup", __name__, url_prefix="/admin")
 _SKIP = {"sqlite_sequence", "mnt_attachments", "bi_dataset_rows"}
 
 
+def _columns_of(conn, table):
+    """Column names for a table that has no rows.
+
+    NOT via cursor.description: app/db.py's PostgreSQL shim (_PGCursor) does not
+    expose it, so reading columns that way worked on SQLite in development and
+    failed on EVERY table in production — a backup that downloaded cleanly and
+    contained nothing but a manifest. Ask the catalogue instead, which both
+    engines answer.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name=? ORDER BY ordinal_position", (table,)).fetchall()
+        if rows:
+            return [r["column_name"] for r in rows]
+    except Exception:                      # noqa: BLE001 — SQLite has no information_schema
+        try:
+            conn.rollback()
+        except Exception:                  # noqa: BLE001
+            pass
+    try:
+        return [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    except Exception:                      # noqa: BLE001
+        return []
+
+
 def _table_names(conn):
     """Every user table, on SQLite or PostgreSQL."""
     try:                      # PostgreSQL
@@ -71,10 +97,8 @@ def build_zip():
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for t in names:
                 try:
-                    cur = conn.execute(f"SELECT * FROM {t}")
-                    rows = cur.fetchall()
-                    cols = ([d[0] for d in cur.description] if cur.description
-                            else (list(rows[0].keys()) if rows else []))
+                    rows = conn.execute(f"SELECT * FROM {t}").fetchall()
+                    cols = list(rows[0].keys()) if rows else _columns_of(conn, t)
                     s = io.StringIO()
                     w = csv.writer(s, lineterminator="\n")
                     w.writerow(cols)
@@ -121,6 +145,16 @@ def download():
     if not has_permission(current_user()["role"], "access_admin"):
         abort(403)
     data, manifest = build_zip()
+    # A backup that captured NOTHING must not arrive as a download. The first
+    # production run returned a 1 KB zip holding only a manifest — every table
+    # had failed — and it looked exactly like success in the browser. An error
+    # page is unmistakable; a tiny file in the Downloads folder is not.
+    if not manifest["tables"]:
+        first = next(iter(manifest["errors"].items()), ("", "no tables found"))
+        abort(500, description=(
+            "The backup captured no tables, so nothing was downloaded — this is "
+            "deliberately an error rather than an empty file that looks like a "
+            f"backup. First failure: {first[0]}: {first[1]}"))
     log_audit(current_user()["username"], "backup_download",
               f"{len(manifest['tables'])} tables, {manifest['rows_total']} rows, "
               f"{len(data)} bytes", "")
