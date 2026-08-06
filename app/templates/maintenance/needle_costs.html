@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Needle economics{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="m.ndl_h">Needle economics</h1>
+    <div class="sub" data-i18n="m.ndl_sub">What needles cost per machine model: unit price, how many a machine carries, and how often they are replaced.</div></div>
+  <a class="btn btn-ghost" href="{{ url_for('maintenance.import_page', kind='needle_costs') }}" data-i18n="m.ndl_import">Import needle costs</a>
+</div>
+
+<div class="grid cols-2">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="m.ndl_totals">Across every model on file</h3></div>
+    <div class="panel-pad">
+      <div class="flex gap wrap">
+        <span class="badge b-info"><b>{{ rows|length }}</b> <span data-i18n="m.ndl_models">models</span></span>
+        <span class="badge b-info"><b style="font-variant-numeric:tabular-nums">{{ '%.0f'|format(machines) }}</b> <span data-i18n="m.ndl_machines">machines covered</span></span>
+        <span class="badge b-warning"><b style="font-variant-numeric:tabular-nums">{{ '%.2f'|format(total) }}</b> <span data-i18n="m.ndl_period">per period</span></span>
+        {% if unpriced %}<span class="badge b-critical"><b>{{ unpriced }}</b> <span data-i18n="m.ndl_unpriced">models with no price on file</span></span>{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="panel accent">
+    <div class="panel-head"><h3 data-i18n="m.ndl_currency_h">About that total</h3></div>
+    <div class="panel-pad">
+      <p class="muted" style="font-size:12.5px" data-i18n="m.ndl_currency">The source states no currency for any row, so the figure above is a bare number. It is deliberately not labelled EGP or USD — stamping a currency the archive never recorded would put a fabricated figure on a cost report. Confirm the currency with the supplier, then it can be set here.</p>
+      {% if unpriced %}<p class="muted mt-3" style="font-size:12.5px"><b>{{ unpriced }}</b>
+        <span data-i18n="m.ndl_unpriced_note">models covering</span> <b>{{ '%.0f'|format(unpriced_machines) }}</b>
+        <span data-i18n="m.ndl_unpriced_note2">machines have no price on file — the source recorded "XXX". They are listed below and are NOT counted in the total above.</span></p>{% endif %}
+      {% if currencies %}<div class="flex gap wrap mt-3">{% for c in currencies %}<span class="tag">{{ c }}</span>{% endfor %}</div>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="m.ndl_list">By machine model</h3>
+    <span class="muted" style="font-size:12px" data-i18n="m.ndl_sorted">Most expensive first</span></div>
+  <div class="panel-pad" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="m.ndl_model">Model</th>
+        <th data-i18n="m.ndl_type">Type</th>
+        <th data-i18n="m.brand">Brand</th>
+        <th data-i18n="m.ndl_supplier">Supplier</th>
+        <th data-i18n="m.ndl_qty">Machines</th>
+        <th data-i18n="m.ndl_unit">Needle price</th>
+        <th data-i18n="m.ndl_per">Per machine</th>
+        <th data-i18n="m.ndl_repl">Replacements</th>
+        <th data-i18n="m.ndl_total">Cost / period</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><b>{{ r.model }}</b>
+            {% if r.model_tokens %}<div class="muted" style="font-size:12px">{{ r.model_tokens }}</div>{% endif %}</td>
+          <td>{{ r.machine_type_tr or '—' }}
+            {% if r.machine_type_ar %}<div class="muted" style="font-size:12px">{{ r.machine_type_ar }}</div>{% endif %}</td>
+          <td>{{ r.brand or '—' }}</td>
+          <td class="muted">{{ r.supplier or '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ '%.0f'|format(r.machines_qty or 0) }}</td>
+          <td style="font-variant-numeric:tabular-nums">{% if r.needle_unit_price is none %}<span class="badge b-critical" data-i18n="m.ndl_none">not on file</span>{% else %}{{ '%.5f'|format(r.needle_unit_price) }}{% endif %}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ '%.0f'|format(r.needles_per_machine or 0) }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ '%.0f'|format(r.replacements_per_period or 0) }}</td>
+          <td style="font-variant-numeric:tabular-nums">{% if r.period_cost_total is none %}<span class="muted">—</span>{% else %}<b>{{ '%.2f'|format(r.period_cost_total) }}</b>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="muted" data-i18n="m.ndl_empty">Nothing on file yet — import needle_cost_and_consumption_by_machine.csv.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

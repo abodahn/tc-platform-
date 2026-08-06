@@ -182,6 +182,35 @@ CREATE TABLE IF NOT EXISTS mnt_pm_plans (
     FOREIGN KEY (machine_id) REFERENCES mnt_machines(id) ON DELETE CASCADE
 );
 
+-- Where a machine physically stands. The archive resolved 115 places into a
+-- tree (site -> building -> floor -> department -> line -> position); until now
+-- `area` and `line_no` on a machine were free text, so "HALL A", "Hall-A" and
+-- "A HOLÜ" were three different places. `parent_code` is the tree, and both
+-- labels are kept because the floor speaks Turkish and the reports do not.
+CREATE TABLE IF NOT EXISTS mnt_locations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE, level TEXT, site TEXT, building TEXT, building_en TEXT,
+    floor TEXT, department TEXT, line_no TEXT, position_code TEXT,
+    label_tr TEXT, label_en TEXT, parent_code TEXT,
+    machines_observed INTEGER DEFAULT 0, mentions INTEGER DEFAULT 0,
+    confidence TEXT, notes TEXT, is_active INTEGER DEFAULT 1, created_at TEXT
+);
+
+-- Needle cost and consumption per machine MODEL (not per machine): what a needle
+-- costs, how many a machine carries, and how often they are replaced. This is
+-- what turns "we spend a lot on needles" into a number per model.
+-- `currency` is stored verbatim — the source says "UNKNOWN - not stated" for
+-- every row, and inventing EGP or USD here would be a fabricated figure on a
+-- cost report.
+CREATE TABLE IF NOT EXISTS mnt_needle_costs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model TEXT, model_tokens TEXT, machine_type_tr TEXT, machine_type_ar TEXT,
+    brand TEXT, supplier TEXT, machines_qty REAL,
+    needle_unit_price REAL, needles_per_machine REAL,
+    replacements_per_period REAL, period_cost_total REAL,
+    currency TEXT, confidence TEXT, created_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS mnt_pm_checklist (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     plan_id INTEGER, item TEXT, required INTEGER DEFAULT 1,

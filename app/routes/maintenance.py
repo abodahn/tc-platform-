@@ -598,6 +598,75 @@ def machine_attach(mid):
 
 
 # --------------------------------------------------------------------------
+# Locations & needle economics — the two reference registers behind the machines
+# --------------------------------------------------------------------------
+@bp.route("/locations")
+@login_required
+def locations():
+    """The place tree, with the machines standing in each place.
+
+    Machines carry `area` and `line_no` as free text, so the count is a MATCH,
+    not a foreign key — and it is labelled that way on the page rather than
+    presented as an exact figure it is not.
+    """
+    _require("maint_view")
+    q = (request.args.get("q") or "").strip()
+    conn = _db()
+    try:
+        sql = "SELECT * FROM mnt_locations WHERE is_active=1"
+        args = []
+        if q:
+            like = f"%{q.lower()}%"
+            sql += (" AND (lower(code) LIKE ? OR lower(label_en) LIKE ? OR "
+                    "lower(label_tr) LIKE ? OR lower(department) LIKE ?)")
+            args = [like, like, like, like]
+        rows = [dict(r) for r in conn.execute(sql + " ORDER BY level, code", args)]
+        # One query for every location's live machine count, matched on the free
+        # text the register actually holds.
+        for r in rows:
+            needle = (r.get("line_no") or r.get("department") or r.get("building") or "").strip()
+            r["live_machines"] = conn.execute(
+                "SELECT COUNT(*) c FROM mnt_machines WHERE is_active=1 AND ("
+                "lower(COALESCE(area,''))=lower(?) OR lower(COALESCE(line_no,''))=lower(?))",
+                (needle, needle)).fetchone()["c"] if needle else 0
+        levels = conn.execute(
+            "SELECT level, COUNT(*) c FROM mnt_locations WHERE is_active=1 "
+            "GROUP BY level ORDER BY c DESC").fetchall()
+    finally:
+        conn.close()
+    return render_template("maintenance/locations.html", rows=rows, q=q,
+                           levels=levels, active="maint_locations")
+
+
+@bp.route("/needle-costs")
+@login_required
+def needle_costs():
+    """What needles cost, per machine model. The archive states no currency for
+    any row, so totals are shown as a bare number with that said out loud —
+    stamping EGP or USD on it would be a fabricated figure on a cost report."""
+    _require("maint_view")
+    conn = _db()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM mnt_needle_costs ORDER BY COALESCE(period_cost_total,0) DESC")]
+        total = sum((r.get("period_cost_total") or 0) for r in rows)
+        machines = sum((r.get("machines_qty") or 0) for r in rows)
+        # The source wrote "XXX" for a price nobody recorded on 21 models. They
+        # are on file with their model, supplier and machine count — but they are
+        # NOT in the total, and the page has to say so, or the total reads as
+        # complete when it covers only part of the fleet.
+        unpriced = [r for r in rows if r.get("needle_unit_price") is None]
+        unpriced_machines = sum((r.get("machines_qty") or 0) for r in unpriced)
+        currencies = sorted({(r.get("currency") or "").strip() for r in rows if r.get("currency")})
+    finally:
+        conn.close()
+    return render_template("maintenance/needle_costs.html", rows=rows, total=total,
+                           machines=machines, currencies=currencies,
+                           unpriced=len(unpriced), unpriced_machines=unpriced_machines,
+                           active="maint_needle")
+
+
+# --------------------------------------------------------------------------
 # Spare parts
 # --------------------------------------------------------------------------
 @bp.route("/spares", methods=["GET", "POST"])
@@ -988,6 +1057,41 @@ IMPORT_SPECS = {
     # Preventive maintenance. Unlike the two above it has no `code` of its own —
     # a plan belongs to a MACHINE, so the key is machine_code and a plan whose
     # machine is not on file is rejected with that reason rather than orphaned.
+    # Two reference tables that arrive as flat files and need no cross-table
+    # resolution: a code is the key, a duplicate is skipped, numbers go through
+    # to_number. They share one generic handler rather than a branch each.
+    "locations": {
+        "required": ("code", "label_en"),
+        "table": "mnt_locations", "key": "code",
+        "nums": ("machines_observed", "mentions"),
+        "headers": ["code", "level", "site", "building", "building_en", "floor",
+                    "department", "line_no", "position_code", "label_tr",
+                    "label_en", "parent_code", "machines_observed", "mentions",
+                    "confidence", "notes"],
+        "example": ["LINE-A-01", "line", "T&C Garments - Obour plant", "ESKİ BİNA",
+                    "Old building", "1", "Sewing", "A01", "P-01", "A HATTI",
+                    "Line A01", "BLD-ESKI", 24, 103, "high", ""],
+    },
+    "needle_costs": {
+        "required": ("model",),
+        "table": "mnt_needle_costs", "key": "model", "nums_optional": True,
+        "nums": ("machines_qty", "needle_unit_price", "needles_per_machine",
+                 "replacements_per_period", "period_cost_total"),
+        "headers": ["model", "model_tokens", "machine_type_tr", "machine_type_ar",
+                    "brand", "supplier", "machines_qty", "needle_unit_price",
+                    "needles_per_machine", "replacements_per_period",
+                    "period_cost_total", "currency", "confidence"],
+        "example": ["MOL - 254 LK-1960", "LK1960|MOL254", "KÖPRÜ TAKMA OTOMATI",
+                    "تركيب لوكسات", "JUKI", "ASTAS MOUSA", 72, 0.147, 2, 2,
+                    42.336, "UNKNOWN - not stated in the source", "high"],
+    },
+    "pm_checklist": {
+        "required": ("machine_code", "plan_title", "item"),
+        "headers": ["machine_code", "plan_title", "item", "required",
+                    "photo_required", "sort"],
+        "example": ["SN-4D0EH13700", "Electronic & motor service - DUZ MAKINA",
+                    "Electronic & motor service", 1, 0, 1],
+    },
     "pm_plans": {
         "required": ("machine_code", "title"),
         "headers": ["machine_code", "title", "frequency", "interval_days",
@@ -1097,7 +1201,8 @@ def import_page():
             conn.close()
     return render_template("maintenance/import.html", kind=kind, result=None,
                            reg_result=reg_result, reg_parsed=reg_parsed,
-                           reg_stats=reg_stats, accept=ACCEPT, active="maint_settings")
+                           reg_stats=reg_stats, accept=ACCEPT, active="maint_settings",
+                           cols=(IMPORT_SPECS.get(kind) or {}).get("headers"))
 
 
 @bp.route("/import/template/<kind>.xlsx")
@@ -1218,6 +1323,113 @@ def import_run(kind):
 
     added, skipped, errors = 0, 0, []
 
+    # Generic reference-table import: a flat file, a unique key, numbers via
+    # to_number. Adding another such table is an IMPORT_SPECS entry, not code.
+    if spec.get("table"):
+        table, keycol = spec["table"], spec["key"]
+        numcols = spec.get("nums", ())
+        conn = _db()
+        try:
+            for i, row in enumerate(rows[hdr_i + 1:], start=hdr_i + 2):
+                if not any((c or "").strip() for c in row):
+                    continue
+                d = {h: ((row[col_of[h]] if h in col_of and col_of[h] < len(row) else "")
+                         or "") for h in headers} if by_name else \
+                    {h: (v or "") for h, v in zip(headers, row)}
+                key = str(d.get(keycol) or "").strip()
+                if not key:
+                    errors.append(f"Row {i}: {keycol} is required")
+                    continue
+                if conn.execute(f"SELECT 1 FROM {table} WHERE {keycol}=?",
+                                (key,)).fetchone():
+                    skipped += 1
+                    continue
+                vals, bad = {}, None
+                for c in numcols:
+                    raw = d.get(c)
+                    n = to_number(raw, decimal=dec)
+                    if n is None and raw is not None and str(raw).strip():
+                        # A reference table records what the source knew. The needle
+                        # file writes "XXX" for a price nobody ever recorded and
+                        # "#VALUE!" where Excel gave up — 21 real machine models.
+                        # Refusing those rows loses the model, the supplier and the
+                        # machine count to save a price that was never there;
+                        # importing 0.00 would be worse still, because a zero on a
+                        # cost report reads as free. NULL says "not on file".
+                        if not spec.get("nums_optional"):
+                            bad = f"Row {i}: {c} is not a number: {str(raw).strip()}"
+                            break
+                        n = None
+                    vals[c] = n
+                if bad:
+                    errors.append(bad)
+                    continue
+                cols = [h for h in headers]
+                conn.execute(
+                    f"INSERT INTO {table} ({','.join(cols)},created_at) VALUES "
+                    f"({','.join('?' for _ in cols)},datetime('now'))",
+                    tuple(vals[h] if h in numcols else (d.get(h) or None) for h in cols))
+                added += 1
+            svc.audit(conn, _u(), "import", kind, 0, None, f"+{added}",
+                      comment=f"skipped {skipped}", ip=request.remote_addr)
+            conn.commit()
+        finally:
+            conn.close()
+        if not added and not skipped and not errors:
+            flash("m_import_nothing", "error")
+        return render_template("maintenance/import.html", kind=kind,
+                               result={"added": added, "skipped": skipped, "errors": errors},
+                               accept=ACCEPT, active="maint_settings",
+                               cols=spec.get("headers"))
+
+    if kind == "pm_checklist":
+        conn = _db()
+        try:
+            plans = {(r["code"], r["title"]): r["pid"] for r in conn.execute(
+                "SELECT m.code code, p.title title, p.id pid FROM mnt_pm_plans p "
+                "JOIN mnt_machines m ON m.id = p.machine_id")}
+            for i, row in enumerate(rows[hdr_i + 1:], start=hdr_i + 2):
+                if not any((c or "").strip() for c in row):
+                    continue
+                d = {h: ((row[col_of[h]] if h in col_of and col_of[h] < len(row) else "")
+                         or "") for h in headers} if by_name else                     {h: (v or "") for h, v in zip(headers, row)}
+                mcode = str(d.get("machine_code") or "").strip()
+                title = str(d.get("plan_title") or "").strip()
+                item = str(d.get("item") or "").strip()
+                if not (mcode and title and item):
+                    errors.append(f"Row {i}: machine_code, plan_title and item are required")
+                    continue
+                pid = plans.get((mcode, title))
+                if pid is None:
+                    # A checklist item with no plan is a check nobody will ever be
+                    # asked to perform. Refuse it and say which plan is missing.
+                    errors.append(f"Row {i}: no plan '{title}' on machine {mcode} — "
+                                  "import the maintenance plans first")
+                    continue
+                if conn.execute("SELECT 1 FROM mnt_pm_checklist WHERE plan_id=? AND item=?",
+                                (pid, item)).fetchone():
+                    skipped += 1
+                    continue
+                conn.execute(
+                    "INSERT INTO mnt_pm_checklist (plan_id,item,required,photo_required,sort) "
+                    "VALUES (?,?,?,?,?)",
+                    (pid, item,
+                     0 if str(d.get("required") or "1").strip() in ("0", "no", "false") else 1,
+                     1 if str(d.get("photo_required") or "0").strip() in ("1", "yes", "true") else 0,
+                     int(to_number(d.get("sort"), default=1) or 1)))
+                added += 1
+            svc.audit(conn, _u(), "import", "pm_checklist", 0, None, f"+{added}",
+                      comment=f"skipped {skipped}", ip=request.remote_addr)
+            conn.commit()
+        finally:
+            conn.close()
+        if not added and not skipped and not errors:
+            flash("m_import_nothing", "error")
+        return render_template("maintenance/import.html", kind=kind,
+                               result={"added": added, "skipped": skipped, "errors": errors},
+                               accept=ACCEPT, active="maint_settings",
+                               cols=spec.get("headers"))
+
     if kind == "pm_plans":
         conn = _db()
         try:
@@ -1270,7 +1482,8 @@ def import_run(kind):
             flash("m_import_nothing", "error")
         return render_template("maintenance/import.html", kind=kind,
                                result={"added": added, "skipped": skipped, "errors": errors},
-                               accept=ACCEPT, active="maint_settings")
+                               accept=ACCEPT, active="maint_settings",
+                               cols=spec.get("headers"))
 
     conn = _db()
     try:
@@ -1360,7 +1573,8 @@ def import_run(kind):
         flash("m_import_nothing", "error")
     return render_template("maintenance/import.html", kind=kind,
                            result={"added": added, "skipped": skipped, "errors": errors},
-                           accept=ACCEPT, active="maint_settings")
+                           accept=ACCEPT, active="maint_settings",
+                           cols=spec.get("headers"))
 
 
 # --------------------------------------------------------------------------

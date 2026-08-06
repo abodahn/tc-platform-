@@ -34,6 +34,8 @@ NAV = [
         ("maint_tickets", "nav.maint_tickets", "kanban", "maintenance.tickets", "maint_view"),
         ("maint_machines", "nav.maint_machines", "factory", "maintenance.machines", "maint_view"),
         ("maint_spares", "nav.maint_spares", "boxes", "maintenance.spares", "maint_view"),
+        ("maint_locations", "nav.maint_locations", "map", "maintenance.locations", "maint_view"),
+        ("maint_needle", "nav.maint_needle", "wallet", "maintenance.needle_costs", "maint_view"),
         ("maint_requests", "nav.maint_requests", "cart", "maintenance.requests", "maint_view"),
         ("maint_approvals", "nav.maint_approvals", "check", "maintenance.approvals", "maint_approve"),
         ("maint_pm", "nav.maint_pm", "refresh", "maintenance.pm", "maint_view"),

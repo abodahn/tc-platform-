@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Locations{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="m.loc_h">Locations</h1>
+    <div class="sub" data-i18n="m.loc_sub">Where a machine physically stands — site, building, floor, department, line. Until this register existed, "HALL A", "Hall-A" and "A HOLÜ" were three different places.</div></div>
+  <a class="btn btn-ghost" href="{{ url_for('maintenance.import_page', kind='locations') }}" data-i18n="m.loc_import">Import locations</a>
+</div>
+
+<div class="panel">
+  <div class="panel-pad">
+    <form method="get" class="flex gap wrap" style="align-items:flex-end">
+      <div class="field" style="flex:1;min-width:260px;margin:0">
+        <label data-i18n="m.reg_search">Search</label>
+        <input type="search" name="q" value="{{ q }}" data-i18n-ph="m.loc_search_ph"
+               placeholder="Code, label, department…">
+      </div>
+      <button class="btn btn-primary" type="submit" data-i18n="m.reg_search">Search</button>
+      {% if q %}<a class="btn btn-ghost" href="{{ url_for('maintenance.locations') }}" data-i18n="m.reg_clear">Clear</a>{% endif %}
+    </form>
+    <div class="flex gap wrap mt-3">
+      {% for l in levels %}<span class="tag">{{ l.level or '—' }} · {{ l.c }}</span>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="m.loc_list">Places on file</h3>
+    <span class="muted" style="font-size:12px">{{ rows|length }}</span></div>
+  <div class="panel-pad" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="cat.code">Code</th>
+        <th data-i18n="m.loc_level">Level</th>
+        <th data-i18n="m.loc_label">Label</th>
+        <th data-i18n="m.loc_parent">Within</th>
+        <th data-i18n="m.loc_observed">Seen in archive</th>
+        <th data-i18n="m.loc_live">Machines here now</th>
+        <th data-i18n="m.loc_conf">Confidence</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><b>{{ r.code }}</b></td>
+          <td><span class="badge b-unknown">{{ r.level or '—' }}</span></td>
+          <td>{{ r.label_en or r.label_tr or '—' }}
+            {% if r.label_tr and r.label_tr != r.label_en %}<div class="muted" style="font-size:12px">{{ r.label_tr }}</div>{% endif %}</td>
+          <td class="muted">{{ r.parent_code or '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ r.machines_observed or 0 }}</td>
+          <td style="font-variant-numeric:tabular-nums">
+            {% if r.live_machines %}<a href="{{ url_for('maintenance.machines', q=(r.line_no or r.department or r.building)) }}">{{ r.live_machines }}</a>
+            {% else %}<span class="muted">0</span>{% endif %}</td>
+          <td><span class="badge {{ 'b-live' if r.confidence=='high' else 'b-warning' }}">{{ r.confidence or '—' }}</span></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="muted" data-i18n="m.loc_empty">No locations yet — import location_master.csv to fill this register.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted mt-3" style="font-size:12.5px" data-i18n="m.loc_note">"Machines here now" is a text MATCH against each machine's area or line, not a foreign key — the machine register stores those as free text. Treat it as a strong hint, not an exact count.</p>
+  </div>
+</div>
+{% endblock %}
