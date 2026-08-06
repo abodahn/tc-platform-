@@ -41,7 +41,15 @@
         <tr><td class="muted">Serial</td><td>{{ m.serial }}</td></tr>
         <tr><td class="muted" data-i18n="m.location">Location</td><td>{{ m.location }}</td></tr>
         <tr><td class="muted">Next PM</td><td>{{ m.next_pm_date or '—' }}</td></tr>
+        {% if m.legacy_card_no %}<tr><td class="muted" data-i18n="m.reg_card">Card no (FIRMA NO)</td><td>{{ m.legacy_card_no }}</td></tr>{% endif %}
+        {% if m.needle_system %}<tr><td class="muted" data-i18n="m.reg_needle">Needle system</td><td>{{ m.needle_system }}</td></tr>{% endif %}
+        {% if m.meter_reading is not none %}<tr><td class="muted" data-i18n="m.reg_meter">Meter reading</td><td>{{ '%.0f'|format(m.meter_reading) }}{% if m.meter_reading_at %} <span class="muted">· {{ m.meter_reading_at }}</span>{% endif %}</td></tr>{% endif %}
+        {% if m.in_register_2023 %}<tr><td class="muted" data-i18n="m.reg_in_2023">In the 2023 register</td><td><span class="tag" data-i18n="m.reg_yes">Yes</span></td></tr>{% endif %}
       </table></div></div>
+    {% if m.remarks %}
+    <div class="panel mt-4"><div class="panel-head"><h3 data-i18n="m.remarks">Remarks</h3></div>
+      <div class="panel-pad"><div class="muted" style="font-size:12.5px;white-space:pre-wrap;word-break:break-word">{{ m.remarks }}</div></div></div>
+    {% endif %}
   </div>
 </div>
 

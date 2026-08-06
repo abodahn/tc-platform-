@@ -11,8 +11,90 @@
 <div class="seg" style="width:max-content;margin-bottom:18px">
   <a class="{{ 'on' if kind=='machines' }}" href="{{ url_for('maintenance.import_page', kind='machines') }}" data-i18n="nav.maint_machines" style="padding:8px 14px">Machines</a>
   <a class="{{ 'on' if kind=='spares' }}" href="{{ url_for('maintenance.import_page', kind='spares') }}" data-i18n="nav.maint_spares" style="padding:8px 14px">Spare parts</a>
+  <a class="{{ 'on' if kind=='register' }}" href="{{ url_for('maintenance.import_page', kind='register') }}" data-i18n="m.reg_tab" style="padding:8px 14px">Machine register (CSV)</a>
 </div>
 
+{% if kind == 'register' %}
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="m.reg_on_file">Machines on file</h3></div>
+  <div class="panel-pad">
+    <span class="tag">{{ reg_stats.total if reg_stats else 0 }}</span>
+    <span class="muted" style="font-size:12.5px">
+      &nbsp;·&nbsp;<span class="tag">{{ reg_stats.in_register if reg_stats else 0 }}</span>
+      <span data-i18n="m.reg_current">In the current 2023 register</span>
+      &nbsp;·&nbsp;<span class="tag">{{ reg_stats.no_serial if reg_stats else 0 }}</span>
+      <span data-i18n="m.reg_no_serial">Keyed by card number (no serial)</span>
+    </span>
+  </div>
+</div>
+
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="m.reg_h">Import the machine register</h3>
+    <span class="muted" style="font-size:12px" data-i18n="m.reg_hint">CSV export of the machine register. Machines are matched by serial number (SN-…); a record with no serial falls back to its card number (CARD-…) and is flagged below. A blank cell never overwrites a value edited here, and every row that cannot be imported is listed with its reason. Nothing is written until you press Import.</span>
+  </div>
+  <form method="post" action="{{ url_for('maintenance.import_page') }}" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="panel-pad">
+      <div class="field"><label data-i18n="cat.file">File</label>
+        <input type="file" name="file" accept=".csv" required></div>
+      <div class="flex gap wrap mt-3">
+        <button class="btn btn-primary" type="submit" data-i18n="cat.run">Import</button>
+        <a class="btn btn-ghost" href="{{ url_for('maintenance.settings') }}" data-i18n="nav.maint_settings">Settings</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+{% if reg_result %}
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="cat.result">Import result</h3></div>
+  <div class="panel-pad">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="cat.added">Added</th><th data-i18n="cat.updated">Updated</th>
+        <th data-i18n="cat.unchanged">Unchanged</th><th data-i18n="cat.rejected">Rejected</th>
+      </tr></thead>
+      <tbody><tr>
+        <td>{{ reg_result.added }}</td><td>{{ reg_result.updated }}</td>
+        <td>{{ reg_result.unchanged }}</td>
+        <td>{{ (reg_parsed.rejects|length if reg_parsed else 0) + reg_result.rejected }}</td>
+      </tr></tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if reg_parsed and reg_parsed.flagged %}
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="m.reg_flagged_h">Rows keyed by card number</h3>
+    <span class="muted" style="font-size:12px">{{ reg_parsed.no_serial }} <span data-i18n="m.reg_flagged_hint">These records carry no serial number, so the card number was used as the key. A card is a slot, not an asset tag — check these before trusting them as one machine each.</span></span></div>
+  <div class="panel-pad" style="max-height:240px;overflow:auto">
+    {% for c in reg_parsed.flagged[:200] %}<span class="tag">{{ c }}</span> {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if reg_parsed and reg_parsed.rejects %}
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="cat.rejects_h">Rejected rows</h3>
+    <span class="muted" style="font-size:12px">{{ reg_parsed.rejects|length }} <span data-i18n="cat.rejects_hint">rows were skipped, each with its reason. Nothing is dropped silently.</span></span></div>
+  <div class="panel-pad" style="max-height:340px;overflow:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="cat.row">Row</th><th data-i18n="cat.code">Code</th>
+        <th data-i18n="cat.reason">Reason</th>
+      </tr></thead>
+      <tbody>
+      {% for r in reg_parsed.rejects[:200] %}
+        <tr><td>{{ r.row }}</td><td>{{ r.code }}</td><td>{{ r.reason }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% else %}
 <div class="grid cols-2">
   <div class="panel accent">
     <div class="panel-head"><h3 data-i18n="m.import_upload">Upload file</h3></div>
@@ -50,5 +132,6 @@
     {% for e in result.errors %}<div class="muted" style="font-size:12.5px">• {{ e }}</div>{% endfor %}
   </div>
 </div>
+{% endif %}
 {% endif %}
 {% endblock %}

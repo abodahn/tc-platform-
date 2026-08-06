@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS mnt_machines (
     total_downtime_min INTEGER DEFAULT 0,
     breakdowns INTEGER DEFAULT 0,
     cost_to_date REAL DEFAULT 0,
+    -- Needle system (DPX17, DCX27 ...): the join to the RT-07 broken-needle record.
+    needle_system TEXT,
+    -- Cycle counter off the machine, and when it was read. Usage-based PM needs both.
+    meter_reading REAL, meter_reading_at TEXT,
+    -- Provenance for the register import: the FIRMA NO card slot the machine was
+    -- filed under (a slot is re-issued, so it is NOT the key), and whether the
+    -- record appears in the current 2023 register (lets "current fleet only" be a
+    -- filter instead of a decision taken at import time).
+    legacy_card_no TEXT, in_register_2023 INTEGER DEFAULT 0,
     remarks TEXT, is_active INTEGER DEFAULT 1, created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_mnt_machine_code ON mnt_machines(code);
@@ -242,13 +251,49 @@ _MIGRATIONS = [
     # counters are rolled up from a ticket exactly once.
     ("mnt_tickets", "machine_rolled",
      "ALTER TABLE mnt_tickets ADD COLUMN machine_rolled INTEGER DEFAULT 0"),
+    # --- Machine register import (app/maintenance/machine_import.py). Five ALTERs,
+    # no index, no other boot work: gunicorn runs --preload, so everything here
+    # happens BEFORE the port binds over a slow external PostgreSQL link.
+    ("mnt_machines", "needle_system",
+     "ALTER TABLE mnt_machines ADD COLUMN needle_system TEXT"),
+    ("mnt_machines", "meter_reading",
+     "ALTER TABLE mnt_machines ADD COLUMN meter_reading REAL"),
+    ("mnt_machines", "meter_reading_at",
+     "ALTER TABLE mnt_machines ADD COLUMN meter_reading_at TEXT"),
+    # The FIRMA NO card slot. Its own field because it must stay searchable and it
+    # is NOT the identity — one card carries several serials over its life.
+    ("mnt_machines", "legacy_card_no",
+     "ALTER TABLE mnt_machines ADD COLUMN legacy_card_no TEXT"),
+    # Keeps the owner's "load everything" decision reversible: filter, don't drop.
+    ("mnt_machines", "in_register_2023",
+     "ALTER TABLE mnt_machines ADD COLUMN in_register_2023 INTEGER DEFAULT 0"),
 ]
 
 
 def create_and_seed(conn):
     """Create maintenance tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
+    # Make the CREATE TABLEs durable BEFORE anything below can roll back. On
+    # PostgreSQL executescript leaves them uncommitted, and the migration loop's
+    # `except: conn.rollback()` rolls back the WHOLE open transaction, not just the
+    # statement that failed — on a fresh database that would take the tables with
+    # it. Costs one COMMIT and takes no lock.
+    conn.commit()
     for _tbl, _col, _ddl in _MIGRATIONS:
+        # PROBE BEFORE ALTER. On PostgreSQL, ALTER TABLE ... ADD COLUMN takes an
+        # ACCESS EXCLUSIVE lock on the table BEFORE it discovers the column is
+        # already there, so re-running a migration that has nothing left to do is
+        # NOT free: it queues for the heaviest lock there is. gunicorn runs
+        # --preload, so that queueing happens before the port binds, which is the
+        # failure 4327e5c's lock_timeout='5s' was added to survive. A SELECT takes
+        # only ACCESS SHARE and never waits on readers, so an already-migrated
+        # database now issues ZERO ALTERs — the table name and column name in each
+        # tuple are module constants, never user input.
+        try:
+            conn.execute(f"SELECT {_col} FROM {_tbl} LIMIT 1")
+            continue
+        except Exception:
+            conn.rollback()   # PostgreSQL aborts the transaction on a failed query
         try:
             conn.execute(_ddl)
             conn.commit()

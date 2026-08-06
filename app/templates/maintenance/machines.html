@@ -27,6 +27,26 @@
 </div>
 {% endif %}
 
+<div class="panel" style="margin-bottom:18px">
+  <form method="get" class="panel-pad flex gap wrap center">
+    <div class="field" style="margin:0;min-width:280px">
+      <input name="q" value="{{ q }}" data-i18n-ph="m.reg_search_ph"
+             placeholder="Code, name, serial or card number…"></div>
+    <div class="field" style="margin:0">
+      <select name="fleet">
+        <option value="" data-i18n="m.reg_all">All machines</option>
+        <option value="current" {{ 'selected' if fleet=='current' }} data-i18n="m.reg_only_current">Current fleet only (2023 register)</option>
+      </select></div>
+    <button class="btn btn-primary btn-sm" data-i18n="m.reg_search">Search</button>
+    {% if q or fleet %}<a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.machines') }}" data-i18n="m.reg_clear">Clear</a>{% endif %}
+    <span class="muted" style="font-size:12.5px">
+      <span class="tag">{{ machines|length }}</span> / <span class="tag">{{ total }}</span>
+      <span data-i18n="m.reg_shown">shown of matching machines</span>
+      {% if total > cap %}· <span data-i18n="m.reg_capped">narrow the search to see the rest</span>{% endif %}
+    </span>
+  </form>
+</div>
+
 <div class="panel"><div class="tbl-wrap"><table class="tbl">
   <thead><tr><th data-i18n="m.machine_code">Code</th><th data-i18n="m.machine_name">Name</th>
     <th data-i18n="m.department">Dept</th><th data-i18n="m.criticality">Criticality</th>
@@ -38,5 +58,7 @@
       <td><span class="badge {{ mbadge(m.status) }}">{{ m.status|mhuman }}</span></td>
       <td>{{ m.breakdowns }}</td><td>{{ m.total_downtime_min }}m</td>
       <td><a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.machine_profile', mid=m.id) }}" data-i18n="m.view">View</a></td></tr>
+  {% else %}
+    <tr><td colspan="8"><div class="empty muted" data-i18n="common.no_results">No results found</div></td></tr>
   {% endfor %}</tbody></table></div></div>
 {% endblock %}

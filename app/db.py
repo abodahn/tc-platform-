@@ -9,6 +9,7 @@ sqlite3 behaviour (RETURNING-id lastrowid, hybrid index/key rows).
 """
 import os
 import re
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
@@ -18,11 +19,22 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from config import Config
 from app.security import DEFAULT_ROLE
 
-# Shared password for the seeded role/approver demo accounts. Accounts still on an
-# older default are migrated to this on boot (see _ensure_demo_users); accounts an
-# admin has given a custom password are left untouched.
-DEMO_PASSWORD = "Admin@1122"
-_OLD_DEMO_PASSWORDS = ("Tc@12345",)
+# Password for the seeded role/approver demo accounts (director, agent, store,
+# factory, warehouse, purchasing, finance, cfo, ceo ...).
+#
+# THIS REPOSITORY IS PUBLIC. A literal here is a published credential for accounts
+# that sit at the TOP OF THE APPROVAL LADDER — anyone reading GitHub could have
+# signed in as cfo or ceo. It now comes from TC_DEMO_PASSWORD, and when that is
+# unset each account is created with an INDEPENDENT random password that is never
+# printed and never written down: the accounts still exist so the role structure
+# is intact, but nobody can sign in as them until an admin sets a password.
+#
+# _ensure_demo_users is additionally skipped entirely in production (see below),
+# so a live deployment never grows demo accounts in the first place.
+DEMO_PASSWORD = (os.getenv("TC_DEMO_PASSWORD", "") or "").strip()
+# Passwords previously shipped in this file. They are listed ONLY so an existing
+# account still on one of them can be migrated off it — never to set one.
+_OLD_DEMO_PASSWORDS = ("Tc@12345", "Admin@1122")
 
 
 # --------------------------------------------------------------------------
@@ -665,11 +677,80 @@ def _ensure_extra_systems(conn):
         "WHERE key='probation' AND (base_url LIKE '%:5005' OR base_url LIKE '%10.100.1.13%')")
 
 
+def _report_published_passwords(conn):
+    """Find accounts still using a password this public repo once contained.
+
+    These are real, exploitable logins — 'ceo' and 'cfo' sit at the top of the
+    procurement approval ladder. Reporting is the default because rotating them
+    unannounced would lock out whoever is using them mid-cycle; set
+    TC_ROTATE_PUBLISHED_PASSWORDS=1 to have the next boot rotate them instead.
+    Either way the operator finds out, which is better than silence.
+    """
+    import logging
+    log = logging.getLogger("tc.security")
+    rotate = (os.getenv("TC_ROTATE_PUBLISHED_PASSWORDS", "") or "").strip().lower() in ("1", "true", "yes")
+    try:
+        rows = conn.execute("SELECT id, username, password_hash FROM users").fetchall()
+    except Exception:
+        return
+    hit = [r for r in rows if r["password_hash"]
+           and any(_pw_matches(r["password_hash"], old) for old in _OLD_DEMO_PASSWORDS)]
+    if not hit:
+        return
+    names = ", ".join(r["username"] for r in hit)
+    if rotate:
+        for r in hit:
+            try:
+                conn.execute("UPDATE users SET password_hash=? WHERE id=?",
+                             (generate_password_hash(secrets.token_urlsafe(24)), r["id"]))
+            except Exception:
+                continue
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        log.warning("SECURITY: rotated %d account(s) off a password published in this "
+                    "repository (%s). They now have unguessable passwords and must be "
+                    "reset by an admin before use.", len(hit), names)
+    else:
+        log.warning("SECURITY: %d account(s) still use a password that was published in "
+                    "this PUBLIC repository (%s). Anyone who read the source could sign "
+                    "in as them. Change these passwords, or set "
+                    "TC_ROTATE_PUBLISHED_PASSWORDS=1 to have the next boot rotate them.",
+                    len(hit), names)
+
+
+def _new_demo_password():
+    """The password a demo account is created with.
+
+    TC_DEMO_PASSWORD when set, otherwise an INDEPENDENT random one per account
+    that is never printed or stored anywhere in clear. The account exists so the
+    role structure is complete, but it cannot be signed into until an admin sets
+    a password — which is the safe default for a public repository.
+    """
+    return DEMO_PASSWORD or secrets.token_urlsafe(24)
+
+
 def _ensure_demo_users(conn):
-    """Idempotently ensure the role/approver demo accounts exist (password
-    DEMO_PASSWORD = Admin@1122). Runs on every init. Creates any missing account,
-    and migrates any account still on an OLD default password to DEMO_PASSWORD —
-    but never overwrites a password an admin has since customised."""
+    """Idempotently ensure the role/approver demo accounts exist. Creates any
+    missing account and migrates any account still on a PREVIOUSLY SHIPPED default
+    password off it — never overwriting a password an admin has customised.
+
+    IN PRODUCTION no account is CREATED — a live deployment with real staff must
+    not grow a 'cfo' and a 'ceo' login nobody made deliberately.
+
+    But production still has the accounts this repository already published, so
+    it does one thing: it REPORTS any account still on a password that was once
+    committed here, naming them in the log. It does not rotate them by default,
+    because those accounts may be in daily use and a surprise lockout on the
+    approval ladder is its own outage. Set TC_ROTATE_PUBLISHED_PASSWORDS=1 to
+    rotate them to unguessable values on the next boot — after which an admin
+    sets real passwords through Admin > Registrations.
+    """
+    production = (getattr(Config, "ENV", "") or "").lower() == "production"
+    if production:
+        _report_published_passwords(conn)
+        return
     demo = [
         ("director", "IT Director", "it_director"),
         ("agent", "Service Desk Agent", "service_desk_agent"),
@@ -693,11 +774,13 @@ def _ensure_demo_users(conn):
             conn.execute(
                 """INSERT INTO users (username, password_hash, full_name, role, created_at)
                    VALUES (?,?,?,?,?)""",
-                (uname, generate_password_hash(DEMO_PASSWORD), name, role, utcnow()))
+                (uname, generate_password_hash(_new_demo_password()), name, role, utcnow()))
         elif row["password_hash"] and any(
                 _pw_matches(row["password_hash"], old) for old in _OLD_DEMO_PASSWORDS):
+            # Still on a password this repository once published: rotate it off,
+            # to TC_DEMO_PASSWORD if set, otherwise to an unguessable random one.
             conn.execute("UPDATE users SET password_hash=? WHERE id=?",
-                         (generate_password_hash(DEMO_PASSWORD), row["id"]))
+                         (generate_password_hash(_new_demo_password()), row["id"]))
 
 
 def _pw_matches(pw_hash, plain):
@@ -907,22 +990,29 @@ def init_db():
                  "Platform Administrator", "admin@tcgarments.com", "super_admin",
                  "en", "light", utcnow()),
             )
-            # A couple of demo users to show RBAC menu visibility
-            for uname, name, role in [
-                ("director", "IT Director", "it_director"),
-                ("agent", "Service Desk Agent", "service_desk_agent"),
-                ("exec", "Executive Viewer", "executive_viewer"),
-                ("maint", "Maintenance Manager", "maintenance_manager"),
-                ("tech", "Maintenance Technician", "maintenance_technician"),
-                ("store", "Storekeeper", "storekeeper"),
-                ("supervisor", "Production Supervisor", "production_supervisor"),
-                ("factory", "Factory Manager", "factory_manager"),
-            ]:
-                conn.execute(
-                    """INSERT INTO users (username, password_hash, full_name, role, created_at)
-                       VALUES (?,?,?,?,?)""",
-                    (uname, generate_password_hash(DEMO_PASSWORD), name, role, utcnow()),
-                )
+            # Demo users that show RBAC menu visibility on an evaluation build.
+            # NOT created in production: a live deployment gets its real people
+            # through Admin > Registrations, and an unexplained "factory" or
+            # "store" login nobody created is a standing invitation. Each is
+            # given an independent unguessable password (see _new_demo_password)
+            # unless TC_DEMO_PASSWORD is set — this repository is public, so a
+            # literal here is a published credential.
+            if (getattr(Config, "ENV", "") or "").lower() != "production":
+                for uname, name, role in [
+                    ("director", "IT Director", "it_director"),
+                    ("agent", "Service Desk Agent", "service_desk_agent"),
+                    ("exec", "Executive Viewer", "executive_viewer"),
+                    ("maint", "Maintenance Manager", "maintenance_manager"),
+                    ("tech", "Maintenance Technician", "maintenance_technician"),
+                    ("store", "Storekeeper", "storekeeper"),
+                    ("supervisor", "Production Supervisor", "production_supervisor"),
+                    ("factory", "Factory Manager", "factory_manager"),
+                ]:
+                    conn.execute(
+                        """INSERT INTO users (username, password_hash, full_name, role, created_at)
+                           VALUES (?,?,?,?,?)""",
+                        (uname, generate_password_hash(_new_demo_password()), name, role, utcnow()),
+                    )
         _ensure_demo_users(conn)
         if conn.execute("SELECT COUNT(*) AS c FROM systems").fetchone()["c"] == 0:
             _seed_systems(conn)

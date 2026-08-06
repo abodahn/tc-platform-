@@ -505,6 +505,9 @@ def ticket_comment(tid):
 # --------------------------------------------------------------------------
 # Machines
 # --------------------------------------------------------------------------
+MACHINE_LIST_CAP = 500
+
+
 @bp.route("/machines", methods=["GET", "POST"])
 @login_required
 def machines():
@@ -533,8 +536,29 @@ def machines():
             finally:
                 conn.close()
         return redirect(url_for("maintenance.machines"))
-    rows = _all("SELECT * FROM mnt_machines WHERE is_active=1 ORDER BY code")
-    return render_template("maintenance/machines.html", machines=rows, active="maint_machines")
+    # The register import loads ~5,100 machines. Rendering all of them was a 2.3 MB
+    # page on every visit, and the two provenance columns it added (legacy_card_no,
+    # in_register_2023) were unreachable — this is where they earn their keep:
+    # `q` searches the card number as well as the serial, `fleet=current` is the
+    # "show me only the current fleet" filter the owner's decision depends on.
+    q = (request.args.get("q") or "").strip()
+    fleet = request.args.get("fleet") or ""
+    where, args = ["is_active=1"], []
+    if fleet == "current":
+        where.append("in_register_2023=1")
+    if q:
+        where.append("(LOWER(code) LIKE ? OR LOWER(name) LIKE ? OR LOWER(serial) LIKE ? "
+                     "OR LOWER(legacy_card_no) LIKE ? OR LOWER(brand) LIKE ? "
+                     "OR LOWER(model) LIKE ?)")
+        args += ["%" + q.lower() + "%"] * 6
+    w = " AND ".join(where)
+    total = _one("SELECT COUNT(*) n FROM mnt_machines WHERE " + w, tuple(args))["n"]
+    # ponytail: hard cap, no paging. Narrow with the search box; add pages the day
+    # someone actually wants to walk 5,000 machines a screen at a time.
+    rows = _all("SELECT * FROM mnt_machines WHERE " + w + " ORDER BY code LIMIT %d"
+                % MACHINE_LIST_CAP, tuple(args))
+    return render_template("maintenance/machines.html", machines=rows, total=total,
+                           q=q, fleet=fleet, cap=MACHINE_LIST_CAP, active="maint_machines")
 
 
 @bp.route("/machines/<int:mid>")
@@ -962,12 +986,68 @@ IMPORT_SPECS = {
 }
 
 
-@bp.route("/import")
+@bp.route("/import", methods=["GET", "POST"])
 @login_required
 def import_page():
+    """GET: the import screen. POST: the machine-register CSV upsert (front door A;
+    scripts/import_machines.py is front door B — both call the SAME
+    app.maintenance.machine_import.parse_machines + upsert_machines, so they
+    cannot drift). The .xlsx tabs still POST to import_run below, untouched."""
     _require("maint_admin")
-    return render_template("maintenance/import.html", kind=request.args.get("kind", "machines"),
-                           result=None, active="maint_settings")
+    from app.maintenance.machine_import import (parse_machines, upsert_machines,
+                                                machine_stats)
+    kind = request.args.get("kind", "machines")
+    reg_result = reg_parsed = None
+    if request.method == "POST":
+        kind = "register"
+        file = request.files.get("file")
+        if not file or not file.filename:
+            flash("Choose a file to import.", "error")
+        else:
+            try:
+                rows, reg_parsed = parse_machines(io.BytesIO(file.read()))
+            except Exception as exc:
+                rows, reg_parsed = [], {"error": f"{type(exc).__name__}: {exc}",
+                                        "rejects": [], "flagged": []}
+            if reg_parsed.get("error"):
+                flash(reg_parsed["error"], "error")
+            else:
+                conn = _db()
+                try:
+                    reg_result = upsert_machines(conn, rows, _u(),
+                                                 source=file.filename[:120])
+                    svc.audit(conn, _u(), "import", "machines", 0, None,
+                              f"+{reg_result['added']}",
+                              comment=f"updated {reg_result['updated']}, "
+                                      f"unchanged {reg_result['unchanged']}",
+                              ip=request.remote_addr)
+                    conn.commit()
+                except Exception as exc:
+                    # upsert_machines already rolled back — the whole file is one
+                    # transaction, so nothing landed half-way. Say so instead of
+                    # returning a 500: re-running the import is safe.
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    flash(f"Import failed ({type(exc).__name__}). Nothing was written "
+                          f"— fix the file and run it again.", "error")
+                finally:
+                    conn.close()
+                if reg_result is not None:
+                    flash(f"{reg_result['added']} added, {reg_result['updated']} updated, "
+                          f"{reg_result['unchanged']} unchanged, "
+                          f"{len(reg_parsed.get('rejects') or [])} rejected.", "success")
+    reg_stats = None
+    if kind == "register":
+        conn = _db()
+        try:
+            reg_stats = machine_stats(conn)
+        finally:
+            conn.close()
+    return render_template("maintenance/import.html", kind=kind, result=None,
+                           reg_result=reg_result, reg_parsed=reg_parsed,
+                           reg_stats=reg_stats, active="maint_settings")
 
 
 @bp.route("/import/template/<kind>.xlsx")
