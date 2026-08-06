@@ -6,6 +6,7 @@ the right maintenance permission; mutating actions enforce finer-grained perms.
 """
 import csv
 import io
+import re
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
                    abort, flash, Response, jsonify, send_file)
@@ -1174,6 +1175,34 @@ def import_run(kind):
     # sniff the column's own values the day one turns up.
     dec = "," if meta.get("delimiter") == ";" else None
 
+    # Bind columns by the file's OWN header names, not by position.
+    #
+    # Positional binding is what made the prepared spare-parts export import
+    # nothing: it carries 25 columns in its own order, so `category` landed in
+    # `uom`, `spec` landed in `reorder_level`, and all 19 rows failed with
+    # "reorder_level is not a number: DPX17 120 NM". Any file that is not the
+    # downloaded template byte-for-byte hit this — which is every real export.
+    #
+    # A file whose header names none of the spec columns is treated as
+    # headerless and falls back to position, so the old template still loads.
+    def _norm(s):
+        return re.sub(r"[^a-z0-9]+", "_", (s or "").strip().lower()).strip("_")
+
+    file_cols = {}
+    for idx, name in enumerate(hdr_row):
+        key = _norm(name)
+        if key and key not in file_cols:
+            file_cols[key] = idx
+    col_of = {h: file_cols[_norm(h)] for h in headers if _norm(h) in file_cols}
+    by_name = len(col_of) >= 2          # two matches is not a coincidence
+    if by_name:
+        missing = [h for h in ("code", "name") if h not in col_of]
+        if missing:
+            flash("m_import_missing_cols", "error")
+            flash(", ".join(missing) + " — " + ", ".join(
+                str(h) for h in hdr_row[:12] if str(h).strip()), "error")
+            return redirect(url_for("maintenance.import_page", kind=kind))
+
     added, skipped, errors = 0, 0, []
     conn = _db()
     try:
@@ -1183,7 +1212,11 @@ def import_run(kind):
                 continue          # CSV keeps trailing blank lines; xlsx never had them
             # "" -> None so a blank cell still writes NULL, exactly as the
             # openpyxl path did.
-            d = {h: (v or None) for h, v in zip(headers, row)}
+            if by_name:
+                d = {h: ((row[col_of[h]] or None) if h in col_of
+                         and col_of[h] < len(row) else None) for h in headers}
+            else:
+                d = {h: (v or None) for h, v in zip(headers, row)}
             code = str(d.get("code") or "").strip()
             if not code:
                 errors.append(f"Row {i}: missing code")
@@ -1250,6 +1283,13 @@ def import_run(kind):
         conn.commit()
     finally:
         conn.close()
+    # Nothing added, nothing skipped, nothing wrong: the file parsed but held no
+    # rows we could use — a headerless export whose only line was eaten as the
+    # header, or a sheet of notes. Rendering the ordinary result panel says
+    # "0 added, 0 errors" in green, which reads as success and is how a failed
+    # load goes unnoticed. Say it out loud instead.
+    if not added and not skipped and not errors:
+        flash("m_import_nothing", "error")
     return render_template("maintenance/import.html", kind=kind,
                            result={"added": added, "skipped": skipped, "errors": errors},
                            accept=ACCEPT, active="maint_settings")
