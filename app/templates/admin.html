@@ -32,6 +32,15 @@
     <div class="eyebrow" data-i18n="admin.eyebrow">Administration</div>
     <h1 data-i18n="admin.title">Admin Center</h1>
   </div>
+  <a class="btn btn-primary" href="{{ url_for('backup.download') }}"
+     data-i18n="admin.backup_btn">Download a backup</a>
+</div>
+
+<div class="panel accent" style="margin-bottom:18px">
+  <div class="panel-head"><h3 data-i18n="admin.backup_h">Backup</h3></div>
+  <div class="panel-pad">
+    <p class="muted" style="font-size:12.5px" data-i18n="admin.backup_note">One ZIP holding every table as a CSV, plus a manifest of row counts. It is a DATA backup, not a pg_dump: no schema, no sequences, no roles — restoring means starting a fresh platform and loading the CSVs. It contains password hashes, so store it where you would store a payroll file. Take one before any bulk import.</p>
+  </div>
 </div>
 
 <div class="grid cols-4" style="margin-bottom:18px">

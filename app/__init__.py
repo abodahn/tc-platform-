@@ -150,6 +150,8 @@ def create_app():
     from app.routes.governance import bp as governance_bp
     app.register_blueprint(reports_hub_bp)
     app.register_blueprint(governance_bp)
+    from app.backup import bp as backup_bp
+    app.register_blueprint(backup_bp)
 
     # --- Error handlers ---
     from flask import render_template
