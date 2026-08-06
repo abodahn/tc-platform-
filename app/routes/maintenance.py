@@ -985,6 +985,16 @@ IMPORT_SPECS = {
                     "reorder_level", "max_level", "avg_cost", "criticality"],
         "example": ["SP-100", "Sample Needle", "needle_textile", "pcs", 100, 40, 60, 300, 0.5, "high"],
     },
+    # Preventive maintenance. Unlike the two above it has no `code` of its own —
+    # a plan belongs to a MACHINE, so the key is machine_code and a plan whose
+    # machine is not on file is rejected with that reason rather than orphaned.
+    "pm_plans": {
+        "required": ("machine_code", "title"),
+        "headers": ["machine_code", "title", "frequency", "interval_days",
+                    "assigned_to", "last_done", "next_due", "active"],
+        "example": ["SN-4D0EH13700", "Electronic & motor service", "quarterly",
+                    84, "", "", "", 1],
+    },
 }
 
 # The spare-parts columns that must be numbers.
@@ -1196,7 +1206,10 @@ def import_run(kind):
     col_of = {h: file_cols[_norm(h)] for h in headers if _norm(h) in file_cols}
     by_name = len(col_of) >= 2          # two matches is not a coincidence
     if by_name:
-        missing = [h for h in ("code", "name") if h not in col_of]
+        # Which columns are mandatory depends on the kind: machines and spares key
+        # on `code`, a PM plan belongs to a machine and keys on `machine_code`.
+        required = spec.get("required", ("code", "name"))
+        missing = [h for h in required if h not in col_of]
         if missing:
             flash("m_import_missing_cols", "error")
             flash(", ".join(missing) + " — " + ", ".join(
@@ -1204,6 +1217,61 @@ def import_run(kind):
             return redirect(url_for("maintenance.import_page", kind=kind))
 
     added, skipped, errors = 0, 0, []
+
+    if kind == "pm_plans":
+        conn = _db()
+        try:
+            ids = {r["code"]: r["id"] for r in
+                   conn.execute("SELECT id, code FROM mnt_machines")}
+            for i, row in enumerate(rows[hdr_i + 1:], start=hdr_i + 2):
+                if not any((c or "").strip() for c in row):
+                    continue
+                d = {h: ((row[col_of[h]] if h in col_of and col_of[h] < len(row) else "")
+                         or "") for h in headers} if by_name else \
+                    {h: (v or "") for h, v in zip(headers, row)}
+                mcode = str(d.get("machine_code") or "").strip()
+                title = str(d.get("title") or "").strip()
+                if not mcode or not title:
+                    errors.append(f"Row {i}: machine_code and title are both required")
+                    continue
+                mid = ids.get(mcode)
+                if mid is None:
+                    # Never orphan a plan. A PM plan pointing at a machine that is
+                    # not on file is preventive maintenance that silently covers
+                    # nothing, which is worse than a refused row.
+                    errors.append(f"Row {i}: no machine with code {mcode} — "
+                                  "import the machine register first")
+                    continue
+                if conn.execute("SELECT 1 FROM mnt_pm_plans WHERE machine_id=? AND title=?",
+                                (mid, title)).fetchone():
+                    skipped += 1          # re-importing must not duplicate plans
+                    continue
+                days = to_number(d.get("interval_days"), decimal=dec)
+                if days is None or days <= 0:
+                    errors.append(f"Row {i}: interval_days is not a positive number: "
+                                  f"{str(d.get('interval_days') or '').strip() or '(blank)'}")
+                    continue
+                active = str(d.get("active") or "1").strip().lower()
+                conn.execute(
+                    "INSERT INTO mnt_pm_plans (machine_id,title,frequency,interval_days,"
+                    "assigned_to,last_done,next_due,active,created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,datetime('now'))",
+                    (mid, title, (d.get("frequency") or "monthly"), int(days),
+                     (d.get("assigned_to") or None), (d.get("last_done") or None),
+                     (d.get("next_due") or None),
+                     0 if active in ("0", "no", "false", "hayır", "لا") else 1))
+                added += 1
+            svc.audit(conn, _u(), "import", "pm_plans", 0, None, f"+{added}",
+                      comment=f"skipped {skipped}", ip=request.remote_addr)
+            conn.commit()
+        finally:
+            conn.close()
+        if not added and not skipped and not errors:
+            flash("m_import_nothing", "error")
+        return render_template("maintenance/import.html", kind=kind,
+                               result={"added": added, "skipped": skipped, "errors": errors},
+                               accept=ACCEPT, active="maint_settings")
+
     conn = _db()
     try:
         table = "mnt_machines" if kind == "machines" else "mnt_spare_parts"

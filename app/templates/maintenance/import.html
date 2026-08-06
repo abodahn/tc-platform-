@@ -14,6 +14,7 @@
      the FILE it takes, not by the thing it loads. #}
   <a class="{{ 'on' if kind=='machines' }}" href="{{ url_for('maintenance.import_page', kind='machines') }}" data-i18n="m.imp_tab_machines" style="padding:8px 14px">Add machines · CSV or Excel template</a>
   <a class="{{ 'on' if kind=='spares' }}" href="{{ url_for('maintenance.import_page', kind='spares') }}" data-i18n="m.imp_tab_spares" style="padding:8px 14px">Add spare parts · CSV or Excel template</a>
+  <a class="{{ 'on' if kind=='pm_plans' }}" href="{{ url_for('maintenance.import_page', kind='pm_plans') }}" data-i18n="m.imp_tab_pm" style="padding:8px 14px">Preventive maintenance plans</a>
   <a class="{{ 'on' if kind=='register' }}" href="{{ url_for('maintenance.import_page', kind='register') }}" data-i18n="m.reg_tab" style="padding:8px 14px">Machine register · CSV or Excel</a>
 </div>
 
@@ -116,10 +117,14 @@
     <div class="panel-pad">
       <div class="flex gap wrap">
         {% for col in (C.SPARE_CATEGORIES if False else []) %}{% endfor %}
-        {% set cols = ['code','name','type','brand','department','area','line_no','criticality','status'] if kind=='machines' else ['code','name','category','uom','stock_qty','min_level','reorder_level','max_level','avg_cost','criticality'] %}
+        {% set cols = ['machine_code','title','frequency','interval_days','assigned_to','last_done','next_due','active'] if kind=='pm_plans' else (['code','name','type','brand','department','area','line_no','criticality','status'] if kind=='machines' else ['code','name','category','uom','stock_qty','min_level','reorder_level','max_level','avg_cost','criticality']) %}
         {% for col in cols %}<span class="tag">{{ col }}</span>{% endfor %}
       </div>
+      {% if kind == 'pm_plans' %}
+      <p class="muted mt-3" style="font-size:12.5px" data-i18n="m.import_note_pm">Each plan belongs to a machine, matched on machine_code — import the machine register first. interval_days is the authority; frequency is only a label. Re-importing the same plan for the same machine is skipped, never duplicated.</p>
+      {% else %}
       <p class="muted mt-3" style="font-size:12.5px" data-i18n="m.import_note">Rows with an existing code are skipped. Codes must be unique. Numbers must be valid.</p>
+      {% endif %}
     </div>
   </div>
 </div>
