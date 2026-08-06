@@ -10,8 +10,11 @@ for coercion and are reused by the aggregation engine, so a column typed here as
 """
 from __future__ import annotations
 
+import re
 import statistics
 from datetime import date, datetime
+
+from app.tabular import to_number
 
 _TRUE = {"true", "yes", "y", "1", "on"}
 _FALSE = {"false", "no", "n", "0", "off"}
@@ -22,10 +25,29 @@ _DATE_FORMATS = [
     "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%d %b %Y", "%b %d, %Y",
     "%d %B %Y", "%m/%d/%y", "%d/%m/%y",
 ]
-_CURRENCY = "$€£₺¥,%  "
+# Symbols peeled off before the digits are parsed. The COMMA is deliberately no
+# longer here: on the Turkish/European exports app/tabular.py now accepts it is
+# the DECIMAL point, and stripping it read '12,50' as 1250 — a hundred times too
+# high, silently, with the column still typed "number", so every KPI tile, chart,
+# insight, threshold alert and xlsx/PDF export carried the wrong figure. Which of
+# '.'/',' is the decimal separator is app.tabular.to_number's job, not ours.
+_CURRENCY = "$€£₺¥%  "
+
+
+# What is allowed to reach to_number at all: digits, separators, an optional sign
+# and an optional exponent. to_number strips every OTHER character as noise, so
+# without this gate '2026-03-01' would parse as 20260301, 'M-1' as 1 and
+# 'Line 3' as 3 — and _infer_type would type dates, IDs and category labels as
+# "number". The gate keeps parse_number exactly as strict as it has always been.
+_NUMERIC = re.compile(r"^[+-]?[\d.,]*\d[\d.,]*(?:[eE][+-]?\d+)?$")
 
 
 def parse_number(v):
+    """Float, or None if the value is not a number. None-contract unchanged.
+
+    Symbol handling lives here; the digits are converted by app.tabular.to_number
+    so a number reads the same in BI as it does on every other import screen.
+    """
     if v is None:
         return None
     if isinstance(v, bool):
@@ -37,15 +59,20 @@ def parse_number(v):
         return None
     neg = False
     if s.startswith("(") and s.endswith(")"):  # accounting negatives (1,234)
-        neg, s = True, s[1:-1]
+        neg, s = True, s[1:-1].strip()
     for ch in _CURRENCY:
         s = s.replace(ch, "")
     s = s.strip()
-    if s in ("", "-", "."):
+    if not _NUMERIC.match(s):
         return None
-    try:
-        f = float(s)
-    except ValueError:
+    # Two commas cannot both be a decimal point, so '1,234,567' is unambiguously
+    # US thousands grouping. to_number returns None for it (see `escalate`), and
+    # a revenue column in millions would otherwise drop out of "number" typing
+    # entirely, taking the whole dashboard with it.
+    if s.count(",") > 1 and "." not in s:
+        s = s.replace(",", "")
+    f = to_number(s)
+    if f is None:
         return None
     return -f if neg else f
 

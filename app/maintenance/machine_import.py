@@ -2,8 +2,9 @@
 """
 TC Platform — Maintenance machine register import: ONE parser, two front doors.
 
-`parse_machines` reads the consolidated machine register (CSV, utf-8 with or
-without a BOM, Turkish + Arabic text) into plain dicts. It is deliberately PURE
+`parse_machines` reads the consolidated machine register (CSV or Excel — comma
+or semicolon, utf-8 with or without a BOM, cp1254/cp1256, Turkish + Arabic text)
+into plain dicts. It is deliberately PURE
 — no database, no Flask — so the admin screen (/maintenance/import) and the CLI
 (scripts/import_machines.py) cannot drift apart, and the tests can drive it
 without an app.
@@ -41,12 +42,18 @@ Header handling: the consolidated export ships every field twice, as
 `_standardized` suffix is stripped, which maps the whole export in one rule
 instead of fifty aliases. The shipped import-package CSV (plain column names)
 lands through the same map.
+
+Reading the file is NOT this module's job: app/tabular.read_grid owns format
+sniffing (magic bytes, never the extension), the semicolon/tab delimiter, and
+cp1254/cp1256 decoding, for every import screen in the platform. This file used
+to carry its own copy; it now calls the shared one, so a .xlsx re-export of the
+register, or a semicolon CSV written by Excel on a Turkish Windows, loads
+exactly like today's comma utf-8 file.
 """
-import csv
 import hashlib
-import io
-import os
 import re
+
+from app.tabular import TableError, read_grid, to_number
 
 # Every data-i18n key the register import panel introduces, with real EN/AR/TR.
 # app/static/i18n/** is owned by the orchestrator, so this dict is the source it
@@ -54,21 +61,25 @@ import re
 # every user in every language, which is why tests_machine_import.py asserts
 # each one resolves in en, ar AND tr.
 I18N = {
-    "m.reg_tab": ("Machine register (CSV)", "سجل الماكينات (CSV)", "Makine kaydı (CSV)"),
+    "m.reg_tab": ("Machine register · CSV or Excel", "سجل الماكينات · CSV أو Excel",
+                  "Makine kaydı · CSV veya Excel"),
     "m.reg_h": ("Import the machine register",
                 "استيراد سجل الماكينات",
                 "Makine kaydını içe aktar"),
     "m.reg_hint": (
-        "CSV export of the machine register. Machines are matched by serial number "
+        "CSV or Excel export of the machine register (.csv, .xls, .xlsx — a semicolon "
+        "CSV works too). Machines are matched by serial number "
         "(SN-…); a record with no serial falls back to its card number (CARD-…) and is "
         "flagged below. A blank cell never overwrites a value edited here, and every "
         "row that cannot be imported is listed with its reason. Nothing is written "
         "until you press Import.",
-        "ملف CSV مُصدَّر من سجل الماكينات. تتم مطابقة الماكينات بالرقم التسلسلي (‏SN-…)؛ "
+        "ملف CSV أو Excel مُصدَّر من سجل الماكينات (‏.csv أو .xls أو .xlsx — وملف CSV "
+        "بالفاصلة المنقوطة مقبول أيضاً). تتم مطابقة الماكينات بالرقم التسلسلي (‏SN-…)؛ "
         "والسجل الذي بلا رقم تسلسلي يُرحَّل برقم البطاقة (‏CARD-…) ويُعلَّم في الأسفل. "
         "الخانة الفارغة لا تستبدل أبداً قيمة تم تعديلها هنا، وكل صف تعذّر استيراده يُعرض "
         "مع سببه. لا يُكتب أي شيء قبل الضغط على استيراد.",
-        "Makine kaydının CSV dosyası. Makineler seri numarasına göre eşleştirilir (SN-…); "
+        "Makine kaydının CSV veya Excel dosyası (.csv, .xls, .xlsx — noktalı virgülle "
+        "ayrılmış CSV de olur). Makineler seri numarasına göre eşleştirilir (SN-…); "
         "seri numarası olmayan kayıt kart numarasına göre aktarılır (CARD-…) ve aşağıda "
         "işaretlenir. Boş bir hücre burada düzenlenmiş bir değeri asla üzerine yazmaz ve "
         "içe aktarılamayan her satır gerekçesiyle listelenir. İçe aktar'a basmadan hiçbir "
@@ -93,24 +104,22 @@ I18N = {
     # The machine registry page — 5,100 rows need a way in, and these are the two
     # provenance columns actually earning their keep (search the card, filter the
     # current fleet).
-    "m.reg_search_ph": ("Code, name, serial or card number…",
-                        "الكود أو الاسم أو الرقم التسلسلي أو رقم البطاقة…",
-                        "Kod, ad, seri no veya kart numarası…"),
+    "m.reg_search_ph": ("Code, serial, brand, model or card no",
+                        "الكود أو الرقم التسلسلي أو الماركة أو الموديل أو رقم الكارت",
+                        "Kod, seri no, marka, model veya kart no"),
     "m.reg_search": ("Search", "بحث", "Ara"),
     "m.reg_clear": ("Clear", "مسح", "Temizle"),
     "m.reg_all": ("All machines", "كل الماكينات", "Tüm makineler"),
-    "m.reg_only_current": ("Current fleet only (2023 register)",
-                           "الأسطول الحالي فقط (سجل 2023)",
-                           "Yalnızca güncel filo (2023 kaydı)"),
-    "m.reg_shown": ("shown of matching machines", "معروضة من الماكينات المطابقة",
-                    "eşleşen makineden gösteriliyor"),
-    "m.reg_capped": ("narrow the search to see the rest", "ضيّق البحث لعرض الباقي",
-                     "geri kalanı görmek için aramayı daraltın"),
-    "m.reg_card": ("Card no (FIRMA NO)", "رقم البطاقة (FIRMA NO)",
-                   "Kart no (FIRMA NO)"),
+    "m.reg_only_current": ("Current register only", "السجل الحالي فقط",
+                           "Yalnızca güncel kayıt"),
+    "m.reg_shown": ("Showing", "المعروض", "Gösterilen"),
+    "m.reg_capped": ("Showing the first results only — narrow the search to see more.",
+                     "يتم عرض النتائج الأولى فقط — ضيّق البحث لعرض المزيد.",
+                     "Yalnızca ilk sonuçlar gösteriliyor — daha fazlası için aramayı daraltın."),
+    "m.reg_card": ("Card no (legacy)", "رقم الكارت (قديم)", "Kart no (eski)"),
     "m.reg_needle": ("Needle system", "نظام الإبرة", "İğne sistemi"),
     "m.reg_meter": ("Meter reading", "قراءة العداد", "Sayaç okuması"),
-    "m.reg_in_2023": ("In the 2023 register", "ضمن سجل 2023", "2023 kaydında"),
+    "m.reg_in_2023": ("In the current register", "ضمن السجل الحالي", "Güncel kayıtta"),
     "m.reg_yes": ("Yes", "نعم", "Evet"),
 }
 
@@ -157,93 +166,11 @@ def _clean(v):
     return re.sub(r"\s+", " ", str(v if v is not None else "")).strip()
 
 
-def _num(v):
-    """'1 234,50' / '4998129' / '' -> float or None. None means 'not stated'."""
-    s = _clean(v).replace(" ", "")
-    if not s:
-        return None
-    s = re.sub(r"[^\d,.\-]", "", s)
-    if not s or s in ("-", ".", ","):
-        return None
-    if "," in s and "." in s:
-        s = s.replace(",", "") if s.rfind(".") > s.rfind(",") else \
-            s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
-    try:
-        return float(s)
-    except ValueError:
-        return None
-
-
 def _norm_header(h):
     h = re.sub(r"[^a-z0-9]+", "_", _clean(h).lower()).strip("_")
     if h.endswith(_STD_SUFFIX):
         h = h[:-len(_STD_SUFFIX)]
     return _ALIAS.get(h, h)
-
-
-def _sniff(raw):
-    """Format from CONTENT, not the file name. Someone exporting from Excel gets
-    .xlsx by default and will upload that — refusing it, or worse reading it as
-    text and importing mojibake, is not an acceptable answer."""
-    if raw[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
-        return "xls"          # legacy OLE2
-    if raw[:2] == b"PK":
-        return "xlsx"         # zip container
-    return "csv"
-
-
-def _rows_from_workbook(raw, kind):
-    """Every used cell of the FIRST sheet as strings, so the CSV path downstream
-    is unchanged. A number Excel stored as 12345.0 becomes '12345', because a
-    serial number that arrives as a float matches nothing."""
-    def cell(v):
-        if v is None:
-            return ""
-        if isinstance(v, float) and v == int(v):
-            return str(int(v))
-        return str(v)
-
-    if kind == "xls":
-        import xlrd
-        sh = xlrd.open_workbook(file_contents=raw).sheet_by_index(0)
-        return [[cell(sh.cell_value(r, c)) for c in range(sh.ncols)]
-                for r in range(sh.nrows)]
-    import openpyxl
-    wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-    try:
-        return [[cell(v) for v in row] for row in wb[wb.sheetnames[0]].iter_rows(values_only=True)]
-    finally:
-        wb.close()
-
-
-def _reader(path_or_stream):
-    """Path / bytes / stream -> rows, accepting .csv, .xlsx AND .xls.
-
-    utf-8-sig strips the BOM that Excel writes; errors='replace' means one bad
-    byte never kills a 5,000-row load. Spreadsheets are detected by their magic
-    bytes and flattened to the same row shape, so everything after this point
-    stays a single code path.
-    """
-    src = path_or_stream
-    if isinstance(src, (str, os.PathLike)):
-        with io.open(src, "rb") as fh:
-            raw = fh.read()
-    elif isinstance(src, bytes):
-        raw = src
-    elif hasattr(src, "read"):
-        raw = src.read()
-        if isinstance(raw, str):
-            raw = raw.encode("utf-8")
-    else:
-        raw = b""
-
-    kind = _sniff(raw)
-    if kind in ("xls", "xlsx"):
-        return iter(_rows_from_workbook(raw, kind))
-    text = raw.decode("utf-8-sig", errors="replace")
-    return csv.reader(io.StringIO(text, newline=""))
 
 
 def compose_remarks(base, parts):
@@ -257,37 +184,44 @@ def compose_remarks(base, parts):
     return "\n".join(x for x in (kept, line) if x)
 
 
-def _safe(reader, stats):
-    """csv refuses some inputs outright — a field over 128 KB, a NUL byte on older
-    Pythons. parse_machines' whole contract is 'returns (rows, stats); trouble
-    lives in stats["error"]', and front door B (scripts/import_machines.py) has no
-    try/except of its own, so a csv.Error escaping here is a traceback instead of a
-    stated reason. Stop at the bad row and say why."""
-    try:
-        for row in reader:
-            yield row
-    except csv.Error as exc:
-        stats["error"] = f"the file is not readable as CSV: {exc}"
+def parse_machines(src):
+    """CSV or Excel -> (rows, stats). Pure: no DB, no Flask.
 
-
-def parse_machines(path_or_stream):
-    """CSV -> (rows, stats). Pure: no DB, no Flask.
+    `src` is a path, bytes, a stream or an uploaded file — read_grid decides the
+    format from the bytes, so a register re-exported as .xlsx, or as a semicolon
+    cp1254 CSV by Excel on a Turkish PC, lands identically.
 
     stats = {rows, machines, no_serial, in_register, rejects:[{row,code,reason}],
              flagged:[codes], error}
     Every row that does not become a machine appears in `rejects` WITH a reason.
+
+    NOTHING escapes as an exception: front door B (scripts/import_machines.py)
+    has no try/except of its own, so an unreadable file has to arrive as a stated
+    reason in stats["error"], not as a traceback. read_grid's TableError messages
+    are already written for a user, so they are passed through verbatim.
     """
     rows, rejects, flagged = [], [], []
     stats = {"rows": 0, "machines": 0, "no_serial": 0, "in_register": 0,
              "rejects": rejects, "flagged": flagged, "error": None}
     try:
-        reader = _reader(path_or_stream)
+        grid, meta = read_grid(src)
+    except TableError as exc:
+        stats["error"] = str(exc)
+        return [], stats
     except OSError as exc:
         stats["error"] = f"cannot read the file: {exc}"
         return [], stats
 
+    # A semicolon delimiter IS the evidence that Excel wrote this on a Turkish or
+    # Arabic Windows, where the decimal separator is the comma and the DOT groups
+    # thousands. Without telling to_number that, the same register re-exported
+    # from that PC reads a 1.250 price as 1.25 USD and drops a 4.998.129 meter
+    # reading on the floor as unparseable. Only ';' earns the hint — guessing it
+    # from a lone dot would turn a genuine 1.234 into 1234.
+    dec = "," if meta.get("delimiter") == ";" else None
+
     cols, seen = None, set()
-    for n, raw in enumerate(_safe(reader, stats), start=1):
+    for n, raw in enumerate(grid, start=1):
         if not raw or not any(_clean(c) for c in raw):
             continue
         if cols is None:
@@ -338,12 +272,14 @@ def parse_machines(path_or_stream):
             v = cell(key)
             if v:
                 bits.append(f"{label}={v}")
-        price = _num(cell("purchase_price"))
+        price = to_number(cell("purchase_price"), decimal=dec)
         if price:
             bits.insert(min(2, len(bits)), f"purchase_price={price:.2f} USD")
-        src = cell("source_register")
-        if src:
-            bits.append(f"source_register={src}")
+        # NOT `src` — that is this function's own parameter, and shadowing it here
+        # left `src` holding a spreadsheet cell from the first data row onward.
+        src_reg = cell("source_register")
+        if src_reg:
+            bits.append(f"source_register={src_reg}")
         reg23 = cell("in_register_2023")
         in_reg = None
         if reg23:
@@ -361,7 +297,7 @@ def parse_machines(path_or_stream):
         row = {
             "code": code, "no_serial": no_serial, "serial": serial,
             "legacy_card_no": card, "in_register_2023": in_reg,
-            "meter_reading": _num(cell("meter_reading")),
+            "meter_reading": to_number(cell("meter_reading"), decimal=dec),
             "remarks_parts": bits, "remarks_src": cell("remarks"),
             "name": cell("name"),
             "name_fallback": " ".join(x for x in (cell("brand"), cell("model")) if x) or code,
@@ -508,3 +444,47 @@ def machine_stats(conn):
         "FROM mnt_machines WHERE is_active=1").fetchone()
     return {"total": int(r["c"] or 0), "in_register": int(r["g"] or 0),
             "no_serial": int(r["s"] or 0)}
+
+
+if __name__ == "__main__":     # python -m app.maintenance.machine_import
+    # The money path only: the European decimal hint. Everything else about this
+    # module is covered by app/maintenance/tests_machine_import.py, which needs an
+    # app and a database; this needs neither, so the branch that decides whether
+    # a 1.250 price is $1,250 or $1.25 can never go unproven.
+    _H = ("serial_standardized;purchase_price_standardized;meter_reading;"
+          "in_current_register_2023")
+
+    def _parse(price, meter, delim=";", enc="cp1254"):
+        head, row = _H, f"SYNTH-1;{price};{meter};YES"
+        if delim != ";":
+            head, row = head.replace(";", delim), row.replace(";", delim)
+        got, st = parse_machines((head + "\n" + row + "\n").encode(enc))
+        assert not st["error"], st["error"]
+        p = [b for b in got[0]["remarks_parts"] if b.startswith("purchase_price=")]
+        return (p[0] if p else None), got[0]["meter_reading"]
+
+    def _eq(label, got, want):
+        assert got == want, f"{label}: got {got!r}, want {want!r}"
+        print("  ok  ", label)
+
+    # A semicolon file IS a European file: the dot groups thousands.
+    _eq("';' 1.250 is a 1250 USD price", _parse("1.250", "1")[0],
+        "purchase_price=1250.00 USD")
+    _eq("';' 4.998.129 meter survives", _parse("1", "4.998.129")[1], 4998129.0)
+    _eq("';' 1250,50 decimal comma", _parse("1250,50", "1")[0],
+        "purchase_price=1250.50 USD")
+    _eq("';' 12,5 meter", _parse("1", "12,5")[1], 12.5)
+    # ...and a comma file is NOT. No evidence, no hint: the dot stays a decimal
+    # point, so the register we load today reads byte-identically to before.
+    _eq("',' 1.250 stays 1.25", _parse("1.250", "1", ",", "utf-8")[0],
+        "purchase_price=1.25 USD")
+    _eq("',' 1250.5 unmoved", _parse("1250.5", "4998129", ",", "utf-8")[0],
+        "purchase_price=1250.50 USD")
+    _eq("',' 4998129 meter unmoved", _parse("1250.5", "4998129", ",", "utf-8")[1],
+        4998129.0)
+    # The cost of the hint, pinned so nobody rediscovers it as a surprise: under
+    # ';' an exactly-3-digit tail flips. A 2dp price — every real one — does not.
+    _eq("';' 1.234 now reads 1234 (the deliberate trade)", _parse("1.234", "1")[0],
+        "purchase_price=1234.00 USD")
+    _eq("';' 1.25 (2dp) untouched", _parse("1.25", "1")[0], "purchase_price=1.25 USD")
+    print("machine_import decimal-hint self-check PASSED")

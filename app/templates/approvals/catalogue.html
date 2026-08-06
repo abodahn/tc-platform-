@@ -46,7 +46,9 @@
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <div class="panel-pad">
       <div class="field"><label data-i18n="cat.file">File</label>
-        <input type="file" name="file" accept=".xls,.xlsx,.csv" required></div>
+        {# accept = app.tabular.ACCEPT — keep the two in step #}
+        <input type="file" name="file" accept=".csv,.tsv,.txt,.xls,.xlsx,.xlsm" required>
+        <div class="muted mt-2" style="font-size:12px" data-i18n="cat.formats">CSV (comma or semicolon), .xls, .xlsx or .xlsm — the format is read from the file itself, not from its name.</div></div>
       <div class="flex gap wrap mt-3">
         <button class="btn btn-primary" type="submit" data-i18n="cat.run">Import</button>
         <a class="btn btn-ghost" href="{{ url_for('approvals.settings') }}" data-i18n="cat.back">Back to settings</a>

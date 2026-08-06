@@ -5,7 +5,7 @@
   <div>
     <div class="eyebrow" data-i18n="prob.eyebrow">Human Resources · Probation Management</div>
     <h1 data-i18n="prob.nav.import">Import employee roster</h1>
-    <div class="sub" data-i18n="prob.import.sub">Upload a .csv or .xlsx export. Matching is by employee code — re-importing updates, never duplicates.</div>
+    <div class="sub" data-i18n="prob.import.sub_formats">Upload a CSV or Excel export (.csv, .xls, .xlsx). Matching is by employee code — re-importing updates, never duplicates.</div>
   </div>
 </div>
 
@@ -13,7 +13,7 @@
   <form method="post" enctype="multipart/form-data" class="panel-pad">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <div class="flex gap center wrap">
-      <input type="file" name="file" accept=".csv,.xlsx,.xlsm" required>
+      <input type="file" name="file" accept="{{ accept }}" required>
       <button class="btn btn-primary" data-i18n="prob.action.import">Import</button>
     </div>
     <label class="flex gap center mt-3" style="cursor:pointer;font-size:13px">

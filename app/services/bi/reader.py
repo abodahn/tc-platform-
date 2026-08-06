@@ -1,22 +1,21 @@
 """
 Read an uploaded file into a simple table: (columns, rows).
 
-Supports CSV / TSV (stdlib csv) and Excel .xlsx (openpyxl, already a dependency).
-Pure-python, no pandas. Values come back as native types where obvious:
-numbers as float, blanks as None, everything else as trimmed strings. Type
-*inference* is the profiler's job — the reader only normalises.
+Every format question — is this CSV or Excel, which delimiter, which codepage,
+how does an .xls store a date — belongs to app/tabular.py, the one reader every
+import screen uses. This module only shapes its grid the way BI wants it:
+native values (the profiler infers types, so it must NOT get strings), a
+de-duplicated header, the row/column caps, and padded short rows.
 """
 from __future__ import annotations
 
-import csv
 import io
-import os
+import zipfile
+
+from app.tabular import TableError, read_grid, sniff_kind
 
 MAX_ROWS = 50000      # hard cap so a huge upload can't exhaust memory
 MAX_COLS = 80
-
-_TRUE = {"true", "yes", "y", "1"}
-_FALSE = {"false", "no", "n", "0"}
 
 
 class ReadError(Exception):
@@ -49,94 +48,63 @@ def _coerce(v):
     return s
 
 
-def read_bytes(data: bytes, filename: str = "") -> tuple[list[str], list[list]]:
-    """Read raw bytes of an uploaded file into (columns, rows)."""
-    ext = os.path.splitext(filename or "")[1].lower()
-    if ext in (".xlsx", ".xlsm"):
-        return _read_xlsx(data)
-    if ext in (".csv", ".tsv", ".txt", ""):
-        return _read_csv(data, ext)
-    raise ReadError(f"Unsupported file type: {ext or 'unknown'}")
-
-
-def _read_csv(data: bytes, ext: str) -> tuple[list[str], list[list]]:
-    text = data.decode("utf-8-sig", errors="replace")
-    sample = text[:4096]
-    delim = "\t" if ext == ".tsv" else None
-    if delim is None:
-        try:
-            delim = csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
-        except Exception:
-            delim = ","
-    reader = csv.reader(io.StringIO(text), delimiter=delim)
-    rows_iter = iter(reader)
-    try:
-        header = next(rows_iter)
-    except StopIteration:
-        raise ReadError("The file is empty.")
-    cols = _clean_header(header)
-    ncol = len(cols)
-    rows = []
-    for raw in rows_iter:
-        if len(rows) >= MAX_ROWS:
-            break
-        if not any((c or "").strip() for c in raw):
-            continue  # skip fully blank lines
-        row = [_coerce(x) for x in raw[:ncol]]
-        row += [None] * (ncol - len(row))  # pad short rows
-        rows.append(row)
-    if not rows:
-        raise ReadError("No data rows found under the header.")
-    return cols, rows
+def _blank(row):
+    return not any(c is not None and str(c).strip() for c in row)
 
 
 _MAX_XLSX_UNCOMPRESSED = 300 * 1024 * 1024   # 300 MB expanded ceiling
 _MAX_XLSX_RATIO = 200                         # reject >200x compression (zip bomb)
 
 
-def _read_xlsx(data: bytes) -> tuple[list[str], list[list]]:
+def _guard_zip_bomb(data: bytes) -> None:
+    """An .xlsx is a zip: a small (allowed) upload can expand to gigabytes.
+    Reject before openpyxl loads it into memory. A zip we cannot open at all is
+    left to the reader, whose message is already written for the user."""
+    if not isinstance(data, bytes) or sniff_kind(data) != "xlsx":
+        return
     try:
-        from openpyxl import load_workbook
-    except Exception as exc:  # pragma: no cover
-        raise ReadError("Excel support unavailable (openpyxl missing).") from exc
-    # Guard against a decompression bomb: an .xlsx is a zip; a small (allowed)
-    # file can expand to gigabytes. Reject before openpyxl loads it into memory.
-    try:
-        import zipfile
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             uncompressed = sum(i.file_size for i in zf.infolist())
-        if uncompressed > _MAX_XLSX_UNCOMPRESSED or (data and uncompressed / len(data) > _MAX_XLSX_RATIO):
-            raise ReadError("This Excel file is too large or looks malformed.")
-    except zipfile.BadZipFile as exc:
-        raise ReadError("Could not open the Excel file.") from exc
+    except zipfile.BadZipFile:
+        return
+    if uncompressed > _MAX_XLSX_UNCOMPRESSED or uncompressed / len(data) > _MAX_XLSX_RATIO:
+        raise ReadError("This Excel file is too large or looks malformed.")
+
+
+def read_bytes(data: bytes, filename: str = "") -> tuple[list[str], list[list]]:
+    """Read raw bytes of an uploaded file into (columns, rows).
+
+    Any format app/tabular.py supports: CSV/TSV with any delimiter and any of
+    utf-8/cp1254/cp1256, .xls, .xlsx/.xlsm. `filename` is accepted for callers'
+    convenience and deliberately ignored — the format comes from the bytes.
+    """
+    if not data:
+        raise ReadError("The file is empty.")
+    _guard_zip_bomb(data)
     try:
-        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-    except Exception as exc:
-        raise ReadError("Could not open the Excel file.") from exc
-    ws = wb.active
-    it = ws.iter_rows(values_only=True)
-    header = None
-    for r in it:
-        if r is not None and any(c is not None and str(c).strip() for c in r):
-            header = r
+        grid, _meta = read_grid(data, stringify=False)   # native values: the
+    except TableError as exc:                            # profiler types them
+        raise ReadError(str(exc)) from exc
+
+    header, body = None, []
+    for i, r in enumerate(grid):
+        if not _blank(r):
+            header, body = r, grid[i + 1:]
             break
     if header is None:
-        raise ReadError("The sheet is empty.")
+        raise ReadError("The file is empty.")
+
     cols = _clean_header(list(header))
     ncol = len(cols)
     rows = []
-    for r in it:
+    for r in body:
         if len(rows) >= MAX_ROWS:
             break
-        if r is None or not any(c is not None and str(c).strip() for c in r):
-            continue
+        if _blank(r):
+            continue  # skip fully blank lines
         row = [_coerce(x) for x in list(r)[:ncol]]
-        row += [None] * (ncol - len(row))
+        row += [None] * (ncol - len(row))  # pad short rows
         rows.append(row)
-    try:
-        wb.close()
-    except Exception:
-        pass
     if not rows:
         raise ReadError("No data rows found under the header.")
     return cols, rows

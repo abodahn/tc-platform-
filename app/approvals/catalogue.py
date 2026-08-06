@@ -2,10 +2,16 @@
 """
 TC Platform — Procurement item catalogue: ONE parser, two front doors.
 
-`parse_workbook` reads the ERP "List Of Item" export (.xls / .xlsx / .csv) into
-plain dicts. It is deliberately PURE — no database, no Flask — so the admin
-upload screen (app/routes/approvals.py) and the CLI (scripts/import_items.py)
-cannot drift apart, and the tests can drive it without an app.
+`parse_workbook` reads the ERP "List Of Item" export into plain dicts. It is
+deliberately PURE — no database, no Flask — so the admin upload screen
+(app/routes/approvals.py) and the CLI (scripts/import_items.py) cannot drift
+apart, and the tests can drive it without an app.
+
+Reading the file is NOT this module's job: app/tabular.read_grid does it, so
+every format the platform accepts anywhere (comma / semicolon / tab CSV in
+utf-8, cp1254 or cp1256, .xls, .xlsx, .xlsm) lands here for free, detected from
+the file's CONTENT rather than its name. read_grid also reports HOW it read the
+file, which is what tells this parser whether the numbers are European.
 
 The export's shape (and why each rule below exists):
     row 0        column numbers 1..9                       -> noise
@@ -18,9 +24,9 @@ The header row is FOUND, not assumed, so next year's export still imports even
 if the filter echo grows a line. Codes carry 1..8 dash-separated segments with
 no single scheme — they are opaque keys and are never parsed for meaning.
 """
-import csv
-import io
 import re
+
+from app.tabular import read_grid, to_number, TableError
 
 # The file's units are numbered strings ("02 Piece"). Map them onto the
 # platform's C.UNITS. Anything not here is REPORTED as a reject, never
@@ -74,6 +80,9 @@ I18N = {
                         "ملف Excel‏ (.xls / .xlsx) أو CSV يحتوي أعمدة الكود واسم الصنف والوحدة وسعر التكلفة. تتم المطابقة بالكود: تُضاف الأكواد الجديدة وتُحدَّث المتغيّرة، والخانة الفارغة لا تستبدل أبداً قيمة تم تعديلها هنا.",
                         "Kod, Kalem Adı, Birim ve Maliyet Fiyatı sütunlarını içeren Excel (.xls / .xlsx) veya CSV dosyası. Eşleştirme koda göre yapılır: yeni kodlar eklenir, değişenler güncellenir ve boş bir hücre burada düzenlenmiş bir değeri asla üzerine yazmaz."),
     "cat.file": ("File", "الملف", "Dosya"),
+    "cat.formats": ("CSV (comma or semicolon), .xls, .xlsx or .xlsm — the format is read from the file itself, not from its name.",
+                    "ملف CSV (بفاصلة أو فاصلة منقوطة) أو ‎.xls أو ‎.xlsx أو ‎.xlsm — يتم تحديد الصيغة من محتوى الملف نفسه وليس من اسمه.",
+                    "CSV (virgül veya noktalı virgül), .xls, .xlsx veya .xlsm — biçim dosya adından değil, dosyanın kendi içeriğinden okunur."),
     "cat.run": ("Import", "استيراد", "İçe aktar"),
     "cat.back": ("Back to settings", "العودة إلى الإعدادات", "Ayarlara dön"),
     "cat.result": ("Import result", "نتيجة الاستيراد", "İçe aktarma sonucu"),
@@ -148,75 +157,34 @@ def norm_unit(raw):
     return None
 
 
-def _cells(row):
-    """Row -> list of stripped strings (xlrd hands back floats for numbers)."""
-    out = []
-    for v in row:
-        if v is None:
-            out.append("")
-        elif isinstance(v, float) and v == int(v):
-            out.append(str(int(v)))
-        else:
-            out.append(str(v).strip())
-    return out
+def _num(s, decimal=None):
+    """('1.35000' | '12,50' | 1.35 | '') -> float or None.
+
+    Delegates to app.tabular.to_number. Stripping ',' as a thousands separator
+    here was right for the US comma CSV and 100x wrong for the Turkish
+    semicolon CSV read_grid now accepts: '12,50' is twelve and a half, not
+    1250. None (not 0.0) for a blank, so has_cost can still tell "no price on
+    file" from a genuine 0.00.
+
+    `decimal=","` is passed only when parse_workbook has EVIDENCE the file is
+    European (a ';' delimiter). It makes a lone dot a thousands separator, so
+    '1.234' reads as 1234 — right for that file, wrong for every other, which
+    is why it is never guessed from the number alone.
+    """
+    return to_number(s, decimal=decimal)
 
 
-def _sniff(head):
-    """Detect the format from the CONTENT, not the file name — a .xls that is
-    really a CSV (or the other way round) is a normal thing to be handed."""
-    if head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
-        return "xls"                       # OLE2 container (BIFF5/BIFF8)
-    if head[:4] == b"PK\x03\x04":
-        return "xlsx"                      # zip container
-    # A bare BIFF record stream (BOF, type 0x0009, version byte 2/3/4/5/8).
-    if head[:2] == b"\x09\x00" or head[:2] in (b"\x09\x02", b"\x09\x04", b"\x09\x08"):
-        return "xls"
-    return "csv"
-
-
-def _read_rows(path_or_stream):
-    """Yield raw rows from .xls / .xlsx / .csv, whichever this really is."""
-    if hasattr(path_or_stream, "read"):
-        raw = path_or_stream.read()
-    else:
-        with open(path_or_stream, "rb") as fh:
-            raw = fh.read()
-    kind = _sniff(raw[:8])
-    if kind == "xls":
-        import xlrd
-        book = xlrd.open_workbook(file_contents=raw)
-        sheet = book.sheet_by_index(0)
-        for r in range(sheet.nrows):
-            yield sheet.row_values(r)
-    elif kind == "xlsx":
-        import openpyxl
-        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-        try:
-            for row in wb[wb.sheetnames[0]].iter_rows(values_only=True):
-                yield list(row)
-        finally:
-            wb.close()
-    else:
-        text = raw.decode("utf-8-sig", errors="replace")
-        for row in csv.reader(io.StringIO(text)):
-            yield row
-
-
-def _num(s):
-    """('1.35000' | 1.35 | '') -> float or None."""
-    s = str(s or "").strip().replace(",", "")
-    if not s:
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
-
-
-def parse_workbook(path_or_stream, zero_is_missing=True):
+def parse_workbook(src, zero_is_missing=True):
     """(items, stats) from an ERP item export.
 
+    `src` is anything app.tabular.read_grid takes: a path, bytes, an open file
+    or an uploaded FileStorage, in any CSV or Excel flavour it supports.
+
     items: [{code, name, unit, category_code, category_name, cost_price, has_cost}]
+           cost_price is None when the file gave NO USABLE PRICE (blank cell,
+           text, or a negative). None means "leave whatever is stored alone" —
+           upsert_items skips it, which is the promise the import screen makes
+           in three languages. A genuine 0.00 is a value and is written as 0.0.
     stats: {rows, items, blanks, bands, header_rows, filter_rows,
             rejects: [{row, code, reason}], unmapped_units: {raw: count},
             categories: {code: name}, error: str|None}
@@ -234,8 +202,21 @@ def parse_workbook(path_or_stream, zero_is_missing=True):
     cat_code = cat_name = ""
     seen = set()
 
-    for n, raw in enumerate(_read_rows(path_or_stream), start=1):
-        row = _cells(raw)
+    try:
+        grid, meta = read_grid(src)
+    except TableError as exc:
+        # Written to be shown to the user; both front doors print stats["error"].
+        stats["error"] = str(exc)
+        return [], stats
+
+    # A ';' delimiter IS the locale: Excel writes it exactly when the decimal
+    # separator is ',', so in that file '1.234' is one thousand two hundred and
+    # thirty-four. The comma-CSV ERP export (the 19,025-item source of truth)
+    # reports ',' here and gets no hint at all, so it parses byte-identically.
+    dec = "," if meta.get("delimiter") == ";" else None
+
+    for n, raw in enumerate(grid, start=1):
+        row = [c.strip() for c in raw]      # read_grid already stringified
         stats["rows"] = n
         first = row[0] if row else ""
 
@@ -304,7 +285,16 @@ def parse_workbook(path_or_stream, zero_is_missing=True):
                             "reason": f"unmapped unit: {key}"})
             continue
 
-        cost = _num(cell("cost"))
+        # THREE distinct states, and collapsing them to (0.0, has_cost 0) is how
+        # a blank cell silently WIPED a cost an admin had edited here:
+        #   blank / text / negative -> None: no usable price, touch nothing
+        #   a genuine 0.00          -> 0.0 : a value the file actually states
+        #   anything above zero     -> the price
+        # A negative is not a price. Treating it as "no usable price" keeps the
+        # last known good cost instead of zeroing it on one bad cell.
+        cost = _num(cell("cost"), dec)
+        if cost is not None and cost < 0:
+            cost = None
         has_cost = cost is not None and (cost > 0 if zero_is_missing else True)
 
         # An explicit Category column, if this export has one, beats the band.
@@ -317,7 +307,7 @@ def parse_workbook(path_or_stream, zero_is_missing=True):
         seen.add(code)
         items.append({"code": code, "name": name, "unit": unit,
                       "category_code": ccode, "category_name": cname,
-                      "cost_price": float(cost) if has_cost else 0.0,
+                      "cost_price": None if cost is None else float(cost),
                       "has_cost": 1 if has_cost else 0})
 
     if cols is None and stats["error"] is None:
@@ -338,8 +328,12 @@ def upsert_items(conn, items, user, source="import"):
 
     A blank incoming value never overwrites a value already on the row: an admin
     who fixed an item name by hand keeps it when the next export is loaded with
-    that cell empty. `rejected` counts rows this function itself refused
-    (missing code); the parser's own rejects are reported separately.
+    that cell empty. Blank is "" for a text column and None for cost_price —
+    the parser only sends a number when the file actually stated one, and a
+    blank cost carries has_cost with it, because writing has_cost=0 over a
+    stored 12.50 would render "no price on file" against a real cost.
+    `rejected` counts rows this function itself refused (missing code); the
+    parser's own rejects are reported separately.
     """
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -358,24 +352,27 @@ def upsert_items(conn, items, user, source="import"):
             counts["rejected"] += 1
             continue
         row = existing.get(code)
+        no_cost = it.get("cost_price") is None      # the file stated no price
         vals = {
             "name": str(it.get("name") or "").strip(),
             "unit": str(it.get("unit") or "").strip(),
             "category_code": str(it.get("category_code") or "").strip(),
             "category_name": str(it.get("category_name") or "").strip(),
-            "cost_price": float(it.get("cost_price") or 0),
-            "has_cost": 1 if it.get("has_cost") else 0,
+            "cost_price": None if no_cost else float(it.get("cost_price") or 0),
+            "has_cost": None if no_cost else (1 if it.get("has_cost") else 0),
         }
         if row is None:
+            # A new row has nothing to preserve, so "no price" is stored as the
+            # 0 / has_cost 0 pair the screens read as "no price on file".
             inserts.append((code, vals["name"], vals["unit"], vals["category_code"],
-                            vals["category_name"], vals["cost_price"], vals["has_cost"],
-                            source, who, now))
+                            vals["category_name"], vals["cost_price"] or 0.0,
+                            vals["has_cost"] or 0, source, who, now))
             counts["added"] += 1
             continue
         changed = {}
         for f in _FIELDS:
             new = vals[f]
-            if isinstance(new, str) and not new:
+            if new is None or (isinstance(new, str) and not new):
                 continue                     # blank never clobbers a hand edit
             old = row[f]
             if f in ("cost_price",):

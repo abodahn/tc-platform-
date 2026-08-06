@@ -30,8 +30,8 @@
     <div class="bi-drop" id="biDrop">
       <svg class="ico" style="width:30px;height:30px;color:var(--tc-red)"><use href="#i-chart"></use></svg>
       <div class="big" data-i18n="bi.drop_title">Drop a CSV or Excel file here</div>
-      <div class="muted" data-i18n="bi.drop_sub">or click to choose · .csv .tsv .xlsx</div>
-      <input type="file" id="biFile" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
+      <div class="muted" data-i18n="bi.drop_formats">or click to choose · .csv .tsv .xls .xlsx</div>
+      <input type="file" id="biFile" accept="{{ accept }}" hidden>
     </div>
     <div class="flex gap center mt-3" style="justify-content:center">
       <button class="btn btn-ghost btn-sm" id="biSample" data-i18n="bi.try_sample">Try a sample dataset</button>

@@ -16,8 +16,8 @@
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <div class="grid cols-2" style="gap:16px">
       <div class="field">
-        <label>File (.xlsx or .csv)</label>
-        <input type="file" name="file" accept=".xlsx,.xlsm,.csv" required>
+        <label>File (CSV or Excel — .csv, .tsv, .xls, .xlsx)</label>
+        <input type="file" name="file" accept=".csv,.tsv,.txt,.xls,.xlsx,.xlsm" required>
       </div>
       <div class="field">
         <label>Role for every imported user</label>

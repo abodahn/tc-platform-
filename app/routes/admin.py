@@ -268,59 +268,37 @@ def add_user():
     return redirect(url_for("admin.index") + "#users")
 
 
-_UHDR = {
-    "username": ("alias", "username", "user name", "login", "samaccountname", "user id"),
-    "full_name": ("display name", "name", "full name", "displayname"),
-    "email": ("primary smtp address", "email", "e-mail", "mail", "smtp", "email address"),
-}
-
-
 def _parse_user_rows(fs):
-    """Parse an uploaded .xlsx/.csv address list into [{username, full_name, email}].
-    Tolerates a header row (Display Name / Alias / Primary SMTP Address, or common
-    equivalents) and reads every worksheet. Returns None if the file is unusable."""
-    name = (fs.filename or "").lower()
+    """Parse an uploaded address list into [{username, full_name, email}].
+
+    The parsing itself lives in app/user_roster.py, shared with
+    scripts/seed_users_from_excel.py — the same file must not import differently
+    through the two doors. This function only turns a failure into a message.
+
+    Returns None when NOTHING could be parsed, having flashed why. This route
+    creates real accounts: an empty result rendered as a green 0/0/0/0 panel
+    tells the admin their roster imported when it did not.
+
+    Two flashes, not one interpolated sentence: the toast layer translates a
+    flash by exact key lookup, so the column list the admin needs to see has to
+    travel as its own fragment or the whole message stays English.
+    """
+    from app.user_roster import parse_roster, safe_fragment, TableError
     try:
-        if name.endswith((".xlsx", ".xlsm")):
-            from openpyxl import load_workbook
-            wb = load_workbook(fs, read_only=True, data_only=True)
-            grids = [list(ws.iter_rows(values_only=True)) for ws in wb.worksheets]
-        elif name.endswith(".csv"):
-            import csv as _csv
-            import io as _io
-            text = fs.read().decode("utf-8-sig", errors="replace")
-            grids = [[tuple(r) for r in _csv.reader(_io.StringIO(text))]]
-        else:
-            return None
-    except Exception:
+        rows, reason, columns = parse_roster(fs)
+    except TableError as exc:
+        flash("m_import_unreadable", "error")
+        flash(safe_fragment(exc), "error")  # the reader's own reason for refusing
         return None
-    out = []
-    for grid in grids:
-        if not grid:
-            continue
-        hdr_i, cols = None, {}
-        for i, row in enumerate(grid[:6]):
-            cells = [("" if c is None else str(c)).strip().lower() for c in row]
-            found = {}
-            for field, names in _UHDR.items():
-                for j, c in enumerate(cells):
-                    if c in names:
-                        found[field] = j
-                        break
-            if "email" in found or "username" in found:
-                hdr_i, cols = i, found
-                break
-        if hdr_i is None:
-            continue
-        for row in grid[hdr_i + 1:]:
-            def cell(field):
-                j = cols.get(field)
-                return "" if (j is None or j >= len(row) or row[j] is None) else str(row[j]).strip()
-            email = cell("email")
-            username = (cell("username") or (email.split("@")[0] if email else "")).lower()
-            if username:
-                out.append({"username": username, "full_name": cell("full_name"), "email": email})
-    return out
+    if reason == "no_header":
+        flash("m_import_no_header", "error")
+        if columns:
+            flash(columns, "error")        # what the file actually had, verbatim
+        return None
+    if reason == "no_rows":
+        flash("m_import_no_rows", "error")
+        return None
+    return rows
 
 
 @bp.route("/users/import", methods=["GET", "POST"])
@@ -338,9 +316,11 @@ def import_users():
     shared = request.form.get("shared_password") or ""
     if role not in valid_roles:
         role = "itsm_user"
-    rows = _parse_user_rows(fs) if (fs and fs.filename) else None
-    if rows is None:
-        flash("Upload a .xlsx or .csv with Display Name / Alias / Primary SMTP Address columns.", "error")
+    if not (fs and fs.filename):
+        flash("m_import_choose_file", "error")
+        return redirect(url_for("admin.import_users"))
+    rows = _parse_user_rows(fs)
+    if rows is None:                       # the parser flashed the specific reason
         return redirect(url_for("admin.import_users"))
     if mode == "shared":
         ok, msg = validate_password(shared)

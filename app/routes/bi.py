@@ -22,11 +22,10 @@ from app.auth import login_required, permission_required, current_user, user_can
 from app.db import log_audit
 from app.services.bi import (analyze, insights, jobs, profiler, query,
                              reader, recommender, store)
+from app.tabular import ACCEPT
 
 log = logging.getLogger("tc.bi")
 bp = Blueprint("bi", __name__, url_prefix="/bi")
-
-_ALLOWED_EXT = (".csv", ".tsv", ".txt", ".xlsx", ".xlsm")
 
 
 def _me():
@@ -53,7 +52,7 @@ def _get_dataset_or_403(ds_id):
 def index():
     # Admins see everything; other users see only what they created.
     scope = None if user_can("access_admin") else _me()
-    return render_template("bi/workspace.html", active="bi",
+    return render_template("bi/workspace.html", active="bi", accept=ACCEPT,
                            datasets=store.list_datasets(owner=scope),
                            dashboards=store.list_dashboards(owner=scope, limit=24))
 
@@ -89,9 +88,10 @@ def upload():
     f = request.files.get("file")
     if not f or not f.filename:
         return jsonify(error="No file selected."), 400
-    ext = os.path.splitext(f.filename)[1].lower()
-    if ext not in _ALLOWED_EXT:
-        return jsonify(error=f"Unsupported type {ext}. Use CSV or Excel."), 400
+    # No extension gate: the format comes from the bytes, like every other import
+    # screen. A CSV exported without an extension, or named .dat, reads fine; a
+    # PDF is still refused — by the reader, which names what the file actually is.
+    # The form's accept= stays as guidance only.
     try:
         data = f.read()
         cols, rows = reader.read_bytes(data, f.filename)

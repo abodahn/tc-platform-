@@ -12,6 +12,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
 
 from config import Config
 from app.db import get_db
+from app.tabular import read_grid, TableError, ACCEPT, to_number
 from app.auth import login_required, current_user
 from app.security import has_permission
 from app.maintenance import services as svc
@@ -985,6 +986,43 @@ IMPORT_SPECS = {
     },
 }
 
+# The spare-parts columns that must be numbers.
+_SPARE_NUMS = ("stock_qty", "min_level", "reorder_level", "max_level", "avg_cost")
+
+# Header spellings that mean "this is the 5,227-machine REGISTER export, not the
+# add-machines template". The register is keyed on a serial / card number and
+# carries no `code` column; the template starts with one. Both tabs read CSV now,
+# so the file is routed by what is IN it — an extension check would send a
+# legitimate template CSV to the upsert.
+#
+# These are RAW spellings, matched after machine_import._norm_header has had them,
+# so its alias map (FIRMA NO / asset code / card number -> card_no) stays the one
+# source of truth and this list cannot drift from it. The Turkish ones are not
+# decoration: 'SERİ NO' is the spelling the real register ships, and it normalises
+# to `seri_no`, which no alias knows. Both casings of "seri numarası" are listed
+# because dotted/dotless I make them normalise differently.
+_REGISTER_HEADERS = ("serial", "serial no", "serial number", "card no",
+                     "SERİ NO", "SERI NO", "SERİ NUMARASI", "Seri Numarası",
+                     "KART NO", "FIRMA NO", "asset code")
+
+
+def _register_keys(headers):
+    """Header cells -> the keys machine_import would read them as.
+
+    Plus the `_original` twin: the consolidated export ships every field twice as
+    `x_standardized` / `x_original` and _norm_header strips only the first, so a
+    file carrying the raw columns alone would look like neither a register nor a
+    template and land in the template upsert.
+    """
+    from app.maintenance.machine_import import _norm_header
+    keys = set()
+    for h in headers:
+        k = _norm_header(h)
+        if k.endswith("_original"):
+            k = _norm_header(k[:-len("_original")])
+        keys.add(k)
+    return keys
+
 
 @bp.route("/import", methods=["GET", "POST"])
 @login_required
@@ -992,7 +1030,8 @@ def import_page():
     """GET: the import screen. POST: the machine-register CSV upsert (front door A;
     scripts/import_machines.py is front door B — both call the SAME
     app.maintenance.machine_import.parse_machines + upsert_machines, so they
-    cannot drift). The .xlsx tabs still POST to import_run below, untouched."""
+    cannot drift). The machines / spares template tabs POST to import_run below,
+    which reads the same formats through the same app.tabular.read_grid."""
     _require("maint_admin")
     from app.maintenance.machine_import import (parse_machines, upsert_machines,
                                                 machine_stats)
@@ -1047,7 +1086,7 @@ def import_page():
             conn.close()
     return render_template("maintenance/import.html", kind=kind, result=None,
                            reg_result=reg_result, reg_parsed=reg_parsed,
-                           reg_stats=reg_stats, active="maint_settings")
+                           reg_stats=reg_stats, accept=ACCEPT, active="maint_settings")
 
 
 @bp.route("/import/template/<kind>.xlsx")
@@ -1057,6 +1096,17 @@ def import_template(kind):
     spec = IMPORT_SPECS.get(kind)
     if not spec:
         abort(404)
+    if (request.args.get("fmt") or "").lower() == "csv":
+        # Anyone who works in CSV needs the template in CSV — same headers, same
+        # example row. utf-8-sig because Excel opens a plain utf-8 CSV as the
+        # local codepage and mangles it; read_grid strips the BOM on the way back.
+        buf = io.StringIO(newline="")
+        w = csv.writer(buf)
+        w.writerow(spec["headers"])
+        w.writerow(spec["example"])
+        return Response(buf.getvalue().encode("utf-8-sig"),
+                        mimetype="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f"attachment; filename=tc_{kind}_template.csv"})
     import openpyxl
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -1079,36 +1129,86 @@ def import_run(kind):
     if not spec:
         abort(404)
     f = request.files.get("file")
-    name = (f.filename or "").lower() if f else ""
-    if not name.endswith(".xlsx"):
-        # A machine register (.csv / .xls) landed on a template tab. Don't just
-        # refuse — that is what happened the first time anyone used this page.
-        # Send them to the tab that DOES read their file, and say why.
-        if kind == "machines" and name.endswith((".csv", ".xls")):
-            flash("m_import_wrong_tab", "error")
-            return redirect(url_for("maintenance.import_page", kind="register"))
-        flash("m_import_bad_file", "error")
+    if not f or not f.filename:
+        flash("m_import_choose_file", "error")
         return redirect(url_for("maintenance.import_page", kind=kind))
-    import openpyxl
     try:
-        wb = openpyxl.load_workbook(f, read_only=True, data_only=True)
-    except Exception:
-        flash("m_import_bad_file", "error")
+        # CSV (comma / semicolon / tab, utf-8 or a Turkish/Arabic codepage), .xls
+        # and .xlsx all land here as strings. Format comes from the bytes, never
+        # the extension — people rename files and mail systems mangle them.
+        rows, meta = read_grid(f)
+    except TableError as exc:
+        flash(str(exc), "error")     # written to be shown to a user
         return redirect(url_for("maintenance.import_page", kind=kind))
-    rows = list(wb.active.iter_rows(values_only=True))
     headers = spec["headers"]
+
+    # The header is the first row that has ANYTHING in it, not row 0. read_grid
+    # hands the sheet back verbatim, and one blank leading row (someone inserted
+    # a row, an export left a gap) shifted the whole file by one: the real header
+    # was read as data and the register check below saw an empty row. Measured:
+    # a register with a blank first row imported a machine called "FIRMA NO" and
+    # every serial after it as a plain code, which is the exact damage the
+    # redirect exists to prevent.
+    hdr_i = next((i for i, r in enumerate(rows) if any((c or "").strip() for c in r)),
+                 len(rows))
+    hdr_row = rows[hdr_i] if hdr_i < len(rows) else []
+
+    # A machine REGISTER landed on a template tab. Don't just refuse — that is what
+    # happened the first time anyone used this page. Send them to the tab that does
+    # the serial-keyed upsert, and say why. Decided on the HEADER ROW: the register
+    # export keys on serial / card no and has no `code` column, while the template
+    # starts with one. (This used to test the extension, which now steals the CSV
+    # template the user was told to fill in.)
+    if kind == "machines" and hdr_row:
+        hdr = _register_keys(hdr_row)
+        if "code" not in hdr and (hdr & _register_keys(_REGISTER_HEADERS)):
+            flash("m_import_register_tab", "error")
+            return redirect(url_for("maintenance.import_page", kind="register"))
+
+    # `;` is Excel's list separator exactly where `,` is the decimal point, so the
+    # delimiter read_grid MEASURED is the evidence that `1.500` in this file means
+    # one thousand five hundred, not one and a half. Without the hint a Turkish
+    # stock level of 1.500 pcs imported as 1.5.
+    # ponytail: the delimiter is the only signal used. A hand-built semicolon file
+    # that writes dot decimals to exactly three places would read 1000x high —
+    # sniff the column's own values the day one turns up.
+    dec = "," if meta.get("delimiter") == ";" else None
+
     added, skipped, errors = 0, 0, []
     conn = _db()
     try:
         table = "mnt_machines" if kind == "machines" else "mnt_spare_parts"
-        for i, row in enumerate(rows[1:], start=2):  # skip header row
-            d = dict(zip(headers, row))
+        for i, row in enumerate(rows[hdr_i + 1:], start=hdr_i + 2):  # after the header
+            if not any((c or "").strip() for c in row):
+                continue          # CSV keeps trailing blank lines; xlsx never had them
+            # "" -> None so a blank cell still writes NULL, exactly as the
+            # openpyxl path did.
+            d = {h: (v or None) for h, v in zip(headers, row)}
             code = str(d.get("code") or "").strip()
             if not code:
                 errors.append(f"Row {i}: missing code")
                 continue
             if conn.execute(f"SELECT 1 FROM {table} WHERE code=?", (code,)).fetchone():
                 skipped += 1
+                continue
+            # Numbers via to_number, because the same Turkish Excel that writes a
+            # semicolon CSV writes `12,50` for twelve and a half — float() rejected
+            # the whole row for it. Contract unchanged otherwise: a BLANK cell is
+            # still 0, and a cell that is genuinely not a number is still REJECTED
+            # with its row, never silently zeroed — that would be a stock level.
+            nums, bad = {}, None
+            for key in _SPARE_NUMS if kind == "spares" else ():
+                raw = d.get(key)
+                n = to_number(raw, decimal=dec)
+                if n is None:
+                    if raw is None or not str(raw).strip():
+                        n = 0.0
+                    else:
+                        bad = f"Row {i}: {key} is not a number: {str(raw).strip()}"
+                        break
+                nums[key] = n
+            if bad:
+                errors.append(bad)
                 continue
             try:
                 if kind == "machines":
@@ -1120,14 +1220,14 @@ def import_run(kind):
                          (d.get("criticality") or "medium"), (d.get("status") or "running"),
                          "MQR" + code.replace("-", "")))
                 else:
-                    qty = float(d.get("stock_qty") or 0)
+                    qty = nums["stock_qty"]
                     cur = conn.execute(
                         "INSERT INTO mnt_spare_parts (code,name,category,uom,stock_qty,min_level,"
                         "reorder_level,max_level,avg_cost,criticality,qr_token,created_at) "
                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
                         (code, d.get("name"), (d.get("category") or "other"), (d.get("uom") or "pcs"),
-                         qty, float(d.get("min_level") or 0), float(d.get("reorder_level") or 0),
-                         float(d.get("max_level") or 0), float(d.get("avg_cost") or 0),
+                         qty, nums["min_level"], nums["reorder_level"],
+                         nums["max_level"], nums["avg_cost"],
                          (d.get("criticality") or "medium"), "PQR" + code.replace("-", "")))
                     if qty:
                         # Number the movement from its OWN row id (collision-free), like
@@ -1152,7 +1252,7 @@ def import_run(kind):
         conn.close()
     return render_template("maintenance/import.html", kind=kind,
                            result={"added": added, "skipped": skipped, "errors": errors},
-                           active="maint_settings")
+                           accept=ACCEPT, active="maint_settings")
 
 
 # --------------------------------------------------------------------------

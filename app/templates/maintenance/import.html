@@ -3,8 +3,8 @@
 {% block content %}
 <div class="page-head">
   <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
-    <h1 data-i18n="m.import">Excel Import</h1>
-    <div class="sub" data-i18n="m.import_sub">Bulk-load machines or spare parts from an Excel file.</div></div>
+    <h1 data-i18n="m.import">Import</h1>
+    <div class="sub" data-i18n="m.import_sub">Bulk-load machines or spare parts from a CSV or Excel file.</div></div>
   <a class="btn btn-ghost" href="{{ url_for('maintenance.settings') }}" data-i18n="nav.maint_settings">Settings</a>
 </div>
 
@@ -12,8 +12,8 @@
   {# Two of these tabs used to be called "Machines" and "Machine register", which is
      one word apart and sent the first real user to the wrong one. Name each tab by
      the FILE it takes, not by the thing it loads. #}
-  <a class="{{ 'on' if kind=='machines' }}" href="{{ url_for('maintenance.import_page', kind='machines') }}" data-i18n="m.imp_tab_machines" style="padding:8px 14px">Add machines · Excel template</a>
-  <a class="{{ 'on' if kind=='spares' }}" href="{{ url_for('maintenance.import_page', kind='spares') }}" data-i18n="m.imp_tab_spares" style="padding:8px 14px">Add spare parts · Excel template</a>
+  <a class="{{ 'on' if kind=='machines' }}" href="{{ url_for('maintenance.import_page', kind='machines') }}" data-i18n="m.imp_tab_machines" style="padding:8px 14px">Add machines · CSV or Excel template</a>
+  <a class="{{ 'on' if kind=='spares' }}" href="{{ url_for('maintenance.import_page', kind='spares') }}" data-i18n="m.imp_tab_spares" style="padding:8px 14px">Add spare parts · CSV or Excel template</a>
   <a class="{{ 'on' if kind=='register' }}" href="{{ url_for('maintenance.import_page', kind='register') }}" data-i18n="m.reg_tab" style="padding:8px 14px">Machine register · CSV or Excel</a>
 </div>
 
@@ -39,7 +39,7 @@
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <div class="panel-pad">
       <div class="field"><label data-i18n="cat.file">File</label>
-        <input type="file" name="file" accept=".csv,.xlsx,.xls" required></div>
+        <input type="file" name="file" accept="{{ accept }}" required></div>
       <div class="flex gap wrap mt-3">
         <button class="btn btn-primary" type="submit" data-i18n="cat.run">Import</button>
         <a class="btn btn-ghost" href="{{ url_for('maintenance.settings') }}" data-i18n="nav.maint_settings">Settings</a>
@@ -103,9 +103,10 @@
     <div class="panel-head"><h3 data-i18n="m.import_upload">Upload file</h3></div>
     <form method="post" enctype="multipart/form-data" action="{{ url_for('maintenance.import_run', kind=kind) }}" class="panel-pad">
       <p class="muted" style="font-size:13px"><span data-i18n="m.import_step1">1) Download the template</span> ·
-        <a href="{{ url_for('maintenance.import_template', kind=kind) }}"><b data-i18n="m.import_template">Download template</b></a></p>
-      <div class="field"><label data-i18n="m.import_step2">2) Choose your filled .xlsx file</label>
-        <input type="file" name="file" accept=".xlsx" required style="height:auto;padding:10px;border:1px dashed var(--line);border-radius:var(--r-md);background:var(--panel);width:100%"></div>
+        <a href="{{ url_for('maintenance.import_template', kind=kind) }}"><b data-i18n="m.import_template_xlsx">Excel template</b></a> ·
+        <a href="{{ url_for('maintenance.import_template', kind=kind, fmt='csv') }}"><b data-i18n="m.import_template_csv">CSV template</b></a></p>
+      <div class="field"><label data-i18n="m.import_step2">2) Choose your filled CSV or Excel file</label>
+        <input type="file" name="file" accept="{{ accept }}" required style="height:auto;padding:10px;border:1px dashed var(--line);border-radius:var(--r-md);background:var(--panel);width:100%"></div>
       <button class="btn btn-primary"><svg class="ico"><use href="#i-boxes"></use></svg><span data-i18n="m.import_run">Import</span></button>
     </form>
   </div>
