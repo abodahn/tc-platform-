@@ -4,11 +4,9 @@ TC Platform — Flask application factory.
 Wires up configuration, security headers, the database, and blueprints.
 """
 import shutil
-import threading
-import time
 from pathlib import Path
 
-from flask import Flask, render_template, request
+from flask import Flask
 
 from config import Config
 from app.db import init_db
@@ -57,91 +55,22 @@ def create_app():
     # passes — then we retry the schema bootstrap on the first request that
     # successfully reaches the database.
     app._db_ready = False
-    app._db_reachable = False      # can we TALK to it, regardless of bootstrap
-    app._db_boot_error = None      # why the bootstrap failed, surfaced in health
     try:
         init_db()
         app._db_ready = True
-        app._db_reachable = True
         from app.security import refresh_db_roles
         refresh_db_roles()               # load admin-managed roles overlay
     except Exception as exc:  # noqa: BLE001
-        app._db_boot_error = f"{type(exc).__name__}: {exc}"[:300]
-        app.logger.warning("init_db deferred: %s", exc)
-        # The bootstrap failing does not mean the database is gone. Find out
-        # which it is, so the first request does not have to.
-        try:
-            from app.db import get_db
-            _c = get_db()
-            try:
-                _c.execute("SELECT 1").fetchone()
-                app._db_reachable = True
-            finally:
-                _c.close()
-        except Exception:  # noqa: BLE001
-            app._db_reachable = False
-
-    # Retrying the schema bootstrap on EVERY request is what turned a database
-    # blip into a total outage: init_db runs ~620 statements and each connection
-    # attempt blocks for connect_timeout seconds, so with 2 workers x 4 threads
-    # all eight slots stalled, gunicorn's 120s timeout killed the workers, and
-    # Render served 502 for everything — including the login page, which needs
-    # no database at all.
-    #
-    # Now: ONE thread may retry, at most once every _DB_RETRY_SECONDS, and it
-    # never blocks the other seven. Anything that does not need the database
-    # (static assets, the health probe) is served throughout, and a request that
-    # does need it gets an honest 503 page immediately instead of hanging.
-    # Recovery is automatic — the next retry after Postgres returns brings the
-    # app back with no redeploy.
-    _DB_RETRY_SECONDS = 30
-    app._db_next_try = 0.0
-    _db_retry_lock = threading.Lock()
-    _DB_FREE_PATHS = ("/api/health", "/healthz", "/favicon.ico")
+        app.logger.warning("init_db deferred (database not ready yet): %s", exc)
 
     @app.before_request
     def _ensure_db_ready():
-        if getattr(app, "_db_ready", False):
-            return
-        path = request.path or ""
-        if path.startswith("/static/") or path in _DB_FREE_PATHS:
-            return
-        now = time.monotonic()
-        if now >= app._db_next_try and _db_retry_lock.acquire(blocking=False):
+        if not getattr(app, "_db_ready", False):
             try:
-                app._db_next_try = now + _DB_RETRY_SECONDS   # set BEFORE trying,
-                init_db()                                    # so a slow failure
-                app._db_ready = True                         # cannot be retried
-                app._db_boot_error = None                    # by the next thread
-                from app.security import refresh_db_roles
-                refresh_db_roles()
-                app.logger.warning("schema bootstrap complete — serving normally")
-            except Exception as exc:  # noqa: BLE001
-                app._db_boot_error = f"{type(exc).__name__}: {exc}"[:300]
-                # A FAILED BOOTSTRAP IS NOT AN OUTAGE. The schema has existed for
-                # months; init_db only re-asserts it. If the database answers, the
-                # pages work — so blocking them on the bootstrap turned a harmless
-                # migration error into a site-wide 503. Ask the question that
-                # actually matters: can we reach the database at all?
-                try:
-                    from app.db import get_db
-                    c = get_db()
-                    try:
-                        c.execute("SELECT 1").fetchone()
-                        app._db_reachable = True
-                    finally:
-                        c.close()
-                    app.logger.error(
-                        "schema bootstrap FAILED but the database is reachable — "
-                        "serving pages, see /api/health bootstrap_error: %s", exc)
-                except Exception as exc2:              # noqa: BLE001
-                    app._db_reachable = False
-                    app.logger.warning("database unreachable: %s", exc2)
-            finally:
-                _db_retry_lock.release()
-        if getattr(app, "_db_ready", False) or getattr(app, "_db_reachable", False):
-            return                      # serve the page
-        return render_template("db_unavailable.html"), 503
+                init_db()
+                app._db_ready = True
+            except Exception:  # noqa: BLE001
+                pass
 
     # CSRF protection for all state-changing requests
     from app.csrf import init_csrf
@@ -221,8 +150,6 @@ def create_app():
     from app.routes.governance import bp as governance_bp
     app.register_blueprint(reports_hub_bp)
     app.register_blueprint(governance_bp)
-    from app.backup import bp as backup_bp
-    app.register_blueprint(backup_bp)
 
     # --- Error handlers ---
     from flask import render_template
