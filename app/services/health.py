@@ -11,6 +11,7 @@ Status model:
   offline  -> connection refused / timeout / DNS failure
   unknown  -> no URL configured
 """
+from concurrent.futures import ThreadPoolExecutor, wait
 import time
 
 import requests
@@ -53,10 +54,47 @@ def check_system(system_row, use_cache=True):
     return data
 
 
-def check_all(system_rows, use_cache=True):
+# The Command Center probes every integrated system before it renders. Serially,
+# that is N x HEALTH_TIMEOUT — and the four legacy systems live on the factory
+# network, which Render cannot reach AT ALL, so every probe pays the full
+# timeout. Combined with fetch_overview's own serial 4s-per-system pass, opening
+# the platform took 35-60+ seconds and looked like a hang. It was the single
+# thing users meant by "the system does not open".
+#
+# Probe in PARALLEL under one deadline. A system that has not answered by then
+# keeps its last-known status instead of holding the page hostage.
+_ALL_DEADLINE = 2.5
+
+
+def check_all(system_rows, use_cache=True, deadline=_ALL_DEADLINE):
+    rows = [r for r in system_rows if r["is_integrated"]]
+    if not rows:
+        return {}
     out = {}
-    for row in system_rows:
-        if not row["is_integrated"]:
-            continue
-        out[row["key"]] = check_system(row, use_cache=use_cache)
+    pool = ThreadPoolExecutor(max_workers=min(8, len(rows)))
+    try:
+        futures = {pool.submit(check_system, r, use_cache=use_cache): r for r in rows}
+        done, pending = wait(futures, timeout=deadline)
+        for f in done:
+            row = futures[f]
+            try:
+                out[row["key"]] = f.result()
+            except Exception:                      # noqa: BLE001
+                out[row["key"]] = _unknown(row)
+        for f in pending:
+            # Do not cancel — let it finish into the cache for the next load.
+            out[futures[f]["key"]] = _unknown(futures[f])
+    finally:
+        # shutdown(wait=False): exiting a `with ThreadPoolExecutor` block calls
+        # shutdown(wait=True), which blocks for the stragglers anyway and threw
+        # the deadline away. Let them finish in the background instead — they
+        # populate the cache for the next page load.
+        pool.shutdown(wait=False)
     return out
+
+
+def _unknown(row):
+    """A system that did not answer within the deadline. Shown as unknown rather
+    than 'offline', because we did not actually learn that it is down."""
+    return {"status": "unknown", "detail": "not checked in time", "ms": None,
+            "key": row["key"]}
