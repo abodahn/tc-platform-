@@ -170,7 +170,11 @@ def dashboard():
         recent = conn.execute(
             "SELECT * FROM mnt_tickets WHERE is_active=1 ORDER BY id DESC LIMIT 8").fetchall()
         low = conn.execute("SELECT * FROM mnt_spare_parts WHERE stock_qty <= reorder_level ORDER BY stock_qty LIMIT 6").fetchall()
-        kpis["ai_at_risk"] = sum(1 for r in ai_engine.risk_ranking(conn) if r["band"] == "high")
+        # COUNT only — so score just the machines that could possibly be high
+        # risk. Ranking all 5,108 here cost 10,216 queries for one KPI tile,
+        # which on external PostgreSQL is what 502'd every authenticated page.
+        kpis["ai_at_risk"] = sum(1 for r in ai_engine.risk_ranking(conn, candidates_only=True)
+                                 if r["band"] == "high")
     finally:
         conn.close()
     return render_template("maintenance/dashboard.html", kpis=kpis, by_status=by_status,

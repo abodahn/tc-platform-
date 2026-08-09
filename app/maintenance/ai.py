@@ -134,7 +134,7 @@ def _recommendation(conn, machine, risk, predicted_days, pm_overdue, open_crit, 
     return ("rec_monitor", {})
 
 
-def risk_ranking(conn, limit=None, candidates_only=True):
+def risk_ranking(conn, limit=None, candidates_only=False):
     """Risk-ranked machines. Two queries up front instead of two PER MACHINE.
 
     predict_machine_risk() costs two queries each. Across 5,108 machines that is
@@ -145,13 +145,19 @@ def risk_ranking(conn, limit=None, candidates_only=True):
     every authenticated page. The code did not change; the fleet grew from 5
     machines to 5,108 and the loop stopped being free.
 
-    A machine with no open ticket, no overdue PM and no breakdown history cannot
-    score as at-risk, so with candidates_only we only score the ones that can.
-    That is a few dozen rows instead of five thousand.
+    candidates_only is OFF by default: this function's contract is to rank the
+    WHOLE fleet and let callers slice, and tests/test_maintenance.py pins that.
+    Pass it only where the caller merely COUNTS high-risk machines — a machine
+    with no ticket history, no overdue PM, no breakdowns, a running status and
+    normal criticality cannot reach that band, so scoring it is pure cost.
     """
+    # ANY ticket, not just open ones: the score uses recent-failure count and
+    # MTBF, so a machine whose faults were all REPAIRED still carries risk —
+    # which is the entire point of predicting the next failure. Filtering on
+    # open tickets alone would have hidden exactly those machines, and
+    # tests/test_maintenance.py::test_offline_ai_risk caught it.
     with_tickets = {r["machine_id"] for r in conn.execute(
-        "SELECT DISTINCT machine_id FROM mnt_tickets "
-        "WHERE status NOT IN ('closed','cancelled','rejected')").fetchall()
+        "SELECT DISTINCT machine_id FROM mnt_tickets").fetchall()
         if r["machine_id"] is not None}
     with_overdue = {r["machine_id"] for r in conn.execute(
         "SELECT DISTINCT machine_id FROM mnt_pm_plans "
@@ -163,6 +169,7 @@ def risk_ranking(conn, limit=None, candidates_only=True):
         rows = [m for m in rows
                 if m["id"] in interesting
                 or (m["breakdowns"] or 0) > 0
+                or m["criticality"] == "critical"      # scores +8 on its own
                 or m["status"] in ("stopped", "waiting_spare", "under_maintenance",
                                    "under_testing")]
     out = [predict_machine_risk(conn, m) for m in rows]
