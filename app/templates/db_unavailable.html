@@ -1,0 +1,77 @@
+<!-- Deliberately standalone: it must render when the database is gone, so it
+     extends nothing, queries nothing, and inlines its own styling. A page that
+     needs the database to explain that the database is down is no page at all. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Database unavailable · TC Platform</title>
+  <link rel="icon" href="/static/img/logo.png">
+  <style>
+    :root{
+      --bg:#f6f7f9; --panel:#fff; --ink:#14161a; --muted:#5b626e;
+      --line:#e4e7ec; --accent:#d7382c; --warn:#8a5a00; --warnbg:#fff6e5;
+    }
+    @media (prefers-color-scheme: dark){
+      :root{ --bg:#0f1115; --panel:#171a20; --ink:#eef0f4; --muted:#9aa3b2;
+             --line:#262b34; --warnbg:#2a2113; --warn:#e0b464; }
+    }
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+         padding:24px;background:var(--bg);color:var(--ink);
+         font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+    .card{width:100%;max-width:560px;background:var(--panel);border:1px solid var(--line);
+          border-radius:14px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+    .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);
+         display:inline-block;margin-inline-end:8px}
+    h1{margin:0 0 8px;font-size:26px;line-height:1.25;letter-spacing:-.02em;text-wrap:balance}
+    .sub{color:var(--muted);margin:0 0 20px}
+    .note{background:var(--warnbg);color:var(--warn);border-radius:10px;padding:12px 14px;
+          font-size:15px;margin:0 0 18px}
+    ul{margin:0 0 20px;padding-inline-start:20px;color:var(--muted);font-size:15px}
+    li{margin-bottom:6px}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    a.btn{display:inline-block;padding:9px 16px;border-radius:9px;text-decoration:none;
+          font-weight:600;font-size:15px}
+    .primary{background:var(--accent);color:#fff}
+    .ghost{border:1px solid var(--line);color:var(--ink)}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <p style="margin:0 0 4px;color:var(--muted);font-size:12px;letter-spacing:.08em;
+              text-transform:uppercase"><span class="dot"></span>TC Platform</p>
+    <h1>The database is not reachable</h1>
+    <p class="sub">The application is running — it simply cannot reach its database
+       right now, so pages that read or write data are paused.</p>
+
+    <p class="note"><b>Nothing has been lost.</b> This is a connection problem, not
+       a data problem. No records were deleted and nothing you saved earlier is affected.</p>
+
+    <ul>
+      <li>The platform retries the connection automatically, about every 30 seconds.</li>
+      <li>When the database answers again, the app recovers on its own — no redeploy,
+          no restart, nothing for you to do.</li>
+      <li>If this persists for more than a few minutes, the database service itself
+          needs attention (check that it is running and has not been suspended).</li>
+    </ul>
+
+    <div class="row">
+      <a class="btn primary" href="/">Try again</a>
+      <a class="btn ghost" href="/api/health">Check status</a>
+    </div>
+  </main>
+  <script>
+    // Poll the health endpoint — it is served without the database — and reload
+    // the moment the database answers, so nobody sits refreshing by hand.
+    setInterval(async function () {
+      try {
+        const r = await fetch('/api/health', { cache: 'no-store' });
+        const d = await r.json();
+        if (d && d.database === 'connected') location.reload();
+      } catch (e) { /* still down; keep waiting */ }
+    }, 15000);
+  </script>
+</body>
+</html>

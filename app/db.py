@@ -187,6 +187,43 @@ def _pg_session_guards(raw):
             pass
 
 
+
+# ---------------------------------------------------------------------------
+# ALTER TABLE ... ADD COLUMN, without the storm
+# ---------------------------------------------------------------------------
+# There are 75+ guarded "add this column if an older database lacks it" migrations.
+# Each one FIRED the ALTER and caught the resulting error. On every boot after the
+# first, every one of them: took an ACCESS EXCLUSIVE lock on the table, failed with
+# "column already exists", and poisoned the transaction so it had to be rolled back.
+#
+# The production log for one boot showed statements .104-74 through .104-151 —
+# 78 consecutive failures on a single connection. Over an external database that
+# is 78 round trips of pure waste, holding exclusive locks against live queries,
+# and it happens under gunicorn --preload BEFORE the port is bound. Slow enough,
+# and Render's health check gives up: 502, restart, repeat.
+#
+# Asking the catalogue ONCE which columns exist turns 78 failing statements into
+# one SELECT and 78 dictionary lookups.
+_ADD_COLUMN_RE = re.compile(
+    r"^\s*ALTER\s+TABLE\s+([A-Za-z_][\w]*)\s+ADD\s+COLUMN\s+([A-Za-z_][\w]*)",
+    re.IGNORECASE)
+
+
+class _NoopCursor:
+    """What a skipped ALTER returns: callers do .commit() or ignore it."""
+    lastrowid = None
+    rowcount = 0
+
+    def fetchone(self):
+        return None
+
+    def fetchall(self):
+        return []
+
+    def __iter__(self):
+        return iter(())
+
+
 class _PGConn:
     """sqlite3-compatible wrapper around a psycopg2 connection.
 
@@ -199,10 +236,36 @@ class _PGConn:
         self._c = conn
         self._pooled = pooled
         self._closed = False
+        self._cols = None          # {(table, column)} — built once, on first need
         _pg_session_guards(conn)
+
+    def _column_exists(self, table, column):
+        """True if the column is already there, from ONE catalogue query."""
+        if self._cols is None:
+            import psycopg2.extras
+            try:
+                cur = self._c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cur.execute("SELECT table_name, column_name FROM information_schema.columns "
+                            "WHERE table_schema = current_schema()")
+                self._cols = {(r["table_name"].lower(), r["column_name"].lower())
+                              for r in cur.fetchall()}
+                cur.close()
+            except Exception:                      # noqa: BLE001
+                # Cannot read the catalogue: fall back to the old behaviour rather
+                # than skip a migration that might be genuinely needed.
+                try:
+                    self._c.rollback()
+                except Exception:                  # noqa: BLE001
+                    pass
+                self._cols = set()
+                return False
+        return (table.lower(), column.lower()) in self._cols
 
     def execute(self, sql, params=()):
         import psycopg2.extras
+        m = _ADD_COLUMN_RE.match(sql)
+        if m and self._column_exists(m.group(1), m.group(2)):
+            return _NoopCursor()   # already there; do not take a lock to find out
         sql2, was_ignore = _translate_sql(sql)
         stripped = sql2.lstrip()
         is_insert = stripped[:6].lower() == "insert"
@@ -218,6 +281,8 @@ class _PGConn:
                 returning = True
         cur = self._c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(sql2, params)
+        if m and self._cols is not None:
+            self._cols.add((m.group(1).lower(), m.group(2).lower()))
         wrapped = _PGCursor(cur)
         if returning:
             try:

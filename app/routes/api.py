@@ -8,7 +8,7 @@ TC Platform — JSON API.
                                by GO_ONLINE.ps1 to push fresh tunnel URLs)
 """
 import sys
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from werkzeug.security import check_password_hash
 
 from config import Config
@@ -41,6 +41,11 @@ def health():
         "service": "tc-platform",
         "status": "online" if db_ok else "degraded",
         "database": "connected" if db_ok else "unreachable",
+        # Whether the app is actually SERVING pages, which is not the same
+        # question as whether a probe can reach the database: the schema
+        # bootstrap may still be pending, in which case every data page returns
+        # the 503 "database unavailable" screen. Ops needs both facts.
+        "schema_ready": bool(getattr(current_app, "_db_ready", False)),
         "engine": engine,
         "python": sys.version.split()[0],
         "env": Config.ENV,

@@ -4,9 +4,11 @@ TC Platform — Flask application factory.
 Wires up configuration, security headers, the database, and blueprints.
 """
 import shutil
+import threading
+import time
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, render_template, request
 
 from config import Config
 from app.db import init_db
@@ -63,14 +65,46 @@ def create_app():
     except Exception as exc:  # noqa: BLE001
         app.logger.warning("init_db deferred (database not ready yet): %s", exc)
 
+    # Retrying the schema bootstrap on EVERY request is what turned a database
+    # blip into a total outage: init_db runs ~620 statements and each connection
+    # attempt blocks for connect_timeout seconds, so with 2 workers x 4 threads
+    # all eight slots stalled, gunicorn's 120s timeout killed the workers, and
+    # Render served 502 for everything — including the login page, which needs
+    # no database at all.
+    #
+    # Now: ONE thread may retry, at most once every _DB_RETRY_SECONDS, and it
+    # never blocks the other seven. Anything that does not need the database
+    # (static assets, the health probe) is served throughout, and a request that
+    # does need it gets an honest 503 page immediately instead of hanging.
+    # Recovery is automatic — the next retry after Postgres returns brings the
+    # app back with no redeploy.
+    _DB_RETRY_SECONDS = 30
+    app._db_next_try = 0.0
+    _db_retry_lock = threading.Lock()
+    _DB_FREE_PATHS = ("/api/health", "/healthz", "/favicon.ico")
+
     @app.before_request
     def _ensure_db_ready():
-        if not getattr(app, "_db_ready", False):
+        if getattr(app, "_db_ready", False):
+            return
+        path = request.path or ""
+        if path.startswith("/static/") or path in _DB_FREE_PATHS:
+            return
+        now = time.monotonic()
+        if now >= app._db_next_try and _db_retry_lock.acquire(blocking=False):
             try:
-                init_db()
-                app._db_ready = True
-            except Exception:  # noqa: BLE001
-                pass
+                app._db_next_try = now + _DB_RETRY_SECONDS   # set BEFORE trying,
+                init_db()                                    # so a slow failure
+                app._db_ready = True                         # cannot be retried
+                from app.security import refresh_db_roles    # by the next thread
+                refresh_db_roles()
+                app.logger.warning("database reachable again — schema bootstrap done")
+            except Exception as exc:  # noqa: BLE001
+                app.logger.warning("database still unreachable: %s", exc)
+            finally:
+                _db_retry_lock.release()
+        if not getattr(app, "_db_ready", False):
+            return render_template("db_unavailable.html"), 503
 
     # CSRF protection for all state-changing requests
     from app.csrf import init_csrf
