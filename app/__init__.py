@@ -57,13 +57,29 @@ def create_app():
     # passes — then we retry the schema bootstrap on the first request that
     # successfully reaches the database.
     app._db_ready = False
+    app._db_reachable = False      # can we TALK to it, regardless of bootstrap
+    app._db_boot_error = None      # why the bootstrap failed, surfaced in health
     try:
         init_db()
         app._db_ready = True
+        app._db_reachable = True
         from app.security import refresh_db_roles
         refresh_db_roles()               # load admin-managed roles overlay
     except Exception as exc:  # noqa: BLE001
-        app.logger.warning("init_db deferred (database not ready yet): %s", exc)
+        app._db_boot_error = f"{type(exc).__name__}: {exc}"[:300]
+        app.logger.warning("init_db deferred: %s", exc)
+        # The bootstrap failing does not mean the database is gone. Find out
+        # which it is, so the first request does not have to.
+        try:
+            from app.db import get_db
+            _c = get_db()
+            try:
+                _c.execute("SELECT 1").fetchone()
+                app._db_reachable = True
+            finally:
+                _c.close()
+        except Exception:  # noqa: BLE001
+            app._db_reachable = False
 
     # Retrying the schema bootstrap on EVERY request is what turned a database
     # blip into a total outage: init_db runs ~620 statements and each connection
@@ -96,15 +112,36 @@ def create_app():
                 app._db_next_try = now + _DB_RETRY_SECONDS   # set BEFORE trying,
                 init_db()                                    # so a slow failure
                 app._db_ready = True                         # cannot be retried
-                from app.security import refresh_db_roles    # by the next thread
+                app._db_boot_error = None                    # by the next thread
+                from app.security import refresh_db_roles
                 refresh_db_roles()
-                app.logger.warning("database reachable again — schema bootstrap done")
+                app.logger.warning("schema bootstrap complete — serving normally")
             except Exception as exc:  # noqa: BLE001
-                app.logger.warning("database still unreachable: %s", exc)
+                app._db_boot_error = f"{type(exc).__name__}: {exc}"[:300]
+                # A FAILED BOOTSTRAP IS NOT AN OUTAGE. The schema has existed for
+                # months; init_db only re-asserts it. If the database answers, the
+                # pages work — so blocking them on the bootstrap turned a harmless
+                # migration error into a site-wide 503. Ask the question that
+                # actually matters: can we reach the database at all?
+                try:
+                    from app.db import get_db
+                    c = get_db()
+                    try:
+                        c.execute("SELECT 1").fetchone()
+                        app._db_reachable = True
+                    finally:
+                        c.close()
+                    app.logger.error(
+                        "schema bootstrap FAILED but the database is reachable — "
+                        "serving pages, see /api/health bootstrap_error: %s", exc)
+                except Exception as exc2:              # noqa: BLE001
+                    app._db_reachable = False
+                    app.logger.warning("database unreachable: %s", exc2)
             finally:
                 _db_retry_lock.release()
-        if not getattr(app, "_db_ready", False):
-            return render_template("db_unavailable.html"), 503
+        if getattr(app, "_db_ready", False) or getattr(app, "_db_reachable", False):
+            return                      # serve the page
+        return render_template("db_unavailable.html"), 503
 
     # CSRF protection for all state-changing requests
     from app.csrf import init_csrf

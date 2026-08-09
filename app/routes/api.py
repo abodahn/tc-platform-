@@ -46,6 +46,9 @@ def health():
         # bootstrap may still be pending, in which case every data page returns
         # the 503 "database unavailable" screen. Ops needs both facts.
         "schema_ready": bool(getattr(current_app, "_db_ready", False)),
+        # Why the bootstrap failed, if it did. Without this the only symptom is
+        # schema_ready:false and no way to find the cause from outside.
+        "bootstrap_error": getattr(current_app, "_db_boot_error", None),
         "engine": engine,
         "python": sys.version.split()[0],
         "env": Config.ENV,
