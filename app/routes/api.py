@@ -25,11 +25,24 @@ def health():
     """Platform self-health (public, no auth). Always returns HTTP 200 so the
     Render health check passes; reports DB connectivity in the payload.
     Engine-agnostic: a tiny SELECT 1 works on both SQLite and PostgreSQL."""
+    # Split the cost: getting a connection vs running a query. Without this the
+    # only visible fact is "the page took N seconds", which says nothing about
+    # WHERE the time goes — and connection setup and query time need different
+    # fixes. `pooled` tells us whether the warm-connection pool is actually
+    # being reused between requests, or silently reconnecting every time.
+    import time
     db_ok = False
+    t_conn = t_query = None
+    pooled = None
     try:
+        t0 = time.perf_counter()
         conn = get_db()
+        t_conn = round((time.perf_counter() - t0) * 1000)
+        pooled = getattr(conn, "_pooled", None)
         try:
+            t1 = time.perf_counter()
             conn.execute("SELECT 1").fetchone()
+            t_query = round((time.perf_counter() - t1) * 1000)
             db_ok = True
         finally:
             conn.close()
@@ -50,6 +63,9 @@ def health():
         # schema_ready:false and no way to find the cause from outside.
         "bootstrap_error": getattr(current_app, "_db_boot_error", None),
         "engine": engine,
+        "db_connect_ms": t_conn,
+        "db_query_ms": t_query,
+        "db_pooled": pooled,
         "python": sys.version.split()[0],
         "env": Config.ENV,
     })
