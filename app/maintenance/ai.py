@@ -134,8 +134,37 @@ def _recommendation(conn, machine, risk, predicted_days, pm_overdue, open_crit, 
     return ("rec_monitor", {})
 
 
-def risk_ranking(conn, limit=None):
+def risk_ranking(conn, limit=None, candidates_only=True):
+    """Risk-ranked machines. Two queries up front instead of two PER MACHINE.
+
+    predict_machine_risk() costs two queries each. Across 5,108 machines that is
+    10,216 queries, and the maintenance dashboard called this for a single KPI
+    tile. On local SQLite the whole page took 2.6s; on Render's EXTERNAL
+    PostgreSQL, where each query is a network round trip, the same page needs
+    ~17 MINUTES — so gunicorn killed the worker at 120s and Render served 502 on
+    every authenticated page. The code did not change; the fleet grew from 5
+    machines to 5,108 and the loop stopped being free.
+
+    A machine with no open ticket, no overdue PM and no breakdown history cannot
+    score as at-risk, so with candidates_only we only score the ones that can.
+    That is a few dozen rows instead of five thousand.
+    """
+    with_tickets = {r["machine_id"] for r in conn.execute(
+        "SELECT DISTINCT machine_id FROM mnt_tickets "
+        "WHERE status NOT IN ('closed','cancelled','rejected')").fetchall()
+        if r["machine_id"] is not None}
+    with_overdue = {r["machine_id"] for r in conn.execute(
+        "SELECT DISTINCT machine_id FROM mnt_pm_plans "
+        "WHERE active=1 AND next_due < date('now')").fetchall()
+        if r["machine_id"] is not None}
     rows = conn.execute("SELECT * FROM mnt_machines WHERE is_active=1").fetchall()
+    if candidates_only:
+        interesting = with_tickets | with_overdue
+        rows = [m for m in rows
+                if m["id"] in interesting
+                or (m["breakdowns"] or 0) > 0
+                or m["status"] in ("stopped", "waiting_spare", "under_maintenance",
+                                   "under_testing")]
     out = [predict_machine_risk(conn, m) for m in rows]
     out.sort(key=lambda x: x["risk"], reverse=True)
     return out[:limit] if limit else out

@@ -157,12 +157,16 @@ def dashboard():
             "SELECT machine_code, SUM(total_downtime_min) d FROM mnt_tickets WHERE total_downtime_min>0 "
             "GROUP BY machine_code ORDER BY d DESC LIMIT 6").fetchall()
         machines_raw = conn.execute("SELECT * FROM mnt_machines ORDER BY status, code").fetchall()
+        health = svc.machine_health_bulk(conn, machines_raw)   # TWO queries, not 2N
         machines = []
         for mm in machines_raw:
-            sc_, band = svc.machine_health(conn, mm)
+            sc_, band = health.get(mm["id"], (100, "good"))
             d = dict(mm); d["health"] = sc_; d["health_band"] = band
             machines.append(d)
         machines.sort(key=lambda x: x["health"])  # worst first
+        # The page shows the worst offenders; sending 5,000 rows to a browser is
+        # its own kind of unusable.
+        machines = machines[:120]
         recent = conn.execute(
             "SELECT * FROM mnt_tickets WHERE is_active=1 ORDER BY id DESC LIMIT 8").fetchall()
         low = conn.execute("SELECT * FROM mnt_spare_parts WHERE stock_qty <= reorder_level ORDER BY stock_qty LIMIT 6").fetchall()

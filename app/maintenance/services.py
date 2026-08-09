@@ -847,6 +847,53 @@ def sync_sla_breaches(conn=None):
             conn.close()
 
 
+def _health_from(status, breakdowns, open_c, crit_c, pm_overdue):
+    """The scoring rule itself, with every input already supplied."""
+    score = 100
+    score -= {"stopped": 30, "waiting_spare": 22, "under_maintenance": 14,
+              "under_testing": 6}.get(status, 0)
+    score -= min((open_c or 0) * 8, 24)
+    score -= min((crit_c or 0) * 12, 24)
+    score -= min((breakdowns or 0) * 2, 20)
+    score -= min((pm_overdue or 0) * 10, 20)
+    score = max(0, min(100, score))
+    return score, ("good" if score >= 75 else ("warn" if score >= 45 else "crit"))
+
+
+def machine_health_bulk(conn, machines):
+    """{machine_id: (score, band)} for MANY machines in TWO queries.
+
+    machine_health() costs two queries per machine. That was invisible with a
+    handful of machines and fatal with 5,108: the maintenance dashboard issued
+    10,216 queries per page load. On local SQLite that is ~2 seconds; on Render's
+    EXTERNAL PostgreSQL, where every query is a network round trip, it is many
+    minutes — gunicorn kills the worker at 120s and Render serves 502. The page
+    did not get slower, the fleet got bigger.
+    """
+    ids = [m["id"] for m in machines]
+    if not ids:
+        return {}
+    tickets, overdue = {}, {}
+    # Aggregate over the WHOLE table once; cheaper and simpler than an IN list
+    # of 5,000 ids, and the row counts here are small.
+    for r in conn.execute(
+            "SELECT machine_id, COUNT(*) c, "
+            "SUM(CASE WHEN priority='critical' THEN 1 ELSE 0 END) crit "
+            "FROM mnt_tickets WHERE status NOT IN ('closed','cancelled','rejected') "
+            "GROUP BY machine_id").fetchall():
+        tickets[r["machine_id"]] = (r["c"] or 0, r["crit"] or 0)
+    for r in conn.execute(
+            "SELECT machine_id, COUNT(*) c FROM mnt_pm_plans "
+            "WHERE active=1 AND next_due < date('now') GROUP BY machine_id").fetchall():
+        overdue[r["machine_id"]] = r["c"] or 0
+    out = {}
+    for m in machines:
+        c, crit = tickets.get(m["id"], (0, 0))
+        out[m["id"]] = _health_from(m["status"], m["breakdowns"], c, crit,
+                                    overdue.get(m["id"], 0))
+    return out
+
+
 def machine_health(conn, machine):
     """0-100 health score from live signals: status, open/critical tickets,
     breakdown history and PM overdue. Returns (score, band)."""
