@@ -263,8 +263,14 @@ class _PGConn:
 
     def execute(self, sql, params=()):
         import psycopg2.extras
-        m = _ADD_COLUMN_RE.match(sql)
-        if m and self._column_exists(m.group(1), m.group(2)):
+        # Capture the table/column NOW and keep them in their own names. `m` is
+        # reused below for the INSERT parse, which has one group — reading
+        # m.group(2) after that raised "IndexError: no such group" on every
+        # INSERT, which broke the schema bootstrap AND every write in the app.
+        alter_m = _ADD_COLUMN_RE.match(sql)
+        alter_tbl = alter_m.group(1) if alter_m else None
+        alter_col = alter_m.group(2) if alter_m else None
+        if alter_tbl and self._column_exists(alter_tbl, alter_col):
             return _NoopCursor()   # already there; do not take a lock to find out
         sql2, was_ignore = _translate_sql(sql)
         stripped = sql2.lstrip()
@@ -281,8 +287,8 @@ class _PGConn:
                 returning = True
         cur = self._c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(sql2, params)
-        if m and self._cols is not None:
-            self._cols.add((m.group(1).lower(), m.group(2).lower()))
+        if alter_tbl and self._cols is not None:
+            self._cols.add((alter_tbl.lower(), alter_col.lower()))
         wrapped = _PGCursor(cur)
         if returning:
             try:
