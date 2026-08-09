@@ -150,6 +150,10 @@ def create_app():
     from app.routes.governance import bp as governance_bp
     app.register_blueprint(reports_hub_bp)
     app.register_blueprint(governance_bp)
+    # admin.html links to backup.download; without this every /admin/ page 500s
+    # with a BuildError. The revert dropped it — the button was added later.
+    from app.backup import bp as backup_bp
+    app.register_blueprint(backup_bp)
 
     # --- Error handlers ---
     from flask import render_template
