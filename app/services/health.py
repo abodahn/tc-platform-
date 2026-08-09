@@ -63,7 +63,11 @@ def check_system(system_row, use_cache=True):
 #
 # Probe in PARALLEL under one deadline. A system that has not answered by then
 # keeps its last-known status instead of holding the page hostage.
-_ALL_DEADLINE = 2.5
+# The home page must NEVER wait on the factory network. 0.8s is enough for a
+# system that is actually reachable to answer; anything slower is served from
+# cache and refreshed in the background. A dashboard that renders instantly with
+# a slightly stale tile beats a dashboard nobody can open.
+_ALL_DEADLINE = 0.8
 
 
 def check_all(system_rows, use_cache=True, deadline=_ALL_DEADLINE):

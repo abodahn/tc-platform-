@@ -20,7 +20,9 @@ _STALE_MAX = 900    # keep last-known-good up to 15 min through transient failur
 # One deadline for the whole pass. Probing serially at 4s each, against systems
 # on the factory network that Render cannot reach at all, added ~20s to every
 # Command Center load — the other half of why "the system does not open".
-_OVERVIEW_DEADLINE = 2.5
+# Same rule as health.check_all: never make a person wait on an unreachable
+# system. Late answers land in the cache and appear on the next load.
+_OVERVIEW_DEADLINE = 0.8
 
 
 def _fetch_one(row, timeout, now):
@@ -54,7 +56,7 @@ def _fetch_one(row, timeout, now):
     return entry
 
 
-def fetch_overview(system_rows, timeout=4.0, force=False):
+def fetch_overview(system_rows, timeout=2.0, force=False):
     now = time.time()
     if not force and _CACHE["data"] and (now - _CACHE["at"] < _TTL):
         return _CACHE["data"]
