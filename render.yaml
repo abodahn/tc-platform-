@@ -26,7 +26,14 @@ services:
     # --preload imports the app once in the master and forks workers from it, so
     # ALL workers share one SECRET_KEY (otherwise each worker gets its own key and
     # ~half of requests fail CSRF with "Invalid or missing CSRF token").
-    startCommand: "gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 --preload"
+    #
+    # ONE worker, not two. A free instance is 0.1 CPU: two processes do not run in
+    # parallel there, they take turns, so the second one bought no throughput and
+    # doubled the memory (measured: 74 MB resident per worker). This app is
+    # I/O-bound — it waits on the database, not the CPU — so threads are the right
+    # unit of concurrency here, and 8 of them in one process beats 2x4 across two.
+    # It also removes the forked-connection-pool hazard entirely.
+    startCommand: "gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120 --preload"
     healthCheckPath: /api/health
     # --- To persist uploads, switch plan to 'starter' and uncomment: ---
     # disk:
