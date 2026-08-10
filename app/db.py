@@ -94,6 +94,14 @@ def _pg_candidates():
         for region in _RENDER_REGIONS:
             ext_host = f"{host}.{region}-postgres.render.com"
             candidates.append(_add_ssl(_swap_host(primary, ext_host)))
+    elif host.startswith("dpg-") and host.endswith("-postgres.render.com"):
+        # DATABASE_URL is Render's EXTERNAL host, which leaves Render's network
+        # and comes back through the public internet — every round trip pays for
+        # it, and a page makes many. The bare short host in front of it is the
+        # same database over the private network, so try that FIRST. Off Render
+        # it simply does not resolve (fast NXDOMAIN) and we fall through to the
+        # external URL, which is why this is safe to do unconditionally.
+        candidates.insert(0, _swap_host(primary, host.split(".")[0]))
     return candidates
 
 
@@ -195,11 +203,20 @@ class _PGConn:
     real close) instead of tearing down the TCP+TLS session. That handshake —
     repeated for every get_db() call, dozens of times per page — was the main
     production latency cost on Render."""
-    def __init__(self, conn, pooled=False):
+    def __init__(self, conn, pooled=False, fresh=True):
         self._c = conn
         self._pooled = pooled
         self._closed = False
-        _pg_session_guards(conn)
+        # close() is a no-op while this connection is the request's shared one;
+        # the request teardown calls release() to actually hand it back.
+        self._shared = False
+        # lock_timeout is a SESSION setting: it survives for the life of the
+        # connection. Re-applying it on every checkout of a pooled connection
+        # bought nothing and cost two network round trips (SET + COMMIT) on
+        # every single get_db() call — with hundreds of call sites, that was a
+        # large part of the per-page latency.
+        if fresh:
+            _pg_session_guards(conn)
 
     def execute(self, sql, params=()):
         import psycopg2.extras
@@ -247,8 +264,13 @@ class _PGConn:
     def rollback(self):
         self._c.rollback()
 
+    def release(self):
+        """Really close/return, ignoring _shared. Used by the request teardown."""
+        self._shared = False
+        self.close()
+
     def close(self):
-        if self._closed:
+        if self._closed or self._shared:
             return
         self._closed = True
         if not self._pooled:
@@ -284,25 +306,51 @@ _RESOLVED_PG_URL = None  # cached working URL once discovered (host probing is o
 # ---------------------------------------------------------------------------
 import threading as _threading
 
+import time as _time
+
 _PG_POOL = None
+_PG_POOL_PID = None
 _PG_POOL_LOCK = _threading.Lock()
+
+# Monotonic time of the last known-good use, keyed by id() of the raw psycopg2
+# connection. psycopg2's connection is a C type that rejects custom attributes,
+# so the timestamp cannot live on the object itself. Entries are dropped when a
+# connection is retired, and the pool is capped, so this stays small.
+# ponytail: id()-keyed dict, bounded by pool size; a WeakKeyDictionary would be
+# tidier if psycopg2 connections ever support weak references.
+_PG_LAST_OK = {}
+_LIVENESS_IDLE_S = 30
 
 
 def _pg_pool(url):
-    """Lazily create the process-wide pool for the resolved URL."""
-    global _PG_POOL
-    if _PG_POOL is None:
+    """Lazily create the pool for the resolved URL, once per PROCESS."""
+    global _PG_POOL, _PG_POOL_PID
+    pid = os.getpid()
+    if _PG_POOL is None or _PG_POOL_PID != pid:
         with _PG_POOL_LOCK:
-            if _PG_POOL is None:
+            if _PG_POOL is None or _PG_POOL_PID != pid:
+                # gunicorn runs with --preload, so create_app() -> init_db()
+                # builds a pool in the MASTER and then every worker is forked
+                # from it — inheriting the same TCP sockets. Two processes
+                # talking over one Postgres session interleave their traffic and
+                # corrupt each other. Detect the pid change and build a fresh
+                # pool. The inherited one is abandoned, never closed: closing it
+                # here would tear down sockets another process is still using.
                 from psycopg2.pool import ThreadedConnectionPool
                 maxconn = int(os.getenv("TC_PG_POOL_MAX", "10") or 10)
                 _PG_POOL = ThreadedConnectionPool(1, max(2, maxconn), url,
                                                   connect_timeout=10)
+                _PG_POOL_PID = pid
+                _PG_LAST_OK.clear()
     return _PG_POOL
 
 
 def _pg_pool_put(raw, broken=False):
     if _PG_POOL is not None:
+        if broken:
+            _PG_LAST_OK.pop(id(raw), None)
+        else:
+            _PG_LAST_OK[id(raw)] = _time.monotonic()
         _PG_POOL.putconn(raw, close=broken)
     else:  # pool torn down (shouldn't happen) — just close
         try:
@@ -312,28 +360,94 @@ def _pg_pool_put(raw, broken=False):
 
 
 def _pg_pool_conn(url):
-    """Checkout with liveness check; discard dead/idle-killed connections.
-    The SELECT 1 costs ~1ms on a warm connection versus ~50-200ms for a fresh
-    TLS handshake, and protects against the server reaping idle sessions."""
+    """Checkout from the pool, discarding dead/idle-killed connections.
+
+    Returns (raw, fresh) — `fresh` is True when the connection has NOT been
+    validated as an already-configured session, so the caller knows it still
+    needs its session guards applied.
+
+    The liveness probe is a full network round trip, so it only runs on a
+    connection that has been sitting idle long enough for the server to have
+    plausibly reaped it. Probing one that was handed back moments ago cost the
+    very round trip the pool exists to avoid."""
     pool = _pg_pool(url)
     for _ in range(3):
         raw = pool.getconn()
         if getattr(raw, "closed", 0):
             pool.putconn(raw, close=True)
+            _PG_LAST_OK.pop(id(raw), None)
             continue
+        last_ok = _PG_LAST_OK.get(id(raw))
+        if last_ok is not None and (_time.monotonic() - last_ok) < _LIVENESS_IDLE_S:
+            return raw, False           # recently healthy; session already set up
         try:
             cur = raw.cursor()
             cur.execute("SELECT 1")
             cur.close()
             raw.rollback()
-            return raw
+            # Known-good, but we have no record of its session state, so let the
+            # caller re-apply the guards.
+            _PG_LAST_OK[id(raw)] = _time.monotonic()
+            return raw, True
         except Exception:
             pool.putconn(raw, close=True)
-    return None  # pool kept handing us corpses — caller falls back to direct
+            _PG_LAST_OK.pop(id(raw), None)
+    return None, True  # pool kept handing us corpses — caller falls back to direct
 
 
 def get_db():
-    """Return a connection. PostgreSQL when DATABASE_URL is set, else SQLite.
+    """Return a connection, reusing ONE per request.
+
+    Every call used to open (or at least re-validate and re-configure) a
+    connection. There are ~700 get_db() call sites and a single page hits a good
+    many of them, each paying several network round trips to a database that is
+    not local. Holding one connection for the life of the request removes all of
+    those but the first. close() on the shared connection is a no-op; the app's
+    teardown handler calls release() to hand it back to the pool.
+
+    Only PostgreSQL is shared: SQLite is a local file with nothing to amortise,
+    and its connection object cannot carry the extra flag. Background threads
+    and CLI use run outside an app context and still get their own connection.
+    """
+    if not _is_pg():
+        return _open_db()
+    try:
+        from flask import g, has_app_context
+    except Exception:
+        return _open_db()
+    if not has_app_context():
+        return _open_db()
+    conn = getattr(g, "_tc_db", None)
+    if conn is not None and not conn._closed:
+        return conn
+    conn = _open_db()
+    conn._shared = True
+    g._tc_db = conn
+    return conn
+
+
+def release_request_db(exc=None):
+    """Return the request's shared connection to the pool. Called from teardown."""
+    try:
+        from flask import g
+    except Exception:
+        return
+    conn = g.pop("_tc_db", None) if hasattr(g, "pop") else None
+    if conn is None:
+        return
+    try:
+        if exc is not None:
+            conn.rollback()
+    except Exception:
+        pass
+    try:
+        conn.release()
+    except Exception:
+        pass
+
+
+def _open_db():
+    """Open a NEW connection. PostgreSQL when DATABASE_URL is set, else SQLite.
 
     For PostgreSQL it auto-discovers a reachable host: it tries the configured
     URL first, then — if that is an unreachable Render internal host — the
@@ -345,9 +459,9 @@ def get_db():
         if _RESOLVED_PG_URL:
             # fast path: warm pooled connection (no TLS handshake per call)
             try:
-                raw = _pg_pool_conn(_RESOLVED_PG_URL)
+                raw, fresh = _pg_pool_conn(_RESOLVED_PG_URL)
                 if raw is not None:
-                    return _PGConn(raw, pooled=True)
+                    return _PGConn(raw, pooled=True, fresh=fresh)
             except Exception:
                 pass  # pool exhausted/broken — fall through to a direct connect
             try:

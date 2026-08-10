@@ -63,6 +63,15 @@ def create_app():
     except Exception as exc:  # noqa: BLE001
         app.logger.warning("init_db deferred (database not ready yet): %s", exc)
 
+    # get_db() hands every caller in a request the SAME connection; this is what
+    # gives it back to the pool at the end. Without it the pool drains and every
+    # request falls back to a fresh TCP+TLS connect.
+    from app.db import release_request_db
+
+    @app.teardown_appcontext
+    def _release_db(exc):
+        release_request_db(exc)
+
     @app.before_request
     def _ensure_db_ready():
         if not getattr(app, "_db_ready", False):
