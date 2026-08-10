@@ -879,10 +879,13 @@ def pm():
         plans = []
         for p in raw:
             d = dict(p); d["pm_status"] = _pm_status(p["next_due"]); plans.append(d)
-        checklists = {}
-        for p in plans:
-            checklists[p["id"]] = conn.execute(
-                "SELECT * FROM mnt_pm_checklist WHERE plan_id=? ORDER BY sort", (p["id"],)).fetchall()
+        # One query for every plan's checklist, not one query PER plan: with 450
+        # plans that loop was 450 network round trips for a single page.
+        checklists = {p["id"]: [] for p in plans}
+        for row in conn.execute(
+                "SELECT * FROM mnt_pm_checklist ORDER BY plan_id, sort").fetchall():
+            if row["plan_id"] in checklists:
+                checklists[row["plan_id"]].append(row)
         wos = conn.execute(
             "SELECT w.*, m.code mcode FROM mnt_pm_work_orders w JOIN mnt_machines m ON m.id=w.machine_id "
             "ORDER BY w.id DESC LIMIT 30").fetchall()

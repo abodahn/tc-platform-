@@ -4,6 +4,7 @@ TC Platform — Flask application factory.
 Wires up configuration, security headers, the database, and blueprints.
 """
 import shutil
+import time
 from pathlib import Path
 
 from flask import Flask
@@ -55,13 +56,7 @@ def create_app():
     # passes — then we retry the schema bootstrap on the first request that
     # successfully reaches the database.
     app._db_ready = False
-    try:
-        init_db()
-        app._db_ready = True
-        from app.security import refresh_db_roles
-        refresh_db_roles()               # load admin-managed roles overlay
-    except Exception as exc:  # noqa: BLE001
-        app.logger.warning("init_db deferred (database not ready yet): %s", exc)
+    app._db_boot_error = None
 
     # get_db() hands every caller in a request the SAME connection; this is what
     # gives it back to the pool at the end. Without it the pool drains and every
@@ -72,14 +67,54 @@ def create_app():
     def _release_db(exc):
         release_request_db(exc)
 
+    # The schema bootstrap used to run HERE, synchronously, inside create_app().
+    # gunicorn runs with --preload, so that happens before the port is bound:
+    # Render waits, sees no open port, and fails the deploy — which is what has
+    # been happening. On PostgreSQL the bootstrap is hundreds of statements
+    # against a database reached over the network, and it grows with the schema,
+    # so it was only a matter of time.
+    #
+    # For PostgreSQL it now runs in a background thread on the first request: the
+    # port binds immediately, the health check answers, and the deploy succeeds.
+    # Safe because nothing gates page rendering on the flag, and the tables it
+    # would create already exist on a database that has served a request before.
+    #
+    # SQLite keeps the synchronous path. There is no network and no port race —
+    # it is a local file, it costs a moment, and an app that is created but never
+    # receives a request (tests, CLI, scripts) must still find its tables.
+    import threading
+    _boot = {"running": False, "next_try": 0.0}
+    _boot_lock = threading.Lock()
+
+    def _bootstrap_schema():
+        try:
+            init_db()
+            from app.security import refresh_db_roles
+            refresh_db_roles()           # load admin-managed roles overlay
+            app._db_ready = True
+            app._db_boot_error = None
+        except Exception as exc:  # noqa: BLE001
+            # Recorded, not raised: /api/health reports it, and the next request
+            # after the cooldown tries again.
+            app._db_boot_error = f"{type(exc).__name__}: {exc}"
+            app.logger.warning("schema bootstrap failed, will retry: %s", exc)
+        finally:
+            _boot["running"] = False
+            _boot["next_try"] = time.monotonic() + 30
+
+    if not (Config.DATABASE_URL or "").startswith(("postgres://", "postgresql://")):
+        _bootstrap_schema()
+
     @app.before_request
     def _ensure_db_ready():
-        if not getattr(app, "_db_ready", False):
-            try:
-                init_db()
-                app._db_ready = True
-            except Exception:  # noqa: BLE001
-                pass
+        if app._db_ready or _boot["running"] or time.monotonic() < _boot["next_try"]:
+            return
+        with _boot_lock:
+            if _boot["running"]:
+                return
+            _boot["running"] = True
+        threading.Thread(target=_bootstrap_schema, daemon=True,
+                         name="tc-db-bootstrap").start()
 
     # CSRF protection for all state-changing requests
     from app.csrf import init_csrf

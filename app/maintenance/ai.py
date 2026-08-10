@@ -17,7 +17,7 @@ on a factory server or even an offline laptop.
 from datetime import datetime, timezone
 
 from app import ai_core
-from app.maintenance.services import machine_health
+from app.maintenance.services import machine_health, machine_health_bulk
 
 _FMT = "%Y-%m-%d %H:%M:%S"
 
@@ -45,12 +45,38 @@ def _clamp(v, lo=0, hi=100):
 # --------------------------------------------------------------------------
 # Machine failure-risk prediction (predictive + prescriptive)
 # --------------------------------------------------------------------------
-def predict_machine_risk(conn, machine):
+def _risk_prefetch(conn, machines):
+    """Every per-machine input for predict_machine_risk, in THREE queries.
+
+    Scoring one machine costs four queries (its tickets, two for health, its
+    overdue PM count). Across 5,108 machines that is ~20,000 round trips for one
+    page. These aggregates answer the same questions for the whole fleet at once.
+    """
+    tickets = {}
+    for t in conn.execute(
+            "SELECT machine_id, created_at, priority, status FROM mnt_tickets "
+            "ORDER BY machine_id, created_at").fetchall():
+        tickets.setdefault(t["machine_id"], []).append(t)
+    overdue = {}
+    for r in conn.execute(
+            "SELECT machine_id, COUNT(*) c FROM mnt_pm_plans "
+            "WHERE active=1 AND next_due < date('now') GROUP BY machine_id").fetchall():
+        overdue[r["machine_id"]] = r["c"] or 0
+    return {"tickets": tickets, "pm_overdue": overdue,
+            "health": machine_health_bulk(conn, machines)}
+
+
+def predict_machine_risk(conn, machine, prefetch=None):
+    """Risk for one machine. Pass `prefetch` from _risk_prefetch to score a whole
+    fleet without issuing four queries per machine; the arithmetic is identical."""
     mid = machine["id"]
     now = _now()
-    tickets = conn.execute(
-        "SELECT created_at, priority, status FROM mnt_tickets WHERE machine_id=? "
-        "ORDER BY created_at", (mid,)).fetchall()
+    if prefetch is not None:
+        tickets = prefetch["tickets"].get(mid, [])
+    else:
+        tickets = conn.execute(
+            "SELECT created_at, priority, status FROM mnt_tickets WHERE machine_id=? "
+            "ORDER BY created_at", (mid,)).fetchall()
     dates = [d for d in (_parse(t["created_at"]) for t in tickets) if d]
     n_fail = len(dates)
     recent_90 = sum(1 for d in dates if (now - d).days <= 90)
@@ -65,7 +91,10 @@ def predict_machine_risk(conn, machine):
             mtbf_days = round(span / (n_fail - 1), 1)
     days_since = (now - dates[-1]).days if dates else None
 
-    health, _band = machine_health(conn, machine)
+    if prefetch is not None:
+        health = prefetch["health"].get(mid, (100, "good"))[0]
+    else:
+        health, _band = machine_health(conn, machine)
     risk = 100 - health  # start from the inverse of current health
 
     drivers = []
@@ -85,9 +114,12 @@ def predict_machine_risk(conn, machine):
             risk += 12
         drivers.append(("mtbf", mtbf_days))
 
-    pm_overdue = conn.execute(
-        "SELECT COUNT(*) c FROM mnt_pm_plans WHERE machine_id=? AND active=1 AND next_due < date('now')",
-        (mid,)).fetchone()["c"]
+    if prefetch is not None:
+        pm_overdue = prefetch["pm_overdue"].get(mid, 0)
+    else:
+        pm_overdue = conn.execute(
+            "SELECT COUNT(*) c FROM mnt_pm_plans WHERE machine_id=? AND active=1 "
+            "AND next_due < date('now')", (mid,)).fetchone()["c"]
     if pm_overdue:
         risk += 10
         drivers.append(("pm_overdue", pm_overdue))
@@ -172,7 +204,8 @@ def risk_ranking(conn, limit=None, candidates_only=False):
                 or m["criticality"] == "critical"      # scores +8 on its own
                 or m["status"] in ("stopped", "waiting_spare", "under_maintenance",
                                    "under_testing")]
-    out = [predict_machine_risk(conn, m) for m in rows]
+    pre = _risk_prefetch(conn, rows)
+    out = [predict_machine_risk(conn, m, pre) for m in rows]
     out.sort(key=lambda x: x["risk"], reverse=True)
     return out[:limit] if limit else out
 

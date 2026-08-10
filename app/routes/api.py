@@ -25,35 +25,49 @@ def health():
     """Platform self-health (public, no auth). Always returns HTTP 200 so the
     Render health check passes; reports DB connectivity in the payload.
     Engine-agnostic: a tiny SELECT 1 works on both SQLite and PostgreSQL."""
-    # Split the cost: getting a connection vs running a query. Without this the
-    # only visible fact is "the page took N seconds", which says nothing about
-    # WHERE the time goes — and connection setup and query time need different
-    # fixes. `pooled` tells us whether the warm-connection pool is actually
-    # being reused between requests, or silently reconnecting every time.
+    # This is Render's healthCheckPath, and Render gives it FIVE SECONDS. It used
+    # to open a database connection and run a query — measured at 1.7s when the
+    # service is idle and far worse while it is booting or under load. So the
+    # health check timed out, Render declared the deploy failed and replaced the
+    # instance, and no new code could ship. A health check must not depend on the
+    # slow thing it is reporting on.
+    #
+    # The default answer is now local and instant: the schema bootstrap records
+    # whether it reached the database, and that is what gets reported. Pass
+    # ?deep=1 for a real probe with timings — for diagnosis, never for monitoring.
     import time
-    db_ok = False
+    deep = request.args.get("deep") in ("1", "true", "yes")
     t_conn = t_query = None
     pooled = None
-    try:
-        t0 = time.perf_counter()
-        conn = get_db()
-        t_conn = round((time.perf_counter() - t0) * 1000)
-        pooled = getattr(conn, "_pooled", None)
-        try:
-            t1 = time.perf_counter()
-            conn.execute("SELECT 1").fetchone()
-            t_query = round((time.perf_counter() - t1) * 1000)
-            db_ok = True
-        finally:
-            conn.close()
-    except Exception:
+    if deep:
         db_ok = False
+        try:
+            t0 = time.perf_counter()
+            conn = get_db()
+            t_conn = round((time.perf_counter() - t0) * 1000)
+            pooled = getattr(conn, "_pooled", None)
+            try:
+                t1 = time.perf_counter()
+                conn.execute("SELECT 1").fetchone()
+                t_query = round((time.perf_counter() - t1) * 1000)
+                db_ok = True
+            finally:
+                conn.close()
+        except Exception:
+            db_ok = False
+    else:
+        # No round trip: the bootstrap thread already knows, and a request that
+        # rendered a page proves reachability better than another SELECT 1 does.
+        db_ok = bool(getattr(current_app, "_db_ready", False))
     engine = "postgresql" if (Config.DATABASE_URL or "").startswith(("postgres://", "postgresql://")) else "sqlite"
     return jsonify({
         "ok": True,
         "service": "tc-platform",
-        "status": "online" if db_ok else "degraded",
-        "database": "connected" if db_ok else "unreachable",
+        # Never anything but 200/online for the boot window itself: a service that
+        # is up but still bootstrapping is starting, not broken, and failing the
+        # check here is what took the deploys down.
+        "status": "online" if db_ok else "starting",
+        "database": "connected" if db_ok else ("unreachable" if deep else "pending"),
         # Whether the app is actually SERVING pages, which is not the same
         # question as whether a probe can reach the database: the schema
         # bootstrap may still be pending, in which case every data page returns
