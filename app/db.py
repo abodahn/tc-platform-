@@ -234,7 +234,23 @@ class _PGConn:
                 sql2 += " RETURNING id"
                 returning = True
         cur = self._c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(sql2, params)
+        try:
+            cur.execute(sql2, params)
+        except Exception:
+            # PostgreSQL aborts the whole transaction on any statement error:
+            # every later statement fails with InFailedSqlTransaction until a
+            # rollback. This codebase is full of "try the query, carry on if it
+            # fails" (migrations, optional columns), which was harmless when
+            # each get_db() had its own connection that got discarded. Now the
+            # connection is shared for the request, so one swallowed error would
+            # break every remaining query on the page. Rollback restores exactly
+            # the old behaviour; it only ever runs on the error path.
+            if self._shared:
+                try:
+                    self._c.rollback()
+                except Exception:
+                    pass
+            raise
         wrapped = _PGCursor(cur)
         if returning:
             try:
