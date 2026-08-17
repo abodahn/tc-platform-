@@ -154,24 +154,47 @@
     // Sections render collapsed by default (server-side) except the one holding the
     // current page. Re-open any the user explicitly expanded before, and persist that set.
     // Open-by-exception keeps a 10-section / 60-item nav scannable instead of a wall.
+    // ONE section open at a time. Opening a second one used to leave the first
+    // open too, so the list grew, the page content jumped, and every click felt
+    // like the sidebar was rearranging itself. An accordion keeps the nav a
+    // fixed, scannable height whatever you click.
+    const nav = document.querySelector(".nav");
+    const sections = Array.from(document.querySelectorAll(".nav-section[data-section]"));
+
     let opened = [];
     try { opened = JSON.parse(localStorage.getItem(LS.navOpen) || "[]"); } catch (e) {}
-    document.querySelectorAll(".nav-section[data-section]").forEach(sec => {
-      const key = sec.getAttribute("data-section");
-      const hasActive = sec.querySelector(".nav-item.active");
-      if (opened.includes(key) && !hasActive) sec.classList.remove("sec-collapsed");
+    // Tolerate the old array format: the last entry is the most recent choice.
+    const remembered = Array.isArray(opened) ? opened[opened.length - 1] : opened;
+
+    function openOnly(key) {
+      sections.forEach(sec => {
+        sec.classList.toggle("sec-collapsed", sec.getAttribute("data-section") !== key);
+      });
+      localStorage.setItem(LS.navOpen, JSON.stringify(key ? [key] : []));
+    }
+
+    // The section holding the current page wins over anything remembered —
+    // landing on a page whose section is shut is disorienting.
+    const activeSec = sections.find(s => s.querySelector(".nav-item.active"));
+    const initial = activeSec ? activeSec.getAttribute("data-section")
+                              : (remembered || null);
+    sections.forEach(sec => {
+      sec.classList.toggle("sec-collapsed", sec.getAttribute("data-section") !== initial);
       const label = sec.querySelector("[data-sec-toggle]");
       if (label) label.addEventListener("click", () => {
         if (app.classList.contains("collapsed")) return; // ignore in rail mode
-        sec.classList.toggle("sec-collapsed");
-        let cur = [];
-        try { cur = JSON.parse(localStorage.getItem(LS.navOpen) || "[]"); } catch (e) {}
-        const isOpen = !sec.classList.contains("sec-collapsed");
-        cur = cur.filter(k => k !== key);
-        if (isOpen) cur.push(key);
-        localStorage.setItem(LS.navOpen, JSON.stringify(cur));
+        const key = sec.getAttribute("data-section");
+        const wasOpen = !sec.classList.contains("sec-collapsed");
+        openOnly(wasOpen ? null : key);   // clicking the open one shuts it
       });
     });
+
+    // The state above was applied while .nav still carries .nav-booting, which
+    // disables the collapse transition. Releasing it on the NEXT frame means the
+    // first paint is already correct — no section animating open on every page
+    // load, which is the flicker — while user clicks stay animated.
+    if (nav) requestAnimationFrame(() => requestAnimationFrame(
+      () => nav.classList.remove("nav-booting")));
 
     // Keep the ACTIVE item visible after a full-page navigation. Without this the
     // sidebar re-renders scrolled to the top, hiding the current item when it's

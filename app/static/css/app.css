@@ -117,7 +117,10 @@ a { color: inherit; text-decoration: none; }
   font: 700 10px/1 var(--font); letter-spacing: 0; font-variant-numeric: tabular-nums;
   min-width: 16px; padding: 2px 0; border-radius: 6px; text-align: center;
   color: var(--sidebar-ink-soft); opacity: .65;
-  transition: background .15s, color .15s, opacity .15s, padding .15s;
+  /* padding removed from the transition: nothing animates it, and a layout
+     property in a transition list on an element that repaints per hover is a
+     reflow waiting to happen. */
+  transition: background .15s, color .15s, opacity .15s;
 }
 .nav-label:hover .nav-count { opacity: 1; color: var(--sidebar-ink); }
 .nav-label .chev { width: 13px; height: 13px; opacity: .3; transition: transform .22s cubic-bezier(.22,1,.36,1), opacity .15s; }
@@ -140,6 +143,14 @@ a { color: inherit; text-decoration: none; }
   transition: grid-template-rows .28s cubic-bezier(.22,1,.36,1), opacity .2s ease;
 }
 .nav-sub { min-height: 0; overflow: hidden; }
+/* First-paint guard. The server renders sections shut except the current one and
+   JS then opens the right one; animating that on every page load is the flicker
+   Ahmed reported. app.js drops .nav-booting after two frames, so the load is
+   instant and only real clicks animate. The rail marker is included because it
+   would otherwise scale in from nothing on each navigation too. */
+.nav.nav-booting > .nav-section > .nav-items,
+.nav.nav-booting .nav-item::before,
+.nav.nav-booting .nav-label .chev { transition: none !important; }
 .nav-section.sec-collapsed:not(.nav-pinned) > .nav-items { grid-template-rows: 0fr; opacity: 0; }
 
 /* ---- Nav item ---- */
@@ -169,6 +180,33 @@ a { color: inherit; text-decoration: none; }
 }
 .nav-item.active .ico { opacity: 1; color: var(--tc-red-2); }
 .nav-item.active::before { transform: scaleY(1); opacity: 1; }
+
+/* Sub-band inside a section (today / planned / parts / assets / setup ...).
+   Nineteen flat maintenance rows read as a wall; the same nineteen under six
+   whispered labels read as six short lists. So it is a whisper, not a heading:
+   9.5px, tracked, soft, with a hairline that fades out to group without
+   drawing a box. A 1px fading rule, deliberately not a stripe down the side. */
+.nav-band {
+  display: flex; align-items: center; gap: 8px;
+  padding: 13px 11px 4px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--sidebar-ink-soft); opacity: .66;
+  user-select: none;
+}
+.nav-band > span { flex: 0 0 auto; }
+.nav-band::after {
+  content: ""; flex: 1 1 auto; height: 1px; min-width: 8px;
+  background: linear-gradient(to right, var(--sidebar-line), transparent);
+}
+[dir="rtl"] .nav-band::after {
+  background: linear-gradient(to left, var(--sidebar-line), transparent);
+}
+/* The first band in a section sits right under the section header, so it does
+   not need the full gap that separates one band from the next. */
+.nav-band:first-child { padding-top: 5px; }
+/* In rail (collapsed) mode there is no room for words, and the icons carry the
+   grouping instead. */
+.app.collapsed .nav-band { display: none; }
 
 /* "soon" tag on in-progress modules (admins only) */
 .nav-item .wip-tag {
@@ -426,10 +464,10 @@ a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
 
 /* rich slide-in notification popups (top-right) */
 .npops { position: fixed; top: 16px; inset-inline-end: 16px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 360px; width: calc(100vw - 32px); pointer-events: none; }
-.npop { pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; background: var(--panel); border: 1px solid var(--line); border-inline-start: 4px solid var(--info); border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 32px rgba(0,0,0,.20); cursor: pointer; transform: translateX(120%); opacity: 0; transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .35s; }
+.npop { pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; background: var(--panel); border: 1px solid var(--info); border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 32px rgba(0,0,0,.20); cursor: pointer; transform: translateX(120%); opacity: 0; transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .35s; }
 .npop.show { transform: translateX(0); opacity: 1; }
-.npop.sev-warning { border-inline-start-color: var(--warn); }
-.npop.sev-critical { border-inline-start-color: var(--crit); }
+.npop.sev-warning { border-color: var(--warn); }
+.npop.sev-critical { border-color: var(--crit); }
 .npop .nicon { width: 32px; height: 32px; border-radius: 9px; flex: 0 0 32px; display: grid; place-items: center; background: var(--info-bg); color: var(--info); }
 .npop.sev-warning .nicon { background: var(--warn-bg); color: var(--warn); }
 .npop.sev-critical .nicon { background: var(--crit-bg); color: var(--crit); }
@@ -684,10 +722,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 
 /* ---------- Toasts ---------- */
 .toasts { position: fixed; bottom: 24px; inset-inline-end: 24px; display: flex; flex-direction: column; gap: 10px; z-index: 9999; }
-.toast { background: var(--panel); border: 1px solid var(--line); border-inline-start: 4px solid var(--tc-red);
+.toast { background: var(--panel); border: 1px solid var(--tc-red);
   border-radius: var(--r-md); box-shadow: var(--shadow-strong); padding: 13px 18px; font-size: 13px; min-width: 260px; animation: slidein .25s ease; }
-.toast.success { border-inline-start-color: var(--ok); }
-.toast.error { border-inline-start-color: var(--crit); }
+.toast.success { border-color: var(--ok); }
+.toast.error { border-color: var(--crit); }
 @keyframes slidein { from { transform: translateY(12px); opacity: 0; } }
 
 /* ---------- Login ---------- */
@@ -765,11 +803,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .floor-card {
   display: flex; align-items: center; gap: 12px; padding: 16px;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
-  box-shadow: var(--shadow-card); border-inline-start: 5px solid var(--muted);
+  box-shadow: var(--shadow-card);
 }
-.floor-card.critical { border-inline-start-color: var(--crit); }
-.floor-card.high { border-inline-start-color: var(--warn); }
-.floor-card.medium { border-inline-start-color: var(--info); }
+.floor-card.critical { border-color: var(--crit); background: var(--crit-bg); }
+.floor-card.high { border-color: var(--warn); background: var(--warn-bg); }
+.floor-card.medium { border-color: var(--info); background: var(--info-bg); }
 .floor-card:hover { border-color: rgba(237,28,36,.35); }
 .floor-card .fc-main { flex: 1; min-width: 0; }
 .floor-card .fc-top { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 15px; }
