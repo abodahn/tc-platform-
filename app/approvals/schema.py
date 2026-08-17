@@ -402,6 +402,43 @@ _ITEM_MIGRATIONS = [
 ]
 
 
+def seed_doam_roles(conn):
+    """Create the DOAM §3.2 authority roles the ladder routes to.
+
+    These are seeded in CODE, not typed into one database. The ladder references
+    supply_chain_director and board; a database without them has stages nothing
+    can sign, so a tier-2 request would sit in a queue with no eligible approver
+    and no error to explain it. Seeding here means every environment — a fresh
+    test database, beta, production — gets them from the same source.
+
+    INSERT OR IGNORE: an admin who has since edited a role's permissions keeps
+    their version, exactly like seed_governance.
+    """
+    import json
+    # What an approver minimally needs: see the request, and sign it. Copied from
+    # the shape finance_user already uses rather than invented — an approver who
+    # cannot open the request cannot approve it either.
+    APPROVER = json.dumps(["open_module", "proc_approve", "proc_view",
+                           "view_dashboard", "view_reports"])
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    for key, label in (
+        ("supply_chain_director", "Supply Chain Director (L2)"),
+        ("plant_director",        "Plant Director (L2)"),
+        ("financial_director",    "Financial Director (L2)"),
+        ("managing_director",     "Managing Director (L1)"),
+        ("board",                 "Board of Directors"),
+    ):
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO custom_roles "
+                "(role_key,label,perms_json,is_builtin,created_at,updated_at) "
+                "VALUES (?,?,?,0,?,?)", (key, label, APPROVER, now, now))
+        except Exception:  # noqa: BLE001
+            # custom_roles belongs to the admin module; if it is not there yet on
+            # this boot, the roles get seeded on the next one. Never fatal.
+            break
+
+
 def seed_governance(conn):
     """Seed the default workflow explanation text (stages, roles, gate docs and
     status meanings) in all three languages. INSERT OR IGNORE for English, so an
@@ -496,6 +533,7 @@ def create_and_seed(conn):
             conn.commit()
         except Exception:
             conn.rollback()
+    seed_doam_roles(conn)
     seed_governance(conn)
     if conn.execute("SELECT COUNT(*) c FROM proc_vendors").fetchone()["c"] > 0:
         return  # already seeded; never overwrite

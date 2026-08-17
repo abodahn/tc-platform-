@@ -162,8 +162,11 @@ def test_full_cycle_create_sign_po(app_client):
                data={"_csrf": get_csrf(c), "vendor": vendor, "amount": amt},
                content_type="multipart/form-data", follow_redirects=True)
 
-    # purchasing + the two value stages now sign
-    for stage in ("purchasing", "finance", "cfo"):
+    # Purchasing and the value-gated rungs now sign. DERIVED from the ladder
+    # rather than named: the DOAM decides who those rungs are, and a hard-coded
+    # list here would silently stop testing the real policy the day it changes.
+    from app.approvals import constants as _C
+    for stage in [s for s in _C.build_ladder(48000) if s != "warehouse"]:
         tok = get_csrf(c)
         c.post(f"/procurement/pr/{pr_id}/approve", data={"_csrf": tok, "comment": "ok"},
                follow_redirects=True)
@@ -174,10 +177,13 @@ def test_full_cycle_create_sign_po(app_client):
 
     with a.app_context():
         from app.approvals import services as svc
+        from app.approvals import constants as C
         b = svc.get_pr(pr_id)
         assert b["pr"]["status"] == "approved"
         assert b["pr"]["po_no"]
-        assert len(b["steps"]) == 5
+        # Four rungs at 48,000 under DOAM §4.1 tier 2, not the paper form's five:
+        # the ladder stops at the two L2 directors and never reaches the CFO.
+        assert len(b["steps"]) == len(C.build_ladder(48000)) == 4
         assert all(s["status"] == "approved" for s in b["steps"])
 
     # PDFs render
@@ -503,7 +509,11 @@ def test_resubmit_rebuilds_ladder_fresh(app_client):
     with a.app_context():
         from app.approvals import services as svc
         svc.act_on_step(pid, _USERS["warehouse"], "approve")            # advance once
-        svc.act_on_step(pid, _USERS["factory_manager"], "reject", comment="redo")
+        # Reject at the SECOND demand rung. Under the DOAM that is Purchasing,
+        # not the Plant Director — an unpriced request only carries the demand
+        # rungs, and the Plant Director became value-gated at tier 2.
+        from app.approvals import constants as C
+        svc.act_on_step(pid, _USERS[C.DEMAND_STAGES[1]], "reject", comment="redo")
         requester = {"username": "admin", "role": "super_admin"}
         ok, _ = svc.submit_pr(pid, requester)
         assert ok
