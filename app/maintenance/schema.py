@@ -211,6 +211,46 @@ CREATE TABLE IF NOT EXISTS mnt_needle_costs (
     currency TEXT, confidence TEXT, created_at TEXT
 );
 
+-- Engineering Justification Report — DOAM §6, form T&C-PUF-09, retained 3 years.
+--
+-- "Every requisition for spares, maintenance, repair, operating supplies, or
+-- workshop activity, at any value, must carry a signed Engineering Justification
+-- Report. Procurement does not accept the requisition without it."
+--
+-- The eight columns between machine_id and alternatives are DOAM Table 14's
+-- mandatory contents, one per field. They are columns rather than a free-text
+-- note precisely so the gate can refuse an incomplete report: a justification
+-- that does not state criticality or the store stock check is the kind of
+-- paperwork that gets waved through, which is what this control exists to stop.
+CREATE TABLE IF NOT EXISTS mnt_eng_justifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ejr_no TEXT UNIQUE,
+    machine_id INTEGER,
+    location TEXT,
+    request_type TEXT,          -- breakdown | preventive | predictive | improvement | consumable
+    description TEXT,
+    root_cause TEXT,
+    criticality TEXT,           -- production_critical | safety | quality | routine
+    downtime_risk TEXT,
+    stock_on_hand REAL,
+    stock_checked_with TEXT,    -- who in Stores confirmed it
+    alternatives TEXT,          -- repair vs replace, local vs import
+    -- §7.4.2: an emergency or breakdown purchase may proceed, but the report is
+    -- still required and must be documented within 24 hours. Recording the
+    -- deadline is what makes "within 24 hours" auditable rather than aspirational.
+    is_emergency INTEGER DEFAULT 0,
+    emergency_due_at TEXT,
+    status TEXT DEFAULT 'draft',   -- draft | submitted | approved | rejected
+    created_by TEXT, created_at TEXT,
+    submitted_at TEXT,
+    -- The Engineering Head's technical approval (DOAM Table 13 step 3, an L3
+    -- authority). decided_signature holds the digital-signature image reference
+    -- so the printed report carries the same signature as a procurement PDF.
+    decided_by TEXT, decided_at TEXT, decision_note TEXT, decided_signature TEXT,
+    is_active INTEGER DEFAULT 1,
+    FOREIGN KEY (machine_id) REFERENCES mnt_machines(id)
+);
+
 CREATE TABLE IF NOT EXISTS mnt_pm_checklist (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     plan_id INTEGER, item TEXT, required INTEGER DEFAULT 1,

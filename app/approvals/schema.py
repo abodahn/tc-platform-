@@ -328,6 +328,10 @@ _PR_MIGRATIONS = [
     # RFQ control (P3): Purchasing's recorded justification for waiving the
     # competitive-quote rule on a high-value PR (single/sole-source purchase).
     ("single_source_reason", "ALTER TABLE pr_requests ADD COLUMN single_source_reason TEXT"),
+    # DOAM §6 — the Engineering Justification Report (T&C-PUF-09) this requisition
+    # carries. NULL is normal: most requests are not spares/MRO and need none.
+    # app.maintenance.eng_justification.ejr_gate_check decides when it is required.
+    ("ejr_id", "ALTER TABLE pr_requests ADD COLUMN ejr_id INTEGER"),
     # Foreign-currency support: fx_rate converts the PR total (in `currency`)
     # to EGP so the EGP-based approval thresholds route honestly. po_rev counts
     # PO revisions (0 = original order; history kept in pr_po_revisions).

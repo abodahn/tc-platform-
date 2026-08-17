@@ -1297,6 +1297,24 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             if not ok_rfq:
                 return False, rfq_msg
 
+        # Engineering gate (DOAM §6): a spares / MRO / workshop requisition needs
+        # an Engineering-Head-signed justification before Procurement accepts it,
+        # AT ANY VALUE. Enforced here because the Purchasing stage IS Procurement's
+        # acceptance point. Automatic min/max replenishment is exempt — the DOAM
+        # says so, and gating it would break the auto-reorder bridge.
+        #
+        # Deliberately fails CLOSED on an unexpected error: a control that stops
+        # working silently because a query raised is worse than one that blocks.
+        if decision == "approve" and step["stage"] == PRICING_GATE_STAGE:
+            try:
+                from app.maintenance.eng_justification import ejr_gate_check
+                items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+                ok_ejr, ejr_msg = ejr_gate_check(conn, pr, items)
+            except Exception as exc:  # noqa: BLE001
+                return False, f"ejr_check_failed:{type(exc).__name__}"
+            if not ok_ejr:
+                return False, ejr_msg
+
         sig_png, sig_name = _user_sig(uname)
         now = _now()
 
