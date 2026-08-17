@@ -243,7 +243,7 @@ def level_above(level):
     So this walks up to the next level that a stage is mapped to. Caps at BOD;
     there is nothing above the Board.
     """
-    staffed = {DOAM_LEVEL[s] for s in LADDER if s in DOAM_LEVEL}
+    staffed = {DOAM_LEVEL[s] for s in _ACTIVE_LADDER if s in DOAM_LEVEL}
     try:
         start = LEVEL_ORDER.index(level)
     except ValueError:
@@ -252,6 +252,35 @@ def level_above(level):
         if nxt in staffed:
             return nxt
     return "BOD"
+
+
+def single_source_stage(ladder, kind=None):
+    """DOAM §4.3 — a single-source award is "approved one level above the value
+    tier". Returns the ONE extra stage to append to `ladder`, or None when the
+    ladder already reaches that high (nothing to escalate to).
+
+    Appending at the end is correct because DOAM_LADDER is ordered by ascending
+    authority: the extra signature is the last one collected, and it belongs to
+    somebody senior to everyone already on the ladder."""
+    if not ladder:
+        return None
+    matrix = MATRICES.get((kind or "opex").strip().lower(), OPEX_MATRIX)
+    order = [s for s in DOAM_LADDER if s in matrix and s not in ladder]
+    if not order:
+        return None
+    want = level_above(DOAM_LEVEL.get(ladder[-1], "L4"))
+    for s in order:
+        if DOAM_LEVEL.get(s) == want:
+            return s
+    # Nobody sits at that exact level for this expenditure type (the CAPEX
+    # ladder has no L4 rung, for instance). Escalating to the lowest stage that
+    # is still ABOVE the ladder's top is the honest reading of "one level above";
+    # silently skipping the escalation would be the wrong way to fail.
+    top = LEVEL_ORDER.index(DOAM_LEVEL.get(ladder[-1], "L4"))
+    for s in order:
+        if LEVEL_ORDER.index(DOAM_LEVEL.get(s, "L4")) > top:
+            return s
+    return None
 
 
 # --- Pricing gate (controlled Procure-to-Pay) -------------------------------
@@ -437,6 +466,10 @@ RFQ_VALUE_THRESHOLD = 25000  # EGP-equivalent total at/above which the rule appl
 #   50,001 -   500,000    three quotations, PD/SCD reviews the comparison
 #   500,001 - 2,000,000   three quotations plus negotiation, Procurement Committee
 #   above 2,000,000       formal tender, Tender Committee recommends
+# DOAM §3.4 — "Splitting a purchase to stay within a lower approval level is
+# prohibited. Related purchases within a 30-day window are aggregated."
+AGGREGATION_WINDOW_DAYS = 30
+
 SOURCING_BANDS = [
     {"over": 0,          "quotes": 1, "mode": "spot",      "governance": "buyer_records_basis"},
     {"over": 50_000,     "quotes": 3, "mode": "compare",   "governance": "director_reviews"},

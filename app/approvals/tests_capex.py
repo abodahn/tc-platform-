@@ -12,7 +12,10 @@ import tempfile
 
 
 def _app():
-    os.environ["TC_DB"] = os.path.join(tempfile.mkdtemp(), "capex.db")
+    # Config.DB_PATH is the switch the app actually reads — an env var here would
+    # silently run these checks against the live beta database.
+    import config
+    config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "capex.db")
     os.environ.pop("DATABASE_URL", None)
     from app import create_app
     return create_app()

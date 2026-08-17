@@ -337,6 +337,9 @@ _PR_MIGRATIONS = [
     # of signatures for the same money, so this column decides which one applies.
     ("expenditure_kind",
      "ALTER TABLE pr_requests ADD COLUMN expenditure_kind TEXT DEFAULT 'opex'"),
+    # DOAM §3.4 — the 30-day aggregate this request was actually routed on, when
+    # related requests existed. NULL means it routed on its own value.
+    ("agg_total", "ALTER TABLE pr_requests ADD COLUMN agg_total REAL"),
     # Foreign-currency support: fx_rate converts the PR total (in `currency`)
     # to EGP so the EGP-based approval thresholds route honestly. po_rev counts
     # PO revisions (0 = original order; history kept in pr_po_revisions).

@@ -596,6 +596,8 @@
       <div class="flex gap wrap mt-3" style="font-size:12.5px;color:var(--muted)">
         {% if pr.department %}<span class="tag">{{ pr.department }}</span>{% endif %}
         {% if pr.expenditure_kind == 'capex' %}<span class="tag" data-i18n="proc.kind_capex_tag">CAPEX · capital</span>{% endif %}
+        {% if pr.agg_total %}<span class="tag" title="{{ pr.agg_total }}"><span data-i18n="proc.agg_tag">Routed on 30-day aggregate</span> · {{ '{:,.0f}'.format(pr.agg_total) }}</span>{% endif %}
+        {% if pr.single_source_reason %}<span class="tag" data-i18n="proc.ss_tag">Single source · signed one level up</span>{% endif %}
         {% if pr.payment_condition %}<span class="tag">{{ pr.payment_condition }}</span>{% endif %}
         {% if pr.delivery_condition %}<span class="tag">{{ pr.delivery_condition }}</span>{% endif %}
         {% if pr.po_no %}<span class="tag">PO {{ pr.po_no }}</span>{% endif %}

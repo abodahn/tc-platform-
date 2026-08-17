@@ -10,7 +10,7 @@ platform-bell notification.
 import hashlib
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.db import get_db
 from app.security import has_permission, effective_roles
@@ -921,8 +921,22 @@ def submit_pr(pr_id, user, ip=None):
         # it has one, else the global default. Each rung = parallel stages.
         # Thresholds are EGP-based, so a foreign-currency PR routes on its
         # EGP-equivalent total (total * fx_rate), never the raw foreign figure.
-        rungs = rungs_from_stages(dept_ladder(conn, pr["department"], egp_total(pr),
-                                          _pr_field(pr, "expenditure_kind")))
+        # DOAM §3.4 — route on the 30-day aggregate when related purchases exist,
+        # so three 9,000 requests cannot each duck a 10,000 threshold. The
+        # aggregate can only ever LENGTHEN the ladder (max of the two).
+        _own = egp_total(pr)
+        _agg, _sibs = aggregated_total(conn, pr_id, pr, _own)
+        _route_on = max(_own, _agg)
+        _stages = dept_ladder(conn, pr["department"], _route_on,
+                              _pr_field(pr, "expenditure_kind"))
+        # DOAM §4.3 — a single-source award is signed one level above the value
+        # tier. Applied here as well as in set_single_source(), because the
+        # justification can be recorded on the draft before it is ever submitted.
+        if str(_pr_field(pr, "single_source_reason") or "").strip():
+            _extra = C.single_source_stage(_stages, _pr_field(pr, "expenditure_kind"))
+            if _extra:
+                _stages = _stages + [_extra]
+        rungs = rungs_from_stages(_stages)
         # SoD escalation, resolved BEFORE anything is written: a rung whose only
         # eligible signer is the requester climbs one level up the org chart. A
         # rung with nobody above it can never be signed, so the request is refused
@@ -996,7 +1010,17 @@ def submit_pr(pr_id, user, ip=None):
                           f"normal signing role.", ip)
         conn.execute(
             "UPDATE pr_requests SET status='pending', current_seq=1, submitted_at=?, "
-            "rejection_reason=NULL WHERE id=?", (now, pr_id))
+            "rejection_reason=NULL, agg_total=? WHERE id=?",
+            (now, _agg if _sibs else None, pr_id))
+        if _sibs and _agg > _own:
+            # Record it on the request, not just in a log: the approver about to
+            # sign needs to see WHY this rung is on their desk for a small value.
+            refs = ", ".join(s["pr_no"] or ("#%s" % s["id"]) for s in _sibs)
+            audit(conn, pr_id, user.get("username") if user else "system",
+                  "aggregated",
+                  f"DOAM §3.4: routed on the {C.AGGREGATION_WINDOW_DAYS}-day "
+                  f"aggregate of {_agg:,.2f} EGP (this request {_own:,.2f}) — "
+                  f"related open requests for the same items: {refs}.", ip)
         uname = user.get("username") if user else "system"
         flat = [s for rung in rungs for s in rung]
         audit(conn, pr_id, uname, "submitted",
@@ -1023,6 +1047,66 @@ def submit_pr(pr_id, user, ip=None):
 # --------------------------------------------------------------------------
 # Pricing gate (Purchasing enters the commercial value)
 # --------------------------------------------------------------------------
+def _item_keys(rows):
+    """Normalised identity for a set of PR lines: the catalogue id when the line
+    came from the catalogue, else the item name folded to lowercase. Two lines
+    for "Bearing 6204" and "bearing 6204 " are the same purchase being split."""
+    keys = set()
+    for r in rows:
+        cat = _pr_field(r, "item_id") or _pr_field(r, "spare_id")
+        if cat:
+            keys.add("cat:%s" % cat)
+        name = str(_pr_field(r, "item") or "").strip().lower()
+        if name:
+            keys.add("name:%s" % " ".join(name.split()))
+    return keys
+
+
+def aggregated_total(conn, pr_id, pr, own_egp=None):
+    """DOAM §3.4 — related purchases inside a 30-day window are aggregated, so
+    splitting an order cannot buy a lower approval level.
+
+    "Related" is read narrowly and defensibly: the SAME DEPARTMENT buying at
+    least one of the SAME ITEMS. A broader rule (everything a department buys in
+    a month) would drag genuinely unrelated purchases up to the Board and the
+    control would be switched off within a week, which protects nothing.
+
+    Returns (aggregate_egp, [siblings]) where each sibling is
+    {"pr_no", "id", "egp"}. The PR's own value is included in the aggregate."""
+    own = egp_total(pr) if own_egp is None else own_egp
+    mine = _item_keys(conn.execute(
+        "SELECT item, item_id, spare_id FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall())
+    if not mine:
+        return own, []
+    since = (datetime.now(timezone.utc)
+             - timedelta(days=C.AGGREGATION_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = conn.execute(
+        "SELECT id, pr_no, total, currency, fx_rate FROM pr_requests "
+        "WHERE department=? AND id<>? AND created_at>=? "
+        "AND COALESCE(expenditure_kind,'opex')=? "
+        "AND status NOT IN ('draft','cancelled','rejected')",
+        (_pr_field(pr, "department") or "", pr_id, since,
+         # Capital and operating spend are not the same purchase being split —
+         # a machine and a box of consumables share nothing but a department.
+         (_pr_field(pr, "expenditure_kind") or "opex"))).fetchall()
+    if not rows:
+        return own, []
+    by_id = {r["id"]: r for r in rows}
+    lines = conn.execute(
+        "SELECT pr_id, item, item_id, spare_id FROM pr_items WHERE pr_id IN (%s)"
+        % ",".join("?" * len(by_id)), tuple(by_id)).fetchall()
+    related = {}
+    for ln in lines:
+        pid = ln["pr_id"]
+        if pid in related or not (_item_keys([ln]) & mine):
+            continue
+        related[pid] = egp_total(by_id[pid])
+    total = round(own + sum(related.values()), 2)
+    sibs = [{"id": pid, "pr_no": by_id[pid]["pr_no"], "egp": amt}
+            for pid, amt in related.items()]
+    return total, sibs
+
+
 def _reconcile_value_ladder(conn, pr_id, department, total):
     """After a pending PR is priced, bring its value-based rungs (Finance / CFO /
     CEO) in line with the new total: append the ones now required that aren't in
@@ -2255,6 +2339,32 @@ def attach_ejr(pr_id, ejr_id, user, ip=None):
         conn.close()
 
 
+def _append_single_source_rung(conn, pr_id, pr):
+    """Add the DOAM §4.3 escalation rung to a PR already in flight. Caller
+    commits. Idempotent: a PR whose justification is edited twice does not
+    collect two extra signatures."""
+    rows = conn.execute("SELECT seq, stage FROM pr_steps WHERE pr_id=? ORDER BY seq",
+                        (pr_id,)).fetchall()
+    stages = [r["stage"] for r in rows]
+    kind = _pr_field(pr, "expenditure_kind")
+    extra = C.single_source_stage(stages, kind)
+    if not extra:
+        return None
+    seq = max([r["seq"] for r in rows] or [0]) + 1
+    _roles = stage_roles_map(conn)
+    e_role, e_from, why = _esc_columns(conn, extra, pr["requester"], _roles,
+                                       escalation_map(conn))
+    conn.execute(
+        "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at, "
+        "esc_role, esc_from) VALUES (?,?,?,?,?,?,?,?)",
+        (pr_id, seq, extra, "pending", stage_label(extra), _now(),
+         "" if why == "no_superior" else e_role, e_from))
+    audit(conn, pr_id, "system", "single_source_escalation",
+          f"Competition waived — DOAM §4.3 adds {stage_label(extra)} as the "
+          f"approval one level above the value tier.")
+    return extra
+
+
 def set_single_source(pr_id, reason, user, ip=None):
     """Purchasing records why competitive quotes are waived for this PR (single/
     sole-source purchase: only OEM vendor, proprietary part, emergency, ...).
@@ -2265,8 +2375,7 @@ def set_single_source(pr_id, reason, user, ip=None):
     reason = reason[:1000]       # keep the justification a sane size
     conn = get_db()
     try:
-        pr = conn.execute("SELECT id, status FROM pr_requests WHERE id=?",
-                          (pr_id,)).fetchone()
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
         if pr["status"] in ("approved", "po_issued", "partially_received",
@@ -2276,6 +2385,15 @@ def set_single_source(pr_id, reason, user, ip=None):
                      (reason, pr_id))
         audit(conn, pr_id, (user or {}).get("username") or "system", "single_source",
               f"Single-source justification recorded: {reason}", ip)
+        # DOAM §4.3 — waiving competition costs one extra signature, one level
+        # above the value tier. A draft picks this up when it is submitted; a PR
+        # already in flight needs the rung appended now, or the waiver would be
+        # recorded with no consequence at all.
+        # Only on the FIRST waiver: the extra signature is owed for waiving
+        # competition, not for each time the wording is edited.
+        if pr["status"] == "pending" and not str(
+                _pr_field(pr, "single_source_reason") or "").strip():
+            _append_single_source_rung(conn, pr_id, pr)
         conn.commit()
         return True, ""
     finally:
