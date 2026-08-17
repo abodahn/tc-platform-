@@ -79,7 +79,7 @@
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF },
-      body: JSON.stringify({ target: col.getAttribute("data-primary") })
+      body: JSON.stringify({ col: cols.indexOf(col) })
     }).then(function (r) { return r.json(); })
       .catch(function () { return null; })
       .then(function (res) {

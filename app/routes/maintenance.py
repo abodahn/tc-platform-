@@ -338,8 +338,15 @@ def ticket_new():
                 svc.save_attachments(request.files.getlist("photos"), "ticket", tid, "issue", _u())
                 flash("m_ticket_created", "success")
                 return redirect(url_for("maintenance.ticket_detail", tid=tid))
-    machines = _all("SELECT id,code,name,department,area,line_no FROM mnt_machines WHERE is_active=1 ORDER BY code")
+    # The fleet is thousands of machines. The picker searches server-side
+    # (/api/lookup/machines); only a first page goes into the HTML — as the
+    # offline fallback, plus whatever ?machine= asked for so it shows selected.
     prefill = request.args.get("machine", "")
+    machines = list(_all("SELECT id,code,name,department,area,line_no FROM mnt_machines "
+                         "WHERE is_active=1 ORDER BY code LIMIT 25"))
+    if prefill.isdigit() and not any(str(m["id"]) == prefill for m in machines):
+        machines = list(_all("SELECT id,code,name,department,area,line_no FROM mnt_machines "
+                             "WHERE id=?", (int(prefill),))) + machines
     return render_template("maintenance/ticket_new.html", machines=machines, prefill=prefill,
                            active="maint_new")
 
@@ -490,6 +497,20 @@ def ticket_reopen(tid):
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
 
 
+def _board_target(current, statuses):
+    """First status in a kanban column that is a LEGAL move from `current`.
+
+    The column's primary status is not always reachable — the board groups
+    several statuses per column and the transition graph does not follow that
+    grouping. Returns None when the column cannot accept the card at all, which
+    is what greys it out on the board.
+    """
+    for st in statuses:
+        if st != current and svc.can_transition(current, st):
+            return st
+    return None
+
+
 @bp.route("/tickets/<int:tid>/move", methods=["POST"])
 @login_required
 def ticket_move(tid):
@@ -500,9 +521,22 @@ def ticket_move(tid):
     so the board can roll the card back and say why.
     """
     _require("maint_manage")
-    target = ((request.get_json(silent=True) or {}).get("target") or "").strip()
+    body = request.get_json(silent=True) or {}
     conn = _db()
     try:
+        cur = conn.execute("SELECT status FROM mnt_tickets WHERE id=?", (tid,)).fetchone()
+        cur = cur["status"] if cur else None
+        # A column holds SEVERAL statuses and its first one is not always the
+        # legal move: from 'assigned' the only step forward is 'diagnosis',
+        # which sits second in its own column. Targeting the column's first
+        # status blindly made every drop illegal and froze the board after one
+        # move. Resolve the column to the first status in it that the transition
+        # table actually allows, and keep that table server-side only.
+        col = body.get("col")
+        if col is not None and str(col).strip().lstrip("-").isdigit()                 and 0 <= int(col) < len(C.TICKET_BOARD):
+            target = _board_target(cur, C.TICKET_BOARD[int(col)][2]) or ""
+        else:
+            target = str(body.get("target") or "").strip()
         if target not in C.TICKET_STATUSES:
             ok, msg = False, "invalid_transition"
         else:
@@ -519,7 +553,7 @@ def ticket_move(tid):
         "badge": _BADGE.get(status, "b-unknown"),
         # columns this ticket may now be dropped on, by board index
         "allow": [i for i, (_k, _t, sts) in enumerate(C.TICKET_BOARD)
-                  if svc.can_transition(status, sts[0])],
+                  if _board_target(status, sts)],
     })
 
 
@@ -736,9 +770,10 @@ def justification_new():
     _require("maint_ticket_create")
     conn = _db()
     try:
+        # Fallback page only — the picker searches /api/lookup/machines.
         machines = conn.execute(
             "SELECT id, code, name, area, line_no, criticality FROM mnt_machines "
-            "WHERE is_active=1 ORDER BY code LIMIT 2000").fetchall()
+            "WHERE is_active=1 ORDER BY code LIMIT 25").fetchall()
         if request.method == "POST":
             form = {k: (request.form.get(k) or "").strip() for k in (
                 "machine_id", "location", "request_type", "description", "root_cause",
@@ -1165,13 +1200,150 @@ def pm_complete(wid):
     return redirect(url_for("maintenance.pm"))
 
 
+_CAL_STATES = ("overdue", "due_soon", "scheduled", "completed")
+
+
 @bp.route("/calendar")
 @login_required
 def calendar():
+    """Month grid of preventive maintenance, scoped to the dates on screen.
+
+    The old view asked for every active plan with no bound and printed one flat
+    list; a fleet with a few hundred machines shipped its whole backlog to the
+    browser. This one asks the DB only for the 4-6 weeks the grid can show, so
+    the page costs a month of work instead of the entire fleet.
+    """
     _require("maint_view")
-    pm_plans = _all("SELECT p.*, m.code mcode FROM mnt_pm_plans p JOIN mnt_machines m ON m.id=p.machine_id "
-                    "WHERE p.active=1 ORDER BY p.next_due")
-    return render_template("maintenance/calendar.html", pm_plans=pm_plans, active="maint_calendar")
+    # Local imports: this view is itself named `calendar`, so a module-level
+    # `import calendar` would be shadowed by the def.
+    import calendar as _cal
+    from datetime import datetime, timedelta, timezone
+
+    today = datetime.now(timezone.utc).date()
+    try:
+        anchor = datetime.strptime((request.args.get("month") or "")[:7], "%Y-%m").date()
+        if not 1970 <= anchor.year <= 2999:      # keep prev/next arithmetic in range
+            raise ValueError
+    except (ValueError, TypeError):
+        anchor = today.replace(day=1)
+
+    # ponytail: week starts Monday (stdlib default). Add a per-user first-weekday
+    # setting when a floor actually asks for a Saturday-start calendar.
+    weeks = _cal.Calendar(0).monthdatescalendar(anchor.year, anchor.month)
+    lo = weeks[0][0].isoformat()
+    hi = (weeks[-1][-1] + timedelta(days=1)).isoformat()   # exclusive; also covers
+    #                                     rows that stored a time after the date
+
+    # ---- filters (sanitised here so nav links can only carry known values) ----
+    raw_machine = (request.args.get("machine") or "").strip()
+    f_machine = int(raw_machine) if raw_machine.isdigit() else None
+    f_freq = (request.args.get("freq") or "").strip()
+    f_freq = f_freq if f_freq in C.PM_FREQUENCIES else ""
+    f_status = (request.args.get("status") or "").strip()
+    f_status = f_status if f_status in _CAL_STATES else ""
+
+    def _scope(prefix, date_col):
+        w, a = ["{}.{}>=?".format(prefix, date_col), "{}.{}<?".format(prefix, date_col)], [lo, hi]
+        if f_machine:
+            w.append("{}.machine_id=?".format(prefix))
+            a.append(f_machine)
+        if f_freq:
+            w.append("p.frequency=?")
+            a.append(f_freq)
+        return " AND ".join(w), a
+
+    plan_where, plan_args = _scope("p", "next_due")
+    wo_where, wo_args = _scope("w", "scheduled_date")
+
+    conn = _db()
+    try:
+        # Plans whose next due date lands in view. A plan that already generated
+        # its work order for that date is skipped so the day shows one entry.
+        plan_rows = conn.execute(
+            "SELECT p.id, p.title, p.frequency, p.next_due d, p.assigned_to, p.machine_id, "
+            "m.code mcode, m.name mname FROM mnt_pm_plans p "
+            "JOIN mnt_machines m ON m.id=p.machine_id "
+            "WHERE p.active=1 AND " + plan_where + " AND NOT EXISTS ("
+            "SELECT 1 FROM mnt_pm_work_orders w WHERE w.plan_id=p.id "
+            "AND w.scheduled_date=p.next_due) ORDER BY p.next_due, m.code", plan_args).fetchall()
+        wo_rows = conn.execute(
+            "SELECT w.id, w.pm_no, w.scheduled_date d, w.status, w.assigned_to, w.machine_id, "
+            "p.title, p.frequency, m.code mcode, m.name mname FROM mnt_pm_work_orders w "
+            "LEFT JOIN mnt_pm_plans p ON p.id=w.plan_id "
+            "LEFT JOIN mnt_machines m ON m.id=w.machine_id "
+            "WHERE " + wo_where + " ORDER BY w.scheduled_date, m.code", wo_args).fetchall()
+        machines = conn.execute(
+            "SELECT id, code, name FROM mnt_machines WHERE is_active=1 ORDER BY code").fetchall()
+        # Imported plans often arrive with no next_due at all (450 of 452 in the
+        # current fleet). They cannot sit on a date, so count them rather than
+        # let the calendar imply the backlog is empty.
+        undated = conn.execute(
+            "SELECT COUNT(*) c FROM mnt_pm_plans WHERE active=1 "
+            "AND (next_due IS NULL OR next_due='')").fetchone()["c"]
+    finally:
+        conn.close()
+
+    soon = today + timedelta(days=7)
+
+    def _state(iso, wo_status):
+        if wo_status in ("completed", "closed"):
+            return "completed"
+        try:
+            d = datetime.strptime(iso, "%Y-%m-%d").date()
+        except ValueError:
+            return "scheduled"
+        return "overdue" if d < today else ("due_soon" if d <= soon else "scheduled")
+
+    by_day, month_items = {}, []
+    mkey = anchor.strftime("%Y-%m")
+    for r in list(plan_rows) + list(wo_rows):
+        row = dict(r)
+        iso = (row.get("d") or "")[:10]
+        item = {
+            "kind": "wo" if "pm_no" in row else "plan",
+            "ref": row.get("pm_no") or "",
+            "title": row.get("title") or row.get("pm_no") or "PM",
+            "mcode": row.get("mcode") or "—", "mname": row.get("mname") or "",
+            "machine_id": row.get("machine_id"), "freq": row.get("frequency") or "",
+            "who": row.get("assigned_to") or "", "date": iso,
+            "state": _state(iso, row.get("status")),
+        }
+        if f_status and item["state"] != f_status:
+            continue
+        by_day.setdefault(iso, []).append(item)
+        if iso.startswith(mkey):
+            month_items.append(item)
+    for lst in by_day.values():
+        lst.sort(key=lambda i: (i["mcode"], i["title"]))
+
+    grid = [[{"iso": d.isoformat(), "day": d.day, "dow": d.weekday(),
+              "out": d.month != anchor.month, "is_today": d == today,
+              "items": by_day.get(d.isoformat(), [])} for d in wk] for wk in weeks]
+
+    keep = {}
+    if f_machine:
+        keep["machine"] = f_machine
+    if f_freq:
+        keep["freq"] = f_freq
+    if f_status:
+        keep["status"] = f_status
+    prev_m = (anchor - timedelta(days=1)).replace(day=1)
+    next_m = (anchor.replace(day=28) + timedelta(days=7)).replace(day=1)
+
+    return render_template(
+        "maintenance/calendar.html", active="maint_calendar",
+        grid=grid, weeks_dow=[d.weekday() for d in weeks[0]],
+        month_num=anchor.month, month_label=_cal.month_name[anchor.month], year=anchor.year,
+        summary={"due": sum(1 for i in month_items if i["state"] != "completed"),
+                 "overdue": sum(1 for i in month_items if i["state"] == "overdue"),
+                 "completed": sum(1 for i in month_items if i["state"] == "completed")},
+        total=sum(len(v) for v in by_day.values()), undated=undated,
+        machines=machines, states=_CAL_STATES,
+        f_machine=f_machine, f_freq=f_freq, f_status=f_status,
+        url_prev=url_for("maintenance.calendar", month=prev_m.strftime("%Y-%m"), **keep),
+        url_next=url_for("maintenance.calendar", month=next_m.strftime("%Y-%m"), **keep),
+        url_today=url_for("maintenance.calendar", month=today.strftime("%Y-%m"), **keep),
+        month_key=mkey)
 
 
 # --------------------------------------------------------------------------

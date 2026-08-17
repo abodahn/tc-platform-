@@ -15,7 +15,7 @@
 
     <div class="field">
       <label data-i18n="m.ejr_f_machine">Asset / machine <span class="req">*</span></label>
-      <select name="machine_id" required>
+      <select name="machine_id" required data-src="/api/lookup/machines">
         <option value="" data-i18n="m.ejr_pick">Choose a machine…</option>
         {% for m in machines %}
           <option value="{{ m.id }}" data-loc="{{ m.area or '' }}{% if m.line_no %} · {{ m.line_no }}{% endif %}">

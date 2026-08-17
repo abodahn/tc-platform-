@@ -14,9 +14,9 @@
     <div class="grid cols-3">
       <div class="field" style="grid-column:span 1">
         <label data-i18n="m.machine">Machine</label>
-        <select name="machine_id" id="machineSel">
+        <select name="machine_id" id="machineSel" data-src="/api/lookup/machines">
           <option value="">—</option>
-          {% for mm in machines %}<option value="{{ mm.id }}" {{ 'selected' if prefill and prefill|string==mm.id|string }}>{{ mm.code }} · {{ mm.name }}</option>{% endfor %}
+          {% for mm in machines %}<option value="{{ mm.id }}" data-dept="{{ mm.department or '' }}" data-area="{{ mm.area or '' }}" data-line="{{ mm.line_no or '' }}" {{ 'selected' if prefill and prefill|string==mm.id|string }}>{{ mm.code }} · {{ mm.name }}</option>{% endfor %}
         </select>
       </div>
       <div class="field"><label data-i18n="m.requester">Requester</label><input name="requester" value="{{ cu.full_name or cu.username }}"></div>
@@ -67,11 +67,19 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  // auto-fill dept/area/line from the chosen machine
+  // auto-fill dept/area/line from the chosen machine. The values ride on the
+  // <option> itself (data-dept/-area/-line) — rendered server-side for the
+  // options in the markup, copied onto the option by tc-combobox.js for the
+  // ones that come back from /api/lookup/machines.
   (function(){
-    var M = { {% for mm in machines %}"{{ mm.id }}":{d:"{{ mm.department or '' }}",a:"{{ mm.area or '' }}",l:"{{ mm.line_no or '' }}"}{{ "," if not loop.last }}{% endfor %} };
     var sel=document.getElementById('machineSel');
-    function fill(){ var m=M[sel.value]; if(m){ var f=sel.form; if(!f.department.value)f.department.value=m.d; if(!f.area.value)f.area.value=m.a; if(!f.line_no.value)f.line_no.value=m.l; } }
+    function fill(){
+      var o=sel.options[sel.selectedIndex]; if(!o||!o.value) return;
+      var f=sel.form, d=o.dataset;
+      if(!f.department.value) f.department.value=d.dept||'';
+      if(!f.area.value) f.area.value=d.area||'';
+      if(!f.line_no.value) f.line_no.value=d.line||'';
+    }
     sel.addEventListener('change', fill); fill();
   })();
 

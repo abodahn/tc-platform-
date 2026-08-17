@@ -1,24 +1,235 @@
 {% extends "base.html" %}
 {% block title %}Maintenance Calendar{% endblock %}
-{% block content %}
-<div class="page-head"><div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
-  <h1 data-i18n="nav.maint_calendar">Maintenance Calendar</h1></div></div>
 
-<div class="panel accent">
-  <div class="panel-head"><h3>Upcoming preventive maintenance</h3></div>
-  <div class="panel-pad">
-    {% for p in pm_plans %}
-    <div class="mhealth">
-      <div style="width:64px;text-align:center;flex:0 0 64px">
-        <div style="font-size:11px;color:var(--muted)">{{ (p.next_due or '')[5:7] }}</div>
-        <div style="font-size:20px;font-weight:800;color:var(--tc-red)">{{ (p.next_due or '--')[8:10] }}</div>
-      </div>
-      <div style="flex:1"><b style="font-size:13.5px">{{ p.title }}</b><br>
-        <span class="muted" style="font-size:12px">{{ p.mcode }} · {{ p.frequency|mhuman }} · {{ p.next_due }}</span></div>
-      <span class="badge b-info">{{ p.frequency|mhuman }}</span>
-    </div>
-    {% else %}<div class="empty" data-i18n="m.no_records">No scheduled maintenance</div>{% endfor %}
+{% block head %}
+<style>
+/* ---------- Maintenance month calendar (page-scoped) ----------
+   One markup tree, two shapes: a 7-column month grid on desktop, an agenda list
+   grouped by day below 700px. All colour comes from the platform tokens so both
+   themes and RTL work without a second stylesheet. */
+.mcal-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mcal-title { font-variant-numeric: tabular-nums; }
+
+.mcal-sum { display: flex; flex-wrap: wrap; gap: 26px; align-items: flex-end; }
+.mcal-sum .v { font-size: 26px; font-weight: 800; letter-spacing: -.5px;
+  font-variant-numeric: tabular-nums; line-height: 1.1; }
+.mcal-sum .k { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.mcal-sum .s-overdue .v { color: var(--crit); }
+.mcal-sum .s-completed .v { color: var(--ok); }
+.mcal-sum .s-undated .v { display: block; color: var(--warn); text-decoration: underline;
+  text-underline-offset: 3px; }
+
+.mcal-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+  font-size: 12px; color: var(--muted); }
+.mcal-legend span.li { display: inline-flex; align-items: center; gap: 6px; }
+
+.mcal-wrap { overflow-x: auto; }
+.mcal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px;
+  background: var(--line); border: 1px solid var(--line);
+  border-radius: var(--r-md); overflow: hidden; min-width: 700px; }
+.mcal-dow { background: var(--panel-2); color: var(--muted); padding: 9px 8px;
+  font-size: 11.5px; font-weight: 700; letter-spacing: .5px;
+  text-transform: uppercase; text-align: center; }
+
+.mcal-day { background: var(--panel); min-height: 118px; padding: 7px 8px 9px;
+  display: flex; flex-direction: column; gap: 5px; }
+.mcal-day.is-out { background: var(--panel-soft); }
+.mcal-day.is-out .mcal-dnum { opacity: .45; }
+.mcal-day.is-today { box-shadow: inset 0 0 0 2px var(--tc-red); }
+.mcal-dnum { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mcal-dnum b { font-size: 13px; font-weight: 700; color: var(--ink); }
+.mcal-day.is-today .mcal-dnum b { background: var(--tc-red); color: var(--on-red);
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; }
+.mcal-adow { display: none; font-weight: 700; }
+
+.mcal-items { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.mcal-ev { display: flex; align-items: center; gap: 6px; min-width: 0;
+  padding: 4px 7px; border-radius: 7px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--ink); font-size: 11.5px; line-height: 1.4;
+  transition: border-color 140ms ease-out; }
+.mcal-ev:hover, .mcal-ev:focus-visible { border-color: var(--tc-red); }
+.mcal-ev .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcal-ev .t b { font-variant-numeric: tabular-nums; }
+.mcal-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; background: var(--muted); }
+.s-overdue   > .mcal-dot, .li.s-overdue   .mcal-dot { background: var(--crit); }
+.s-due_soon  > .mcal-dot, .li.s-due_soon  .mcal-dot { background: var(--warn); }
+.s-scheduled > .mcal-dot, .li.s-scheduled .mcal-dot { background: var(--muted); }
+.s-completed > .mcal-dot, .li.s-completed .mcal-dot { background: var(--ok); }
+.mcal-ev.s-overdue  { background: var(--crit-bg); border-color: var(--crit); }
+.mcal-ev.s-due_soon { background: var(--warn-bg); border-color: var(--warn); }
+.mcal-ev.s-completed { background: var(--ok-bg); border-color: var(--ok); }
+.mcal-ev.is-x { display: none; }
+
+.mcal-more { align-self: flex-start; margin-top: auto; background: none; border: 0;
+  padding: 2px 0; color: var(--muted); font: inherit; font-size: 11.5px; font-weight: 600;
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.mcal-more:hover { color: var(--tc-red); }
+.mcal-more .n { font-variant-numeric: tabular-nums; }
+
+.mcal-dlg { width: min(460px, 94vw); }
+.mcal-dlg .mcal-items { gap: 6px; margin-top: 12px; }
+.mcal-dlg .mcal-ev { font-size: 12.5px; padding: 8px 10px; }
+.mcal-dlg .mcal-ev .t { white-space: normal; }
+
+@media (prefers-reduced-motion: reduce) { .mcal-ev { transition: none; } }
+
+/* Agenda shape: same cells, stacked, empty and out-of-range days dropped. */
+@media (max-width: 700px) {
+  .mcal-wrap { overflow-x: visible; }
+  .mcal { display: flex; flex-direction: column; gap: 8px; min-width: 0;
+    background: none; border: 0; border-radius: 0; overflow: visible; }
+  .mcal-dow { display: none; }
+  .mcal-day { display: none; min-height: 0; border: 1px solid var(--line);
+    border-radius: var(--r-md); padding: 12px 14px; }
+  .mcal-day.has-items, .mcal-day.is-today { display: flex; }
+  .mcal-day.is-out { opacity: .72; }
+  .mcal-adow { display: inline; }
+  .mcal-dnum { font-size: 13px; }
+  .mcal-ev { font-size: 12.5px; padding: 8px 10px; }
+  .mcal-ev .t { white-space: normal; }
+  .mcal-ev.is-x { display: flex; }
+  .mcal-more { display: none; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+{% set DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 class="mcal-title"><span data-i18n="cal.mon.{{ month_num }}">{{ month_label }}</span> {{ year }}</h1>
+  </div>
+  <div class="mcal-nav">
+    <a class="btn btn-ghost btn-sm" href="{{ url_prev }}" data-i18n="m.cal_prev">Previous</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_today }}" data-i18n="m.cal_today">Today</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_next }}" data-i18n="m.cal_next">Next</a>
   </div>
 </div>
-<p class="muted mt-4" style="font-size:12.5px">A full month grid and drag-to-reschedule will follow PM auto-generation (roadmap). This view lists upcoming PM by due date.</p>
+
+{# Filters — kept in the query string so month navigation preserves them. #}
+<form class="panel" style="margin-bottom:16px" method="get">
+  <input type="hidden" name="month" value="{{ month_key }}">
+  <div class="panel-pad flex gap wrap center">
+    <select name="machine" onchange="this.form.submit()" aria-label="Machine"
+            style="height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px;max-width:230px">
+      <option value="" data-i18n="m.all_machines">All machines</option>
+      {% for m in machines %}<option value="{{ m.id }}" {{ 'selected' if f_machine == m.id }}>{{ m.code }}{% if m.name %} · {{ m.name }}{% endif %}</option>{% endfor %}
+    </select>
+    <select name="freq" onchange="this.form.submit()" aria-label="Frequency"
+            style="height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px">
+      <option value="" data-i18n="m.all_frequencies">All frequencies</option>
+      {% for fq in C.PM_FREQUENCIES %}<option value="{{ fq }}" data-i18n="mx.{{ fq }}" {{ 'selected' if f_freq == fq }}>{{ fq|mtext }}</option>{% endfor %}
+    </select>
+    <select name="status" onchange="this.form.submit()" aria-label="Status"
+            style="height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px">
+      <option value="" data-i18n="m.all_statuses">All statuses</option>
+      {% for s in states %}<option value="{{ s }}" data-i18n="mx.{{ s }}" {{ 'selected' if f_status == s }}>{{ s|mtext }}</option>{% endfor %}
+    </select>
+    <span class="tag" style="font-variant-numeric:tabular-nums">{{ total }} <span data-i18n="m.cal_in_view">in view</span></span>
+    <div class="spacer"></div>
+    {% if f_machine or f_freq or f_status %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.calendar', month=month_key) }}" data-i18n="m.cal_clear">Clear filters</a>
+    {% endif %}
+  </div>
+</form>
+
+{# Month summary + colour legend #}
+<div class="panel" style="margin-bottom:16px">
+  <div class="panel-pad flex gap wrap between center" style="gap:22px">
+    <div class="mcal-sum">
+      <div><div class="v">{{ summary.due }}</div><div class="k" data-i18n="m.cal_due">Due this month</div></div>
+      <div class="s-overdue"><div class="v">{{ summary.overdue }}</div><div class="k" data-i18n="m.cal_overdue">Overdue</div></div>
+      <div class="s-completed"><div class="v">{{ summary.completed }}</div><div class="k" data-i18n="m.cal_completed">Completed</div></div>
+      {% if undated %}
+      <div class="s-undated"><a class="v" href="{{ url_for('maintenance.pm') }}">{{ undated }}</a>
+        <div class="k" data-i18n="m.cal_undated">Plans with no due date</div></div>
+      {% endif %}
+    </div>
+    <div class="mcal-legend">
+      {% for s in states %}
+      <span class="li s-{{ s }}"><span class="mcal-dot"></span><span data-i18n="mx.{{ s }}">{{ s|mtext }}</span></span>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-pad">
+    {% if total == 0 %}
+    <div class="empty">
+      <svg class="ico"><use href="#i-clock"></use></svg>
+      <b data-i18n="m.cal_empty">Nothing scheduled this month</b>
+      <div class="muted" style="font-size:12.5px;margin-top:6px" data-i18n="m.cal_empty_sub">No preventive maintenance falls in this month for the current filters. Try another month or clear the filters.</div>
+    </div>
+    {% else %}
+    <div class="mcal-wrap">
+      <div class="mcal">
+        {% for dw in weeks_dow %}<div class="mcal-dow" data-i18n="cal.dow.{{ dw }}">{{ DOW[dw] }}</div>{% endfor %}
+        {% for week in grid %}{% for c in week %}
+        <div class="mcal-day{{ ' is-out' if c.out }}{{ ' is-today' if c.is_today }}{{ ' has-items' if c['items'] }}"
+             data-date="{{ c.iso }}"{% if c.is_today %} aria-current="date"{% endif %}>
+          <div class="mcal-dnum">
+            <span class="mcal-adow" data-i18n="cal.dow.{{ c.dow }}">{{ DOW[c.dow] }}</span>
+            <b>{{ c.day }}</b>
+          </div>
+          {% if c['items'] %}
+          <div class="mcal-items">
+            {% for it in c['items'] %}
+            <a class="mcal-ev s-{{ it.state }}{{ ' is-x' if loop.index > 3 }}"
+               href="{{ url_for('maintenance.machine_profile', mid=it.machine_id) if it.machine_id else url_for('maintenance.pm') }}"
+               title="{{ it.mcode }} · {{ it.title }}{% if it.who %} · {{ it.who }}{% endif %}">
+              <span class="mcal-dot"></span>
+              <span class="t"><b>{{ it.mcode }}</b> {{ it.title }}</span>
+            </a>
+            {% endfor %}
+          </div>
+          {% if c['items']|length > 3 %}
+          <button type="button" class="mcal-more" data-more>
+            <span class="n">+{{ c['items']|length - 3 }}</span> <span data-i18n="m.cal_more">more</span></button>
+          {% endif %}
+          {% endif %}
+        </div>
+        {% endfor %}{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<dialog id="mcalDlg" class="tc-dialog mcal-dlg">
+  <div class="flex between center" style="gap:12px">
+    <div>
+      <div class="muted" style="font-size:12px" data-i18n="m.cal_day_items">Scheduled maintenance</div>
+      <b id="mcalDlgDate" style="font-size:16px;font-variant-numeric:tabular-nums"></b>
+    </div>
+    <button type="button" class="icon-btn" id="mcalDlgX" data-i18n-title="m.cal_close"
+            aria-label="Close" style="font-size:18px;line-height:1">&#10005;</button>
+  </div>
+  <div class="mcal-items" id="mcalDlgBody"></div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* "+N more" -> native <dialog> holding that day's full list. The cell already
+   carries every item (the overflow ones are hidden by CSS), so the panel is a
+   clone of markup the i18n pass has already localised — no second data source. */
+(function () {
+  var dlg = document.getElementById("mcalDlg");
+  if (!dlg || !dlg.showModal) return;
+  var body = document.getElementById("mcalDlgBody"), lbl = document.getElementById("mcalDlgDate");
+  document.querySelectorAll("[data-more]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var cell = btn.closest(".mcal-day");
+      lbl.textContent = cell.getAttribute("data-date");
+      body.innerHTML = cell.querySelector(".mcal-items").innerHTML;
+      body.querySelectorAll(".is-x").forEach(function (el) { el.classList.remove("is-x"); });
+      dlg.showModal();
+    });
+  });
+  document.getElementById("mcalDlgX").addEventListener("click", function () { dlg.close(); });
+})();
+</script>
 {% endblock %}

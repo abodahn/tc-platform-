@@ -625,13 +625,28 @@ def dept_ladder(conn, department, total, kind="opex"):
     except (TypeError, ValueError):
         t = 0.0
     kind = (kind or "opex").strip().lower()
-    if kind != "capex":
-        rows = conn.execute(
-            "SELECT stage, threshold FROM proc_resp_matrix "
-            "WHERE department=? AND active=1 ORDER BY seq, id", (department or "",)).fetchall()
-        if rows:
-            return [r["stage"] for r in rows if t >= float(r["threshold"] or 0)]
-    return build_ladder(t, kind)
+    floor = build_ladder(t, kind)
+    if kind == "capex":
+        return floor
+    rows = conn.execute(
+        "SELECT stage, threshold FROM proc_resp_matrix "
+        "WHERE department=? AND active=1 ORDER BY seq, id", (department or "",)).fetchall()
+    if not rows:
+        return floor
+    dept = [r["stage"] for r in rows if t >= float(r["threshold"] or 0)]
+    if not C.DOAM_IN_FORCE:
+        return dept              # pre-DOAM behaviour: the matrix fully replaces
+    # DOAM in force: the ladder is a FLOOR, not a default. A department matrix may
+    # ADD signatures, never remove one the DOAM requires.
+    #
+    # This is defence in depth, and it is needed: a single row (department,
+    # 'warehouse', threshold 0) used to collapse a whole department to ONE
+    # signature — which also dropped 'purchasing', the pricing-gate stage, so the
+    # pricing, RFQ and engineering gates were skipped along with it. Enforcing the
+    # floor HERE means an existing bad row in the database cannot do that either.
+    merged = list(floor) + [s for s in dept if s not in floor]
+    order = {s: i for i, s in enumerate(C.DOAM_LADDER)}
+    return sorted(merged, key=lambda s: order.get(s, len(order)))
 
 
 def list_departments():
@@ -697,21 +712,46 @@ def set_dept_matrix(department, stage_rows, user=None):
     department = (department or "").strip()
     if not department:
         return False, "no_department"
+    rows = [r for r in stage_rows if r.get("stage") in LADDER]
+    if C.DOAM_IN_FORCE and rows:
+        # The DOAM ladder is a floor. A department may add signatures or demand
+        # them earlier (a LOWER threshold), never drop a stage the matrix
+        # requires or push its threshold higher. Refused at the write, and
+        # enforced again at read time in dept_ladder() — a matrix saved before
+        # this rule existed must not keep working either.
+        given = {r["stage"]: float(r.get("threshold") or 0) for r in rows}
+        weakened = []
+        for stage, floor_at in C.OPEX_MATRIX.items():
+            if stage not in given:
+                weakened.append("%s is required by the DOAM and is not in the matrix"
+                                % stage_label(stage))
+            elif given[stage] > floor_at:
+                weakened.append("{} starts at {:,.0f} in the DOAM but {:,.0f} here".format(
+                    stage_label(stage), floor_at, given[stage]))
+        if weakened:
+            return False, "below_doam_floor: " + "; ".join(weakened)
     conn = get_db()
     try:
         conn.execute("DELETE FROM proc_resp_matrix WHERE department=?", (department,))
         now = _now()
-        for i, r in enumerate(stage_rows):
-            stage = r.get("stage")
-            if stage not in LADDER:
-                continue
+        for i, r in enumerate(rows):
             conn.execute(
                 "INSERT INTO proc_resp_matrix (department, stage, threshold, seq, active, updated_at) "
-                "VALUES (?,?,?,?,1,?)", (department, stage, float(r.get("threshold") or 0), i, now))
+                "VALUES (?,?,?,?,1,?)",
+                (department, r["stage"], float(r.get("threshold") or 0), i, now))
         conn.commit()
-        return True, ""
     finally:
         conn.close()
+    # Who changed a department's approval routing is exactly the kind of thing an
+    # auditor asks about, and it was not being recorded at all.
+    try:
+        from app.db import log_audit
+        log_audit((user or {}).get("username") or "system", "proc_resp_matrix",
+                  "%s: %s" % (department, ", ".join(
+                      "%s@%g" % (r["stage"], float(r.get("threshold") or 0)) for r in rows) or "cleared"))
+    except Exception:
+        pass
+    return True, ""
 
 
 def delete_dept_matrix(department):

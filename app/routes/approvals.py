@@ -883,8 +883,10 @@ def delegations():
     from app.db import get_db
     conn = get_db()
     try:
+        # Fallback page only — both pickers search /api/lookup/users.
         users = [dict(r) for r in conn.execute(
-            "SELECT username, full_name, role FROM users WHERE is_active=1 ORDER BY username").fetchall()]
+            "SELECT username, full_name, role FROM users WHERE is_active=1 "
+            "ORDER BY username LIMIT 25").fetchall()]
     finally:
         conn.close()
     return render_template("approvals/delegations.html", active="proc_delegations",

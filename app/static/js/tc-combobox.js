@@ -242,6 +242,11 @@
       if (this.sel.disabled || open === this) return;
       if (open) open.close(true);
       open = this;
+      // A page script may have changed the select since this instance last
+      // looked — a new value, or options appended after enhancement. Re-read
+      // instead of trusting the cache; it is one pass over the options.
+      this.items = null;
+      this.syncFromSelect();
       popup().hidden = false;
       this.input.setAttribute("aria-expanded", "true");
       this.wrap.classList.add("is-open");

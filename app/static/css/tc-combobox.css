@@ -35,14 +35,16 @@
   color: var(--ink);
   font-family: inherit;
   font-size: var(--fs-md);
-  padding-inline: 12px 34px;
+  /* room for the caret AND the clear button, so a long label never runs
+     underneath either of them */
+  padding-inline: 12px 56px;
   padding-block: 0;
   outline: none;
   text-overflow: ellipsis;
   transition: border-color 140ms ease-out, box-shadow 140ms ease-out;
 }
 .tc-cb-input::placeholder { color: var(--soft-ink); }
-.tc-cb-input:hover:not(:disabled) { border-color: var(--line-2); }
+.tc-cb-input:hover:not(:disabled) { border-color: var(--soft-ink); }
 .tc-cb-input:focus,
 .tc-cb.is-open .tc-cb-input {
   border-color: var(--tc-red);

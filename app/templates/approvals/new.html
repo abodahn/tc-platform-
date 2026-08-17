@@ -61,7 +61,7 @@
         <div class="field"><label data-i18n="proc.date_l">Request date</label>
           <input type="date" name="request_date" value="{{ '' }}"></div>
         <div class="field"><label data-i18n="proc.vendor_l">Vendor</label>
-          <select name="vendor">
+          <select name="vendor" data-src="/api/lookup/vendors">
             <option value=""></option>
             {% for v in vendors %}<option value="{{ v.name }}" {{ 'selected' if prefill.vendor==v.name }}>{{ v.name }}</option>{% endfor %}
             {% if prefill.vendor and prefill.vendor not in vendors|map(attribute='name')|list %}<option value="{{ prefill.vendor }}" selected>{{ prefill.vendor }}</option>{% endif %}
@@ -410,7 +410,10 @@
         var t = document.querySelector('input[name=title]'); if (t && dr.title) t.value = dr.title;
         var rf = document.querySelector('input[name=request_for]'); if (rf && dr.request_for) rf.value = dr.request_for;
         var nt = document.querySelector('textarea[name=notes]'); if (nt && dr.notes) nt.value = dr.notes;
-        if (deptSelEl && dr.department) deptSelEl.value = dr.department;
+        // dispatch: the department picker is a searchable combobox, and it
+        // repaints its visible text off the select's change event.
+        if (deptSelEl && dr.department) { deptSelEl.value = dr.department;
+          deptSelEl.dispatchEvent(new Event('change', { bubbles: true })); }
         if (dr.items && dr.items.length){
           rows.innerHTML = '';
           dr.items.forEach(function(it){ addRow(); fillRow(rows.lastElementChild, it); });
@@ -635,7 +638,12 @@
     if (unitSel) {
       var u = (opt.dataset.unit || '').toLowerCase();
       Array.prototype.some.call(unitSel.options, function (o) {
-        if (o.value.toLowerCase() === u) { unitSel.value = o.value; return true; }
+        if (o.value.toLowerCase() === u) {
+          unitSel.value = o.value;
+          // see above — tells the combobox to repaint its visible text
+          unitSel.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }
         return false;
       });
     }
