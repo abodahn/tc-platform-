@@ -91,6 +91,15 @@ def _missing(row):
     return out
 
 
+def missing_labels(conn, ejr_id):
+    """Which DOAM-mandatory fields this report still lacks, as readable labels.
+    Empty list means the report is complete. Used by the detail page so the
+    author is told exactly what to fill in rather than just being refused."""
+    row = conn.execute("SELECT * FROM mnt_eng_justifications WHERE id=? AND is_active=1",
+                       (ejr_id,)).fetchone()
+    return _missing(row) if row else []
+
+
 def ejr_required(pr, items=None):
     """Does DOAM §6 require an Engineering Justification for this request?
 

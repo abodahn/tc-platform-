@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Raise an Engineering Justification{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="m.ejr_h">Engineering Justification</div>
+    <h1 data-i18n="m.ejr_new_h">Raise a report</h1>
+    <div class="sub" data-i18n="m.ejr_new_sub">Every field below is required by the Delegation of Authority Matrix. A report can be saved as a draft while you chase the stock check, but it cannot go for signature until all of it is answered.</div></div>
+  <a class="btn btn-ghost" href="{{ url_for('maintenance.justifications') }}"
+     data-i18n="m.ejr_back">Back to reports</a>
+</div>
+
+<form method="post" class="panel">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-pad grid-2">
+
+    <div class="field">
+      <label data-i18n="m.ejr_f_machine">Asset / machine <span class="req">*</span></label>
+      <select name="machine_id" required>
+        <option value="" data-i18n="m.ejr_pick">Choose a machine…</option>
+        {% for m in machines %}
+          <option value="{{ m.id }}" data-loc="{{ m.area or '' }}{% if m.line_no %} · {{ m.line_no }}{% endif %}">
+            {{ m.code }} — {{ m.name }}{% if m.area %} ({{ m.area }}){% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <div class="hint" data-i18n="m.ejr_f_machine_h">Ties the spend to a specific asset, which is what makes cost-per-machine reporting possible.</div>
+    </div>
+
+    <div class="field">
+      <label data-i18n="m.ejr_f_location">Location</label>
+      <input name="location" data-i18n-ph="m.ejr_f_location_ph" placeholder="Hall, floor, line…">
+      <div class="hint" data-i18n="m.ejr_f_location_h">Filled from the machine if you leave it blank.</div>
+    </div>
+
+    <div class="field">
+      <label data-i18n="m.ejr_f_type">Request type <span class="req">*</span></label>
+      <select name="request_type" required>
+        <option value="" data-i18n="m.ejr_pick">Choose…</option>
+        {% for t in request_types %}
+        <option value="{{ t }}" data-i18n="m.ejr_rt_{{ t }}">{{ t|replace('_',' ')|title }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label data-i18n="m.ejr_f_crit">Criticality <span class="req">*</span></label>
+      <select name="criticality" required>
+        <option value="" data-i18n="m.ejr_pick">Choose…</option>
+        {% for c in criticalities %}
+        <option value="{{ c }}" data-i18n="m.ejr_cr_{{ c }}">{{ c|replace('_',' ')|title }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field span-2">
+      <label data-i18n="m.ejr_f_desc">What is failing <span class="req">*</span></label>
+      <textarea name="description" rows="3" required
+                data-i18n-ph="m.ejr_f_desc_ph" placeholder="What is wrong and what part is needed"></textarea>
+    </div>
+
+    <div class="field span-2">
+      <label data-i18n="m.ejr_f_root">Root cause <span class="req">*</span></label>
+      <textarea name="root_cause" rows="2" required
+                data-i18n-ph="m.ejr_f_root_ph" placeholder="Why it failed — wear, misuse, age, a design problem"></textarea>
+      <div class="hint" data-i18n="m.ejr_f_root_h">The same part failing for the same reason twice is what the repeated-failure report looks for.</div>
+    </div>
+
+    <div class="field span-2">
+      <label data-i18n="m.ejr_f_risk">Downtime or risk if not actioned <span class="req">*</span></label>
+      <textarea name="downtime_risk" rows="2" required
+                data-i18n-ph="m.ejr_f_risk_ph" placeholder="What it costs to do nothing — lost output, safety, quality"></textarea>
+      <div class="hint" data-i18n="m.ejr_f_risk_h">This is the number the Engineering Head weighs the spend against.</div>
+    </div>
+
+    <div class="field">
+      <label data-i18n="m.ejr_f_stock">Quantity on hand <span class="req">*</span></label>
+      <input name="stock_on_hand" type="number" step="any" min="0" required
+             data-i18n-ph="m.ejr_f_stock_ph" placeholder="0">
+      <div class="hint" data-i18n="m.ejr_f_stock_h">Zero is a valid answer. Blank is not.</div>
+    </div>
+
+    <div class="field">
+      <label data-i18n="m.ejr_f_checked">Confirmed with (Stores) <span class="req">*</span></label>
+      <input name="stock_checked_with" required
+             data-i18n-ph="m.ejr_f_checked_ph" placeholder="Who in Stores confirmed it">
+    </div>
+
+    <div class="field span-2">
+      <label data-i18n="m.ejr_f_alt">Alternatives considered <span class="req">*</span></label>
+      <textarea name="alternatives" rows="2" required
+                data-i18n-ph="m.ejr_f_alt_ph" placeholder="Repair versus replace, local versus import, a substitute part"></textarea>
+    </div>
+
+    <div class="field span-2">
+      <label class="check">
+        <input type="checkbox" name="is_emergency" value="1" id="isEmergency">
+        <span data-i18n="m.ejr_f_emerg">Emergency or breakdown purchase</span>
+      </label>
+      <div class="hint" data-i18n="m.ejr_f_emerg_h">The purchase may proceed, but this report is still required and must be documented within 24 hours.</div>
+    </div>
+
+    <div class="field" id="emergDue" style="display:none">
+      <label data-i18n="m.ejr_f_due">Documented by</label>
+      <input name="emergency_due_at" placeholder="YYYY-MM-DD HH:MM:SS">
+    </div>
+
+  </div>
+
+  <div class="panel-pad flex gap wrap" style="border-top:1px solid var(--line)">
+    <button class="btn btn-primary" type="submit" name="submit_now" value="1"
+            data-i18n="m.ejr_save_send">Save and send for signature</button>
+    <button class="btn btn-ghost" type="submit" data-i18n="m.ejr_save_draft">Save as draft</button>
+  </div>
+</form>
+
+<script>
+  // Only ask for the 24-hour deadline when it applies, and pre-fill it so the
+  // deadline is a real timestamp rather than something typed from memory.
+  (function () {
+    var box = document.getElementById('isEmergency'),
+        wrap = document.getElementById('emergDue');
+    if (!box || !wrap) return;
+    box.addEventListener('change', function () {
+      wrap.style.display = box.checked ? '' : 'none';
+      var input = wrap.querySelector('input');
+      if (box.checked && input && !input.value) {
+        var d = new Date(Date.now() + 24 * 3600 * 1000);
+        input.value = d.toISOString().slice(0, 19).replace('T', ' ');
+      }
+    });
+  }());
+</script>
+{% endblock %}

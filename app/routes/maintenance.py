@@ -20,6 +20,7 @@ from app.maintenance import services as svc
 from app.maintenance import constants as C
 from app.maintenance import ai as ai_engine
 from app.maintenance import workflow as wf
+from app.maintenance import eng_justification as ejr
 
 bp = Blueprint("maintenance", __name__, url_prefix="/maintenance")
 
@@ -644,6 +645,155 @@ def locations():
         conn.close()
     return render_template("maintenance/locations.html", rows=rows, q=q,
                            levels=levels, active="maint_locations")
+
+
+# --------------------------------------------------------------------------
+# Engineering Justification Report — DOAM §6, form T&C-PUF-09
+#
+# The gate that consumes these lives in app/maintenance/eng_justification.py and
+# fires at the Purchasing stage. These screens exist so there is somewhere to
+# raise and sign a report BEFORE that gate is switched on — turning the gate on
+# without them would block maintenance purchasing with no way to unblock it.
+# --------------------------------------------------------------------------
+@bp.route("/justifications")
+@login_required
+def justifications():
+    """The register of Engineering Justification Reports."""
+    _require("maint_view")
+    status = (request.args.get("status") or "").strip() or None
+    conn = _db()
+    try:
+        rows = [dict(r) for r in ejr.listing(conn, status=status)]
+        counts = {r["status"]: r["c"] for r in conn.execute(
+            "SELECT status, COUNT(*) c FROM mnt_eng_justifications "
+            "WHERE is_active=1 GROUP BY status").fetchall()}
+        gate_on = ejr.gate_enabled(conn)
+    finally:
+        conn.close()
+    return render_template("maintenance/justifications.html", rows=rows, status=status,
+                           counts=counts, gate_on=gate_on, active="maint_ejr")
+
+
+@bp.route("/justifications/new", methods=["GET", "POST"])
+@login_required
+def justification_new():
+    """Raise a report. DOAM Table 14's eight fields are all on this one form
+    because the report is only useful complete — submitting is what enforces it."""
+    _require("maint_ticket_create")
+    conn = _db()
+    try:
+        machines = conn.execute(
+            "SELECT id, code, name, area, line_no, criticality FROM mnt_machines "
+            "WHERE is_active=1 ORDER BY code LIMIT 2000").fetchall()
+        if request.method == "POST":
+            form = {k: (request.form.get(k) or "").strip() for k in (
+                "machine_id", "location", "request_type", "description", "root_cause",
+                "criticality", "downtime_risk", "stock_on_hand", "stock_checked_with",
+                "alternatives", "emergency_due_at")}
+            form["is_emergency"] = bool(request.form.get("is_emergency"))
+            ejr_id, ejr_no = ejr.create(conn, form, _u())
+            # "Save and send for signature" in one action when asked for, so the
+            # common path is not two clicks; the incomplete-field refusal still
+            # applies and comes back as a flash rather than a silent draft.
+            if request.form.get("submit_now"):
+                good, msg = ejr.submit(conn, ejr_id)
+                if not good and msg.startswith("incomplete"):
+                    flash("Saved as a draft. Still needed: " + msg.split(":", 1)[1], "warning")
+                elif good:
+                    flash(f"{ejr_no} sent to Engineering for signature.", "success")
+            else:
+                flash(f"{ejr_no} saved as a draft.", "success")
+            conn.commit()
+            return redirect(url_for("maintenance.justification", jid=ejr_id))
+        machines = [dict(m) for m in machines]
+    finally:
+        conn.close()
+    return render_template("maintenance/justification_form.html", machines=machines,
+                           request_types=ejr.REQUEST_TYPES, criticalities=ejr.CRITICALITIES,
+                           active="maint_ejr")
+
+
+@bp.route("/justifications/<int:jid>")
+@login_required
+def justification(jid):
+    """One report, its missing fields if any, and the Engineering Head's sign-off."""
+    _require("maint_view")
+    conn = _db()
+    try:
+        row = ejr.get(conn, jid)
+        if not row:
+            abort(404)
+        row = dict(row)
+        missing = ejr.missing_labels(conn, jid)
+        prs = conn.execute(
+            "SELECT id, pr_no, title, status, total, currency FROM pr_requests "
+            "WHERE ejr_id=? AND is_active=1 ORDER BY id DESC", (jid,)).fetchall()
+    finally:
+        conn.close()
+    return render_template("maintenance/justification.html", r=row, missing=missing,
+                           prs=[dict(p) for p in prs],
+                           can_decide=_can("maint_approve"), active="maint_ejr")
+
+
+@bp.route("/justifications/<int:jid>/submit", methods=["POST"])
+@login_required
+def justification_submit(jid):
+    _require("maint_ticket_create")
+    conn = _db()
+    try:
+        good, msg = ejr.submit(conn, jid)
+        conn.commit()
+    finally:
+        conn.close()
+    if good:
+        flash("Sent to Engineering for signature.", "success")
+    elif msg.startswith("incomplete"):
+        flash("Cannot send yet. Still needed: " + msg.split(":", 1)[1], "error")
+    else:
+        flash(f"Could not send this report ({msg}).", "error")
+    return redirect(url_for("maintenance.justification", jid=jid))
+
+
+@bp.route("/justifications/<int:jid>/decide", methods=["POST"])
+@login_required
+def justification_decide(jid):
+    """The Engineering Head's technical approval (DOAM Table 13 step 3, an L3
+    authority). Signed with the approver's stored digital signature, so the
+    printed report carries the same signature as a procurement document."""
+    _require("maint_approve")
+    approve = (request.form.get("decision") or "").lower() == "approve"
+    note = (request.form.get("note") or "").strip() or None
+    u = _u()
+    sig_png, _sig_name = _ejr_signature((u or {}).get("username"))
+    conn = _db()
+    try:
+        good, msg = ejr.decide(conn, jid, approve, u, note=note, signature=sig_png)
+        conn.commit()
+    finally:
+        conn.close()
+    if good:
+        flash("Report approved." if approve else "Report rejected.", "success")
+    elif msg == "self_approval_blocked":
+        # DOAM §3.4 — no person may approve a transaction that names them as
+        # requestor. Said plainly, because "forbidden" would look like a bug.
+        flash("You raised this report, so you cannot also sign it. "
+              "Segregation of duties applies.", "error")
+    elif msg == "not_pending":
+        flash("This report is not waiting for a signature.", "error")
+    else:
+        flash(f"Could not record that decision ({msg}).", "error")
+    return redirect(url_for("maintenance.justification", jid=jid))
+
+
+def _ejr_signature(username):
+    """The approver's stored signature image, or (None, None)."""
+    if not username:
+        return None, None
+    try:
+        from app.approvals.services import _user_sig
+        return _user_sig(username)
+    except Exception:  # noqa: BLE001
+        return None, None
 
 
 @bp.route("/needle-costs")

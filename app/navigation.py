@@ -102,7 +102,10 @@ NAV = [
         # planned
         ("maint_pm", "nav.maint_pm", "refresh", "maintenance.pm", "maint_view"),
         ("maint_calendar", "nav.maint_calendar", "clock", "maintenance.calendar", "maint_view"),
-        # parts
+        # parts. The engineering justification sits FIRST in this band because it
+        # comes before a requisition exists: DOAM §6 requires it signed before
+        # Procurement will accept the request it justifies.
+        ("maint_ejr", "nav.maint_ejr", "shield", "maintenance.justifications", "maint_view"),
         ("maint_spares", "nav.maint_spares", "boxes", "maintenance.spares", "maint_view"),
         ("maint_stock", "nav.maint_stock", "server", "maintenance.stock", "maint_view"),
         ("maint_requests", "nav.maint_requests", "cart", "maintenance.requests", "maint_view"),
