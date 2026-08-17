@@ -46,6 +46,12 @@
             <option value="capex" {{ 'selected' if prefill.expenditure_kind == 'capex' }} data-i18n="proc.kind_capex">Capital (CAPEX) — machinery, vehicles, buildings, IT assets</option>
           </select>
           <span class="muted" style="font-size:12px" data-i18n="proc.kind_hint">Capital purchases follow the DOAM capital authority ladder — every level signs, and the Managing Director signs above 250,000 EGP.</span></div>
+        <div class="field"><label data-i18n="proc.so_l">Sales order</label>
+          <input name="so_no" list="soList" autocomplete="off" value="{{ prefill.so_no or '' }}" placeholder="SO / order number">
+          <datalist id="soList">{% for o in sales_orders %}<option value="{{ o }}"></option>{% endfor %}</datalist>
+          <span class="muted" style="font-size:12px" data-i18n="proc.so_hint">Required for fabric, yarn, trims, chemicals, packaging, subcontract and wash — that is the order this spend is costed against.</span></div>
+        <div class="field"><label data-i18n="proc.cc_l">Cost centre</label>
+          <input name="cost_center" autocomplete="off" value="{{ prefill.cost_center or '' }}" placeholder="For MRO, facility, IT and utilities"></div>
         <div class="field"><label data-i18n="proc.dept_l">Department</label>
           <select name="department" id="deptSel">
             <option value=""></option>

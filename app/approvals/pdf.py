@@ -375,6 +375,20 @@ _PR_NOTES = [
 ]
 
 
+def _cost_object_pairs(pr):
+    """DOAM §5 — the controlling cost object, printed on every document in the
+    chain so cost and margin can be read per order. Only the ones actually set
+    are printed; an empty "SO: —" on an MRO order is noise, not a control."""
+    out = []
+    if pr.get("so_no"):
+        out.append(("Sales order", pr.get("so_no")))
+    if pr.get("cost_center"):
+        out.append(("Cost centre", pr.get("cost_center")))
+    if pr.get("asset_code"):
+        out.append(("Asset", pr.get("asset_code")))
+    return out
+
+
 def pr_pdf(bundle):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
@@ -395,7 +409,7 @@ def pr_pdf(bundle):
         ("Department", pr.get("department")),
         ("Request date", pr.get("request_date")), ("Vendor", pr.get("vendor")),
         ("Payment", pr.get("payment_condition")), ("Delivery", pr.get("delivery_condition")),
-    ])
+    ] + _cost_object_pairs(pr))
 
     cur = pr.get("currency") or ""
     rows = [[str(i), (it.get("item") or "", it.get("description") or ""),
@@ -572,6 +586,7 @@ def po_pdf(bundle):
     ]
     if fx not in (0.0, 1.0):
         meta_pairs.append(("FX rate", f"1 {pr.get('currency') or ''} = {fx:g} EGP"))
+    meta_pairs += _cost_object_pairs(pr)
     y = _meta_grid(c, w, cm, y, meta_pairs)
 
     cur = pr.get("currency") or ""
@@ -718,6 +733,7 @@ def grn_pdf(bundle):
         ("Received at", received_at),
         ("Delivery condition", pr.get("delivery_condition")),
     ]
+    pairs += _cost_object_pairs(pr)
     if pr.get("receipt_notes"):
         pairs.append(("Receipt notes", pr.get("receipt_notes")))
     y = _meta_grid(c, w, cm, y, pairs)

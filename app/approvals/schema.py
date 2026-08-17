@@ -340,6 +340,18 @@ _PR_MIGRATIONS = [
     # DOAM §3.4 — the 30-day aggregate this request was actually routed on, when
     # related requests existed. NULL means it routed on its own value.
     ("agg_total", "ALTER TABLE pr_requests ADD COLUMN agg_total REAL"),
+    # DOAM §4.3 — advance-payment authorisation, recorded on the request.
+    ("advance_pct", "ALTER TABLE pr_requests ADD COLUMN advance_pct REAL"),
+    ("advance_auth_by", "ALTER TABLE pr_requests ADD COLUMN advance_auth_by TEXT"),
+    ("advance_auth_stage", "ALTER TABLE pr_requests ADD COLUMN advance_auth_stage TEXT"),
+    ("advance_auth_at", "ALTER TABLE pr_requests ADD COLUMN advance_auth_at TEXT"),
+    ("bank_guarantee_ref", "ALTER TABLE pr_requests ADD COLUMN bank_guarantee_ref TEXT"),
+    # DOAM §5 — the golden thread: the controlling cost object. `asset_code`
+    # already carries the asset, so only the sales order and the cost centre are
+    # new. Every downstream document (PO, GRN, invoice) is keyed to the PR, so
+    # carrying it here carries it along the whole chain.
+    ("so_no", "ALTER TABLE pr_requests ADD COLUMN so_no TEXT"),
+    ("cost_center", "ALTER TABLE pr_requests ADD COLUMN cost_center TEXT"),
     # Foreign-currency support: fx_rate converts the PR total (in `currency`)
     # to EGP so the EGP-based approval thresholds route honestly. po_rev counts
     # PO revisions (0 = original order; history kept in pr_po_revisions).

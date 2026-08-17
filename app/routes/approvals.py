@@ -145,9 +145,10 @@ def new():
         prefill = svc.ticket_prefill(int(ticket_id)) or {}
     return render_template("approvals/new.html", active="proc_new",
                            vendors=svc.list_vendors(), units=C.UNITS,
+                           sales_orders=svc.list_sales_orders(),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            deliveries=C.DELIVERY_CONDITIONS, departments=svc.list_departments(),
-                           matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
+                           matrix=C.ACTIVE_MATRIX, ladder=C.LADDER,
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
                            item_categories=svc.item_categories(),
@@ -182,6 +183,9 @@ def _parse_header(f, can_price=False):
         # DOAM §4.2 — capital expenditure follows a different ladder. Anything
         # not explicitly marked capital is operating expenditure.
         "expenditure_kind": f.get("expenditure_kind", "").strip().lower(),
+        # DOAM §5 — the cost object this spend belongs to.
+        "so_no": f.get("so_no", "").strip(),
+        "cost_center": f.get("cost_center", "").strip(),
     }
     if not can_price:
         # Server-side commercial lockout (defence-in-depth — independent of the UI):
@@ -495,6 +499,9 @@ def _submit_error(msg):
     one case the reader has to act on (no superior above their own role)."""
     if msg == "no_eligible_approver":
         return svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]["esc_blocked_flash"]
+    if msg == "cost_object_required":
+        return ("This request buys direct materials, so it must name the sales order "
+                "it is for (DOAM §5). Add the sales order and submit again.")
     return f"Could not submit ({msg})."
 
 
@@ -517,12 +524,14 @@ def edit(pr_id):
                "delivery_condition": pr.get("delivery_condition"), "currency": pr.get("currency"),
                "req_del_date": pr.get("req_del_date"), "asset_code": pr.get("asset_code"),
                "tax_rate": pr.get("tax_rate"),
-               "expenditure_kind": pr.get("expenditure_kind")}
+               "expenditure_kind": pr.get("expenditure_kind"),
+               "so_no": pr.get("so_no"), "cost_center": pr.get("cost_center")}
     return render_template("approvals/new.html", active="proc_list",
                            vendors=svc.list_vendors(), units=C.UNITS,
+                           sales_orders=svc.list_sales_orders(),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            deliveries=C.DELIVERY_CONDITIONS, departments=svc.list_departments(),
-                           matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
+                           matrix=C.ACTIVE_MATRIX, ladder=C.LADDER,
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
                            editing=pr, edit_items=bundle["items"],
@@ -651,6 +660,10 @@ def detail(pr_id):
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
                            budget=svc.budget_status(pr.get("department")),
                            can_purchasing=can_purchasing, is_priced=is_priced,
+                           # DOAM §4.3: only someone who could sign Finance/CFO/MD
+                           # is offered the advance-authorisation control.
+                           can_advance=any(svc.can_act(user, s)
+                                           for s in ("finance", "cfo", "ceo")),
                            needs_pricing=needs_pricing, show_commercial=show_commercial,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            rfq_min=C.RFQ_QUOTE_MIN, rfq_threshold=C.RFQ_VALUE_THRESHOLD,
@@ -663,6 +676,10 @@ def detail(pr_id):
                            # the page only shows the control when it applies —
                            # a picker on an IT stationery order is noise.
                            **_ejr_context(pr_id, pr),
+                           # DOAM §4.4: how far each line departs from its target
+                           # price / stock ceiling. Fails soft — a grading error
+                           # must never take the request page down with it.
+                           deviation=_deviation_context(pr_id, pr),
                            spare_live=spare_live, source_link=source_link,
                            item_costs=item_costs,
                            # Escalation stamps are DB-stored role keys: their names
@@ -713,6 +730,26 @@ def choose_quote(pr_id, quote_id):
     flash("Quote selected." if ok else f"Could not select quote ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+def _deviation_context(pr_id, pr):
+    """DOAM §4.4 grading for one request, or None when there is nothing to show
+    (an unpriced request, or every line on plan)."""
+    if (pr.get("pricing_status") or "priced") != "priced":
+        return None
+    try:
+        conn = get_db()
+        try:
+            dev = svc.deviation_findings(conn, pr_id)
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    off = [l for l in dev["lines"] if l["grade"] != "on_plan"]
+    if not off and not dev["unassessable"]:
+        return None
+    dev["off_plan"] = off
+    return dev
 
 
 def _ejr_context(pr_id, pr):
@@ -1126,7 +1163,44 @@ def add_payment(pr_id):
                             "the mismatch first — an administrator can override.",
            "over_payment": "This payment would exceed the PO total. Check the amount — "
                            "an administrator can override if intentional.",
+           "advance_not_authorised": "This is an advance payment (nothing invoiced yet). "
+                                     "DOAM §4.3 requires it to be authorised first — "
+                                     "record the advance authorisation on this request.",
+           "advance_exceeds_authorised": "This payment is larger than the advance that "
+                                         "was authorised. Re-authorise for the higher "
+                                         "percentage, or reduce the amount.",
+           "advance_guarantee_required": "An advance above 25% on an order over "
+                                         "500,000 EGP needs a bank guarantee reference.",
+           "advance_vendor_not_approved": "No advance may be paid to a supplier off the "
+                                          "approved vendor list (DOAM §4.3). Add the "
+                                          "supplier to the vendor master first.",
            }.get(res, f"Could not record payment ({res})."),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/advance", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def authorize_advance(pr_id):
+    """DOAM §4.3 — Finance / CFO / MD authorises an advance before it is paid."""
+    if not svc.get_pr(pr_id):
+        abort(404)
+    f = request.form
+    ok, msg = svc.authorize_advance(pr_id, f.get("advance_pct"),
+                                    f.get("bank_guarantee_ref", "").strip(),
+                                    _u(), ip=_ip())
+    flash("Advance authorised." if ok else
+          {"bad_pct": "Enter the advance as a percentage of the PO value (1–100).",
+           "no_po": "There is no Purchase Order yet to advance against.",
+           "vendor_not_approved": "This supplier is not on the approved vendor list, "
+                                  "so no advance may be authorised (DOAM §4.3).",
+           "guarantee_required": "An advance above 25% on an order over 500,000 EGP "
+                                 "needs a bank guarantee reference.",
+           "not_authorised": "An advance of this size needs a higher authority: up to "
+                             "25% the Financial Director, above that the CFO or the "
+                             "Managing Director.",
+           }.get(msg, f"Could not authorise the advance ({msg})."),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
@@ -1324,7 +1398,7 @@ def save_settings():
     # A brand-new department (Add form, no stages ticked) seeds with the default
     # ladder so it persists and is immediately usable; admins tune it afterwards.
     if not rows and f.get("new_department"):
-        rows = [{"stage": s, "threshold": C.APPROVAL_MATRIX.get(s, 0)} for s in C.LADDER]
+        rows = [{"stage": s, "threshold": C.ACTIVE_MATRIX.get(s, 0)} for s in C.LADDER]
     ok, msg = svc.set_dept_matrix(dept, rows, _u())
     flash(f"Responsibility matrix saved for {dept}." if ok else f"Could not save ({msg}).",
           "success" if ok else "error")

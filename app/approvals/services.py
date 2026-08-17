@@ -805,9 +805,11 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
             in ("capex", "capital") else "opex"
         try:
             conn.execute("UPDATE pr_requests SET tax_rate=?, pricing_status=?, "
-                         "expenditure_kind=? WHERE id=?",
+                         "expenditure_kind=?, so_no=?, cost_center=? WHERE id=?",
                          (float(header.get("tax_rate") or 0),
-                          "priced" if priced else "unpriced", kind, pr_id))
+                          "priced" if priced else "unpriced", kind,
+                          header.get("so_no") or None,
+                          header.get("cost_center") or None, pr_id))
         except Exception:
             pass
         audit(conn, pr_id, uname, "created",
@@ -868,12 +870,14 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
         conn.execute(
             """UPDATE pr_requests SET title=?, request_for=?, department=?, currency=?,
                vendor=?, payment_condition=?, delivery_condition=?, req_del_date=?,
-               asset_code=?, notes=?, tax_rate=?, expenditure_kind=?, total=? WHERE id=?""",
+               asset_code=?, notes=?, tax_rate=?, expenditure_kind=?, so_no=?,
+               cost_center=?, total=? WHERE id=?""",
             (header.get("title"), header.get("request_for"), header.get("department"),
              header.get("currency") or "EGP", header.get("vendor"),
              pay_cond, header.get("delivery_condition"),
              header.get("req_del_date"), header.get("asset_code"), header.get("notes"),
-             tax_rate, kind, total, pr_id))
+             tax_rate, kind, header.get("so_no") or None,
+             header.get("cost_center") or None, total, pr_id))
         if not can_price and (pr["pricing_status"] or "priced") == "priced":
             # the lines were replaced unpriced -> back through the pricing gate
             conn.execute("UPDATE pr_requests SET pricing_status='unpriced', "
@@ -917,6 +921,12 @@ def submit_pr(pr_id, user, ip=None):
             return False, "not_found"
         if pr["status"] not in ("draft", "rejected"):
             return False, "not_submittable"
+        # DOAM §5 — direct materials must name the sales order they are for,
+        # before they enter the ladder. Without it the spend has no cost object
+        # and the order's margin can never be closed out.
+        _co_ok, _co_need = cost_object_check(conn, pr_id, pr)
+        if not _co_ok:
+            return False, "cost_object_required"
         # Department-aware ladder: use the department's responsibility matrix if
         # it has one, else the global default. Each rung = parallel stages.
         # Thresholds are EGP-based, so a foreign-currency PR routes on its
@@ -1270,6 +1280,11 @@ def price_pr(pr_id, prices, meta, user, ip=None):
 
         if pr["status"] == "pending":
             _reconcile_value_ladder(conn, pr_id, pr["department"], total)
+            # DOAM §4.4 — deviation grading runs HERE, immediately after the
+            # value ladder is reconciled: the prices being graded are the ones
+            # just entered, and the extra rungs sit on top of the value rungs
+            # rather than being reshuffled by the reconcile that follows.
+            apply_deviation_stages(conn, pr_id, pr)
 
         cur = meta.get("currency") or pr["currency"]
         audit(conn, pr_id, (user or {}).get("username"), "priced",
@@ -1884,6 +1899,228 @@ def get_invoice(inv_id):
         conn.close()
 
 
+def list_sales_orders(limit=300):
+    """Live sales-order numbers for the PR form's picker (DOAM §5). Reads the
+    orders module directly; returns [] if it is not installed, because a missing
+    picker must not stop anyone raising a request."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT order_no FROM ord_orders WHERE order_no IS NOT NULL "
+            "AND order_no<>'' AND status NOT IN ('cancelled','closed') "
+            "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [r["order_no"] for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def cost_object_check(conn, pr_id, pr):
+    """DOAM §5 / Table 12 — does this request carry the cost object it must?
+    Returns (ok, required) where `required` is "sales_order" when a sales-order
+    reference is mandatory and missing, else None."""
+    if str(_pr_field(pr, "so_no") or "").strip():
+        return True, None
+    texts = [_pr_field(pr, "title"), _pr_field(pr, "request_for")]
+    rows = conn.execute(
+        "SELECT i.item, i.description, c.category_name FROM pr_items i "
+        "LEFT JOIN proc_items c ON c.id = i.item_id WHERE i.pr_id=?",
+        (pr_id,)).fetchall()
+    for r in rows:
+        texts += [r["item"], r["description"], r["category_name"]]
+    need = C.cost_object_required(texts)
+    return (need is None), need
+
+
+def deviation_findings(conn, pr_id):
+    """DOAM §4.4 — grade every line of a PR against its target price and the
+    item's maximum stock ceiling. Returns
+    {"lines": [...], "stages": [...], "memo": bool, "quotes": bool,
+     "unassessable": int} where `stages` are the EXTRA approvals the deviations
+    require, de-duplicated across lines.
+
+    Two facts per line, both read from the masters the buyer cannot edit:
+    the target price (proc_items.cost_price, the ERP cost) and the ceiling
+    (mnt_spares.max_level). A line with neither is reported, not graded — the
+    control must not pretend to have checked something it could not see."""
+    rows = conn.execute(
+        "SELECT i.id, i.item, i.qty, i.unit_price, i.item_id, i.spare_id "
+        "FROM pr_items i WHERE i.pr_id=? ORDER BY i.seq", (pr_id,)).fetchall()
+    if not rows:
+        return {"lines": [], "stages": [], "memo": False, "quotes": False,
+                "unassessable": 0}
+    cat = {}
+    iids = [r["item_id"] for r in rows if r["item_id"]]
+    if iids:
+        cat = {r["id"]: r for r in conn.execute(
+            "SELECT id, cost_price, has_cost FROM proc_items WHERE id IN (%s)"
+            % ",".join("?" * len(iids)), tuple(iids)).fetchall()}
+    spares = {}
+    sids = [r["spare_id"] for r in rows if r["spare_id"]]
+    if sids:
+        try:
+            spares = {r["id"]: r for r in conn.execute(
+                "SELECT id, stock_qty, max_level, unit_cost FROM mnt_spares "
+                "WHERE id IN (%s)" % ",".join("?" * len(sids)), tuple(sids)).fetchall()}
+        except Exception:
+            spares = {}          # maintenance module absent -> price grading only
+
+    lines, stages, memo, quotes, blind = [], [], False, False, 0
+    for r in rows:
+        c = cat.get(r["item_id"])
+        s = spares.get(r["spare_id"])
+        target = None
+        if c is not None and c["has_cost"]:
+            target = float(c["cost_price"] or 0)
+        elif s is not None and (s["unit_cost"] or 0) > 0:
+            target = float(s["unit_cost"])
+        ceiling = float(s["max_level"]) if s is not None and (s["max_level"] or 0) > 0 else None
+        over_ceiling = bool(
+            ceiling is not None
+            and float(s["stock_qty"] or 0) + float(r["qty"] or 0) > ceiling)
+        pct = C.price_deviation_pct(r["unit_price"], target)
+        g = C.deviation_grade(pct, over_ceiling)
+        if target is None and ceiling is None:
+            blind += 1
+        lines.append({"item": r["item"], "qty": float(r["qty"] or 0),
+                      "unit_price": float(r["unit_price"] or 0), "target": target,
+                      "pct_over": round(pct, 1) if pct is not None else None,
+                      "ceiling": ceiling, "over_ceiling": over_ceiling,
+                      "grade": g["grade"]})
+        for st in g["stages"]:
+            if st not in stages:
+                stages.append(st)
+        memo = memo or g["memo"]
+        quotes = quotes or g["quotes"]
+    # Keep ladder order, not discovery order: an extra rung must still be
+    # collected after the ones below it.
+    stages = [s for s in C.DOAM_LADDER if s in stages]
+    return {"lines": lines, "stages": stages, "memo": memo, "quotes": quotes,
+            "unassessable": blind}
+
+
+def apply_deviation_stages(conn, pr_id, pr):
+    """Append the §4.4 extra rungs a priced request has earned. Caller commits.
+    Only ever ADDS, and only rungs not already on the ladder — a deviation can
+    make an order need more signatures, never fewer."""
+    dev = deviation_findings(conn, pr_id)
+    if not dev["stages"]:
+        return dev
+    rows = conn.execute("SELECT seq, stage FROM pr_steps WHERE pr_id=? ORDER BY seq",
+                        (pr_id,)).fetchall()
+    have = {r["stage"] for r in rows}
+    seq = max([r["seq"] for r in rows] or [0])
+    _roles = stage_roles_map(conn)
+    _chain = escalation_map(conn)
+    added = []
+    for st in dev["stages"]:
+        if st in have:
+            continue
+        seq += 1
+        e_role, e_from, why = _esc_columns(conn, st, pr["requester"], _roles, _chain)
+        conn.execute(
+            "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at, "
+            "esc_role, esc_from) VALUES (?,?,?,?,?,?,?,?)",
+            (pr_id, seq, st, "pending", stage_label(st), _now(),
+             "" if why == "no_superior" else e_role, e_from))
+        added.append(st)
+    if added:
+        grades = ", ".join(sorted({l["grade"] for l in dev["lines"]
+                                   if l["grade"] != "on_plan"}))
+        audit(conn, pr_id, "system", "deviation_approval",
+              f"DOAM §4.4 deviation ({grades}): added "
+              f"{', '.join(stage_label(s) for s in added)} on top of the value ladder.")
+    return dev
+
+
+def vendor_approved(conn, name):
+    """DOAM §4.3 — "No advance to a supplier off the approved vendor list."
+    The approved list IS the active vendor master; an inactive or unknown
+    supplier is off it."""
+    if not str(name or "").strip():
+        return False
+    row = conn.execute("SELECT is_active FROM proc_vendors WHERE name=?",
+                       (name,)).fetchone()
+    return bool(row and row["is_active"])
+
+
+def advance_required_authority(pr, pct):
+    """The DOAM §4.3 rule for this request: which stages may authorise an advance
+    of `pct`, and whether a bank guarantee is required. Split out so the gate,
+    the authorising call and the UI all read the SAME rule."""
+    return C.advance_rule(pr_amounts(pr)["grand"], pct)
+
+
+def authorize_advance(pr_id, pct, guarantee_ref, user, ip=None):
+    """Record the DOAM §4.3 authorisation for an advance payment. Returns
+    (ok, msg). Refuses when the signer does not hold the required authority, the
+    supplier is off the approved list, or a required bank guarantee is missing."""
+    try:
+        pct = float(pct or 0)
+    except (TypeError, ValueError):
+        return False, "bad_pct"
+    if not 0 < pct <= 100:
+        return False, "bad_pct"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] not in ("po_issued", "partially_received", "received"):
+            return False, "no_po"        # there is no PO value to advance against
+        if not vendor_approved(conn, pr["vendor"]):
+            return False, "vendor_not_approved"
+        rule = advance_required_authority(pr, pct)
+        guarantee_ref = str(guarantee_ref or "").strip()[:120]
+        if rule["guarantee"] and not guarantee_ref:
+            return False, "guarantee_required"
+        # Who is signing. can_act() already encodes delegation, proc_admin and
+        # the permission check — a second role test here would drift from it.
+        _roles = stage_roles_map(conn)
+        stage = next((s for s in rule["stages"] if can_act(user, s, _roles=_roles)), None)
+        if not stage:
+            return False, "not_authorised"
+        conn.execute(
+            "UPDATE pr_requests SET advance_pct=?, advance_auth_by=?, "
+            "advance_auth_stage=?, advance_auth_at=?, bank_guarantee_ref=? WHERE id=?",
+            (pct, (user or {}).get("username") or "system", stage or "proc_admin",
+             _now(), guarantee_ref or None, pr_id))
+        audit(conn, pr_id, (user or {}).get("username") or "system", "advance_authorised",
+              f"DOAM §4.3: advance of {pct:.1f}% authorised by "
+              f"{stage_label(stage) if stage else 'Procurement admin'}"
+              + (f", bank guarantee {guarantee_ref}" if guarantee_ref else ""), ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def advance_gate_check(conn, pr, amount):
+    """Is this payment an advance, and if so is it authorised? Returns
+    (ok, msg). An advance is a payment made before the supplier has invoiced —
+    that is the money genuinely at risk, and the only money §4.3 governs."""
+    invoiced = conn.execute(
+        "SELECT COALESCE(SUM(amount),0) AS t FROM pr_invoices WHERE pr_id=?",
+        (pr["id"],)).fetchone()["t"]
+    already = float(_pr_field(pr, "paid_amount") or 0)
+    if float(invoiced or 0) >= already + amount - 0.01:
+        return True, ""                  # covered by invoices — not an advance
+    grand = pr_amounts(pr)["grand"]
+    pct = ((already + amount) / grand * 100.0) if grand > 0 else 100.0
+    if not vendor_approved(conn, _pr_field(pr, "vendor")):
+        return False, "advance_vendor_not_approved"
+    authorised = float(_pr_field(pr, "advance_pct") or 0)
+    if authorised <= 0:
+        return False, "advance_not_authorised"
+    if pct > authorised + 0.01:
+        return False, "advance_exceeds_authorised"
+    rule = C.advance_rule(grand, pct)
+    if rule["guarantee"] and not str(_pr_field(pr, "bank_guarantee_ref") or "").strip():
+        return False, "advance_guarantee_required"
+    return True, ""
+
+
 def add_payment(pr_id, data, user, ip=None, force=False):
     """Record a payment against the PR/invoice and roll up the payment status.
 
@@ -1911,6 +2148,16 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         if match and match["has_invoice"] and not force \
            and (not match["price_ok"] or not match["receipt_inv_ok"]):
             return False, "match_blocked"
+        # DOAM §4.3 — money leaving before the supplier has invoiced is an
+        # advance, and needs its own authority, an approved vendor, and a bank
+        # guarantee on large orders. Checked here rather than in the UI so it
+        # holds for the API and for anything else that posts a payment.
+        adv_ok, adv_msg = advance_gate_check(conn, pr, amount)
+        # "No advance to a supplier off the approved vendor list" is written
+        # without exception, so that one holds even for an admin override — the
+        # others stay overridable like every other gate here.
+        if not adv_ok and (not force or adv_msg == "advance_vendor_not_approved"):
+            return False, adv_msg
         grand = pr_amounts(pr)["grand"]
         # Configurable slack on the caps. Written as x * (pct/100.0), NOT
         # x * pct / 100.0: with the default 1.0 the first form is bit-for-bit the
@@ -3226,7 +3473,9 @@ def _effective_matrix(department):
         rows = sorted(((s, v) for s, v in m.items() if v["included"]),
                       key=lambda kv: kv[1]["seq"])
         return [(s, v["threshold"]) for s, v in rows], "department"
-    return [(s, float(APPROVAL_MATRIX.get(s, 0))) for s in LADDER], "default"
+    # ACTIVE_MATRIX, not APPROVAL_MATRIX: the default thresholds shown to an
+    # admin must be the ones the request will actually route on.
+    return [(s, float(C.ACTIVE_MATRIX.get(s, 0))) for s in LADDER], "default"
 
 
 def _stage_gates(stage, is_last):

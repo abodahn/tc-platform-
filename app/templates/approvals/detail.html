@@ -475,6 +475,34 @@
     </details>
     {% endif %}
 
+    {# --- Advance payment authorisation (DOAM §4.3) --- #}
+    {% if pr.status in ('po_issued','partially_received','received') %}
+      {% if pr.advance_pct %}
+      <div class="mt-2" style="font-size:12.5px;color:var(--muted)">
+        <span data-i18n="proc.adv_authorised">Advance authorised</span>:
+        <b style="font-variant-numeric:tabular-nums">{{ '{:.1f}'.format(pr.advance_pct) }}%</b>
+        · {{ pr.advance_auth_by }}{% if pr.bank_guarantee_ref %} ·
+        <span data-i18n="proc.adv_guarantee">bank guarantee</span> {{ pr.bank_guarantee_ref }}{% endif %}
+      </div>
+      {% endif %}
+      {% if can_advance %}
+      <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.adv_authorise">Authorise an advance payment</summary>
+        <p class="muted" style="font-size:12.5px" data-i18n="proc.adv_hint">Paying before the supplier invoices is an advance. Up to 25% of the PO the Financial Director authorises; above that the CFO or the Managing Director, plus a bank guarantee when the order exceeds 500,000&nbsp;EGP.</p>
+        <form method="post" action="{{ url_for('approvals.authorize_advance', pr_id=pr.id) }}" class="mt-2">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <div class="grid cols-2">
+            <div class="field"><label data-i18n="proc.adv_pct">Advance % of PO value *</label>
+              <input name="advance_pct" type="number" step="0.1" min="0.1" max="100" required
+                     value="{{ pr.advance_pct or '' }}"></div>
+            <div class="field"><label data-i18n="proc.adv_bg">Bank guarantee reference</label>
+              <input name="bank_guarantee_ref" autocomplete="off" value="{{ pr.bank_guarantee_ref or '' }}"></div>
+          </div>
+          <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.adv_authorise_btn">Authorise advance</button>
+        </form>
+      </details>
+      {% endif %}
+    {% endif %}
+
     {% if pr.status in ('received','partially_received') and can_purchasing %}
     <form method="post" action="{{ url_for('approvals.close', pr_id=pr.id) }}" class="mt-3">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -598,6 +626,10 @@
         {% if pr.expenditure_kind == 'capex' %}<span class="tag" data-i18n="proc.kind_capex_tag">CAPEX · capital</span>{% endif %}
         {% if pr.agg_total %}<span class="tag" title="{{ pr.agg_total }}"><span data-i18n="proc.agg_tag">Routed on 30-day aggregate</span> · {{ '{:,.0f}'.format(pr.agg_total) }}</span>{% endif %}
         {% if pr.single_source_reason %}<span class="tag" data-i18n="proc.ss_tag">Single source · signed one level up</span>{% endif %}
+        {# DOAM §5 — the cost object this spend is costed against, on every document. #}
+        {% if pr.so_no %}<span class="tag"><span data-i18n="proc.so_tag">SO</span> {{ pr.so_no }}</span>{% endif %}
+        {% if pr.cost_center %}<span class="tag"><span data-i18n="proc.cc_tag">Cost centre</span> {{ pr.cost_center }}</span>{% endif %}
+        {% if pr.asset_code %}<span class="tag"><span data-i18n="proc.asset_tag">Asset</span> {{ pr.asset_code }}</span>{% endif %}
         {% if pr.payment_condition %}<span class="tag">{{ pr.payment_condition }}</span>{% endif %}
         {% if pr.delivery_condition %}<span class="tag">{{ pr.delivery_condition }}</span>{% endif %}
         {% if pr.po_no %}<span class="tag">PO {{ pr.po_no }}</span>{% endif %}
@@ -683,6 +715,46 @@
         {% else %}
         <div class="muted" style="margin-bottom:12px" data-i18n="proc.no_quotes2">Add competing quotes to compare vendors.</div>
         {% endif %}
+        {# DOAM §4.4 — how far this order departs from plan. Only rendered when
+           something actually deviates, or when a line could not be graded. #}
+        {% if deviation %}
+        <div class="mt-2" style="margin-bottom:12px">
+          <b data-i18n="proc.dev_title">Deviation from plan</b>
+          <table class="tbl mt-2">
+            <thead><tr>
+              <th data-i18n="proc.item">Item</th>
+              <th style="text-align:end" data-i18n="proc.dev_price">Price</th>
+              <th style="text-align:end" data-i18n="proc.dev_target">Target</th>
+              <th style="text-align:end" data-i18n="proc.dev_over">Over</th>
+              <th data-i18n="proc.dev_grade">Grade</th>
+            </tr></thead>
+            <tbody>
+            {% for l in deviation.off_plan %}
+              <tr>
+                <td>{{ l.item }}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(l.unit_price) }}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(l.target) if l.target else '—' }}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums;color:{{ 'var(--crit)' if (l.pct_over or 0) > 15 else 'var(--warn)' }}">
+                  {{ '+{:.1f}%'.format(l.pct_over) if l.pct_over else '—' }}</td>
+                <td><span class="tag" data-i18n="proc.dev_{{ l.grade }}">{{ l.grade|replace('_',' ') }}</span></td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% if deviation.stages %}
+          <div class="muted mt-2" style="font-size:12.5px">
+            <span data-i18n="proc.dev_extra">Extra approvals required by §4.4</span>:
+            <b>{{ deviation.stages|map('replace','_',' ')|join(', ')|title }}</b>
+          </div>
+          {% endif %}
+          {% if deviation.unassessable %}
+          <div class="muted mt-2" style="font-size:12.5px" data-i18n="proc.dev_blind">
+            {{ deviation.unassessable }} line(s) have no target price or stock ceiling on file, so they could not be graded.
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
         {# DOAM §6 — the engineering justification. Only rendered when the request
            actually needs one; a picker on an IT stationery order is noise. #}
         {% if ejr_required %}

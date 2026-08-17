@@ -300,6 +300,17 @@ PRICING_STATUSES = ["unpriced", "priced"]
 _ACTIVE_LADDER = DOAM_LADDER if DOAM_IN_FORCE else LEGACY_LADDER
 _ACTIVE_MATRIX = OPEX_MATRIX if DOAM_IN_FORCE else APPROVAL_MATRIX
 
+# "The ladder", for everything that is not routing: the governance screens, the
+# stage-role override admin, the workflow view. This is re-bound (it was defined
+# as LEGACY_LADDER above, before DOAM_IN_FORCE is known) rather than defined
+# once, so the DOAM stages are visible in one place instead of two.
+#
+# It matters: stage_roles_map() drops any override for a stage not in LADDER, so
+# while this pointed at the paper form nobody could assign a signing role to the
+# Supply Chain Director or the Board — two stages the live ladder actually uses.
+LADDER = _ACTIVE_LADDER
+ACTIVE_MATRIX = _ACTIVE_MATRIX
+
 DEMAND_STAGES = [s for s in _ACTIVE_LADDER if _ACTIVE_MATRIX.get(s, 1) <= 0]
 
 # Value-gated stages: they join only once Purchasing has priced the request and
@@ -466,6 +477,118 @@ RFQ_VALUE_THRESHOLD = 25000  # EGP-equivalent total at/above which the rule appl
 #   50,001 -   500,000    three quotations, PD/SCD reviews the comparison
 #   500,001 - 2,000,000   three quotations plus negotiation, Procurement Committee
 #   above 2,000,000       formal tender, Tender Committee recommends
+# DOAM §5 — the golden thread. Every document from requisition to payment
+# carries the controlling cost object, so cost, margin and stock can be read per
+# order and per client. Table 12 says which cost object applies to what:
+#
+#   fabric, yarn, trims, chemicals, packaging   -> sales order   MANDATORY
+#   subcontract or wash for a specific order    -> sales order   MANDATORY
+#   spares, MRO, maintenance, workshop          -> asset / cost centre
+#   facility services, IT, utilities            -> cost centre
+#   capital assets                              -> asset / project
+COST_OBJECTS = ["sales_order", "asset", "cost_center"]
+
+# Category keywords that make a sales-order reference mandatory. Matched against
+# the catalogue category and the line text, lowercased — the ERP's category
+# names are not under this system's control, so a keyword match is the only
+# thing that survives an import that renames "Trims" to "TRIM & ACCESSORIES".
+SO_MANDATORY_KEYWORDS = (
+    "fabric", "yarn", "trim", "chemical", "packaging", "accessor",
+    "subcontract", "sub-contract", "wash", "dye", "print", "embroider",
+)
+
+
+def cost_object_required(texts):
+    """Does this requisition need a sales-order reference? `texts` is every
+    category / item string on the request. Returns "sales_order" when Table 12
+    makes it mandatory, else None (asset or cost centre, requester's choice)."""
+    blob = " ".join(str(t or "").lower() for t in texts)
+    return "sales_order" if any(k in blob for k in SO_MANDATORY_KEYWORDS) else None
+
+
+# DOAM §4.4 — Purchase Order Approval by Deviation. Beyond the value ladder, an
+# order is graded by how far it departs from the approved plan, and each grade
+# adds signatures ON TOP of the value ladder:
+#
+#   on plan                     qty within ceiling, price <= target   nothing
+#   over the stock ceiling      qty pushes stock past max_level       PD + SCD, memo
+#   price up to  5% over target                                       3 quotes, memo
+#   price  5-15% over target                                          FIN-D, memo, quotes
+#   price   >15% over target                                          FIN-D + MD, memo
+#
+# The document's middle quantity row ("over plan, within the stock ceiling") needs
+# a per-item PLAN quantity, which this system does not hold — there is no purchase
+# plan module. Rather than invent one from the reorder level and grade real orders
+# against a guess, that row is reported as "not assessable" wherever it applies.
+DEVIATION_PRICE_BANDS = [
+    (5.0,  [],                  "price_5"),      # standard approvers + 3 quotes
+    (15.0, ["finance"],         "price_15"),
+    (None, ["finance", "ceo"],  "price_over_15"),
+]
+
+
+def price_deviation_pct(unit_price, target):
+    """How far above target this price sits, in percent. None when there is no
+    target on file — an unpriced catalogue line cannot be graded, and guessing a
+    target of zero would grade every purchase as infinitely over."""
+    try:
+        target = float(target or 0)
+        unit_price = float(unit_price or 0)
+    except (TypeError, ValueError):
+        return None
+    if target <= 0:
+        return None
+    return (unit_price - target) / target * 100.0
+
+
+def deviation_grade(pct_over, over_ceiling=False):
+    """The §4.4 grade for one line. Returns
+    {"grade", "stages", "memo", "quotes"} — `stages` are EXTRA approvals on top
+    of the value ladder."""
+    if over_ceiling:
+        # The heavier of the two rows always wins; quantity above the ceiling is
+        # the one the document calls out as the trigger.
+        return {"grade": "over_ceiling", "stages": ["factory_manager", "scd"],
+                "memo": True, "quotes": False}
+    if pct_over is None or pct_over <= 0:
+        return {"grade": "on_plan", "stages": [], "memo": False, "quotes": False}
+    for ceiling, stages, grade in DEVIATION_PRICE_BANDS:
+        if ceiling is None or pct_over <= ceiling:
+            return {"grade": grade, "stages": list(stages), "memo": True, "quotes": True}
+    return {"grade": "on_plan", "stages": [], "memo": False, "quotes": False}
+
+
+# DOAM §4.3 — "Advance up to 25% of PO value: FIN-D. Above 30%: CFO or MD, with
+# a bank guarantee when the order exceeds 500,000 EGP. No advance to a supplier
+# off the approved vendor list."
+#
+# The document leaves 25–30% unnamed. Anything above the Financial Director's
+# stated ceiling is treated as needing the higher authority: reading the gap the
+# other way would let 30% of a large order out of the door on the lower
+# signature, which is plainly not what the clause is protecting against.
+ADVANCE_FIND_MAX_PCT = 25.0
+ADVANCE_GUARANTEE_OVER = 500_000.0
+
+
+def advance_rule(po_value, advance_pct):
+    """Who must authorise an advance of `advance_pct` on a PO of `po_value`, and
+    whether a bank guarantee is required. Returns
+    {"stages": [...], "level": "L2"|"L1", "guarantee": bool}."""
+    try:
+        pct = float(advance_pct or 0)
+    except (TypeError, ValueError):
+        pct = 0.0
+    try:
+        value = float(po_value or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if pct <= ADVANCE_FIND_MAX_PCT:
+        return {"stages": ["finance"], "level": DOAM_LEVEL.get("finance", "L2"),
+                "guarantee": False}
+    return {"stages": ["cfo", "ceo"], "level": DOAM_LEVEL.get("cfo", "L1"),
+            "guarantee": value > ADVANCE_GUARANTEE_OVER}
+
+
 # DOAM §3.4 — "Splitting a purchase to stay within a lower approval level is
 # prohibited. Related purchases within a 30-day window are aggregated."
 AGGREGATION_WINDOW_DAYS = 30
