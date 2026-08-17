@@ -10,6 +10,8 @@ import base64
 import io
 import os
 
+from app.approvals import constants as C
+
 _IMG_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "img")
 
 
@@ -140,9 +142,13 @@ def _wrap_lines(c, text, font, size, max_w, max_lines=2):
 # --------------------------------------------------------------------------
 # shared chrome
 # --------------------------------------------------------------------------
-def _draw_header(c, w, h, cm, title, doc_no, sub):
+def _draw_header(c, w, h, cm, title, doc_no, sub, form_code=None):
     """Clean white letterhead: full brand lockup on the left, document title on the
-    right, and a red rule beneath. Returns the y to start body content at."""
+    right, and a red rule beneath. Returns the y to start body content at.
+
+    `form_code` is the DOAM Annex controlled-form code (T&C-PUF-nn). Printed small
+    under the brand so a filed PDF can be traced to the register entry that sets
+    its retention period, which is the whole point of a controlled form."""
     top = h - 0.55 * cm
     logo_h = 2.35 * cm
     logo = _logo()
@@ -164,6 +170,10 @@ def _draw_header(c, w, h, cm, title, doc_no, sub):
     c.setFont("Helvetica", 9)
     c.setFillColorRGB(0.45, 0.45, 0.45)
     c.drawRightString(w - 1.5 * cm, top - 2.0 * cm, sub)
+    if form_code:
+        c.setFont("Helvetica", 7.5)
+        c.setFillColorRGB(0.55, 0.55, 0.55)
+        c.drawString(1.5 * cm, top - logo_h - 0.42 * cm, form_code)
     # red separator rule under the header
     ry = top - logo_h - 0.05 * cm
     c.setStrokeColorRGB(0.93, 0.11, 0.14)
@@ -401,7 +411,10 @@ def pr_pdf(bundle):
     pn = {"page": 1, "notes": _PR_NOTES}
 
     y = _draw_header(c, w, h, cm, "PURCHASE REQUEST", pr.get("pr_no") or "PR",
-                     "STATUS: " + (pr.get("status") or "").upper())
+                     "STATUS: " + (pr.get("status") or "").upper(),
+                     form_code=C.FORM_CODES["capex"]
+                     if (pr.get("expenditure_kind") == "capex")
+                     else C.FORM_CODES["pr"])
 
     y = _meta_grid(c, w, cm, y, [
         ("Title", pr.get("title")), ("Request for", pr.get("request_for")),
@@ -571,7 +584,7 @@ def po_pdf(bundle):
         po_rev = 0
     y = _draw_header(c, w, h, cm, "PURCHASE ORDER",
                      f"{po_no} · Rev {po_rev}" if po_rev > 0 else po_no,
-                     "Ref " + (pr.get("pr_no") or ""))
+                     "Ref " + (pr.get("pr_no") or ""), form_code=C.FORM_CODES["po"])
 
     try:
         fx = float(pr.get("fx_rate") or 0)
@@ -715,7 +728,8 @@ def grn_pdf(bundle):
     pn = {"page": 1, "notes": _GRN_NOTES}
 
     y = _draw_header(c, w, h, cm, "GOODS RECEIVED NOTE", grn_doc_no(pr.get("pr_no")),
-                     "Ref " + (pr.get("po_no") or pr.get("pr_no") or ""))
+                     "Ref " + (pr.get("po_no") or pr.get("pr_no") or ""),
+                     form_code=C.FORM_CODES["grn"])
 
     # received_at is only stamped on the PR once FULLY received; for a partial
     # receipt fall back to the latest goods-receipt entry in the audit trail.

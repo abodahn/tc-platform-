@@ -3702,5 +3702,15 @@
   "proc.so_tag": "SO",
   "proc.cc_tag": "Masraf merkezi",
   "proc.asset_tag": "Varlık",
-  "proc.so_hint": "Kumaş, iplik, aksesuar, kimyasal, ambalaj, fason ve yıkama için zorunlu — bu harcamanın maliyetlendiği sipariştir."
+  "proc.so_hint": "Kumaş, iplik, aksesuar, kimyasal, ambalaj, fason ve yıkama için zorunlu — bu harcamanın maliyetlendiği sipariştir.",
+  "gov.tab.forms": "Kontrollü formlar",
+  "gov.forms.title": "Kontrollü form kaydı",
+  "gov.forms.produced": "bu sistemde üretiliyor",
+  "gov.forms.code": "Kod",
+  "gov.forms.form": "Form",
+  "gov.forms.purpose": "Amaç",
+  "gov.forms.retention": "Saklama",
+  "gov.forms.where": "Sistemdeki yeri",
+  "gov.forms.offsystem": "Sistem dışı",
+  "gov.forms.sub": "Yetki Devri El Kitabı'nın kontrol ettiği her form, amacı, saklama süresi ve sistemdeki yeri. Ekranı listelenmeyen form henüz burada üretilmiyor — hâlâ kağıt ya da tablo kontrolü."
 }

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Governance &mdash; Controlled Forms{% endblock %}
+{% block content %}
+{% include "governance/_head.html" %}
+
+<div class="panel">
+  <div class="panel-head">
+    <h3 data-i18n="gov.forms.title">Controlled forms register</h3>
+    <span class="muted" style="font-variant-numeric:tabular-nums">{{ live }}/{{ total }}
+      <span data-i18n="gov.forms.produced">produced by this system</span></span>
+  </div>
+  <div class="panel-pad">
+    <p class="muted" style="font-size:13px;max-width:70ch" data-i18n="gov.forms.sub">
+      Every form the Delegation of Authority Manual controls, what it is for, how long
+      it must be kept, and where it lives in this system. A form with no screen listed
+      is not produced here yet &mdash; it is still a paper or spreadsheet control.
+    </p>
+    <div style="overflow-x:auto">
+      <table class="tbl mt-3">
+        <thead><tr>
+          <th data-i18n="gov.forms.code">Code</th>
+          <th data-i18n="gov.forms.form">Form</th>
+          <th data-i18n="gov.forms.purpose">Purpose</th>
+          <th data-i18n="gov.forms.retention">Retention</th>
+          <th data-i18n="gov.forms.where">Where in the system</th>
+        </tr></thead>
+        <tbody>
+        {% for f in forms %}
+          <tr>
+            <td style="font-variant-numeric:tabular-nums;white-space:nowrap"><b>{{ f.code }}</b></td>
+            <td>{{ f.form }}</td>
+            <td class="muted">{{ f.purpose }}</td>
+            <td style="white-space:nowrap">{{ f.retention }}</td>
+            <td>
+              {% if f.route %}
+                <a href="{{ f.route }}">{{ f.route }}</a>
+              {% else %}
+                <span class="badge b-pending" data-i18n="gov.forms.offsystem">Off system</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

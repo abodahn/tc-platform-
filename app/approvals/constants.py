@@ -477,6 +477,48 @@ RFQ_VALUE_THRESHOLD = 25000  # EGP-equivalent total at/above which the rule appl
 #   50,001 -   500,000    three quotations, PD/SCD reviews the comparison
 #   500,001 - 2,000,000   three quotations plus negotiation, Procurement Committee
 #   above 2,000,000       formal tender, Tender Committee recommends
+# DOAM Annex, Table 20 — the register of controlled forms. Each entry says what
+# the form is FOR, how long it is kept, and — the part that matters for an audit
+# — WHERE in this system the form actually lives. `route` None means the form is
+# not produced by this system yet, and the register says so rather than leaving a
+# blank that reads as "covered".
+CONTROLLED_FORMS = [
+    ("T&C-PUF-01", "Purchase Requisition", "Initiate a need (SO or cost centre linked)",
+     "5 yrs", "/procurement/new"),
+    ("T&C-PUF-02", "Purchase Order", "Commit a supplier", "5 yrs", "/procurement/list"),
+    ("T&C-PUF-03", "Request for Quotation", "Solicit supplier prices", "5 yrs",
+     "/procurement/rfqs"),
+    ("T&C-PUF-04", "Quote Comparison", "Compare bids and justify award", "5 yrs",
+     "/procurement/rfqs"),
+    ("T&C-PUF-05", "Purchasing Register", "Sequential log of PRs and POs", "5 yrs",
+     "/procurement/list"),
+    ("T&C-PUF-06", "Goods Receipt Note", "Confirm receipt and condition", "5 yrs",
+     "/procurement/receiving"),
+    ("T&C-PUF-07", "Three-Way Match", "Reconcile PO, GRN and invoice", "5 yrs",
+     "/procurement/invoices"),
+    ("T&C-PUF-08", "CAPEX Request", "Capital request and business case", "10 yrs",
+     "/procurement/new"),
+    ("T&C-PUF-09", "Engineering Justification", "Justify spares and MRO", "3 yrs",
+     "/maintenance/justifications"),
+    ("T&C-PUF-10", "Coverage Check", "Net requirement after netting", "1 yr", None),
+    ("T&C-PUF-11", "Intercompany Reconciliation", "Taypa PO versus requirement",
+     "1 yr", None),
+    ("T&C-PUF-12", "Justification Memo", "Over-plan quantity or over-target price",
+     "3 yrs", "/procurement/list"),
+    ("T&C-PUF-13", "Return to Vendor", "Rejected-goods handling", "1 yr", None),
+    ("T&C-PUF-14", "Buyer Daily Work Program", "Daily buyer routine", "1 yr", None),
+    ("T&C-PUF-15", "Supplier Registration", "Onboard and pre-qualify a supplier",
+     "Active +3", "/procurement/vendors"),
+    ("T&C-PUF-16", "Conflict of Interest", "Declare a related-party interest",
+     "3 yrs", None),
+]
+
+# The form code a printed document carries, so a filed PDF can be traced back to
+# the register entry that governs its retention.
+FORM_CODES = {"pr": "T&C-PUF-01", "po": "T&C-PUF-02", "rfq": "T&C-PUF-03",
+              "grn": "T&C-PUF-06", "capex": "T&C-PUF-08"}
+
+
 # DOAM §5 — the golden thread. Every document from requisition to payment
 # carries the controlling cost object, so cost, margin and stock can be read per
 # order and per client. Table 12 says which cost object applies to what:

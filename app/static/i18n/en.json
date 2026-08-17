@@ -3702,5 +3702,15 @@
   "proc.so_tag": "SO",
   "proc.cc_tag": "Cost centre",
   "proc.asset_tag": "Asset",
-  "proc.so_hint": "Required for fabric, yarn, trims, chemicals, packaging, subcontract and wash — that is the order this spend is costed against."
+  "proc.so_hint": "Required for fabric, yarn, trims, chemicals, packaging, subcontract and wash — that is the order this spend is costed against.",
+  "gov.tab.forms": "Controlled forms",
+  "gov.forms.title": "Controlled forms register",
+  "gov.forms.produced": "produced by this system",
+  "gov.forms.code": "Code",
+  "gov.forms.form": "Form",
+  "gov.forms.purpose": "Purpose",
+  "gov.forms.retention": "Retention",
+  "gov.forms.where": "Where in the system",
+  "gov.forms.offsystem": "Off system",
+  "gov.forms.sub": "Every form the Delegation of Authority Manual controls, what it is for, how long it must be kept, and where it lives in this system. A form with no screen listed is not produced here yet — it is still a paper or spreadsheet control."
 }

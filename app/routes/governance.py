@@ -586,6 +586,20 @@ def rules_view():
                               for r in roles})
 
 
+@bp.route("/forms")
+@login_required
+@permission_required("access_admin")
+def forms_view():
+    """DOAM Annex, Table 20 — the register of controlled forms, and where each
+    one lives in this system. An entry with no route is listed as not yet
+    produced here, which is the honest answer for an auditor."""
+    from app.approvals import constants as PC
+    rows = [{"code": c, "form": f, "purpose": p, "retention": r, "route": u}
+            for c, f, p, r, u in PC.CONTROLLED_FORMS]
+    return _tab("forms", forms=rows,
+                live=sum(1 for r in rows if r["route"]), total=len(rows))
+
+
 @bp.route("/findings")
 @login_required
 @permission_required("access_admin")
