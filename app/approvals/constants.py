@@ -48,36 +48,136 @@ DEPARTMENTS = ["General Maintenance", "Production", "Cutting", "Sewing", "Finish
 
 # --- The approval ladder ----------------------------------------------------
 # Ordered stage keys (excluding the requester, who is the originator).
-LADDER = ["warehouse", "factory_manager", "purchasing", "finance", "cfo", "ceo"]
+#
+# ORDER IS THE SIGNING ORDER, AND THE LAST INCLUDED STAGE IS THE FINAL APPROVER.
+# That is why Purchasing sits BEFORE the directors: DOAM tier 1 (up to 10,000)
+# must end on the Procurement Manager's signature, while tier 2 must end on a
+# director's. Putting the buyer first satisfies both without special cases, and
+# it matches the real sequence — the buyer sources and prices, then management
+# commits. `scd` and `bod` are new; every pre-existing stage keeps its relative
+# position, so requests already in flight are unaffected (their steps are rows
+# already written to the database).
+# The ladder in use TODAY, derived from T&C's real paper form: at 48,000 EGP it
+# produces warehouse + factory_manager + purchasing + finance + cfo, which with
+# the requester is the six signatures on the paper. DOAM v1.1 disagrees with that
+# form — at 48,000 it wants five signatures and involves NEITHER Finance NOR the
+# CFO (§4.1 tier 2 approves at Plant / Supply Chain Director). Since the DOAM is
+# still "Draft v1.0" with a blank approval line, the paper form stays
+# authoritative and the DOAM ladder is opt-in. See build_ladder().
+LEGACY_LADDER = ["warehouse", "factory_manager", "purchasing", "finance", "cfo", "ceo"]
+
+# The DOAM ladder. Purchasing sits BEFORE the directors because the last included
+# stage is the final approver: tier 1 (up to 10,000) must end on the Procurement
+# Manager's signature and tier 2 on a director's, and this order satisfies both
+# without special cases. It also matches the real sequence — the buyer sources
+# and prices, then management commits.
+DOAM_LADDER = ["warehouse", "purchasing", "factory_manager", "scd",
+               "finance", "cfo", "ceo", "bod"]
+
+# What the rest of the codebase means by "the ladder". Unchanged on purpose:
+# nothing about who signs moves until someone signs the DOAM.
+LADDER = LEGACY_LADDER
 
 # Human labels for each stage (EN — AR/TR carried by i18n on the client).
+# Wording follows the DOAM's own role names so a signature block in the system
+# reads the same as the signature block on the paper form.
 STAGE_LABELS = {
     "requester": "Requester",
     "warehouse": "Warehouse",
-    "factory_manager": "Factory Manager",
-    "purchasing": "Purchasing",
-    "finance": "Finance",
+    "purchasing": "Procurement Manager",
+    "factory_manager": "Plant Director",
+    "scd": "Supply Chain Director",
+    "finance": "Financial Director",
     "cfo": "CFO",
-    "ceo": "CEO",
+    "ceo": "Managing Director",
+    "bod": "Board of Directors",
 }
+
+# DOAM §3.2 authority levels. Carried so the ladder can reason about LEVELS
+# rather than named individuals — which is what "approved one level above the
+# value tier" (single-source, §4.3) needs in order to mean anything.
+DOAM_LEVEL = {
+    "warehouse": "L4",
+    "purchasing": "L4",
+    "factory_manager": "L2",
+    "scd": "L2",
+    "finance": "L2",
+    "cfo": "L1",
+    "ceo": "L1",
+    "bod": "BOD",
+}
+LEVEL_ORDER = ["L4", "L3", "L2", "L1", "BOD"]
 
 # Which platform roles may act on each stage. super_admin (and anyone with the
 # proc_admin permission) can act on ANY stage — handled in the service layer.
+#
+# If two DOAM roles are the same person at T&C (Managing Director and CEO, or
+# Financial Director and CFO), map both stages to that one role here rather than
+# editing any logic — that is the whole answer to "are they the same person".
 STAGE_ROLES = {
     "warehouse": {"storekeeper", "warehouse_manager"},
-    "factory_manager": {"factory_manager"},
     "purchasing": {"purchasing_manager"},
-    "finance": {"finance_manager", "finance_user"},
+    "factory_manager": {"factory_manager", "plant_director"},
+    "scd": {"supply_chain_director"},
+    "finance": {"finance_manager", "finance_user", "financial_director"},
     "cfo": {"cfo"},
-    "ceo": {"ceo"},
+    "ceo": {"ceo", "managing_director"},
+    "bod": {"board"},
 }
 
 # --- Amount-threshold routing (EGP-equivalent) ------------------------------
-# A stage is included in a PR's ladder only if the PR total is >= its threshold.
-# Warehouse / Factory / Purchasing are always required (threshold 0). Finance,
-# CFO and CEO join as the amount grows. Tunable here without touching logic.
-# Example: total 48,000 -> warehouse, factory_manager, purchasing, finance, cfo
-# = 5 approvers + the requester = 6 signatures, matching the real paper form.
+# A stage joins the ladder when the total EXCEEDS its threshold; a threshold of
+# 0 means always required. Exceeds, not "reaches", because the DOAM's bands are
+# written as "up to 10,000" then "10,001 to 200,000" — so 10,000 is tier 1 and
+# 10,000.01 is tier 2. Using >= here would put an exact 10,000 in the wrong tier.
+#
+# Only stages PRESENT in a matrix can ever be included, which is how CAPEX
+# leaves out Warehouse: a capital purchase is not a stores replenishment.
+
+# DOAM §4.1 — OPEX ladder (budgeted)
+#   up to 10,000          PRM                          (L4)
+#   10,001 -    200,000   Plant / Supply Chain Director (L2)
+#   200,001 -   500,000   Financial Director            (L2)
+#   500,001 - 2,000,000   MD *or* CFO                   (L1)  -> CFO carries it
+#   2,000,001 - 5,000,000 MD *and* CFO                  (L1)  -> both included
+#   5,000,001 - 10,000,000 Board
+#   above 10,000,000      Board, with a business case
+OPEX_MATRIX = {
+    "warehouse": 0,
+    "purchasing": 0,
+    "factory_manager": 10_000,
+    "scd": 10_000,
+    "finance": 200_000,
+    "cfo": 500_000,
+    "ceo": 2_000_000,
+    "bod": 5_000_000,
+}
+
+# DOAM §4.2 — CAPEX ladder. Every tier is a joint approval, which this engine
+# expresses by including both stages: each must sign before the request moves.
+#   up to 250,000          review SCD + FIND, approve PD + CFO
+#   250,001 - 2,000,000    + MD
+#   2,000,001 - 10,000,000 Board
+#   above 10,000,000       Board, with a business case
+CAPEX_MATRIX = {
+    "purchasing": 0,
+    "scd": 0,
+    "finance": 0,
+    "factory_manager": 0,
+    "cfo": 0,
+    "ceo": 250_000,
+    "bod": 2_000_000,
+}
+
+EXPENDITURE_KINDS = ["opex", "capex"]
+MATRICES = {"opex": OPEX_MATRIX, "capex": CAPEX_MATRIX}
+
+# The thresholds actually in force today, from the paper form. Read by the
+# per-department override table and by every existing call site. Note the
+# comparison for these is >= (a total of exactly 10,000 DOES pull in Finance),
+# which is the behaviour the form and the tests have always had; the DOAM's
+# bands are exclusive instead ("up to 10,000", then "10,001 to ..."), which is
+# why the two ladders cannot share one comparison.
 APPROVAL_MATRIX = {
     "warehouse": 0,
     "factory_manager": 0,
@@ -87,14 +187,60 @@ APPROVAL_MATRIX = {
     "ceo": 100_000,
 }
 
+# Above this, the DOAM requires a written business case in addition to Board
+# approval (§4.1 tier 7, §4.2 tier 4).
+BUSINESS_CASE_OVER = 10_000_000
 
-def build_ladder(total):
-    """Return the ordered list of stage keys required for a PR of `total`."""
+
+def build_ladder(total, kind=None):
+    """Return the ordered list of stage keys required for a request of `total`.
+
+    Called with NO kind — which is every existing call site — this is the paper
+    form's ladder and behaves exactly as it always has. Nothing about who signs
+    changes until the DOAM is signed and the caller starts passing a kind.
+
+    Pass kind="opex" (DOAM §4.1) or kind="capex" (§4.2) for the DOAM ladders.
+    An unrecognised kind falls back to DOAM OPEX rather than to no approvals: a
+    blank or fat-fingered value must never be the cheap path through the gate.
+    """
     try:
         t = float(total or 0)
     except (TypeError, ValueError):
         t = 0.0
-    return [s for s in LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
+    if kind is None:
+        # The form in force: inclusive thresholds, legacy stage order.
+        return [s for s in LEGACY_LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
+    matrix = MATRICES.get((kind or "").strip().lower(), OPEX_MATRIX)
+    return [s for s in DOAM_LADDER
+            if s in matrix and (matrix[s] <= 0 or t > matrix[s])]
+
+
+def final_approver_level(total, kind="opex"):
+    """The DOAM authority level that carries the final signature."""
+    ladder = build_ladder(total, kind)
+    return DOAM_LEVEL.get(ladder[-1], "L4") if ladder else "L4"
+
+
+def level_above(level):
+    """The next level up that SOMEBODY CAN ACTUALLY SIGN AT, for DOAM §4.3
+    single-source ("approved one level above the value tier").
+
+    The DOAM defines L3 (functional heads) but no ladder stage sits at L3 — the
+    Procurement Manager is L4 and the directors are L2. Returning a bare "one
+    higher" would hand back L3 for a tier-1 purchase, an escalation target with
+    no approver, and the request would wait forever with nothing to show for it.
+    So this walks up to the next level that a stage is mapped to. Caps at BOD;
+    there is nothing above the Board.
+    """
+    staffed = {DOAM_LEVEL[s] for s in LADDER if s in DOAM_LEVEL}
+    try:
+        start = LEVEL_ORDER.index(level)
+    except ValueError:
+        return "BOD"
+    for nxt in LEVEL_ORDER[start + 1:]:
+        if nxt in staffed:
+            return nxt
+    return "BOD"
 
 
 # --- Pricing gate (controlled Procure-to-Pay) -------------------------------
@@ -261,6 +407,60 @@ def stage_label(stage):
 # (pr_requests.single_source_reason). Enforced by services.rfq_gate_check.
 RFQ_QUOTE_MIN = 2            # competitive quotes required
 RFQ_VALUE_THRESHOLD = 25000  # EGP-equivalent total at/above which the rule applies
+
+# --- DOAM §4.3 sourcing bands ----------------------------------------------
+# The flat "2 quotes at 25,000" rule above is what the system enforced before
+# the DOAM; it is kept because the settings table and its tests read it, but
+# rfq_required_for() below is the rule that now applies. Each band gives the
+# minimum number of quotes and the governance step the DOAM attaches to it.
+#   up to 50,000          one quotation (spot buy), buyer records price basis
+#   50,001 -   500,000    three quotations, PD/SCD reviews the comparison
+#   500,001 - 2,000,000   three quotations plus negotiation, Procurement Committee
+#   above 2,000,000       formal tender, Tender Committee recommends
+SOURCING_BANDS = [
+    {"over": 0,          "quotes": 1, "mode": "spot",      "governance": "buyer_records_basis"},
+    {"over": 50_000,     "quotes": 3, "mode": "compare",   "governance": "director_reviews"},
+    {"over": 500_000,    "quotes": 3, "mode": "negotiate", "governance": "procurement_committee"},
+    {"over": 2_000_000,  "quotes": 3, "mode": "tender",    "governance": "tender_committee"},
+]
+
+
+def sourcing_band(total):
+    """The DOAM §4.3 band for an EGP-equivalent total. Bands are keyed on
+    'exceeds', matching the document's 'up to 50,000' / '50,001 to ...' wording."""
+    try:
+        t = float(total or 0)
+    except (TypeError, ValueError):
+        t = 0.0
+    band = SOURCING_BANDS[0]
+    for b in SOURCING_BANDS:
+        if b["over"] <= 0 or t > b["over"]:
+            band = b
+    return band
+
+
+def quotes_required(total):
+    """Minimum competitive quotes for a total, per DOAM §4.3."""
+    return sourcing_band(total)["quotes"]
+
+
+# --- DOAM §7.3.3 three-way match tolerance ---------------------------------
+# "within tolerance of 2% of value or 500 EGP ... or 5% of quantity, whichever
+# is greater." The old code used a flat 1% on value only, hardcoded. "Whichever
+# is greater" is the important half: on a small invoice the 500 EGP floor is the
+# binding number, and on a large one the percentage is.
+MATCH_TOLERANCE_PCT = 2.0
+MATCH_TOLERANCE_ABS = 500.0      # EGP
+MATCH_QTY_TOLERANCE_PCT = 5.0
+
+
+def match_tolerance_value(amount):
+    """Absolute EGP slack allowed on a value comparison of `amount`."""
+    try:
+        a = abs(float(amount or 0))
+    except (TypeError, ValueError):
+        a = 0.0
+    return max(a * MATCH_TOLERANCE_PCT / 100.0, MATCH_TOLERANCE_ABS)
 
 
 # --- Payment cap tolerance --------------------------------------------------
