@@ -53,8 +53,59 @@ def index():
 @permission_required("cost_view")
 def orders():
     only = request.args.get("costed") == "1"
-    return render_template("costing/orders.html", active="costing_orders",
-                           rows=svc.list_costed(only_costed=only), f_costed=only)
+    sort = (request.args.get("sort") or "risk").strip()
+    q = (request.args.get("q") or "").strip()
+    rows = svc.list_costed(only_costed=only)
+
+    if q:
+        needle = q.lower()
+        rows = [o for o in rows if needle in " ".join(str(o.get(k) or "").lower() for k in
+                ("order_no", "buyer", "style_name", "style_ref"))]
+
+    # PROBLEMS FIRST is the default, and it is the whole point of the page. A
+    # costing manager opens this to find the orders quietly losing money, and
+    # ship-date order buries them. Rank: money overspent against the quote,
+    # then thinnest delivered margin. Orders with no actual booked yet cannot be
+    # judged, so they sort last rather than looking healthy.
+    def overspend(o):
+        return (o["variance"]["total"]["value"] or 0) if o["has_actual"] else float("-inf")
+
+    def thinnest(o):
+        p = o["margin"]["act_pct"] if o["has_actual"] else o["margin"]["est_pct"]
+        return p if p is not None else 999.0
+
+    if sort == "margin":
+        rows.sort(key=thinnest)
+    elif sort == "ship":
+        rows.sort(key=lambda o: (o.get("ship_date") or "9999-99-99", o.get("order_no") or ""))
+    elif sort == "order":
+        rows.sort(key=lambda o: (o.get("order_no") or ""))
+    else:
+        sort = "risk"
+        rows.sort(key=lambda o: (-overspend(o), thinnest(o)))
+
+    # One honest summary line. Every figure below counts only orders that HAVE an
+    # actual booked, because mixing quoted-only orders into an "overspend" total
+    # would overstate or understate it depending on which happened to be costed.
+    booked = [o for o in rows if o["has_actual"]]
+    over = [o for o in booked if o["variance"]["total"]["flag"] == "unfavourable"]
+    losing = [o for o in booked if (o["margin"]["act_pct"] or 0) < 0]
+    thin = [o for o in booked if o["margin"]["act_pct"] is not None
+            and 0 <= o["margin"]["act_pct"] < VARIANCE_ALERT_PCT]
+    summary = {
+        "orders": len(rows),
+        "costed": sum(1 for o in rows if o.get("costed")),
+        "booked": len(booked),
+        "estimate": round(sum(o["estimate"]["total"] for o in booked), 2),
+        "actual": round(sum(o["actual"]["total"] for o in booked), 2),
+        "overspend": round(sum(o["variance"]["total"]["value"] for o in over), 2),
+        "over_n": len(over),
+        "losing_n": len(losing),
+        "thin_n": len(thin),
+    }
+    return render_template("costing/orders.html", active="cost_orders",
+                           rows=rows, f_costed=only, sort=sort, q=q, summary=summary,
+                           alert_pct=VARIANCE_ALERT_PCT)
 
 
 @bp.route("/order/<int:order_id>")
@@ -64,7 +115,7 @@ def sheet(order_id):
     bundle = svc.cost_sheet(order_id)
     if not bundle:
         abort(404)
-    return render_template("costing/sheet.html", active="costing_orders", **bundle,
+    return render_template("costing/sheet.html", active="cost_orders", **bundle,
                            kinds=BOM_KINDS, uoms=UOMS, categories=CATEGORIES,
                            alert_pct=VARIANCE_ALERT_PCT)
 

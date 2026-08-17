@@ -1121,4 +1121,5 @@ def my_work():
     total_actions = (len(data["sign_queue"]) + len(data["maint_approvals"])
                      + len(data["prob_pending"]) + len(data["late_milestones"])
                      + len(data["cmp_caps"]) + len(data["cmp_expiring"]))
-    return render_template("my_work.html", user=user, total_actions=total_actions, **data)
+    return render_template("my_work.html", user=user, total_actions=total_actions,
+                           active="my_work", **data)

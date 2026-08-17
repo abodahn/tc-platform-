@@ -208,6 +208,37 @@ a { color: inherit; text-decoration: none; }
    grouping instead. */
 .app.collapsed .nav-band { display: none; }
 
+/* ---------- Order costing table ----------
+   A money table is read by column, so the digits must line up: tabular-nums
+   makes 1,111 and 9,999 the same width. Severity is a faint row wash plus a
+   coloured figure, not a stripe: on a variance table the NUMBER is what the
+   reader is looking at, so that is what should carry the colour. */
+.cst-orders .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cst-orders td, .cst-orders th { vertical-align: top; }
+.cst-orders .row-warn > td { background: color-mix(in srgb, var(--warn) 5%, transparent); }
+.cst-orders .row-loss > td { background: color-mix(in srgb, var(--crit) 7%, transparent); }
+@supports not (background: color-mix(in srgb, red 5%, transparent)) {
+  .cst-orders .row-warn > td { background: var(--warn-bg); }
+  .cst-orders .row-loss > td { background: var(--crit-bg); }
+}
+.cst-v { font-weight: 700; font-variant-numeric: tabular-nums; }
+.cst-v.is-over  { color: var(--crit); }
+.cst-v.is-under { color: var(--ok); }
+.cst-v.is-flat  { color: var(--muted); }
+.cst-m { font-weight: 650; font-variant-numeric: tabular-nums; }
+.cst-m.is-loss { color: var(--crit); }
+.cst-m.is-thin { color: var(--warn); }
+.cst-m.is-ok   { color: var(--ok); }
+/* quoted -> delivered reads as one movement, so the arrow is quiet and the two
+   figures sit close enough to compare without the eye travelling. */
+.cst-move { display: flex; gap: 6px; align-items: baseline; justify-content: flex-end; }
+.cst-arrow { color: var(--muted); font-size: 11px; }
+[dir="rtl"] .cst-arrow { transform: scaleX(-1); display: inline-block; }
+
+/* Empty state that offers the next action instead of shrugging. */
+.empty { text-align: center; padding: 34px 20px; }
+.empty b { font-size: 15px; }
+
 /* "soon" tag on in-progress modules (admins only) */
 .nav-item .wip-tag {
   font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;

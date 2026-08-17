@@ -39,7 +39,7 @@ def _referrer_or(default):
 @permission_required("pln_view")
 def index():
     days = request.args.get("days") or BOARD_DAYS
-    return render_template("planning/index.html", active="pln_board",
+    return render_template("planning/index.html", active="planning",
                            d=svc.dashboard(days))
 
 
@@ -81,7 +81,7 @@ def order_detail(order_id):
     f = svc.feasibility(_pk(order_id))
     if not f:
         abort(404)
-    return render_template("planning/order.html", active="pln_board", f=f,
+    return render_template("planning/order.html", active="planning", f=f,
                            lines=svc.list_lines(active_only=True))
 
 
@@ -102,7 +102,7 @@ def smv_set(order_id):
 @login_required
 @permission_required("pln_plan")
 def allocate():
-    return render_template("planning/allocate.html", active="pln_board",
+    return render_template("planning/allocate.html", active="planning",
                            orders=svc.list_orders(), lines=svc.list_lines(active_only=True),
                            wi=None)
 
@@ -115,7 +115,7 @@ def whatif():
     wi = svc.what_if(request.form.get("order_id"), request.form.get("pline_id"),
                      request.form.get("start_date"), request.form.get("qty"),
                      request.form.get("smv"))
-    return render_template("planning/allocate.html", active="pln_board",
+    return render_template("planning/allocate.html", active="planning",
                            orders=svc.list_orders(), lines=svc.list_lines(active_only=True),
                            wi=wi, form=request.form)
 
@@ -181,7 +181,7 @@ def balance(order_id):
     b = svc.balance(_pk(order_id))
     if not b:
         abort(404)
-    return render_template("planning/balance.html", active="pln_board", b=b)
+    return render_template("planning/balance.html", active="planning", b=b)
 
 
 @bp.route("/balance/<int:order_id>/op", methods=["POST"])

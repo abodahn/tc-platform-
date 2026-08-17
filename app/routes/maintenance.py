@@ -1380,7 +1380,7 @@ def import_page():
             conn.close()
     return render_template("maintenance/import.html", kind=kind, result=None,
                            reg_result=reg_result, reg_parsed=reg_parsed,
-                           reg_stats=reg_stats, accept=ACCEPT, active="maint_settings",
+                           reg_stats=reg_stats, accept=ACCEPT, active="maint_import",
                            cols=(IMPORT_SPECS.get(kind) or {}).get("headers"))
 
 
@@ -1558,7 +1558,7 @@ def import_run(kind):
             flash("m_import_nothing", "error")
         return render_template("maintenance/import.html", kind=kind,
                                result={"added": added, "skipped": skipped, "errors": errors},
-                               accept=ACCEPT, active="maint_settings",
+                               accept=ACCEPT, active="maint_import",
                                cols=spec.get("headers"))
 
     if kind == "pm_checklist":
@@ -1606,7 +1606,7 @@ def import_run(kind):
             flash("m_import_nothing", "error")
         return render_template("maintenance/import.html", kind=kind,
                                result={"added": added, "skipped": skipped, "errors": errors},
-                               accept=ACCEPT, active="maint_settings",
+                               accept=ACCEPT, active="maint_import",
                                cols=spec.get("headers"))
 
     if kind == "pm_plans":
@@ -1661,7 +1661,7 @@ def import_run(kind):
             flash("m_import_nothing", "error")
         return render_template("maintenance/import.html", kind=kind,
                                result={"added": added, "skipped": skipped, "errors": errors},
-                               accept=ACCEPT, active="maint_settings",
+                               accept=ACCEPT, active="maint_import",
                                cols=spec.get("headers"))
 
     conn = _db()
