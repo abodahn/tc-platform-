@@ -74,7 +74,7 @@ def index():
 @login_required
 @permission_required("proc_view")
 def analytics():
-    return render_template("approvals/analytics.html", active="procurement",
+    return render_template("approvals/analytics.html", active="proc_analytics",
                            a=svc.analytics_summary())
 
 
@@ -105,7 +105,7 @@ def listing():
     mine = request.args.get("mine") == "1"
     user = _u()
     prs = svc.list_prs(status=status, requester=(user["username"] if mine else None))
-    return render_template("approvals/list.html", active="procurement",
+    return render_template("approvals/list.html", active="proc_list",
                            prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES)
 
 
@@ -143,7 +143,7 @@ def new():
     ticket_id = request.args.get("from_ticket")
     if ticket_id and ticket_id.isdigit():
         prefill = svc.ticket_prefill(int(ticket_id)) or {}
-    return render_template("approvals/new.html", active="procurement",
+    return render_template("approvals/new.html", active="proc_new",
                            vendors=svc.list_vendors(), units=C.UNITS,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            deliveries=C.DELIVERY_CONDITIONS, departments=svc.list_departments(),
@@ -284,7 +284,7 @@ def api_items():
 def item_request_new():
     from app.approvals import item_requests as ir
     u = _u() or {}
-    return render_template("approvals/item_request_new.html", active="procurement",
+    return render_template("approvals/item_request_new.html", active="proc_item_requests",
                            units=C.UNITS, item_categories=svc.item_categories(),
                            prefill={"name": (request.args.get("name") or "")[:200],
                                     "unit": (request.args.get("unit") or "")[:40],
@@ -319,7 +319,7 @@ def item_request_create():
 def item_requests():
     from app.approvals import item_requests as ir
     status = request.args.get("status", "pending")
-    return render_template("approvals/item_requests.html", active="procurement",
+    return render_template("approvals/item_requests.html", active="proc_item_requests",
                            status=status, requests=ir.list_requests(status),
                            counts=ir.counts(), refused=None)
 
@@ -327,7 +327,7 @@ def item_requests():
 def _queue(refused=None, code=200):
     from app.approvals import item_requests as ir
     status = request.args.get("status", "pending")
-    return render_template("approvals/item_requests.html", active="procurement",
+    return render_template("approvals/item_requests.html", active="proc_item_requests",
                            status=status, requests=ir.list_requests(status),
                            counts=ir.counts(), refused=refused), code
 
@@ -514,7 +514,7 @@ def edit(pr_id):
                "delivery_condition": pr.get("delivery_condition"), "currency": pr.get("currency"),
                "req_del_date": pr.get("req_del_date"), "asset_code": pr.get("asset_code"),
                "tax_rate": pr.get("tax_rate")}
-    return render_template("approvals/new.html", active="procurement",
+    return render_template("approvals/new.html", active="proc_list",
                            vendors=svc.list_vendors(), units=C.UNITS,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            deliveries=C.DELIVERY_CONDITIONS, departments=svc.list_departments(),
@@ -639,7 +639,7 @@ def detail(pr_id):
                      and pr["status"] in ("draft", "rejected", "pending"))
     # Requesters don't see commercial figures until Purchasing has priced the PR.
     show_commercial = is_priced or can_purchasing
-    return render_template("approvals/detail.html", active="procurement",
+    return render_template("approvals/detail.html", active="proc_list",
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
                            stage_label=C.stage_label, queued=queued,
                            current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
@@ -750,7 +750,7 @@ def budgets():
         b["spent"] = st["spent"] if st else 0
         b["remaining"] = st["remaining"] if st else None
         b["pct"] = st["pct"] if st else 0
-    return render_template("approvals/budgets.html", active="procurement",
+    return render_template("approvals/budgets.html", active="proc_budgets",
                            budgets=rows, can_manage=user_can("proc_admin"))
 
 
@@ -783,7 +783,7 @@ def delegations():
             "SELECT username, full_name, role FROM users WHERE is_active=1 ORDER BY username").fetchall()]
     finally:
         conn.close()
-    return render_template("approvals/delegations.html", active="procurement",
+    return render_template("approvals/delegations.html", active="proc_delegations",
                            delegations=svc.list_delegations(), users=users,
                            can_manage=user_can("proc_admin"))
 
@@ -1195,7 +1195,7 @@ def download_attachment(att_id):
 @login_required
 @permission_required("proc_view")
 def vendors():
-    return render_template("approvals/vendors.html", active="procurement",
+    return render_template("approvals/vendors.html", active="proc_vendors",
                            vendors=svc.list_vendors(active_only=False),
                            can_manage=user_can("proc_purchasing"))
 
@@ -1225,7 +1225,7 @@ def settings():
     depts = svc.list_departments()
     dept = request.args.get("department") or (depts[0] if depts else "")
     lang = (_u() or {}).get("lang_pref") or "en"
-    return render_template("approvals/settings.html", active="procurement",
+    return render_template("approvals/settings.html", active="proc_settings",
                            departments=depts, department=dept,
                            matrix=svc.get_dept_matrix(dept), ladder=C.LADDER,
                            stage_labels=C.STAGE_LABELS, default_matrix=C.APPROVAL_MATRIX,
@@ -1337,7 +1337,7 @@ def workflow():
     # The explanation prose lives in the database, so it cannot be swapped by the
     # client-side data-i18n pass — the reader's own language picks the column here.
     lang = (_u() or {}).get("lang_pref") or "en"
-    return render_template("approvals/workflow.html", active="procurement",
+    return render_template("approvals/workflow.html", active="proc_workflow",
                            v=svc.workflow_view(request.args.get("department"), lang),
                            can_edit=user_can("proc_admin"))
 

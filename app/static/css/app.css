@@ -510,6 +510,26 @@ a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
   padding: 18px 20px; box-shadow: var(--shadow-card); position: relative; overflow: hidden;
 }
+/* A KPI that links to the records it counts. Reusable: add .kpi-link to any
+   <a class="kpi">. The arrow is the affordance — a card that moves on hover but
+   shows no target reads as decoration, and a number nobody can open is a dead
+   end. Inherits colour so the card does not turn link-blue. */
+a.kpi-link {
+  display: block; color: inherit; text-decoration: none;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+a.kpi-link:hover, a.kpi-link:focus-visible {
+  border-color: var(--tc-red); box-shadow: var(--shadow-card-hover, var(--shadow-card));
+  transform: translateY(-2px);
+}
+a.kpi-link:focus-visible { outline: 2px solid var(--tc-red); outline-offset: 2px; }
+.kpi .kpi-go { width: 15px; height: 15px; color: var(--muted); opacity: 0; transition: opacity .16s ease; }
+a.kpi-link:hover .kpi-go, a.kpi-link:focus-visible .kpi-go { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  a.kpi-link, .kpi .kpi-go { transition: none; }
+  a.kpi-link:hover, a.kpi-link:focus-visible { transform: none; }
+}
+
 .kpi .ktop { display: flex; align-items: center; justify-content: space-between; }
 .kpi .kicon { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: var(--crit-bg); color: var(--tc-red); }
 .kpi .kval { font-size: 30px; font-weight: 800; letter-spacing: -1px; margin-top: 14px; }
