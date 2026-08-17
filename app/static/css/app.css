@@ -235,6 +235,66 @@ a { color: inherit; text-decoration: none; }
 .cst-arrow { color: var(--muted); font-size: 11px; }
 [dir="rtl"] .cst-arrow { transform: scaleX(-1); display: inline-block; }
 
+/* ---------- Production planning ----------
+   The load board is a heat grid, so the cell BACKGROUND carries the load and the
+   figure stays legible on top of it. Thresholds match the legend exactly (over
+   100 / 85-100 / under 85 / no capacity set) — a colour key that disagrees with
+   the code is worse than no key. */
+.pln-band {
+  display: flex; align-items: center; gap: 9px;
+  margin: 22px 0 9px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted);
+}
+.pln-band::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--line); }
+
+.pln-board .num, .pln-orders .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pln-cell { font-weight: 600; }
+.pln-cell.is-over  { background: color-mix(in srgb, var(--crit) 16%, transparent); color: var(--crit); font-weight: 800; }
+.pln-cell.is-tight { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.pln-cell.is-free  { background: color-mix(in srgb, var(--ok) 10%, transparent); color: var(--ok); }
+.pln-cell.is-none  { background: transparent; }
+@supports not (background: color-mix(in srgb, red 10%, transparent)) {
+  .pln-cell.is-over  { background: var(--crit-bg); }
+  .pln-cell.is-tight { background: var(--warn-bg); }
+  .pln-cell.is-free  { background: var(--ok-bg, transparent); }
+}
+
+.pln-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+  font-size: 11.5px; color: var(--muted); padding-top: 0;
+}
+.pln-key { display: inline-flex; align-items: center; gap: 6px; }
+.pln-legend .sw { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; border: 1px solid var(--line); }
+.pln-legend .sw-over  { background: color-mix(in srgb, var(--crit) 45%, transparent); }
+.pln-legend .sw-tight { background: color-mix(in srgb, var(--warn) 45%, transparent); }
+.pln-legend .sw-free  { background: color-mix(in srgb, var(--ok) 35%, transparent); }
+.pln-legend .sw-none  { background: transparent; }
+
+/* Feasibility + plan-vs-actual, from the theme rather than inline hex. */
+.pln-st {
+  display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px;
+  border-radius: var(--r-pill); white-space: nowrap;
+}
+.pln-st.is-ok   { background: var(--ok-bg, var(--have-soft, transparent)); color: var(--ok); }
+.pln-st.is-risk { background: var(--warn-bg); color: var(--warn); }
+.pln-st.is-late { background: var(--crit-bg); color: var(--crit); }
+.pln-st.is-idle { background: var(--surface-2, transparent); color: var(--muted); }
+.pln-v { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pln-v.is-behind { color: var(--crit); }
+.pln-v.is-ahead  { color: var(--ok); }
+
+/* A KPI acting as an active filter says so, rather than leaving the planner to
+   wonder why the table below is short. */
+a.kpi-link.is-on { border-color: var(--tc-red); box-shadow: inset 0 0 0 1px var(--tc-red); }
+
+.pln-orders .row-warn > td { background: color-mix(in srgb, var(--warn) 5%, transparent); }
+.pln-orders .row-loss > td { background: color-mix(in srgb, var(--crit) 7%, transparent); }
+@supports not (background: color-mix(in srgb, red 5%, transparent)) {
+  .pln-orders .row-warn > td { background: var(--warn-bg); }
+  .pln-orders .row-loss > td { background: var(--crit-bg); }
+}
+
 /* Empty state that offers the next action instead of shrugging. */
 .empty { text-align: center; padding: 34px 20px; }
 .empty b { font-size: 15px; }

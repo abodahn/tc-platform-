@@ -39,8 +39,56 @@ def _referrer_or(default):
 @permission_required("pln_view")
 def index():
     days = request.args.get("days") or BOARD_DAYS
-    return render_template("planning/index.html", active="planning",
-                           d=svc.dashboard(days))
+    try:
+        days = max(3, min(60, int(days)))
+    except (TypeError, ValueError):
+        days = BOARD_DAYS
+    d = svc.dashboard(days)
+
+    # The KPI tiles counted "5 orders late" and then gave the planner no way to
+    # SEE those five. dashboard() already separates them, so each tile now filters
+    # the order book below it.
+    show = (request.args.get("show") or "all").strip()
+    BUCKETS = {
+        "late": lambda o: o["status"] == "late",
+        "at_risk": lambda o: o["status"] == "at_risk",
+        "unplanned": lambda o: o["status"] in ("unplanned", "no_capacity"),
+        "behind": lambda o: o["vs"]["status"] == "behind",
+        "smv": lambda o: o["smv_resolved"]["conflict"],
+    }
+    orders = d["orders"]
+    if show in BUCKETS:
+        orders = [o for o in orders if BUCKETS[show](o)]
+    else:
+        show = "all"
+
+    q = (request.args.get("q") or "").strip()
+    if q:
+        n = q.lower()
+        orders = [o for o in orders if n in " ".join(
+            str(o.get(k) or "").lower() for k in ("order_no", "buyer", "style_name", "style_ref"))]
+
+    # URGENCY FIRST, always. A planner opens this to find what will miss its ship
+    # date; the previous order was whatever the query returned. Late before
+    # at-risk before everything else, then the most days late, then the nearest
+    # ship date — so the order that needs a decision today is the top row.
+    RANK = {"late": 0, "no_capacity": 1, "at_risk": 2, "unplanned": 3,
+            "on_time": 4, "no_ship_date": 5}
+    sort = (request.args.get("sort") or "urgency").strip()
+    if sort == "ship":
+        orders = sorted(orders, key=lambda o: (o.get("ship_date") or "9999-99-99",))
+    elif sort == "order":
+        orders = sorted(orders, key=lambda o: (o.get("order_no") or ""))
+    else:
+        sort = "urgency"
+        orders = sorted(orders, key=lambda o: (
+            RANK.get(o["status"], 9),
+            -(o.get("days_late") or 0),
+            o.get("ship_date") or "9999-99-99"))
+
+    return render_template("planning/index.html", active="planning", d=d,
+                           orders=orders, show=show, sort=sort, q=q, days=days,
+                           shown=len(orders), total=len(d["orders"]))
 
 
 @bp.route("/lines")
