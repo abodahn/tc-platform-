@@ -28,33 +28,45 @@
   </div>
 </form>
 
-{# Kanban board grouped into logical columns #}
-{% set groups = [
-  ('m.col_new', 'New', ['submitted','under_review','reopened']),
-  ('m.col_assigned', 'Assigned / Diagnosis', ['assigned','diagnosis']),
-  ('m.col_spare', 'Spare & Approval', ['spare_required','waiting_stock','waiting_approval','approved_issue']),
-  ('m.col_repair', 'Repair / Testing', ['parts_issued','repair','testing']),
-  ('m.col_done', 'Resolved / Closed', ['resolved','closed','rejected','cancelled'])
-] %}
-<div class="mkanban">
+{# Kanban board grouped into logical columns (C.TICKET_BOARD: the move endpoint
+   renders from the same list, so columns and transitions can't drift apart). #}
+{% set groups = C.TICKET_BOARD %}
+{% set can_move = mcan('maint_manage') %}
+{% if can_move %}
+<p class="mk-hint"><svg class="ico"><use href="#i-kanban"></use></svg><span data-i18n="m.kb_hint">Drag a card to another column to move the ticket. Or focus a card: Space picks it up, arrow keys choose a column, Enter drops it.</span></p>
+{% endif %}
+<div class="mkanban" data-kanban>
   {% for key, title, states in groups %}
   {% set col = tickets|selectattr('status','in',states)|list %}
-  <div class="mkcol">
-    <h4><span data-i18n="{{ key }}">{{ title }}</span><span class="tag">{{ col|length }}</span></h4>
+  <div class="mkcol" data-col="{{ loop.index0 }}" data-primary="{{ states[0] }}">
+    <h4><span data-i18n="{{ key }}">{{ title }}</span><span class="tag" data-mk-count>{{ col|length }}</span></h4>
     <div class="mkbody">
       {% for t in col %}
-      <a class="mkcard" href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}">
-        <div class="flex between center"><span class="mk-no">{{ t.ticket_no }}</span><span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span></div>
+      <a class="mkcard" href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}"
+         {% if can_move %}draggable="true" data-no="{{ t.ticket_no }}"
+         data-move-url="{{ url_for('maintenance.ticket_move', tid=t.id) }}"
+         data-allow="{% for _k, _t, _s in groups %}{% if mmove_ok(t.status, _s[0]) %}{{ loop.index0 }} {% endif %}{% endfor %}"{% endif %}>
+        <div class="flex between center">
+          <span class="mk-id">{% if can_move %}<svg class="ico mk-grip" aria-hidden="true"><use href="#i-apps"></use></svg>{% endif %}<span class="mk-no">{{ t.ticket_no }}</span></span>
+          <span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span>
+        </div>
         <div class="mk-meta">{{ t.machine_code }} · {{ t.department or '—' }}</div>
         <div style="font-size:12.5px;margin-top:6px">{{ (t.description or '')[:64] }}</div>
         <div class="flex between center" style="margin-top:8px">
-          <span class="badge {{ mbadge(t.status) }}">{{ t.status|mhuman }}</span>
+          <span class="badge {{ mbadge(t.status) }}" data-mk-status>{{ t.status|mhuman }}</span>
           <span class="muted" style="font-size:11px">{{ t.assigned_to or '—' }}</span>
         </div>
       </a>
-      {% else %}<div class="empty muted" style="padding:18px;font-size:12px" data-i18n="m.no_records">No records</div>{% endfor %}
+      {% endfor %}
+      <div class="empty muted" style="padding:18px;font-size:12px" data-i18n="m.no_records" {{ 'hidden' if col }}>No records</div>
     </div>
   </div>
   {% endfor %}
 </div>
+<div class="mk-live" role="status" aria-live="polite" id="mkLive"></div>
+{% endblock %}
+
+{% block scripts %}
+{# separate block scope -- re-check the permission rather than reusing can_move #}
+{% if mcan('maint_manage') %}<script src="{{ url_for('static', filename='js/tc-kanban.js') }}"></script>{% endif %}
 {% endblock %}

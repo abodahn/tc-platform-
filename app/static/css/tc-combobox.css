@@ -1,0 +1,172 @@
+/* ============================================================
+   TC Platform — searchable combobox (tc-combobox.js)
+   Built entirely from tokens.css; light + dark, LTR + RTL.
+   ============================================================ */
+
+.tc-cb {
+  position: relative;
+  display: block;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.tc-cb.is-inline { display: inline-block; }
+
+/* The real form control. Kept in the layout at 1px and transparent rather than
+   display:none — a `required` select that is display:none makes the browser
+   refuse to submit ("not focusable") with no visible message. */
+.tc-cb-native {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-start: 12px;
+  width: 1px; height: 1px;
+  opacity: 0;
+  border: 0; padding: 0; margin: 0;
+  pointer-events: none;
+  appearance: none;
+}
+
+.tc-cb-input {
+  width: 100%;
+  min-height: 34px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  padding-inline: 12px 34px;
+  padding-block: 0;
+  outline: none;
+  text-overflow: ellipsis;
+  transition: border-color 140ms ease-out, box-shadow 140ms ease-out;
+}
+.tc-cb-input::placeholder { color: var(--soft-ink); }
+.tc-cb-input:hover:not(:disabled) { border-color: var(--line-2); }
+.tc-cb-input:focus,
+.tc-cb.is-open .tc-cb-input {
+  border-color: var(--tc-red);
+  box-shadow: 0 0 0 4px rgba(237, 28, 36, .1);
+}
+.tc-cb-input:disabled { background: var(--panel-2); color: var(--muted); cursor: not-allowed; }
+
+/* Caret — a CSS chevron, no icon dependency. */
+.tc-cb-caret {
+  position: absolute;
+  inset-inline-end: 12px;
+  inset-block-start: 50%;
+  width: 7px; height: 7px;
+  margin-block-start: -5px;
+  border-inline-end: 1.5px solid var(--muted);
+  border-block-end: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+  pointer-events: none;
+  transition: transform 140ms ease-out;
+}
+.tc-cb.is-open .tc-cb-caret { transform: rotate(-135deg); margin-block-start: -2px; }
+
+.tc-cb-clear {
+  position: absolute;
+  inset-inline-end: 30px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px; line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.tc-cb-clear:hover { background: var(--panel-2); color: var(--ink); }
+.tc-cb-clear[hidden] { display: none; }
+
+/* ---------- the popup ---------- */
+/* position:fixed, placed by JS from getBoundingClientRect, so no ancestor with
+   overflow:hidden/auto (panels, .tbl-wrap, modals) can clip it. */
+.tc-cb-pop {
+  position: fixed;
+  z-index: 9000;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-strong);
+  padding: 4px;
+  font-size: var(--fs-sm);
+  animation: tc-cb-in 140ms ease-out;
+}
+.tc-cb-pop[hidden] { display: none; }
+
+@keyframes tc-cb-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.tc-cb-pop.is-up { animation-name: tc-cb-in-up; }
+@keyframes tc-cb-in-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.tc-cb-opt {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: 9px 10px;
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.tc-cb-opt .tc-cb-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.tc-cb-opt mark {
+  background: rgba(237, 28, 36, .16);
+  color: inherit;
+  border-radius: 3px;
+  padding-inline: 1px;
+}
+.tc-cb-hint {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  max-width: 45%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tc-cb-opt.is-current { font-weight: 600; }
+.tc-cb-opt.is-current::after {
+  content: "✓";
+  color: var(--tc-red);
+  font-size: var(--fs-xs);
+}
+.tc-cb-opt.is-active { background: var(--panel-2); }
+.tc-cb-opt.is-active,
+.tc-cb-opt:hover { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
+
+.tc-cb-msg {
+  padding: 12px 10px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Screen-reader-only result count. */
+.tc-cb-live {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Shop-floor / tablet: real hit targets, matching app.css's coarse-pointer pass. */
+@media (pointer: coarse) {
+  .tc-cb-input { min-height: 46px; }
+  .tc-cb-opt { padding-block: 13px; }
+  .tc-cb-clear { width: 28px; height: 28px; font-size: 19px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-cb-pop { animation: none; }
+  .tc-cb-input, .tc-cb-caret { transition: none; }
+}

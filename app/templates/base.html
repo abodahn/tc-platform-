@@ -14,6 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="TC Platform">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tc-combobox.css') }}">
   {% if cu %}<link rel="stylesheet" href="{{ url_for('static', filename='css/garamento.css') }}">{% endif %}
   {% block head %}{% endblock %}
   <script>
@@ -233,6 +234,9 @@
 {% if cu %}{% include "_garamento.html" %}{% endif %}
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{# Searchable dropdowns. Loaded after app.js so window.tcT / tcApplyI18n exist
+   when it enhances the selects on this page. #}
+<script src="{{ url_for('static', filename='js/tc-combobox.js') }}"></script>
 {% if cu %}<script src="{{ url_for('static', filename='js/garamento.js') }}"></script>
 <script src="{{ url_for('static', filename='js/autocorrect.js') }}"></script>{% endif %}
 <script>

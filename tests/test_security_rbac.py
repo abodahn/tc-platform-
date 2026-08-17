@@ -38,7 +38,16 @@ def test_role_labels_and_choices():
     for key in ROLES:
         assert role_label(key)
     choices = all_role_choices()
-    assert len(choices) == len(ROLES)
+    # all_role_choices() merges DB-defined roles over the static ones by design
+    # (the roles manager, and the five DOAM authority roles seeded with the
+    # approvals schema). So the invariant is CONTAINMENT, not equality: every
+    # built-in role must be offered. Asserting equality made this test depend on
+    # whether an earlier test in the run had seeded a database — it passed alone
+    # and failed in the full suite.
+    keys = [k for k, _ in choices]
+    missing = [k for k in ROLES if k not in keys]
+    assert not missing, "built-in roles missing from the choices: %s" % missing
+    assert len(keys) == len(set(keys)), "a role is offered twice"
     assert all(isinstance(c, tuple) and len(c) == 2 for c in choices)
 
 

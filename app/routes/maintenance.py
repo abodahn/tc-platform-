@@ -117,7 +117,10 @@ def mbadge(value):
 
 @bp.app_context_processor
 def _inject():
-    return {"mbadge": lambda v: _BADGE.get(v, "b-unknown"), "C": C, "mcan": _can}
+    return {"mbadge": lambda v: _BADGE.get(v, "b-unknown"), "C": C, "mcan": _can,
+            # kanban board: may a card in status X be dropped on a column whose
+            # primary status is Y? Single source of truth = services.can_transition.
+            "mmove_ok": svc.can_transition}
 
 
 # --------------------------------------------------------------------------
@@ -485,6 +488,39 @@ def ticket_reopen(tid):
     svc.reopen_ticket(tid, _u(), request.remote_addr)
     flash("m_saved", "success")
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
+
+
+@bp.route("/tickets/<int:tid>/move", methods=["POST"])
+@login_required
+def ticket_move(tid):
+    """Kanban drag-and-drop: move a ticket to a board column's primary status.
+
+    Same permission as the other status-changing ticket actions (assign / reject
+    / close / reopen). NEVER forces: an illegal move is refused with its reason
+    so the board can roll the card back and say why.
+    """
+    _require("maint_manage")
+    target = ((request.get_json(silent=True) or {}).get("target") or "").strip()
+    conn = _db()
+    try:
+        if target not in C.TICKET_STATUSES:
+            ok, msg = False, "invalid_transition"
+        else:
+            ok, msg = svc.set_ticket_status(conn, tid, target, _u(), request.remote_addr)
+            if ok:
+                conn.commit()
+        row = conn.execute("SELECT status FROM mnt_tickets WHERE id=?", (tid,)).fetchone()
+    finally:
+        conn.close()
+    status = row["status"] if row else None
+    return jsonify({
+        "ok": ok, "error": msg, "status": status,
+        "status_label": mtext(status) if status else "",
+        "badge": _BADGE.get(status, "b-unknown"),
+        # columns this ticket may now be dropped on, by board index
+        "allow": [i for i, (_k, _t, sts) in enumerate(C.TICKET_BOARD)
+                  if svc.can_transition(status, sts[0])],
+    })
 
 
 @bp.route("/tickets/<int:tid>/attach", methods=["POST"])

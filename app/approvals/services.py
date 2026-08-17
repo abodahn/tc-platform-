@@ -2534,8 +2534,12 @@ def rfq_gate_check(conn, pr):
     if C.DOAM_IN_FORCE:
         band = C.sourcing_band(total)
         required_quotes = band["quotes"]
-        if required_quotes <= 1:
-            return True, ""      # spot buy: the buyer records the price basis
+        # The lowest band is "One quotation — buyer records the price basis". It
+        # is ONE, not none: returning early here let a 48,000 EGP purchase be
+        # signed with no recorded price basis at all, which is the opposite of
+        # what the band says. A genuinely uncontested buy still has to carry a
+        # single-source justification, which is checked just below.
+        required_quotes = max(1, required_quotes)
     else:
         if total < num_setting(conn, "rfq_value_threshold"):
             return True, ""      # below the competitive-quote threshold

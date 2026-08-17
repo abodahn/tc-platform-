@@ -889,8 +889,35 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .mkcol .mkbody { padding: 10px; display: flex; flex-direction: column; gap: 10px; max-height: 62vh; overflow-y: auto; }
 .mkcard { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px; box-shadow: var(--shadow-card); }
 .mkcard:hover { border-color: rgba(237,28,36,.35); }
-.mkcard .mk-no { font-weight: 700; font-size: 12.5px; }
+.mkcard .mk-no { font-weight: 700; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .mkcard .mk-meta { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+.mkcol h4 .tag { font-variant-numeric: tabular-nums; }
+
+/* ---- Kanban drag & drop (js/tc-kanban.js) ---- */
+.mk-hint { display: flex; align-items: center; gap: 8px; color: var(--muted);
+  font-size: 12.5px; margin: 0 0 12px; }
+.mkcard .mk-id { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mkcard .mk-grip { width: 14px; height: 14px; flex: 0 0 14px; color: var(--soft-ink); opacity: .5; }
+.mkcard[draggable="true"] { cursor: grab; }
+.mkcard[draggable="true"]:active { cursor: grabbing; }
+.mkcard[draggable="true"]:hover .mk-grip,
+.mkcard[draggable="true"]:focus-visible .mk-grip { opacity: 1; color: var(--tc-red); }
+.mkcard[draggable="true"] { transition: transform 160ms ease-out, box-shadow 160ms ease-out, opacity 160ms ease-out; }
+.mkcard.mk-dragging { transform: scale(1.02); box-shadow: var(--shadow-strong);
+  border-color: var(--tc-red); opacity: .92; }
+/* drop target / picked-up target column */
+.mkcol.mk-drop, .mkcol.mk-target { border-color: var(--tc-red); background: var(--crit-bg); }
+.mkcol.mk-target { box-shadow: inset 0 0 0 1px var(--tc-red); }
+/* columns this card cannot move to */
+.mkcol.mk-inert { opacity: .42; }
+.mkcol.mk-inert .mkbody { cursor: not-allowed; }
+/* live region for keyboard moves (screen readers only) */
+.mk-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .mkcard[draggable="true"] { transition: none; }
+  .mkcard.mk-dragging { transform: none; }
+}
 
 /* horizontal stat bars for charts */
 .hbar { display: grid; grid-template-columns: 130px 1fr 46px; align-items: center; gap: 10px; margin: 7px 0; font-size: 12.5px; }
