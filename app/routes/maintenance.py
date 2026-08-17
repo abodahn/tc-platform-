@@ -562,9 +562,18 @@ def machines():
     # "show me only the current fleet" filter the owner's decision depends on.
     q = (request.args.get("q") or "").strip()
     fleet = request.args.get("fleet") or ""
+    # The dashboard counts "7 machines stopped" and a supervisor needs to know
+    # WHICH seven. Validated against the known statuses rather than dropped into
+    # the query, so a hand-typed ?status= cannot reach the SQL.
+    status = (request.args.get("status") or "").strip().lower()
+    if status not in {s for s in getattr(C, "MACHINE_STATUSES", ())}:
+        status = ""
     where, args = ["is_active=1"], []
     if fleet == "current":
         where.append("in_register_2023=1")
+    if status:
+        where.append("status=?")
+        args.append(status)
     if q:
         where.append("(LOWER(code) LIKE ? OR LOWER(name) LIKE ? OR LOWER(serial) LIKE ? "
                      "OR LOWER(legacy_card_no) LIKE ? OR LOWER(brand) LIKE ? "
@@ -577,7 +586,8 @@ def machines():
     rows = _all("SELECT * FROM mnt_machines WHERE " + w + " ORDER BY code LIMIT %d"
                 % MACHINE_LIST_CAP, tuple(args))
     return render_template("maintenance/machines.html", machines=rows, total=total,
-                           q=q, fleet=fleet, cap=MACHINE_LIST_CAP, active="maint_machines")
+                           q=q, fleet=fleet, status=status, statuses=C.MACHINE_STATUSES,
+                           cap=MACHINE_LIST_CAP, active="maint_machines")
 
 
 @bp.route("/machines/<int:mid>")
@@ -864,8 +874,28 @@ def spares():
             finally:
                 conn.close()
         return redirect(url_for("maintenance.spares"))
-    rows = _all("SELECT * FROM mnt_spare_parts WHERE is_active=1 ORDER BY code")
-    return render_template("maintenance/spares.html", spares=rows, active="maint_spares")
+    # Same reason as the machine status filter: the dashboard counts parts that
+    # are out or below reorder, and the storekeeper needs the list, not the
+    # number. Comparing to reorder_level (not min_level) matches the auto-reorder
+    # bridge, so the two never disagree about what "low" means.
+    stock = (request.args.get("stock") or "").strip().lower()
+    where = ["is_active=1"]
+    if stock == "out":
+        where.append("COALESCE(stock_qty,0) <= 0")
+    elif stock == "low":
+        where.append("COALESCE(stock_qty,0) > 0 AND "
+                     "COALESCE(stock_qty,0) <= COALESCE(reorder_level,0)")
+    else:
+        stock = ""
+    q = (request.args.get("q") or "").strip()
+    args = []
+    if q:
+        where.append("(LOWER(code) LIKE ? OR LOWER(name) LIKE ? OR LOWER(category) LIKE ?)")
+        args += ["%" + q.lower() + "%"] * 3
+    rows = _all("SELECT * FROM mnt_spare_parts WHERE " + " AND ".join(where)
+                + " ORDER BY code", tuple(args))
+    return render_template("maintenance/spares.html", spares=rows, stock=stock, q=q,
+                           active="maint_spares")
 
 
 @bp.route("/spares/<int:sid>")

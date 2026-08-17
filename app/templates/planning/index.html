@@ -116,21 +116,34 @@
   </div>
   <div class="table-wrap">
     <table class="table pln-board">
+      {# The line name is the row's identity, so it STAYS PUT while you scroll
+         through fourteen day columns — otherwise you are reading a percentage
+         with no idea which line it belongs to. Header sticks for the same
+         reason. Weekday and weekend shading because a factory schedules by the
+         working week, not by "08-17". #}
       <thead><tr>
-        <th data-i18n="pln.field.line">Line</th>
+        <th class="pln-stick" data-i18n="pln.field.line">Line</th>
         <th class="num" data-i18n="pln.field.capacity">Capacity / day</th>
-        {% for dt in d.board.dates %}<th class="num">{{ dt[5:] }}</th>{% endfor %}
+        {% for b in board_days %}
+        <th class="num pln-day{{ ' is-weekend' if b.weekend }}{{ ' is-today' if b.today }}">
+          <span class="pln-wd">{{ b.wd }}</span>
+          <span class="pln-dd">{{ b.dd }}</span>
+        </th>{% endfor %}
       </tr></thead>
       <tbody>
       {% for g in d.board.grid %}
         <tr>
-          <td><a href="{{ url_for('planning.lines') }}"><b>{{ g.line.code or g.line.name }}</b></a>
+          <td class="pln-stick"><a href="{{ url_for('planning.lines') }}"><b>{{ g.line.code or g.line.name }}</b></a>
             {% if not g.line.active %} <span class="tag" data-i18n="pln.status.inactive">Inactive</span>{% endif %}
             <div class="muted" style="font-size:11px">{{ g.line.name }} · {{ g.line.section or '—' }}</div></td>
           <td class="num">{{ g.capacity|round(0)|int }}</td>
           {% for c in g.cells %}
-            <td class="num pln-cell {{ 'is-over' if c.over else ('is-tight' if c.pct >= 85 else ('is-free' if c.pct > 0 else '')) }}{{ ' is-none' if c.no_cap }}">
-              {% if c.no_cap %}<span class="muted">—</span>{% else %}{{ c.pct|round(0)|int }}%{% endif %}</td>
+            {% set b = board_days[loop.index0] %}
+            <td class="num pln-cell {{ 'is-over' if c.over else ('is-tight' if c.pct >= 85 else ('is-free' if c.pct > 0 else 'is-empty')) }}{{ ' is-none' if c.no_cap }}{{ ' is-weekend' if b.weekend }}"
+                title="{{ b.iso }} · {{ c.minutes|round(0)|int }} min">
+              {% if c.no_cap %}<span class="muted">—</span>
+              {% elif c.pct <= 0 %}<span class="pln-zero">·</span>
+              {% else %}{{ c.pct|round(0)|int }}%{% endif %}</td>
           {% endfor %}
         </tr>
       {% else %}

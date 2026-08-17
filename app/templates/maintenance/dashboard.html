@@ -13,24 +13,58 @@
   {% endif %}
 </div>
 
-{# KPI grid #}
+{#  Twelve equally-weighted tiles in one block is a readout: a supervisor cannot
+    tell what needs doing this morning, and none of the numbers opened anything.
+    They are now three bands — WORK, ASSETS & PARTS, PERFORMANCE — and every
+    count links to the records it counts. The last three are measurements, not
+    work queues, so they stay plain: a link that goes nowhere useful is worse
+    than no link.  #}
+{% macro k(cls, icon, val, label, href='', suf='') %}
+  {% if href %}
+  <a class="kpi kpi-link {{ cls }}" href="{{ href }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-{{ icon }}"></use></svg></div>
+      <svg class="ico kpi-go" aria-hidden="true"><use href="#i-external"></use></svg></div>
+    <div class="kval" data-count="{{ val }}" data-suffix="{{ suf }}">0</div>
+    <div class="klabel" data-i18n="{{ label }}">{{ label }}</div></a>
+  {% else %}
+  <div class="kpi {{ cls }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-{{ icon }}"></use></svg></div></div>
+    <div class="kval" data-count="{{ val }}" data-suffix="{{ suf }}">0</div>
+    <div class="klabel" data-i18n="{{ label }}">{{ label }}</div></div>
+  {% endif %}
+{% endmacro %}
+
+<div class="pln-band" data-i18n="m.band.work">Work today</div>
 <div class="grid cols-4">
-  {% macro k(cls, icon, val, label, suf='') %}
-  <div class="kpi {{ cls }}"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-{{ icon }}"></use></svg></div></div>
-    <div class="kval" data-count="{{ val }}" data-suffix="{{ suf }}">0</div><div class="klabel" data-i18n="{{ label }}">{{ label }}</div></div>
-  {% endmacro %}
-  {{ k('', 'kanban', kpis.open_tickets, 'm.open_tickets') }}
-  {{ k('warn', 'alert', kpis.critical, 'm.critical') }}
-  {{ k('warn', 'factory', kpis.machines_stopped, 'm.machines_stopped') }}
-  {{ k('info', 'settings', kpis.under_maint, 'm.under_maint') }}
-  {{ k('warn', 'cart', kpis.waiting_spare, 'm.waiting_spare') }}
-  {{ k('info', 'check', kpis.pending_appr, 'm.pending_appr') }}
-  {{ k('warn', 'boxes', kpis.low_stock, 'm.low_stock') }}
-  {{ k('warn', 'alert', kpis.out_stock, 'm.out_stock') }}
-  {{ k('warn', 'refresh', kpis.pm_overdue, 'm.pm_overdue') }}
+  {{ k('', 'kanban', kpis.open_tickets, 'm.open_tickets',
+       url_for('maintenance.tickets', status='open')) }}
+  {{ k('warn', 'alert', kpis.critical, 'm.critical',
+       url_for('maintenance.tickets', priority='critical')) }}
+  {{ k('info', 'check', kpis.pending_appr, 'm.pending_appr',
+       url_for('maintenance.approvals')) }}
+  {{ k('warn', 'refresh', kpis.pm_overdue, 'm.pm_overdue',
+       url_for('maintenance.pm')) }}
+</div>
+
+<div class="pln-band" data-i18n="m.band.assets">Assets and parts</div>
+<div class="grid cols-4">
+  {{ k('warn', 'factory', kpis.machines_stopped, 'm.machines_stopped',
+       url_for('maintenance.machines', status='stopped')) }}
+  {{ k('info', 'settings', kpis.under_maint, 'm.under_maint',
+       url_for('maintenance.machines', status='under_maintenance')) }}
+  {{ k('warn', 'cart', kpis.waiting_spare, 'm.waiting_spare',
+       url_for('maintenance.machines', status='waiting_spare')) }}
+  {{ k('warn', 'alert', kpis.out_stock, 'm.out_stock',
+       url_for('maintenance.spares', stock='out')) }}
+</div>
+
+<div class="pln-band" data-i18n="m.band.perf">Performance</div>
+<div class="grid cols-4">
+  {{ k('warn', 'boxes', kpis.low_stock, 'm.low_stock',
+       url_for('maintenance.spares', stock='low')) }}
   {{ k('', 'clock', kpis.downtime_month, 'm.downtime_month') }}
   {{ k('good', 'trend', kpis.mttr, 'm.mttr') }}
-  {{ k('good', 'shield', kpis.sla, 'm.sla', '%') }}
+  {{ k('good', 'shield', kpis.sla, 'm.sla', '', '%') }}
 </div>
 
 <a class="ai-banner mt-6" href="{{ url_for('maintenance.ai_insights') }}">

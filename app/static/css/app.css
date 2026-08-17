@@ -249,6 +249,32 @@ a { color: inherit; text-decoration: none; }
 .pln-band::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--line); }
 
 .pln-board .num, .pln-orders .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* The line name is the row's identity, so it stays put while you scroll through
+   fourteen day columns. Without this you end up reading a percentage with no
+   idea which line it belongs to, which is what made the board unusable. */
+.pln-board .pln-stick {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--panel); min-width: 168px;
+  box-shadow: 1px 0 0 var(--line);
+}
+[dir="rtl"] .pln-board .pln-stick { left: auto; right: 0; box-shadow: -1px 0 0 var(--line); }
+.pln-board thead .pln-stick { z-index: 3; }
+.pln-board thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+
+/* Weekday over date: a factory schedules by the working week, and "08-17" alone
+   does not say whether that is a Sunday. */
+.pln-day { line-height: 1.15; }
+.pln-day .pln-wd { display: block; font-size: 9.5px; letter-spacing: .04em;
+                   text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.pln-day .pln-dd { display: block; font-size: 11.5px; }
+.pln-day.is-weekend .pln-wd, .pln-day.is-weekend .pln-dd { color: var(--muted); opacity: .75; }
+.pln-day.is-today { box-shadow: inset 0 -2px 0 var(--tc-red); }
+.pln-day.is-today .pln-wd { color: var(--tc-red); }
+.pln-cell.is-weekend:not(.is-over):not(.is-tight) { background: color-mix(in srgb, var(--muted) 6%, transparent); }
+/* An empty day is noise as "0%"; a dot keeps the grid's shape readable so the
+   eye follows the load profile rather than a field of zeros. */
+.pln-zero { color: var(--muted); opacity: .45; }
 .pln-cell { font-weight: 600; }
 .pln-cell.is-over  { background: color-mix(in srgb, var(--crit) 16%, transparent); color: var(--crit); font-weight: 800; }
 .pln-cell.is-tight { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }

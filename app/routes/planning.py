@@ -86,8 +86,25 @@ def index():
             -(o.get("days_late") or 0),
             o.get("ship_date") or "9999-99-99"))
 
+    # The board hands back bare ISO strings, and a header reading "08-17" tells a
+    # planner nothing they schedule by. Factories plan around the working week, so
+    # enrich here (not in the service, whose `dates` the CSV export also reads)
+    # with the weekday, whether it is a weekend, and which column is today.
+    from datetime import date as _d
+    _today = _d.today().isoformat()
+    board_days = []
+    for iso in d["board"]["dates"]:
+        try:
+            dt = _d.fromisoformat(iso)
+            wd, weekend = dt.strftime("%a"), dt.weekday() >= 5
+        except (TypeError, ValueError):
+            wd, weekend = "", False
+        board_days.append({"iso": iso, "dd": iso[5:], "wd": wd,
+                           "weekend": weekend, "today": iso == _today})
+
     return render_template("planning/index.html", active="planning", d=d,
                            orders=orders, show=show, sort=sort, q=q, days=days,
+                           board_days=board_days,
                            shown=len(orders), total=len(d["orders"]))
 
 

@@ -192,14 +192,25 @@ APPROVAL_MATRIX = {
 BUSINESS_CASE_OVER = 10_000_000
 
 
+# THE DOAM IS THE POLICY IN FORCE. Ahmed confirmed it is mandatory, so the
+# ladders in §4.1 and §4.2 now govern every request; the paper form's thresholds
+# stay in APPROVAL_MATRIX / LEGACY_LADDER so reverting is this one flag rather
+# than an archaeology exercise through the history.
+#
+# What this changed, concretely: a 48,000 EGP request used to collect Warehouse,
+# Plant Director, Purchasing, Finance and the CFO. Under DOAM §4.1 tier 2 it
+# collects Warehouse, Purchasing, Plant Director and the Supply Chain Director —
+# Finance and the CFO are NOT involved at that value, and above 5,000,000 the
+# Board is.
+DOAM_IN_FORCE = True
+
+
 def build_ladder(total, kind=None):
     """Return the ordered list of stage keys required for a request of `total`.
 
-    Called with NO kind — which is every existing call site — this is the paper
-    form's ladder and behaves exactly as it always has. Nothing about who signs
-    changes until the DOAM is signed and the caller starts passing a kind.
+    `kind` selects the DOAM ladder: "opex" (§4.1) or "capex" (§4.2). With no kind
+    the request is treated as OPEX, which is what an unmarked request is.
 
-    Pass kind="opex" (DOAM §4.1) or kind="capex" (§4.2) for the DOAM ladders.
     An unrecognised kind falls back to DOAM OPEX rather than to no approvals: a
     blank or fat-fingered value must never be the cheap path through the gate.
     """
@@ -207,10 +218,10 @@ def build_ladder(total, kind=None):
         t = float(total or 0)
     except (TypeError, ValueError):
         t = 0.0
-    if kind is None:
-        # The form in force: inclusive thresholds, legacy stage order.
+    if not DOAM_IN_FORCE and kind is None:
+        # The pre-DOAM paper form: inclusive thresholds, legacy stage order.
         return [s for s in LEGACY_LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
-    matrix = MATRICES.get((kind or "").strip().lower(), OPEX_MATRIX)
+    matrix = MATRICES.get((kind or "opex").strip().lower(), OPEX_MATRIX)
     return [s for s in DOAM_LADDER
             if s in matrix and (matrix[s] <= 0 or t > matrix[s])]
 
@@ -250,13 +261,22 @@ def level_above(level):
 # the value-based financial approvals (Finance / CFO / CEO) join the ladder.
 PRICING_STATUSES = ["unpriced", "priced"]
 
-# Stages that are always required regardless of value (threshold 0): these form
-# the "demand approval" part of the ladder that runs BEFORE pricing.
-DEMAND_STAGES = [s for s in LADDER if APPROVAL_MATRIX.get(s, 0) <= 0]
+# Stages always required regardless of value (threshold 0): the "demand
+# approval" part of the ladder, which runs BEFORE pricing.
+#
+# These MUST derive from whichever ladder is in force. Leaving them on the paper
+# form while build_ladder() followed the DOAM would put a stage in the demand
+# list that the DOAM makes value-gated, and the pricing gate would then wait for
+# a signature that the ladder never asks for — a request stuck with no error.
+_ACTIVE_LADDER = DOAM_LADDER if DOAM_IN_FORCE else LEGACY_LADDER
+_ACTIVE_MATRIX = OPEX_MATRIX if DOAM_IN_FORCE else APPROVAL_MATRIX
 
-# Value-gated stages (threshold > 0): they only join the ladder once Purchasing
-# has priced the request and the total clears their threshold.
-VALUE_STAGES = [s for s in LADDER if APPROVAL_MATRIX.get(s, 0) > 0]
+DEMAND_STAGES = [s for s in _ACTIVE_LADDER if _ACTIVE_MATRIX.get(s, 1) <= 0]
+
+# Value-gated stages: they join only once Purchasing has priced the request and
+# the total clears their threshold.
+VALUE_STAGES = [s for s in _ACTIVE_LADDER
+                if s in _ACTIVE_MATRIX and _ACTIVE_MATRIX[s] > 0]
 
 # The stage at which Purchasing enters pricing (the gate). A request cannot pass
 # this stage until it has been priced.

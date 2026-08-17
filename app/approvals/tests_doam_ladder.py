@@ -133,29 +133,38 @@ chk("negative/blank amounts do not produce negative slack",
     C.match_tolerance_value(-1_000) == 500.0 and C.match_tolerance_value(None) == 500.0)
 
 # ---------------------------------------------------------------------------
-# The paper form must be UNTOUCHED until the DOAM is signed.
+# THE DOAM IS NOW IN FORCE (Ahmed confirmed it is mandatory). These assert the
+# switch actually happened, and record exactly what it changed.
 # ---------------------------------------------------------------------------
-print("\nthe form in force today is unchanged (no kind passed)")
-chk("48,000 still collects the paper form's five approvers",
-    C.build_ladder(48_000) == ["warehouse", "factory_manager", "purchasing", "finance", "cfo"],
-    C.build_ladder(48_000))
-chk("legacy thresholds are inclusive, as they always were (10,000 pulls Finance)",
-    "finance" in C.build_ladder(10_000), C.build_ladder(10_000))
-chk("legacy order is unchanged: factory_manager before purchasing",
-    C.build_ladder(5_000) == ["warehouse", "factory_manager", "purchasing"], C.build_ladder(5_000))
-chk("legacy ladder never reaches the DOAM-only stages",
-    not ({"scd", "bod"} & set(C.build_ladder(50_000_000))), C.build_ladder(50_000_000))
-chk("LADDER (what the rest of the app reads) is still the legacy six",
-    C.LADDER == ["warehouse", "factory_manager", "purchasing", "finance", "cfo", "ceo"], C.LADDER)
+print(str())
+print("the DOAM ladder is the one in force")
+chk("DOAM_IN_FORCE is set", C.DOAM_IN_FORCE is True)
+chk("a bare build_ladder() call now uses the DOAM, not the paper form",
+    C.build_ladder(48_000) == C.build_ladder(48_000, "opex"), C.build_ladder(48_000))
 
-print("\n  and the DOAM ladder differs, which is the decision Ahmed has to make")
-legacy = C.build_ladder(48_000)
-doam = C.build_ladder(48_000, "opex")
-chk("at 48,000 the two ladders genuinely disagree", legacy != doam)
-print(f"     paper form : {len(legacy)} approvers  {legacy}")
-print(f"     DOAM v1.1  : {len(doam)} approvers  {doam}")
-chk("DOAM drops Finance and CFO at 48,000 (its tier 2 stops at director level)",
-    "finance" not in doam and "cfo" not in doam, doam)
+paper = ["warehouse", "factory_manager", "purchasing", "finance", "cfo"]
+now = C.build_ladder(48_000)
+print("     48,000 EGP was : %d approvers  %r" % (len(paper), paper))
+print("     48,000 EGP now : %d approvers  %r" % (len(now), now))
+chk("Finance and the CFO no longer sign a 48,000 request (tier 2 stops at L2)",
+    "finance" not in now and "cfo" not in now, now)
+chk("the Supply Chain Director carries it instead", now[-1] == "scd", now)
+chk("above 5,000,000 the Board is required", C.build_ladder(6_000_000)[-1] == "bod")
 
-print("\nFINAL:", "ALL GREEN" if ok else "FAILURES ABOVE")
+print(str())
+print("  demand and value stages follow the ACTIVE ladder")
+chk("demand stages == the ladder at zero value",
+    C.build_ladder(0) == C.DEMAND_STAGES, (C.build_ladder(0), C.DEMAND_STAGES))
+chk("no stage is both demand and value-gated",
+    not (set(C.DEMAND_STAGES) & set(C.VALUE_STAGES)))
+chk("every value stage is reachable at some amount",
+    all(s in C.build_ladder(10**9) for s in C.VALUE_STAGES), C.VALUE_STAGES)
+
+print(str())
+print("  the paper form stays expressible, so reverting is one flag")
+chk("legacy ladder and thresholds still defined",
+    bool(C.LEGACY_LADDER) and C.APPROVAL_MATRIX.get("cfo") == 25_000)
+
+print(str())
+print("FINAL: " + ("ALL GREEN" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)
