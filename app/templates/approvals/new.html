@@ -40,6 +40,12 @@
           <input name="title" required autocomplete="off" data-ac data-polish="title" value="{{ prefill.title or '' }}" placeholder="e.g. Repair forklift battery"></div>
         <div class="field"><label data-i18n="proc.request_for_l">Request for</label>
           <input name="request_for" autocomplete="off" data-ac value="{{ prefill.request_for or '' }}" placeholder="Asset / machine / area"></div>
+        <div class="field"><label data-i18n="proc.kind_l">Expenditure type</label>
+          <select name="expenditure_kind" id="expKind">
+            <option value="opex" {{ 'selected' if (prefill.expenditure_kind or 'opex') != 'capex' }} data-i18n="proc.kind_opex">Operating (OPEX) — consumables, spares, services</option>
+            <option value="capex" {{ 'selected' if prefill.expenditure_kind == 'capex' }} data-i18n="proc.kind_capex">Capital (CAPEX) — machinery, vehicles, buildings, IT assets</option>
+          </select>
+          <span class="muted" style="font-size:12px" data-i18n="proc.kind_hint">Capital purchases follow the DOAM capital authority ladder — every level signs, and the Managing Director signs above 250,000 EGP.</span></div>
         <div class="field"><label data-i18n="proc.dept_l">Department</label>
           <select name="department" id="deptSel">
             <option value=""></option>

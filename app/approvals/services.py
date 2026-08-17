@@ -611,20 +611,27 @@ def counts(user=None):
 # --------------------------------------------------------------------------
 # Responsibility (approval) matrix — per department
 # --------------------------------------------------------------------------
-def dept_ladder(conn, department, total):
+def dept_ladder(conn, department, total, kind="opex"):
     """Ordered stage list required for a PR of `total` in `department`. Uses the
-    department's custom responsibility matrix if one exists, else the global
-    default (constants.APPROVAL_MATRIX)."""
+    department's custom responsibility matrix if one exists, else the DOAM ladder
+    selected by `kind` ("opex" §4.1 / "capex" §4.2).
+
+    A department override still wins, because a department that has set its own
+    matrix has deliberately said so — but it is only consulted for OPEX. Capital
+    expenditure is a company-level authority in the DOAM, not a departmental one,
+    so a department cannot quietly give itself a shorter ladder for machinery."""
     try:
         t = float(total or 0)
     except (TypeError, ValueError):
         t = 0.0
-    rows = conn.execute(
-        "SELECT stage, threshold FROM proc_resp_matrix "
-        "WHERE department=? AND active=1 ORDER BY seq, id", (department or "",)).fetchall()
-    if rows:
-        return [r["stage"] for r in rows if t >= float(r["threshold"] or 0)]
-    return build_ladder(t)
+    kind = (kind or "opex").strip().lower()
+    if kind != "capex":
+        rows = conn.execute(
+            "SELECT stage, threshold FROM proc_resp_matrix "
+            "WHERE department=? AND active=1 ORDER BY seq, id", (department or "",)).fetchall()
+        if rows:
+            return [r["stage"] for r in rows if t >= float(r["threshold"] or 0)]
+    return build_ladder(t, kind)
 
 
 def list_departments():
@@ -794,10 +801,13 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
                  float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes"),
                  int(it["spare_id"]) if str(it.get("spare_id") or "").strip().isdigit() else None,
                  int(it["item_id"]) if str(it.get("item_id") or "").strip().isdigit() else None))
+        kind = "capex" if str(header.get("expenditure_kind") or "").strip().lower() \
+            in ("capex", "capital") else "opex"
         try:
-            conn.execute("UPDATE pr_requests SET tax_rate=?, pricing_status=? WHERE id=?",
+            conn.execute("UPDATE pr_requests SET tax_rate=?, pricing_status=?, "
+                         "expenditure_kind=? WHERE id=?",
                          (float(header.get("tax_rate") or 0),
-                          "priced" if priced else "unpriced", pr_id))
+                          "priced" if priced else "unpriced", kind, pr_id))
         except Exception:
             pass
         audit(conn, pr_id, uname, "created",
@@ -853,15 +863,17 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
             else float(pr["tax_rate"] or 0)
         pay_cond = header.get("payment_condition") if can_price \
             else pr["payment_condition"]
+        kind = "capex" if str(header.get("expenditure_kind") or "").strip().lower() in (
+            "capex", "capital") else "opex"
         conn.execute(
             """UPDATE pr_requests SET title=?, request_for=?, department=?, currency=?,
                vendor=?, payment_condition=?, delivery_condition=?, req_del_date=?,
-               asset_code=?, notes=?, tax_rate=?, total=? WHERE id=?""",
+               asset_code=?, notes=?, tax_rate=?, expenditure_kind=?, total=? WHERE id=?""",
             (header.get("title"), header.get("request_for"), header.get("department"),
              header.get("currency") or "EGP", header.get("vendor"),
              pay_cond, header.get("delivery_condition"),
              header.get("req_del_date"), header.get("asset_code"), header.get("notes"),
-             tax_rate, total, pr_id))
+             tax_rate, kind, total, pr_id))
         if not can_price and (pr["pricing_status"] or "priced") == "priced":
             # the lines were replaced unpriced -> back through the pricing gate
             conn.execute("UPDATE pr_requests SET pricing_status='unpriced', "
@@ -909,7 +921,8 @@ def submit_pr(pr_id, user, ip=None):
         # it has one, else the global default. Each rung = parallel stages.
         # Thresholds are EGP-based, so a foreign-currency PR routes on its
         # EGP-equivalent total (total * fx_rate), never the raw foreign figure.
-        rungs = rungs_from_stages(dept_ladder(conn, pr["department"], egp_total(pr)))
+        rungs = rungs_from_stages(dept_ladder(conn, pr["department"], egp_total(pr),
+                                          _pr_field(pr, "expenditure_kind")))
         # SoD escalation, resolved BEFORE anything is written: a rung whose only
         # eligible signer is the requester climbs one level up the org chart. A
         # rung with nobody above it can never be signed, so the request is refused
@@ -1017,9 +1030,12 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     qualify. Never touches steps that are approved, rejected, or currently active,
     so an in-flight approval is never disturbed."""
     row = conn.execute(
-        "SELECT current_seq, currency, fx_rate, requester, pr_no FROM pr_requests WHERE id=?",
-        (pr_id,)).fetchone()
+        "SELECT current_seq, currency, fx_rate, requester, pr_no, expenditure_kind "
+        "FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
     cur_seq = (row["current_seq"] or 0) if row else 0
+    # Read the OPEX/CAPEX flag here rather than making both callers pass it —
+    # it lives on the row we are already fetching.
+    kind = _pr_field(row, "expenditure_kind") or "opex"
     # Thresholds are EGP-based: convert `total` (PR currency) to its EGP
     # equivalent using the row's currency/fx_rate. Reading them HERE (instead of
     # making each caller convert) keeps the call sites unchanged — price_pr and
@@ -1029,7 +1045,8 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                            "currency": row["currency"] if row else "EGP",
                            "fx_rate": row["fx_rate"] if row else 1})
     # Reuse the tested department-aware ladder, keep only the value stages.
-    target = [s for s in dept_ladder(conn, department, total_egp) if s in VALUE_STAGES]
+    target = [s for s in dept_ladder(conn, department, total_egp, kind)
+              if s in VALUE_STAGES]
     existing = conn.execute(
         "SELECT id, seq, stage, status, esc_role, approver_user FROM pr_steps "
         "WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()
@@ -1727,7 +1744,12 @@ def three_way_match(pr_id):
                          for iv in bundle["invoices"]), 2)          # gross (with tax)
     invoiced_net = round(sum(float(iv["amount"] or 0) for iv in bundle["invoices"]), 2)  # pre-tax
 
-    tol = max(1.0, ordered_grand * 0.01)      # 1% (or 1 unit) tolerance
+    # DOAM §7.3.3: "within tolerance of 2% of value or 500 EGP ... whichever is
+    # greater". The floor is the binding half on a small invoice — on 1,000 EGP,
+    # 2% is 20 and the DOAM allows 500. The old flat 1% with a 1-unit floor was
+    # therefore both too tight on small invoices and too loose on large ones.
+    tol = C.match_tolerance_value(ordered_grand) if C.DOAM_IN_FORCE \
+        else max(1.0, ordered_grand * 0.01)
     flags = []
     qty_ok = received_qty >= ordered_qty - 1e-6
     if not qty_ok:
@@ -2174,8 +2196,19 @@ def rfq_gate_check(conn, pr):
         total = float(egp_total(pr))
     except (TypeError, ValueError):
         total = 0.0
-    if total < num_setting(conn, "rfq_value_threshold"):
-        return True, ""          # below the competitive-quote threshold
+    # DOAM §4.3 bands when the matrix is in force: 1 quote up to 50,000, three to
+    # 500,000, three plus negotiation to 2,000,000, formal tender above that. The
+    # flat "2 quotes at 25,000" setting was the pre-DOAM rule and stays as the
+    # fallback so a database with the matrix switched off behaves as it always did.
+    if C.DOAM_IN_FORCE:
+        band = C.sourcing_band(total)
+        required_quotes = band["quotes"]
+        if required_quotes <= 1:
+            return True, ""      # spot buy: the buyer records the price basis
+    else:
+        if total < num_setting(conn, "rfq_value_threshold"):
+            return True, ""      # below the competitive-quote threshold
+        required_quotes = num_setting(conn, "rfq_quote_min")
     if str(_pr_field(pr, "single_source_reason") or "").strip():
         return True, ""          # justified single/sole-source purchase
     # "Competitive" means distinct VENDORS, not just distinct quote rows — two quotes
@@ -2186,9 +2219,40 @@ def rfq_gate_check(conn, pr):
     except Exception:
         n = conn.execute("SELECT COUNT(*) c FROM pr_quotes WHERE pr_id=?",
                          (_pr_field(pr, "id"),)).fetchone()["c"]
-    if int(n or 0) < num_setting(conn, "rfq_quote_min"):
+    if int(n or 0) < required_quotes:
         return False, "needs_quotes"
     return True, ""
+
+
+def attach_ejr(pr_id, ejr_id, user, ip=None):
+    """Cite an APPROVED Engineering Justification Report on a requisition.
+
+    Without this the DOAM §6 gate is unsatisfiable: it refuses any spares/MRO
+    request that has no report, and nothing could put one there — so switching
+    the gate on blocked maintenance purchasing outright. The report must already
+    be approved, because the whole control is that Engineering signs BEFORE
+    Procurement accepts (Table 13 step 3); letting a draft be attached would let
+    the requester supply their own justification and move on.
+    """
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, ejr_no, status FROM mnt_eng_justifications "
+            "WHERE id=? AND is_active=1", (ejr_id,)).fetchone()
+        if not row:
+            return False, "ejr_not_found"
+        if row["status"] != "approved":
+            return False, "ejr_not_approved"
+        conn.execute("UPDATE pr_requests SET ejr_id=? WHERE id=?", (ejr_id, pr_id))
+        audit(conn, pr_id, (user or {}).get("username") or "system", "ejr_attached",
+              f"Engineering Justification {row['ejr_no']} cited", ip)
+        conn.commit()
+        return True, row["ejr_no"]
+    except Exception:
+        conn.rollback()
+        return False, "error"
+    finally:
+        conn.close()
 
 
 def set_single_source(pr_id, reason, user, ip=None):
@@ -3170,7 +3234,10 @@ def workflow_view(department=None, lang="en"):
         # Every short label already resolved for this reader's language.
         "L": L,
         "sla_hours": C.SLA_HOURS_PER_STAGE, "sla_warn": C.SLA_WARN_HOURS,
-        "match_tolerance_pct": 1.0,      # three_way_match's own, deliberately fixed
+        # What three_way_match actually applies, so the governance page never
+        # states a tolerance the code does not use.
+        "match_tolerance_pct": C.MATCH_TOLERANCE_PCT if C.DOAM_IN_FORCE else 1.0,
+        "match_tolerance_abs": C.MATCH_TOLERANCE_ABS if C.DOAM_IN_FORCE else 1.0,
         "log": governance_log(),
     }
 

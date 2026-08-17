@@ -179,6 +179,9 @@ def _parse_header(f, can_price=False):
         "asset_code": f.get("asset_code", "").strip(),
         "notes": f.get("notes", "").strip(),
         "tax_rate": f.get("tax_rate", "").strip() or 0,
+        # DOAM §4.2 — capital expenditure follows a different ladder. Anything
+        # not explicitly marked capital is operating expenditure.
+        "expenditure_kind": f.get("expenditure_kind", "").strip().lower(),
     }
     if not can_price:
         # Server-side commercial lockout (defence-in-depth — independent of the UI):
@@ -513,7 +516,8 @@ def edit(pr_id):
                "vendor": pr.get("vendor"), "payment_condition": pr.get("payment_condition"),
                "delivery_condition": pr.get("delivery_condition"), "currency": pr.get("currency"),
                "req_del_date": pr.get("req_del_date"), "asset_code": pr.get("asset_code"),
-               "tax_rate": pr.get("tax_rate")}
+               "tax_rate": pr.get("tax_rate"),
+               "expenditure_kind": pr.get("expenditure_kind")}
     return render_template("approvals/new.html", active="proc_list",
                            vendors=svc.list_vendors(), units=C.UNITS,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
@@ -653,6 +657,12 @@ def detail(pr_id):
                            rfq_required=(is_priced and float(pr.get("total") or 0) >= C.RFQ_VALUE_THRESHOLD),
                            rfq_locked=(pr["status"] in ("approved", "po_issued", "partially_received",
                                                         "received", "closed", "cancelled")),
+                           # DOAM §6: whether this request needs an engineering
+                           # justification, which one it cites, and the approved
+                           # reports Purchasing can choose from. Computed here so
+                           # the page only shows the control when it applies —
+                           # a picker on an IT stationery order is noise.
+                           **_ejr_context(pr_id, pr),
                            spare_live=spare_live, source_link=source_link,
                            item_costs=item_costs,
                            # Escalation stamps are DB-stored role keys: their names
@@ -702,6 +712,63 @@ def choose_quote(pr_id, quote_id):
     ok, msg = svc.choose_quote(pr_id, quote_id, _u(), ip=_ip())
     flash("Quote selected." if ok else f"Could not select quote ({msg}).",
           "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+def _ejr_context(pr_id, pr):
+    """DOAM §6 state for one request: is a report required, which is cited, and
+    what approved reports are available. Fails soft — a maintenance-module error
+    must not take down the procurement page."""
+    out = {"ejr_required": False, "ejr_reason": "", "ejr_row": None,
+           "ejr_choices": [], "ejr_gate_on": False}
+    try:
+        from app.maintenance import eng_justification as ejr
+        conn = get_db()
+        try:
+            items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+            required, why = ejr.ejr_required(pr, items)
+            out["ejr_required"] = required
+            out["ejr_reason"] = why
+            out["ejr_gate_on"] = ejr.gate_enabled(conn)
+            cited = pr.get("ejr_id") if isinstance(pr, dict) else None
+            if cited:
+                out["ejr_row"] = ejr.get(conn, cited)
+            if required:
+                out["ejr_choices"] = ejr.approved_for_picker(conn)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+@bp.route("/pr/<int:pr_id>/engineering-justification", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def attach_ejr(pr_id):
+    """Cite an approved Engineering Justification Report (DOAM §6, T&C-PUF-09).
+
+    Purchasing does this, not the requester: the DOAM makes Procurement the party
+    that refuses a requisition without a report, so Procurement is the party that
+    records which report satisfies it.
+    """
+    if not svc.get_pr(pr_id):
+        abort(404)
+    try:
+        ejr_id = int(request.form.get("ejr_id") or 0)
+    except (TypeError, ValueError):
+        ejr_id = 0
+    if not ejr_id:
+        flash("Choose an approved engineering justification.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    ok, msg = svc.attach_ejr(pr_id, ejr_id, _u(), ip=_ip())
+    if ok:
+        flash(f"Engineering justification {msg} cited on this request.", "success")
+    else:
+        flash({"ejr_not_found": "That engineering justification no longer exists.",
+               "ejr_not_approved": "That report is not signed yet. Engineering must "
+                                   "approve it before Procurement can accept the request."
+               }.get(msg, f"Could not attach the report ({msg})."), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 

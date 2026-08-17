@@ -595,6 +595,7 @@
       {% endif %}
       <div class="flex gap wrap mt-3" style="font-size:12.5px;color:var(--muted)">
         {% if pr.department %}<span class="tag">{{ pr.department }}</span>{% endif %}
+        {% if pr.expenditure_kind == 'capex' %}<span class="tag" data-i18n="proc.kind_capex_tag">CAPEX · capital</span>{% endif %}
         {% if pr.payment_condition %}<span class="tag">{{ pr.payment_condition }}</span>{% endif %}
         {% if pr.delivery_condition %}<span class="tag">{{ pr.delivery_condition }}</span>{% endif %}
         {% if pr.po_no %}<span class="tag">PO {{ pr.po_no }}</span>{% endif %}
@@ -680,6 +681,47 @@
         {% else %}
         <div class="muted" style="margin-bottom:12px" data-i18n="proc.no_quotes2">Add competing quotes to compare vendors.</div>
         {% endif %}
+        {# DOAM §6 — the engineering justification. Only rendered when the request
+           actually needs one; a picker on an IT stationery order is noise. #}
+        {% if ejr_required %}
+        <div class="mt-2" style="margin-bottom:12px">
+          {% if ejr_row and ejr_row.status == 'approved' %}
+            <span class="badge b-live" data-i18n="proc.ejr.ok">Engineering justification</span>
+            <a href="/maintenance/justifications/{{ ejr_row.id }}"><b>{{ ejr_row.ejr_no }}</b></a>
+            <span class="muted">· {{ (ejr_row.request_type or '')|replace('_',' ') }}
+              · <span data-i18n="m.ejr_decided_by">Signed by</span> {{ ejr_row.decided_by }}</span>
+          {% else %}
+            <span class="badge {{ 'b-critical' if ejr_gate_on else 'b-warning' }}"
+                  data-i18n="proc.ejr.missing">Engineering justification required</span>
+            <div class="muted mt-1" data-i18n="proc.ejr.why">
+              Spares, maintenance and workshop requests need an Engineering Head signature
+              before Procurement accepts them, at any value.</div>
+            {% if can_purchasing and not rfq_locked %}
+              {% if ejr_choices %}
+              <form method="post" action="{{ url_for('approvals.attach_ejr', pr_id=pr.id) }}"
+                    class="flex gap center mt-2 wrap">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <select name="ejr_id" required style="min-width:260px">
+                  <option value="" data-i18n="m.ejr_pick">Choose an approved report…</option>
+                  {% for j in ejr_choices %}
+                  <option value="{{ j.id }}">{{ j.ejr_no }} — {{ j.mcode or '—' }}
+                    ({{ (j.request_type or '')|replace('_',' ') }})</option>
+                  {% endfor %}
+                </select>
+                <button class="btn btn-primary btn-sm" type="submit"
+                        data-i18n="proc.ejr.attach">Cite this report</button>
+              </form>
+              {% else %}
+              <div class="mt-2">
+                <a class="btn btn-ghost btn-sm" href="/maintenance/justifications/new"
+                   data-i18n="proc.ejr.none">No approved report exists yet — raise one</a>
+              </div>
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        </div>
+        {% endif %}
+
         {% if pr.single_source_reason %}
         <div class="muted" style="margin-bottom:12px">
           <strong data-i18n="proc.rfq.single_source">Single-source justification</strong>: {{ pr.single_source_reason }}

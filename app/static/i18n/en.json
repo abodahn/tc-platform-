@@ -2481,6 +2481,11 @@
   "proc.due": "Due date",
   "proc.edit": "Edit",
   "proc.edit_title": "Edit request",
+  "proc.ejr.attach": "Cite this report",
+  "proc.ejr.missing": "Engineering justification required",
+  "proc.ejr.none": "No approved report exists yet — raise one",
+  "proc.ejr.ok": "Engineering justification",
+  "proc.ejr.why": "Spares, maintenance and workshop requests need an Engineering Head signature before Procurement accepts them, at any value.",
   "proc.email": "Email",
   "proc.email_po": "Email PO to vendor",
   "proc.est_total": "Estimated total",
@@ -3666,5 +3671,10 @@
   "wsh.nav.labdips": "Lab dips",
   "wsh.nav.recipes": "Recipes",
   "wsh.recipes.hint": "A draft version 1 is created automatically.",
-  "wsh.recipes.sub": "One row per recipe family. Steps and chemicals live on a version, never on the family."
+  "wsh.recipes.sub": "One row per recipe family. Steps and chemicals live on a version, never on the family.",
+  "proc.kind_l": "Expenditure type",
+  "proc.kind_opex": "Operating (OPEX) — consumables, spares, services",
+  "proc.kind_capex": "Capital (CAPEX) — machinery, vehicles, buildings, IT assets",
+  "proc.kind_hint": "Capital purchases follow the DOAM capital authority ladder — every level signs, and the Managing Director signs above 250,000 EGP.",
+  "proc.kind_capex_tag": "CAPEX · capital"
 }

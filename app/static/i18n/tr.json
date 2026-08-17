@@ -2481,6 +2481,11 @@
   "proc.due": "Vade tarihi",
   "proc.edit": "Düzenle",
   "proc.edit_title": "Talebi düzenle",
+  "proc.ejr.attach": "Bu raporu ekle",
+  "proc.ejr.missing": "Mühendislik gerekçesi gerekli",
+  "proc.ejr.none": "Henüz onaylı rapor yok — bir tane oluşturun",
+  "proc.ejr.ok": "Mühendislik gerekçesi",
+  "proc.ejr.why": "Yedek parça, bakım ve atölye talepleri, tutarı ne olursa olsun, Satın Alma kabul etmeden önce Mühendislik Müdürü imzası gerektirir.",
   "proc.email": "E-posta",
   "proc.email_po": "PO'yu tedarikçiye e-postala",
   "proc.est_total": "Tahmini toplam",
@@ -3666,5 +3671,10 @@
   "wsh.nav.labdips": "Laboratuvar daldırmaları",
   "wsh.nav.recipes": "Reçeteler",
   "wsh.recipes.hint": "Otomatik olarak taslak sürüm 1 oluşturulur.",
-  "wsh.recipes.sub": "Her reçete ailesi için bir satır. Adımlar ve kimyasallar aileye değil, sürüme aittir."
+  "wsh.recipes.sub": "Her reçete ailesi için bir satır. Adımlar ve kimyasallar aileye değil, sürüme aittir.",
+  "proc.kind_l": "Harcama türü",
+  "proc.kind_opex": "İşletme (OPEX) — sarf malzeme, yedek parça, hizmet",
+  "proc.kind_capex": "Yatırım (CAPEX) — makine, araç, bina, BT varlıkları",
+  "proc.kind_hint": "Yatırım alımları DOAM sermaye yetki merdivenini izler — tüm seviyeler imzalar, 250.000 EGP üzeri Genel Müdür imzalar.",
+  "proc.kind_capex_tag": "CAPEX · yatırım"
 }

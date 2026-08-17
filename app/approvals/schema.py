@@ -332,6 +332,11 @@ _PR_MIGRATIONS = [
     # carries. NULL is normal: most requests are not spares/MRO and need none.
     # app.maintenance.eng_justification.ejr_gate_check decides when it is required.
     ("ejr_id", "ALTER TABLE pr_requests ADD COLUMN ejr_id INTEGER"),
+    # DOAM §4.2 — operating vs capital expenditure. NULL/blank reads as 'opex',
+    # which is what an unmarked request is; the CAPEX ladder is a different set
+    # of signatures for the same money, so this column decides which one applies.
+    ("expenditure_kind",
+     "ALTER TABLE pr_requests ADD COLUMN expenditure_kind TEXT DEFAULT 'opex'"),
     # Foreign-currency support: fx_rate converts the PR total (in `currency`)
     # to EGP so the EGP-based approval thresholds route honestly. po_rev counts
     # PO revisions (0 = original order; history kept in pr_po_revisions).
