@@ -220,9 +220,17 @@ def ai_insights():
     finally:
         conn.close()
     high = [r for r in risks if r["band"] == "high"]
-    return render_template("maintenance/ai.html", risks=risks, reorder=reorder,
-                           repeated=repeated, anomalies=anomalies, pm_opt=pm_opt, sla=sla,
-                           high=high, active="maint_ai")
+    # Render the ranked TOP of the list, not all of it. risk_ranking scores the
+    # whole fleet (5,108 machines), and putting every row in the table produced a
+    # 3.8 MB HTML page — the queries were fixed but the page was still enormous,
+    # which is what made moving between screens feel slow. The KPI keeps counting
+    # the full fleet from `analyzed`, so no number on the page changes; only the
+    # tail of a table nobody scrolls to is left out, and the page says so.
+    AI_TABLE_CAP = 150
+    return render_template("maintenance/ai.html", risks=risks[:AI_TABLE_CAP],
+                           analyzed=len(risks), shown=min(len(risks), AI_TABLE_CAP),
+                           reorder=reorder, repeated=repeated, anomalies=anomalies,
+                           pm_opt=pm_opt, sla=sla, high=high, active="maint_ai")
 
 
 @bp.route("/floor")
@@ -1041,7 +1049,17 @@ def pm():
             "ORDER BY w.id DESC LIMIT 30").fetchall()
     finally:
         conn.close()
+    # Overdue and due-soon first, then the rest — and cap what is rendered. All
+    # 452 plans with their checklists inline made a 489 KB page, and the plans a
+    # supervisor needs are the ones that are late, not the ones due in November.
+    _ORDER = {"overdue": 0, "due_soon": 1, "scheduled": 2}
+    plans.sort(key=lambda p: (_ORDER.get(p["pm_status"], 3), p["next_due"] or ""))
+    total_plans = len(plans)
+    plans = plans[:150]
+    keep = {p["id"] for p in plans}
+    checklists = {k: v for k, v in checklists.items() if k in keep}
     return render_template("maintenance/pm.html", plans=plans, checklists=checklists,
+                           total_plans=total_plans, shown_plans=len(plans),
                            wos=wos, active="maint_pm")
 
 
