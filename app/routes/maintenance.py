@@ -118,9 +118,16 @@ def mbadge(value):
 @bp.app_context_processor
 def _inject():
     return {"mbadge": lambda v: _BADGE.get(v, "b-unknown"), "C": C, "mcan": _can,
-            # kanban board: may a card in status X be dropped on a column whose
-            # primary status is Y? Single source of truth = services.can_transition.
-            "mmove_ok": svc.can_transition}
+            # kanban board: may a card in status X be dropped on THIS COLUMN?
+            # Not "on the column's first status" — mmove_ok(status, col[0]) was
+            # what this used, and it disagreed with the move endpoint, which asks
+            # whether ANY status in the column is reachable. Measured on a real
+            # board: a submitted ticket advertised column 1 only, while the
+            # endpoint accepted 0, 1 and 4 — so two legal columns rendered inert
+            # and the card could not be dragged to them. Both now call the same
+            # _board_target, so the board and the endpoint cannot drift again.
+            "mmove_ok": svc.can_transition,
+            "mboard_ok": lambda status, statuses: bool(_board_target(status, statuses))}
 
 
 # --------------------------------------------------------------------------

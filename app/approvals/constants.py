@@ -11,6 +11,7 @@ them are the approval ladder; which stages apply depends on the PR total via
 APPROVAL_MATRIX, so a small PR needs fewer signatures than a large one.
 """
 import re
+from datetime import date as _date, datetime as _dt, timezone as _tz
 
 # --- Request lifecycle ------------------------------------------------------
 PR_STATUSES = [
@@ -448,13 +449,19 @@ PROC_ROLE_PERMS = {
     # signer and no error. Same grants as cfo/ceo: they approve, they do not buy.
     "supply_chain_director": ["proc_view", "proc_approve"],
     "plant_director": ["proc_view", "proc_approve"],
-    "financial_director": ["proc_view", "proc_approve"],
+    # DOAM §7.3.4 "FIND owns payment", and Table 4 L2 "FIN-D owns payment
+    # control". Releasing payment was gated on proc_purchasing, so the buyer who
+    # committed the spend could also pay it and Finance could not — the exact
+    # separation the clause exists to create, inverted. proc_pay moves it.
+    "financial_director": ["proc_view", "proc_approve", "proc_pay"],
     "managing_director": ["proc_view", "proc_approve"],
     "board": ["proc_view", "proc_approve"],
     # grants for roles that already exist on the platform:
     "storekeeper": ["proc_view", "proc_create", "proc_approve"],
     "factory_manager": ["proc_view", "proc_create", "proc_approve"],
     "finance_user": ["proc_view", "proc_approve"],
+    "finance_manager": ["proc_view", "proc_approve", "proc_pay"],
+    "cfo": ["proc_view", "proc_approve", "proc_pay"],
     "production_manager": ["proc_view", "proc_create"],
     "production_supervisor": ["proc_view", "proc_create"],
     "maintenance_manager": ["proc_view", "proc_create"],
@@ -539,7 +546,41 @@ CONTROLLED_FORMS = [
 # The form code a printed document carries, so a filed PDF can be traced back to
 # the register entry that governs its retention.
 FORM_CODES = {"pr": "T&C-PUF-01", "po": "T&C-PUF-02", "rfq": "T&C-PUF-03",
-              "grn": "T&C-PUF-06", "capex": "T&C-PUF-08"}
+              "grn": "T&C-PUF-06", "dn": "T&C-PUF-07", "capex": "T&C-PUF-08"}
+
+# DOAM Annex / audit 3.4-b9b — RETENTION, as a date on the record rather than a
+# sentence on a page. The register above says "5 yrs" and "10 yrs" in prose; a
+# prose retention period is not a control, it is a claim. Every requisition is
+# stamped with the day it may first be disposed of, computed from the SAME two
+# numbers the register prints: capital expenditure is kept ten years, everything
+# else five.
+RETENTION_YEARS = {"capex": 10, "opex": 5}
+
+
+def retention_years(kind):
+    """Years a request of this expenditure kind must be kept. An unrecognised or
+    blank kind reads as OPEX, exactly like build_ladder — and OPEX is the SHORTER
+    period, so the fallback is checked again wherever the kind can change: a
+    request that becomes CAPEX must have its retention EXTENDED, never left."""
+    return RETENTION_YEARS.get(str(kind or "").strip().lower(), RETENTION_YEARS["opex"])
+
+
+def retention_until(created_at, kind):
+    """The date (YYYY-MM-DD) this record leaves its retention window.
+
+    Date arithmetic by year number, not by adding 365*n days: five years from a
+    29 February lands on 28 February, which is what a records officer means.
+    """
+    day = str(created_at or "")[:10]
+    try:
+        d = _date.fromisoformat(day)
+    except ValueError:
+        d = _dt.now(_tz.utc).date()
+    y = d.year + retention_years(kind)
+    try:
+        return d.replace(year=y).isoformat()
+    except ValueError:                      # 29 Feb -> 28 Feb in a non-leap year
+        return d.replace(year=y, day=28).isoformat()
 
 
 # DOAM §5 — the golden thread. Every document from requisition to payment
@@ -551,7 +592,15 @@ FORM_CODES = {"pr": "T&C-PUF-01", "po": "T&C-PUF-02", "rfq": "T&C-PUF-03",
 #   spares, MRO, maintenance, workshop          -> asset / cost centre
 #   facility services, IT, utilities            -> cost centre
 #   capital assets                              -> asset / project
-COST_OBJECTS = ["sales_order", "asset", "cost_center"]
+# There is deliberately no COST_OBJECTS list here. It existed as
+#   COST_OBJECTS = ["sales_order", "asset", "cost_center"]
+# and NOTHING read it — `grep -rn COST_OBJECTS` returned only its own
+# definition. The rule it looked like it enforced is already enforced, by
+# name and by keyword, in cost_object_required() below and in
+# services.cost_object_check(): those two decide when a sales order is
+# mandatory and refuse the submission when one is missing. A bare list of
+# the three cost-object NAMES adds nothing a reader could execute, so it is
+# gone rather than left looking like a control.
 
 # Category keywords that make a sales-order reference mandatory. Matched against
 # the catalogue category and the line text, lowercased — the ERP's category
@@ -707,11 +756,27 @@ def advance_rule(po_value, advance_pct):
 # prohibited. Related purchases within a 30-day window are aggregated."
 AGGREGATION_WINDOW_DAYS = 30
 
+# DOAM §4.3 sourcing bands. `quotes` is the ONLY field here, and that is the
+# point: the bands used to carry "mode" (spot / compare / negotiate / tender) and
+# "governance" (buyer_records_basis / director_reviews / procurement_committee /
+# tender_committee) and NOTHING read either one — `grep -rn` found the two keys
+# only in this literal and in one assertion in tests_doam_ladder.py. They named
+# procedures that happen OFF this system: a negotiation round and a tender
+# committee are meetings, not states a Flask app can hold or refuse. Keeping them
+# as dict keys made the band look like it enforced four rules when it enforced
+# one. The DOAM wording stays here, in the comment, where non-executing text
+# belongs:
+#     up to 50,000        one quotation, buyer records the price basis
+#     50,001 - 500,000    three quotations, director reviews
+#     500,001 - 2,000,000 three quotations + negotiation, procurement committee
+#     above 2,000,000     formal tender, tender committee
+# `quotes` is the half of that this system can and does enforce — see
+# services.rfq_gate_check, which blocks the Purchasing signature without them.
 SOURCING_BANDS = [
-    {"over": 0,          "quotes": 1, "mode": "spot",      "governance": "buyer_records_basis"},
-    {"over": 50_000,     "quotes": 3, "mode": "compare",   "governance": "director_reviews"},
-    {"over": 500_000,    "quotes": 3, "mode": "negotiate", "governance": "procurement_committee"},
-    {"over": 2_000_000,  "quotes": 3, "mode": "tender",    "governance": "tender_committee"},
+    {"over": 0,          "quotes": 1},
+    {"over": 50_000,     "quotes": 3},
+    {"over": 500_000,    "quotes": 3},
+    {"over": 2_000_000,  "quotes": 3},
 ]
 
 

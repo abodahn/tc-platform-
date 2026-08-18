@@ -22,6 +22,33 @@
   </div>
 </div>
 
+{# Audit 3.4-b9b — retention as a DATE ON THE RECORD, not a sentence on a page.
+   Stamped when the request was raised: 10 years for capital expenditure, 5 for
+   everything else. Nothing is ever purged automatically; a record only leaves
+   the register when an administrator retires it AFTER this date. #}
+{% if retention %}
+<div class="panel mt-2"><div class="panel-pad flex between center wrap gap">
+  <div class="muted" style="font-size:12.5px">
+    <svg class="ico"><use href="#i-report"></use></svg>
+    <span data-i18n="proc.ret_keep">Records retention</span>:
+    <b>{{ retention.years }}</b> <span data-i18n="proc.ret_years">years</span>
+    ({{ 'capex' if (pr.expenditure_kind or 'opex') == 'capex' else 'opex' }}) ·
+    <span data-i18n="proc.ret_until">keep until</span>
+    <b dir="ltr">{{ retention.until }}</b>
+    {% if retention.expired %}
+      · <span class="badge b-pending" data-i18n="proc.ret_due">Retention expired — disposal may be authorised</span>
+    {% endif %}
+  </div>
+  {% if retention.expired and can_dispose and pr.is_active %}
+  <form method="post" action="{{ url_for('approvals.dispose', pr_id=pr.id) }}"
+        onsubmit="return confirm('Retire this record from the register? The row is kept on disk and this can be reversed by an administrator.')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.ret_dispose">Retire record</button>
+  </form>
+  {% endif %}
+</div></div>
+{% endif %}
+
 {% if pr.status == 'rejected' and pr.rejection_reason %}
 <div class="panel accent mt-2" style="border-color:var(--crit)">
   <div class="panel-pad flex gap center">
@@ -374,7 +401,8 @@
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <table class="tbl" style="margin-bottom:10px">
         <thead><tr><th data-i18n="proc.item">Item</th><th data-i18n="proc.ordered_qty">Ordered</th>
-          <th data-i18n="proc.recd">Received</th><th data-i18n="proc.receive_now">Receive now</th></tr></thead>
+          <th data-i18n="proc.recd">Received</th><th data-i18n="proc.accept_now">Accept now</th>
+          <th data-i18n="proc.reject_now">Reject now</th></tr></thead>
         <tbody>
         {% for it in b['items'] %}
           <tr>
@@ -388,15 +416,21 @@
               <input name="recv_qty[]" type="number" min="0" step="any" style="width:90px"
                      placeholder="0">
             </td>
+            <td>
+              <input name="rej_qty[]" type="number" min="0" step="any" style="width:90px"
+                     placeholder="0">
+            </td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
       <div class="flex gap center wrap">
         <input name="notes" class="input" placeholder="Delivery note (optional)" data-i18n-ph="proc.receipt_note" style="min-width:200px">
+        <input name="reject_reason" class="input" placeholder="Reason for rejection (required if rejecting)" data-i18n-ph="proc.reject_reason_ph" style="min-width:260px">
         <button class="btn btn-primary btn-sm" type="submit"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="proc.record_receipt">Record receipt</span></button>
       </div>
       <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.over_hint">Anything above the ordered quantity is held in quarantine, not added to stock.</div>
+      <div class="muted" style="font-size:11px;margin-top:2px" data-i18n="proc.reject_hint">A rejected quantity is not received, does not enter stock, and goes back to the supplier under a debit note that reduces what is payable.</div>
     </form>
     {% elif pr.status in ('received','closed') %}
     <div class="muted" style="margin-bottom:12px"><b data-i18n="proc.received_ok">Delivery confirmed.</b> {{ (pr.received_at or '')[:16] }}{% if pr.receipt_notes %} · {{ pr.receipt_notes }}{% endif %}</div>
@@ -463,6 +497,43 @@
     <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.quar.note">Quarantined quantities are not in stock and are not payable.</div>
     {% endif %}
 
+    {# --- Rejected goods: returns to the supplier and their debit notes --- #}
+    {% if b.returns %}
+    <div class="mt-3" style="margin-top:16px"><b data-i18n="proc.rtv.title">Returns to supplier &amp; debit notes</b></div>
+    <table class="tbl mt-2">
+      <thead><tr><th data-i18n="proc.rtv.dn">Debit note</th><th data-i18n="proc.date">Date</th>
+        <th data-i18n="proc.rtv.qty">Qty returned</th><th data-i18n="proc.rtv.value">Value debited</th>
+        <th data-i18n="proc.reason">Reason</th><th data-i18n="proc.status">Status</th><th></th></tr></thead>
+      <tbody>
+      {% for r in b.returns %}
+        <tr>
+          <td style="font-weight:600">{{ r.dn_no }}</td>
+          <td class="muted">{{ (r.created_at or '')[:16] }}</td>
+          <td style="color:var(--crit);font-weight:600">{{ '%g'|format(r.qty or 0) }}</td>
+          <td style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(r.total or 0) }} {{ r.currency }}</td>
+          <td class="muted">{{ r.reason or '—' }}</td>
+          <td>{% if r.status == 'open' %}<span class="badge b-rejected" data-i18n="proc.rtv.open">Open — supplier owes</span>
+              {% else %}<span class="badge b-approved" data-i18n="proc.rtv.settled">Settled</span>
+              <span class="muted" style="font-size:11px">{{ r.settled_by }} · {{ (r.settled_at or '')[:16] }}</span>{% endif %}</td>
+          <td class="flex gap center wrap">
+            <a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+               href="{{ url_for('approvals.debit_note_pdf', ret_id=r.id) }}">
+              <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rtv.pdf">Debit note PDF</span></a>
+            {% if r.status == 'open' and can_purchasing %}
+            <form method="post" style="display:inline"
+                  action="{{ url_for('approvals.settle_return', ret_id=r.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.rtv.settle">Mark settled</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.rtv.note">Returned quantities were never received and never entered stock. An open debit note is deducted from what this order can be paid, and shows as an outstanding due against the vendor.</div>
+    {% endif %}
+
     {# --- Invoices --- #}
     <div class="flex between center mt-3" style="margin-top:16px">
       <b data-i18n="proc.invoices">Invoices</b>
@@ -519,7 +590,7 @@
       </tbody>
     </table>
     {% endif %}
-    {% if can_purchasing and pr.status in ('po_issued','partially_received','received','closed') and (pr.payment_status or 'unpaid') != 'paid' %}
+    {% if can_pay and pr.status in ('po_issued','partially_received','received','closed') and (pr.payment_status or 'unpaid') != 'paid' %}
     <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_payment">+ Record payment</summary>
       <form method="post" action="{{ url_for('approvals.add_payment', pr_id=pr.id) }}" class="mt-2">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -687,6 +758,7 @@
         {% if pr.single_source_reason %}<span class="tag" data-i18n="proc.ss_tag">Single source · signed one level up</span>{% endif %}
         {# DOAM §5 — the cost object this spend is costed against, on every document. #}
         {% if pr.so_no %}<span class="tag"><span data-i18n="proc.so_tag">SO</span> {{ pr.so_no }}</span>{% endif %}
+        {% if pr.forecast_ref %}<span class="tag"><span data-i18n="proc.fc_tag">Agreed forecast</span> {{ pr.forecast_ref }}</span>{% endif %}
         {% if pr.cost_center %}<span class="tag"><span data-i18n="proc.cc_tag">Cost centre</span> {{ pr.cost_center }}</span>{% endif %}
         {% if pr.asset_code %}<span class="tag"><span data-i18n="proc.asset_tag">Asset</span> {{ pr.asset_code }}</span>{% endif %}
         {% if pr.payment_condition %}<span class="tag">{{ pr.payment_condition }}</span>{% endif %}
@@ -810,6 +882,52 @@
           <div class="muted mt-2" style="font-size:12.5px" data-i18n="proc.dev_blind">
             {{ deviation.unassessable }} line(s) have no target price or stock ceiling on file, so they could not be graded.
           </div>
+          {% endif %}
+          {# DOAM §4.4 / T&C-PUF-12 — the memo the extra approvers are meant to
+             read. Purchasing cannot sign the request off without it. #}
+          {% if deviation.memo %}
+          <div class="mt-3">
+            {% if pr.deviation_memo %}
+              <span class="badge b-live" data-i18n="proc.memo_ok">Justification memo recorded</span>
+              <div class="mt-1" style="white-space:pre-wrap">{{ pr.deviation_memo }}</div>
+            {% else %}
+              <span class="badge b-critical" data-i18n="proc.memo_req">Justification memo required (§4.4)</span>
+            {% endif %}
+            {% if can_purchasing and not rfq_locked %}
+            <form method="post" action="{{ url_for('approvals.doam_doc', pr_id=pr.id) }}" class="mt-2">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="field" value="deviation_memo">
+              <textarea name="text" rows="3" style="width:100%"
+                        placeholder="Why this order departs from plan, and why it should still be placed."
+                        data-i18n-ph="proc.memo_ph">{{ pr.deviation_memo or '' }}</textarea>
+              <button class="btn btn-ghost btn-sm mt-2" type="submit" data-i18n="proc.memo_save">Save memo</button>
+            </form>
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {# DOAM §4.1 tier 7 / §4.2 tier 4 — above 10,000,000 EGP the Board signs
+           WITH a written business case. Only rendered once the request is that
+           big, which is almost never. #}
+        {% if business_case_required %}
+        <div class="mt-2" style="margin-bottom:12px">
+          {% if pr.business_case %}
+            <span class="badge b-live" data-i18n="proc.bcase_ok">Business case recorded</span>
+            <div class="mt-1" style="white-space:pre-wrap">{{ pr.business_case }}</div>
+          {% else %}
+            <span class="badge b-critical" data-i18n="proc.bcase_req">Business case required above 10,000,000 EGP</span>
+          {% endif %}
+          {% if can_purchasing and not rfq_locked %}
+          <form method="post" action="{{ url_for('approvals.doam_doc', pr_id=pr.id) }}" class="mt-2">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="field" value="business_case">
+            <textarea name="text" rows="4" style="width:100%"
+                      placeholder="The need, the options considered, the return, and the consequence of not proceeding."
+                      data-i18n-ph="proc.bcase_ph">{{ pr.business_case or '' }}</textarea>
+            <button class="btn btn-ghost btn-sm mt-2" type="submit" data-i18n="proc.bcase_save">Save business case</button>
+          </form>
           {% endif %}
         </div>
         {% endif %}

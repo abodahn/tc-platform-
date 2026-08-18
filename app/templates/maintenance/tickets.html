@@ -45,7 +45,7 @@
       <a class="mkcard" href="{{ url_for('maintenance.ticket_detail', tid=t.id) }}"
          {% if can_move %}draggable="true" data-no="{{ t.ticket_no }}"
          data-move-url="{{ url_for('maintenance.ticket_move', tid=t.id) }}"
-         data-allow="{% for _k, _t, _s in groups %}{% if mmove_ok(t.status, _s[0]) %}{{ loop.index0 }} {% endif %}{% endfor %}"{% endif %}>
+         data-allow="{% for _k, _t, _s in groups %}{% if mboard_ok(t.status, _s) %}{{ loop.index0 }} {% endif %}{% endfor %}"{% endif %}>
         <div class="flex between center">
           <span class="mk-id">{% if can_move %}<svg class="ico mk-grip" aria-hidden="true"><use href="#i-apps"></use></svg>{% endif %}<span class="mk-no">{{ t.ticket_no }}</span></span>
           <span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span>

@@ -349,6 +349,7 @@ PERMISSION_LABELS = {
     "proc_create": "Procurement: raise requests",
     "proc_approve": "Procurement: approve stages",
     "proc_purchasing": "Procurement: purchasing / PO / vendors",
+    "proc_pay": "Procurement: release payments to suppliers",
     "proc_admin": "Procurement: admin (any stage, budgets)",
     "prob_view": "Probation: view",
     "prob_evaluate": "Probation: evaluate (manager)",
@@ -417,6 +418,9 @@ PERMISSION_DESC = {
     "proc_create": "Raise purchase requests.",
     "proc_approve": "Approve/reject a stage you're eligible for.",
     "proc_purchasing": "Issue POs, manage vendors and quotes.",
+    "proc_pay": "Release payments to suppliers. DOAM §7.3.4 puts payment "
+                "control with the Financial Director, deliberately NOT with the "
+                "buyer who committed the spend.",
     "proc_admin": "Act on any stage; manage budgets/matrix.",
     "prob_view": "See probation dashboards and cases within your scope.",
     "prob_evaluate": "Evaluate employees assigned to you (draft, submit, correct).",

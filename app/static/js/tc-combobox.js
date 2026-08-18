@@ -375,6 +375,11 @@
           h.className = "tc-cb-hint";
           h.textContent = m.hint;
           row.appendChild(h);
+          // The label and the hint are separate flex items, so they read fine
+          // on screen — but a screen reader concatenates the text nodes and
+          // announces "Delta Industrial Suppliesgeneral" as one word. An explicit
+          // label keeps the two apart for anyone listening rather than looking.
+          row.setAttribute("aria-label", m.label + ", " + m.hint);
         }
         frag.appendChild(row);
       }
