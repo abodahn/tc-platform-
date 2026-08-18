@@ -10,8 +10,14 @@ xlrd==2.0.2               # .xls (legacy OLE2) — the ERP item master exports t
                           # format and openpyxl CANNOT read it. xlrd 2.x is
                           # .xls-only by design, so the two do not overlap.
 qrcode==7.4.2            # machine/spare/ticket QR codes (pure-python)
-Pillow>=10.4             # QR rendering + logo/icon processing (unpinned: wheels vary by Python)
-reportlab>=4.0          # PDF reports (unpinned: wheels vary by Python)
+Pillow>=10.4,<13         # QR rendering + logo/icon processing. Lower bound stays open
+                         # because wheels vary by Python version; the UPPER bound is the
+                         # point — an unbounded spec lets a build silently cross a major
+                         # version and ship a different library than the one tested.
+reportlab>=4.0,<5        # PR/PO/GRN PDFs. Verified: with no upper bound pip resolves this
+                         # to reportlab 5.0.0 while every environment here runs 4.2.5. The
+                         # build would have succeeded and PDF generation could then fail at
+                         # runtime — on a paid build, on production.
 
 # --- Production WSGI servers ---
 waitress==3.0.0          # local Windows production (serve.py)
