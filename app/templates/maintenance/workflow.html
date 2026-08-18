@@ -216,7 +216,8 @@
       <tbody>
       {% for s in d.settings %}
         <tr>
-          <td><b>{{ loc('setting', s.key) }}</b><div class="muted" style="font-size:11px">{{ s.source }}</div></td>
+          <td><b>{{ loc('setting', s.key) }}</b><div class="muted" style="font-size:11px">{{ s.source }}</div>
+            {% if s.key == 'ejr_gate' %}<div class="muted" style="font-size:11px;max-width:38ch" data-i18n="mwf.setting.ejr_gate_note">DOAM §6 requires this. On: Procurement cannot sign off any spares, MRO or maintenance-department requisition without an Engineering-Head-approved justification report — automatic min/max reorders stay exempt. Ships off so switching it on is a deliberate decision.</div>{% endif %}</td>
           <td><b>{% if s.kind == 'bool' %}<span data-i18n="{{ 'mwf.on' if s.value else 'mwf.off' }}">{{ 'On' if s.value else 'Off' }}</span>
               {% else %}{{ '%g'|format(s.value) }}{% endif %}</b></td>
           <td class="muted">{% if s.kind == 'bool' %}<span data-i18n="{{ 'mwf.on' if s.default else 'mwf.off' }}">{{ 'On' if s.default else 'Off' }}</span>

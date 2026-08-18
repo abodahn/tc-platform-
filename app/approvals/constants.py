@@ -10,6 +10,7 @@ The requester is the originator (they "sign" by submitting). The stages after
 them are the approval ladder; which stages apply depends on the PR total via
 APPROVAL_MATRIX, so a small PR needs fewer signatures than a large one.
 """
+import re
 
 # --- Request lifecycle ------------------------------------------------------
 PR_STATUSES = [
@@ -438,6 +439,18 @@ PROC_ROLE_PERMS = {
     "cfo": ["proc_view", "proc_approve"],
     "ceo": ["proc_view", "proc_approve"],
     "warehouse_manager": ["proc_view", "proc_create", "proc_approve"],
+    # DOAM §3.2 authority roles that STAGE_ROLES routes to. Registered HERE, in
+    # code, and not only seeded into custom_roles at boot: can_act() resolves a
+    # role through effective_roles(), and stage_roles_map() drops any role that
+    # is not in it. A role that lives only as a database row is therefore absent
+    # from the registry in every environment where that one write did not land —
+    # which is how a 60,000 EGP request reached the 'scd' rung with no eligible
+    # signer and no error. Same grants as cfo/ceo: they approve, they do not buy.
+    "supply_chain_director": ["proc_view", "proc_approve"],
+    "plant_director": ["proc_view", "proc_approve"],
+    "financial_director": ["proc_view", "proc_approve"],
+    "managing_director": ["proc_view", "proc_approve"],
+    "board": ["proc_view", "proc_approve"],
     # grants for roles that already exist on the platform:
     "storekeeper": ["proc_view", "proc_create", "proc_approve"],
     "factory_manager": ["proc_view", "proc_create", "proc_approve"],
@@ -458,6 +471,11 @@ PROC_ROLE_LABELS = {
     "cfo": "Chief Financial Officer",
     "ceo": "Chief Executive Officer",
     "warehouse_manager": "Warehouse Manager",
+    "supply_chain_director": "Supply Chain Director",
+    "plant_director": "Plant Director",
+    "financial_director": "Financial Director",
+    "managing_director": "Managing Director",
+    "board": "Board of Directors",
 }
 
 
@@ -539,10 +557,59 @@ COST_OBJECTS = ["sales_order", "asset", "cost_center"]
 # the catalogue category and the line text, lowercased — the ERP's category
 # names are not under this system's control, so a keyword match is the only
 # thing that survives an import that renames "Trims" to "TRIM & ACCESSORIES".
+#
+# The original twelve were a substring match over six words of Table 12's prose,
+# and an audit walked fourteen of seventeen real apparel direct materials
+# straight past it with no sales order: zippers, sewing thread, buttons,
+# interlining, greige, denim, care labels, hangtags, cartons, polybags — even a
+# line literally reading "Direct materials". Trims, fasteners, labelling and
+# packaging are the bulk of what a garment factory buys against an order, so the
+# list now covers them by name.
+#
+# Matching is WHOLE-WORD (plus a plural), not substring. That is what keeps the
+# widening safe in the other direction: "wash" no longer fires on flat WASHERS
+# or the WASHROOM, "thread" no longer fires on THREADED rod, "print" no longer
+# fires on the PRINTER. Multi-word entries are matched as written.
 SO_MANDATORY_KEYWORDS = (
-    "fabric", "yarn", "trim", "chemical", "packaging", "accessor",
-    "subcontract", "sub-contract", "wash", "dye", "print", "embroider",
+    # base materials
+    "fabric", "greige", "griege", "grey goods", "denim", "twill", "poplin",
+    "jersey", "knit", "woven", "interlining", "fusible", "lining", "wadding",
+    "padding", "yarn", "thread", "sewing thread",
+    # trims, fasteners, closures
+    "trim", "accessory", "accessories", "zipper", "zip fastener", "button",
+    "snap fastener", "snap button", "buckle", "eyelet", "velcro", "elastic",
+    "drawcord", "drawstring", "webbing", "twill tape",
+    # labelling
+    "label", "care label", "size label", "hangtag", "hang tag", "swing tag",
+    # packaging
+    "packaging", "packing material", "carton", "polybag", "poly bag", "hanger",
+    # wet process / outsourced operations
+    "chemical", "dye", "dyestuff", "wash", "washing", "print", "printing",
+    "embroider", "embroidery", "embroidered", "subcontract", "sub-contract",
+    "cmt", "cut make trim",
+    # the requester saying it in so many words
+    "direct material", "raw material",
 )
+
+# Phrases that LOOK like a trim but are maintenance / IT / facility stock. They
+# are struck out of the text before matching, so an electrician ordering PUSH
+# BUTTONS or a workshop ordering BUTTON HEAD screws is not sent away to find a
+# sales order it has no business carrying. Anything else in the same line still
+# matches — this removes the phrase, not the check.
+SO_EXEMPT_PHRASES = (
+    "push button", "push-button", "pushbutton", "button head",
+    "label printer", "labelling machine", "labeling machine",
+    "print head", "printhead", "thread tap", "threading tap", "thread gauge",
+)
+
+_SO_EXEMPT_RE = re.compile("|".join(re.escape(p) for p in SO_EXEMPT_PHRASES))
+_SO_RE = re.compile(r"\b(?:%s)(?:s|es)?\b"
+                    % "|".join(re.escape(k) for k in SO_MANDATORY_KEYWORDS))
+
+# Sales-order statuses that are NOT a live cost object. A requisition may not be
+# raised against one: the order is finished or gone, so nothing can be costed to
+# it. Shipped orders stay acceptable — late trims and rework are real.
+SO_CLOSED_STATUSES = ("closed", "cancelled")
 
 
 def cost_object_required(texts):
@@ -550,7 +617,7 @@ def cost_object_required(texts):
     category / item string on the request. Returns "sales_order" when Table 12
     makes it mandatory, else None (asset or cost centre, requester's choice)."""
     blob = " ".join(str(t or "").lower() for t in texts)
-    return "sales_order" if any(k in blob for k in SO_MANDATORY_KEYWORDS) else None
+    return "sales_order" if _SO_RE.search(_SO_EXEMPT_RE.sub(" ", blob)) else None
 
 
 # DOAM §4.4 — Purchase Order Approval by Deviation. Beyond the value ladder, an
@@ -690,8 +757,9 @@ def match_tolerance_value(amount):
 # Rounding/bank-charge slack allowed on the payment caps in services.add_payment
 # (cumulative paid vs the PO grand total, and vs the invoiced gross total). The
 # hard floor of 1 currency unit inside add_payment is separate and stays fixed.
-# NOTE: services.three_way_match uses its own 1% for the MATCH verdict; that one
-# is deliberately NOT configurable (see docs/still_hardcoded in the workflow page).
+# NOTE: the MATCH verdict uses match_tolerance_value() and
+# MATCH_QTY_TOLERANCE_PCT above, not this one, and those two are deliberately NOT
+# admin-configurable — they are the DOAM's numbers (see the workflow page).
 PAYMENT_TOLERANCE_PCT = 1.0
 
 
@@ -854,18 +922,23 @@ DOC_SECTIONS = {
     "three_way_match": (
         "Before payment, ORDERED (the PO grand total and quantities) is compared with "
         "RECEIVED (goods-receipt quantities and their value at the order price) and "
-        "INVOICED (registered vendor invoices, gross of tax). Short delivery is flagged "
-        "but does NOT block payment — paying for what was actually delivered on a partial "
-        "receipt is legitimate. Over-billing does block: invoiced above the PO total, or "
-        "invoiced pre-tax above the value of what was received. The comparison allows a "
-        "tolerance of 1% of the PO total or 1 currency unit, whichever is larger."),
+        "INVOICED (registered vendor invoices, gross of tax). Over-billing blocks "
+        "payment: invoiced above the PO total, or invoiced pre-tax above the value of "
+        "what was received. Short delivery does NOT block the payment, it CAPS it — the "
+        "shortfall is stated in units and in money, and cumulative payment may not "
+        "exceed the value actually received, so paying for what was delivered on a "
+        "partial receipt stays legitimate while paying the whole PO for part of it does "
+        "not. The comparison allows the DOAM tolerances: 2% of the PO total or 500 EGP "
+        "on value, whichever is larger, and 5% on quantity."),
     "payment_cap": (
         "A payment can only be recorded once a Purchase Order exists — never against a "
         "draft, pending or cancelled request. Cumulative payments may not exceed the PO "
-        "grand total, and once invoices exist they may not exceed the invoiced gross "
-        "total either, so in practice the cap is the LOWER of the two, each with the "
-        "payment tolerance applied. A payment is also refused while the 3-way match shows "
-        "over-billing. An admin can override any of these and the override is audited."),
+        "grand total; once invoices exist they may not exceed the invoiced gross total "
+        "either; and on a short delivery they may not exceed the gross value of what was "
+        "actually received. In practice the cap is the LOWEST of the three that apply, "
+        "each with the payment tolerance applied. A payment is also refused while the "
+        "3-way match shows over-billing. An admin can override any of these and the "
+        "override is audited."),
 }
 
 # One-line meaning per PR status (stored as proc_doc sections 'status.<key>').

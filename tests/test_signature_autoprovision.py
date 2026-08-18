@@ -1,7 +1,7 @@
 """Signature auto-provisioning + server-side generation + one-click quick sig."""
 import pytest
 
-from _support import login_admin, get_csrf
+from _support import login_admin, login_as, get_csrf
 
 
 @pytest.fixture()
@@ -63,6 +63,10 @@ def test_approval_stamps_user_signature(app_client):
     approve (so it appears on the paper)."""
     a, c = app_client
     import io
+    # Raised by a requester, signed by the admin: the admin cannot approve a
+    # request that names them as the originator (DOAM §3.4), and it is the
+    # APPROVER's signature this test is about.
+    login_as(c, a, "normal_user")
     tok = get_csrf(c)
     c.post("/procurement/new", data={
         "_csrf": tok, "action": "submit", "title": "Sig stamp",
@@ -74,6 +78,7 @@ def test_approval_stamps_user_signature(app_client):
         from app.approvals import services as svc
         pid = [p for p in svc.list_prs(status="pending") if p["title"] == "Sig stamp"][0]["id"]
     # admin approves the current (warehouse) step
+    login_admin(c)
     c.post(f"/procurement/pr/{pid}/approve", data={"_csrf": get_csrf(c)}, follow_redirects=True)
     with a.app_context():
         from app.approvals import services as svc

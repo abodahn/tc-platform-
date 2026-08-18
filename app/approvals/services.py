@@ -216,6 +216,43 @@ def role_holders(conn, roles):
     return out
 
 
+def ladder_signer_health(conn=None):
+    """Every ladder rung with the roles that sign it and whether anyone can.
+
+    A rung whose roles have no active holder is a SILENT deadlock, not an error:
+    resolve_escalation() treats "nobody eligible at all" as unchanged, so the
+    request simply sits there until a platform admin notices and signs it. This
+    reports the condition before a request lands on it.
+
+    Covers the DOAM ladder and any legacy rung not in it, so the answer stays
+    right whichever ladder DOAM_IN_FORCE selects. Per rung:
+      roles         the role keys that may sign it (admin override applied)
+      unregistered  those roles that are in no role registry at all
+      holders       count of active users (incl. delegates) who hold one
+      ok            False = nobody can sign this rung
+    """
+    own = conn is None
+    if own:
+        conn = get_db()
+    try:
+        rmap = stage_roles_map(conn)
+        registry = set(effective_roles())
+        stages = list(C.DOAM_LADDER) + [s for s in C.LADDER if s not in C.DOAM_LADDER]
+        out = []
+        for stage in stages:
+            roles = sorted(rmap.get(stage, ()))
+            holders = role_holders(conn, roles)
+            out.append({"stage": stage, "label": C.stage_label(stage),
+                        "roles": roles,
+                        "unregistered": [r for r in roles if r not in registry],
+                        "holders": len(holders),
+                        "ok": bool(holders)})
+        return out
+    finally:
+        if own:
+            conn.close()
+
+
 def eligible_approvers(conn, stage, roles=None):
     """Usernames allowed to act on a stage: everyone holding a qualifying role,
     plus anyone with an active delegation from such a person.
@@ -505,6 +542,14 @@ def get_pr(pr_id):
                 (pr_id,)).fetchall()
         except Exception:
             sig_evs = []
+        try:
+            grns = [dict(r) for r in conn.execute(
+                "SELECT * FROM pr_grn WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()]
+            quarantine = [dict(r) for r in conn.execute(
+                "SELECT * FROM pr_grn_quarantine WHERE pr_id=? ORDER BY id",
+                (pr_id,)).fetchall()]
+        except Exception:
+            grns, quarantine = [], []    # database predating the GRN tables
     finally:
         conn.close()
     pr_d = dict(pr)
@@ -526,7 +571,8 @@ def get_pr(pr_id):
     return {"pr": pr_d, "items": [dict(r) for r in items], "steps": step_ds,
             "events": [dict(r) for r in events], "attachments": [dict(r) for r in atts],
             "quotes": [dict(r) for r in quotes],
-            "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments]}
+            "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments],
+            "grns": grns, "quarantine": quarantine}
 
 
 def list_prs(status=None, requester=None, limit=500):
@@ -1007,9 +1053,11 @@ def submit_pr(pr_id, user, ip=None):
         # DOAM §5 — direct materials must name the sales order they are for,
         # before they enter the ladder. Without it the spend has no cost object
         # and the order's margin can never be closed out.
+        # A sales order that is closed, cancelled or simply not a real order is
+        # refused here too — a free-text "n/a" is not a cost object.
         _co_ok, _co_need = cost_object_check(conn, pr_id, pr)
         if not _co_ok:
-            return False, "cost_object_required"
+            return False, _co_need
         # Department-aware ladder: use the department's responsibility matrix if
         # it has one, else the global default. Each rung = parallel stages.
         # Thresholds are EGP-based, so a foreign-currency PR routes on its
@@ -1501,7 +1549,10 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         # purchase, so NO setting and no admin role waives it. Only the
         # dual-role rule below stays waivable, because a genuinely small team
         # can have one person legitimately holding two ladder roles.
-        if pr["requester"] == uname:
+        # ...but only for an APPROVAL. The clause governs approving; rejecting
+        # your own request is withdrawing it, which is legitimate and harmless.
+        # Blocking that too stranded the request with nobody able to close it.
+        if decision == "approve" and pr["requester"] == uname:
             return False, "self_approval"
         if not (_is_admin and bool_setting(conn, "sod_admin_exempt")):
             other = conn.execute(
@@ -1762,6 +1813,94 @@ def revise_po(pr_id, reason, user, ip=None):
         conn.close()
 
 
+def _record_grn(conn, pr_id, pr, lines, user, notes=None):
+    """Allocate and persist ONE Goods Received Note for ONE receipt event.
+
+    `lines` = [{item_id, item, ordered, accepted, quarantined}] for the lines that
+    moved on THIS delivery. The number comes from the row id, so two partial
+    receipts on the same PR get two different numbers — the old behaviour derived
+    it from the PR number at print time and reprinted GRN-YYYY-NNNNNN forever.
+    Returns (grn_id, grn_no)."""
+    seq = (conn.execute("SELECT COUNT(*) c FROM pr_grn WHERE pr_id=?",
+                        (pr_id,)).fetchone()["c"] or 0) + 1
+    uname = (user or {}).get("username") or "system"
+    # A rejected quantity rides in lines_json, not in a rollup column: the GRN PDF
+    # and the detail page both read the lines anyway, and the money side of a
+    # rejection lives on the debit note, which is its own document.
+    cur = conn.execute(
+        """INSERT INTO pr_grn (pr_id, seq, lines_json, accepted_qty, quarantined_qty,
+           notes, received_by, created_at) VALUES (?,?,?,?,?,?,?,?)""",
+        (pr_id, seq, _json_dumps(lines),
+         round(sum(l["accepted"] for l in lines), 6),
+         round(sum(l["quarantined"] for l in lines), 6),
+         notes, uname, _now()))
+    grn_id = cur.lastrowid
+    grn_no = doc_no("GRN", grn_id)
+    conn.execute("UPDATE pr_grn SET grn_no=? WHERE id=?", (grn_no, grn_id))
+
+    excess = [l for l in lines if l["quarantined"] > 0]
+    for l in excess:
+        conn.execute(
+            """INSERT INTO pr_grn_quarantine (pr_id, grn_id, item_id, item, ordered_qty,
+               accepted_qty, qty, status, created_by, created_at)
+               VALUES (?,?,?,?,?,?,?,'quarantined',?,?)""",
+            (pr_id, grn_id, l["item_id"], l["item"], l["ordered"], l["accepted"],
+             l["quarantined"], uname, _now()))
+    if excess:
+        detail = ", ".join(f"{l['item']} +{l['quarantined']:g}" for l in excess)
+        audit(conn, pr_id, uname, "over_delivery_quarantined",
+              f"{grn_no}: over-delivery held in quarantine — {detail}")
+        bell(conn, "warning", "Over-delivery quarantined",
+             f"{grn_no} ({pr['pr_no']}): {detail}. Not added to stock — accept or "
+             f"return it.", link=_pr_link(pr_id))
+        notify_users(conn, [pr["requester"], uname],
+                     "warning", "Over-delivery quarantined",
+                     f"{pr['pr_no']}: the supplier delivered more than ordered "
+                     f"({detail}). Held in quarantine on {grn_no}.", link=_pr_link(pr_id))
+    return grn_id, grn_no
+
+
+def list_grns(pr_id):
+    conn = get_db()
+    try:
+        try:
+            grns = [dict(r) for r in conn.execute(
+                "SELECT * FROM pr_grn WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()]
+            quar = [dict(r) for r in conn.execute(
+                "SELECT * FROM pr_grn_quarantine WHERE pr_id=? ORDER BY id",
+                (pr_id,)).fetchall()]
+        except Exception:
+            return [], []        # pre-migration database: no GRN tables yet
+        return grns, quar
+    finally:
+        conn.close()
+
+
+def resolve_quarantine(q_id, decision, user, ip=None):
+    """Decide a quarantined over-delivery: 'return' it to the supplier or 'accept'
+    it (a written-off free-issue — the PO is NOT re-opened and stock is NOT
+    inflated, because the ordered quantity is what was authorised)."""
+    if decision not in ("return", "accept"):
+        return False, "bad_decision"
+    conn = get_db()
+    try:
+        q = conn.execute("SELECT * FROM pr_grn_quarantine WHERE id=?", (q_id,)).fetchone()
+        if not q:
+            return False, "not_found"
+        if q["status"] != "quarantined":
+            return False, "already_resolved"
+        uname = (user or {}).get("username") or "system"
+        conn.execute(
+            "UPDATE pr_grn_quarantine SET status='resolved', resolution=?, "
+            "resolved_by=?, resolved_at=? WHERE id=?", (decision, uname, _now(), q_id))
+        audit(conn, q["pr_id"], uname, "quarantine_resolved",
+              f"Over-delivery of {q['item']} ({q['qty']:g}) — {decision}", ip)
+        conn.commit()
+        return True, decision
+    finally:
+        conn.close()
+
+
 def receive_goods(pr_id, user, notes=None, ip=None):
     """Confirm delivery/goods-receipt for an issued PO. po_issued -> received."""
     conn = get_db()
@@ -1782,13 +1921,18 @@ def receive_goods(pr_id, user, notes=None, ip=None):
                      f"{pr['pr_no']} was received.", link=_pr_link(pr_id))
         # Whole-PR receive: mark every line fully received so the maintenance
         # bridge (and line reports) see the delivered quantities.
-        items = conn.execute("SELECT id, qty, received_qty FROM pr_items WHERE pr_id=?",
+        items = conn.execute("SELECT id, item, qty, received_qty FROM pr_items WHERE pr_id=?",
                              (pr_id,)).fetchall()
         remaining = {it["id"]: max(0.0, float(it["qty"] or 0) - float(it["received_qty"] or 0))
                      for it in items}
         for iid, qty in remaining.items():
             if qty > 0:
                 conn.execute("UPDATE pr_items SET received_qty=qty WHERE id=?", (iid,))
+        # this door delivers exactly the outstanding balance, so nothing to quarantine
+        _record_grn(conn, pr_id, pr,
+                    [{"item_id": it["id"], "item": it["item"], "ordered": float(it["qty"] or 0),
+                      "accepted": remaining[it["id"]], "quarantined": 0.0}
+                     for it in items if remaining[it["id"]] > 0], user, notes)
         conn.commit()
         _post_bridge_receipt(pr_id, remaining, user)
         return True, ""
@@ -1796,10 +1940,18 @@ def receive_goods(pr_id, user, notes=None, ip=None):
         conn.close()
 
 
-def receive_items(pr_id, receipts, user, notes=None, ip=None):
+def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True):
     """Record a line-level goods receipt. `receipts` = {item_id: qty_received_now}.
     Adds to each line's received_qty (capped at ordered), then sets the PR status to
-    'received' (all lines fulfilled) or 'partially_received'."""
+    'received' (all lines fulfilled) or 'partially_received'.
+
+    Anything delivered ABOVE the ordered quantity is NOT added to stock and NOT
+    thrown away: it is written to pr_grn_quarantine with an explicit state and a
+    notification. Every call allocates its own GRN number.
+
+    post_stock=False when the CALLER books the stock itself (the warehouse door
+    keeps roll/lot data the bridge cannot carry) — the PR bookkeeping, the GRN and
+    the quarantine still happen here so both doors obey one rule."""
     conn = get_db()
     try:
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
@@ -1815,6 +1967,7 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
         # posted onward into warehouse stock, otherwise typing "6" twice on a
         # 10-piece order books 10 but would inflate the spare stock by 12.
         effective = {}
+        grn_lines = []
         for it in items:
             add = receipts.get(str(it["id"])) or receipts.get(it["id"]) or 0
             try:
@@ -1828,9 +1981,15 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
                 continue    # never book receipts against a zero-quantity line
             already = float(it["received_qty"] or 0)
             new_total = min(ordered, already + add)
-            if new_total > already:
-                effective[it["id"]] = round(new_total - already, 6)
+            accepted = round(max(0.0, new_total - already), 6)
+            # The excess is what the truncation used to swallow. It is recorded,
+            # never stocked: `effective` (what goes to the store) stays capped.
+            over = round(max(0.0, (already + add) - ordered), 6)
+            if accepted > 0:
+                effective[it["id"]] = accepted
             conn.execute("UPDATE pr_items SET received_qty=? WHERE id=?", (new_total, it["id"]))
+            grn_lines.append({"item_id": it["id"], "item": it["item"], "ordered": ordered,
+                              "accepted": accepted, "quarantined": over})
             any_recv = True
         if not any_recv:
             return False, "nothing_received"
@@ -1843,14 +2002,16 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
             "receipt_notes=COALESCE(?, receipt_notes) WHERE id=?",
             (new_status, now if fully else pr["received_at"],
              user.get("username") if user else "system", notes, pr_id))
+        _, grn_no = _record_grn(conn, pr_id, pr, grn_lines, user, notes)
         audit(conn, pr_id, user.get("username") if user else "system", "goods_received",
-              ("Fully received" if fully else "Partial receipt")
+              ("Fully received" if fully else "Partial receipt") + f" — {grn_no}"
               + (f": {notes}" if notes else ""), ip)
         if fully:
             notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
-                         f"{pr['pr_no']} fully received.", link=_pr_link(pr_id))
+                         f"{pr['pr_no']} fully received ({grn_no}).", link=_pr_link(pr_id))
         conn.commit()
-        _post_bridge_receipt(pr_id, effective, user)
+        if post_stock:
+            _post_bridge_receipt(pr_id, effective, user)
         return True, ("received" if fully else "partial")
     finally:
         conn.close()
@@ -1961,10 +2122,27 @@ def three_way_match(pr_id):
     # therefore both too tight on small invoices and too loose on large ones.
     tol = C.match_tolerance_value(ordered_grand) if C.DOAM_IN_FORCE \
         else max(1.0, ordered_grand * 0.01)
+    # ...and the QUANTITY half of the same clause ("or 5% of quantity"), which
+    # until now was a constant with no reader at all: the match compared value
+    # only, so 4 units short of 100 and 40 units short of 100 were both simply
+    # "short", and neither had a number the payment side could act on.
+    qty_tol = ordered_qty * C.MATCH_QTY_TOLERANCE_PCT / 100.0 if C.DOAM_IN_FORCE else 0.0
     flags = []
-    qty_ok = received_qty >= ordered_qty - 1e-6
-    if not qty_ok:
-        flags.append(f"Short delivery: received {received_qty:g} of {ordered_qty:g} ordered")
+    # The shortfall is stated in BOTH units and money: the units are what the
+    # tolerance is measured in, the money is what add_payment caps against.
+    short_qty = round(max(0.0, ordered_qty - received_qty), 6)
+    received_grand = round(received_value * (1 + amt["tax_rate"] / 100.0), 2)
+    short_value = round(max(0.0, ordered_grand - received_grand), 2)
+    qty_ok = short_qty <= qty_tol + 1e-9
+    if short_qty > 0:
+        flags.append(
+            f"Short delivery: received {received_qty:g} of {ordered_qty:g} ordered "
+            f"- short {short_qty:g} ({short_value:,.2f}); "
+            + (f"within the {C.MATCH_QTY_TOLERANCE_PCT:g}% quantity tolerance"
+               if qty_ok else
+               f"beyond the {C.MATCH_QTY_TOLERANCE_PCT:g}% quantity tolerance "
+               f"({qty_tol:g})")
+            + f"; payment is capped at the received value {received_grand:,.2f}")
     price_ok = invoiced <= ordered_grand + tol
     if invoiced > ordered_grand + tol:
         flags.append(f"Over-billing: invoiced {invoiced:,.2f} vs PO {ordered_grand:,.2f}")
@@ -1977,6 +2155,8 @@ def three_way_match(pr_id):
     result = {
         "ordered_grand": ordered_grand, "ordered_qty": ordered_qty,
         "received_qty": received_qty, "received_value": received_value,
+        "received_grand": received_grand, "short_qty": short_qty,
+        "short_value": short_value, "qty_tol": qty_tol, "tol": tol,
         "invoiced": invoiced, "qty_ok": qty_ok, "price_ok": price_ok,
         "receipt_inv_ok": receipt_inv_ok, "flags": flags,
         "status": "matched" if matched else ("mismatch" if bundle["invoices"] else "pending"),
@@ -2019,8 +2199,9 @@ def list_sales_orders(limit=300):
     try:
         rows = conn.execute(
             "SELECT DISTINCT order_no FROM ord_orders WHERE order_no IS NOT NULL "
-            "AND order_no<>'' AND status NOT IN ('cancelled','closed') "
-            "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            "AND order_no<>'' AND status NOT IN (%s) ORDER BY id DESC LIMIT ?"
+            % ",".join("?" * len(C.SO_CLOSED_STATUSES)),
+            tuple(C.SO_CLOSED_STATUSES) + (limit,)).fetchall()
         return [r["order_no"] for r in rows]
     except Exception:
         return []
@@ -2028,21 +2209,66 @@ def list_sales_orders(limit=300):
         conn.close()
 
 
+def sales_order_state(conn, so_no):
+    """Is `so_no` a real, open sales order? "open" / "closed" / "unknown", or
+    None when there is nothing to check it against.
+
+    The PR form's sales-order field is a free-text datalist: the picker offers
+    real orders, but "x", "-" or "n/a" typed over it used to satisfy the DOAM's
+    "valid client sales order reference" just as well. It is validated here.
+
+    None (skip the check) covers the two cases where refusing would be wrong
+    rather than strict: the orders module is not installed (the query raises),
+    or it is installed with no orders on file yet — the picker is empty too, so
+    there is no reference the requester could possibly give.
+    """
+    ref = str(so_no or "").strip().lower()
+    if not ref:
+        return None
+    try:
+        rows = conn.execute(
+            "SELECT status FROM ord_orders WHERE LOWER(TRIM(order_no))=?",
+            (ref,)).fetchall()
+        if not rows:
+            return "unknown" if conn.execute(
+                "SELECT 1 FROM ord_orders LIMIT 1").fetchone() else None
+    except Exception:
+        return None
+    closed = set(C.SO_CLOSED_STATUSES)
+    # Any live row wins: the same order number can legitimately appear more than
+    # once (split shipments), and one open line is an open order.
+    return "open" if any(str(r["status"] or "").strip().lower() not in closed
+                         for r in rows) else "closed"
+
+
 def cost_object_check(conn, pr_id, pr):
     """DOAM §5 / Table 12 — does this request carry the cost object it must?
-    Returns (ok, required) where `required` is "sales_order" when a sales-order
-    reference is mandatory and missing, else None."""
-    if str(_pr_field(pr, "so_no") or "").strip():
-        return True, None
+    Returns (ok, reason) where `reason` is the refusal code — "so_unknown",
+    "so_closed" or "cost_object_required" — and None when the request is fine."""
+    so = str(_pr_field(pr, "so_no") or "").strip()
+    if so:
+        state = sales_order_state(conn, so)
+        if state in ("open", None):
+            return True, None
+        return False, "so_closed" if state == "closed" else "so_unknown"
     texts = [_pr_field(pr, "title"), _pr_field(pr, "request_for")]
     rows = conn.execute(
-        "SELECT i.item, i.description, c.category_name FROM pr_items i "
+        "SELECT i.item, i.description, i.spare_id, c.category_name FROM pr_items i "
         "LEFT JOIN proc_items c ON c.id = i.item_id WHERE i.pr_id=?",
         (pr_id,)).fetchall()
+    # Master data beats free text. Every line linked to a MAINTENANCE SPARE is
+    # MRO under Table 12 (asset / cost centre), whatever the wording says — and
+    # sewing-machine spares are called things like "thread guide" and "elastic
+    # feeder". Without this the maintenance auto-reorder would raise a request
+    # and then be told to find a sales order it must not carry.
+    # ponytail: only when EVERY line is a spare; a mixed request is judged on its
+    # text, which is the safe way round.
+    if rows and all(r["spare_id"] for r in rows):
+        return True, None
     for r in rows:
         texts += [r["item"], r["description"], r["category_name"]]
     need = C.cost_object_required(texts)
-    return (need is None), need
+    return (need is None), ("cost_object_required" if need else None)
 
 
 def deviation_findings(conn, pr_id):
@@ -2256,7 +2482,10 @@ def add_payment(pr_id, data, user, ip=None, force=False):
       * the 3-way match must not show over-billing (invoice > PO, or invoice >
         received value) — "payment block on mismatch";
       * total paid may not exceed the PO grand total (+ the payment tolerance,
-        setting 'payment_tolerance_pct' -> C.PAYMENT_TOLERANCE_PCT, default 1%)."""
+        setting 'payment_tolerance_pct' -> C.PAYMENT_TOLERANCE_PCT, default 1%);
+      * on a SHORT DELIVERY the cap drops to the value actually received. Paying
+        for what arrived is legitimate; paying the whole PO for part of it is
+        not, and the DOAM asks for the shortfall to be stated, not waved past."""
     # run the match first (own connections) — before opening ours
     match = three_way_match(pr_id)
     conn = get_db()
@@ -2269,8 +2498,8 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         amount = float(data.get("amount") or 0)
         if amount <= 0:
             return False, "bad_amount"
-        # over-billing block (short delivery alone does NOT block: paying for
-        # what WAS received on a partial delivery is legitimate)
+        # over-billing block (short delivery alone does not block the payment,
+        # it caps it — see the received-value cap further down)
         if match and match["has_invoice"] and not force \
            and (not match["price_ok"] or not match["receipt_inv_ok"]):
             return False, "match_blocked"
@@ -2300,6 +2529,18 @@ def add_payment(pr_id, data, user, ip=None, force=False):
             billed = float(match.get("invoiced") or 0)
             if billed > 0 and already + amount > billed + max(1.0, billed * _tol_pct):
                 return False, "exceeds_invoiced"
+        # DOAM 7.3.3 short delivery — the third cap, and the one that was missing:
+        # goods short, invoice for the full order, every other gate green, and the
+        # company paid the whole PO for part of a delivery. Cumulative payment is
+        # capped at the GROSS value of what was actually received. Only bites when
+        # something is genuinely short, so a fully received order and an advance
+        # (no invoice yet, governed above) are untouched. Same payment tolerance
+        # as its two siblings above, for rounding and bank charges.
+        if match and match["has_invoice"] and not force \
+           and float(match.get("short_qty") or 0) > 0:
+            rcv = float(match.get("received_grand") or 0)
+            if already + amount > rcv + max(1.0, rcv * _tol_pct):
+                return False, "exceeds_received"
         now = _now()
         if force:
             audit(conn, pr_id, (user or {}).get("username"), "payment_override",

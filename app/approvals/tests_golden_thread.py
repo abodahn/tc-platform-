@@ -42,13 +42,22 @@ def run():
         ok, msg = svc.submit_pr(bad, tech)
         assert not ok and msg == "cost_object_required", (ok, msg)
 
-        # 2. With the sales order on it, the same request goes through.
+        # 2. With a REAL, OPEN sales order on it, the same request goes through.
+        #    The reference is validated against ord_orders now (audit 3.4-b2a):
+        #    a made-up number like "SO-8841" is refused, so the fixture uses a
+        #    live order. tests_so_gate.py drives the validation itself.
+        conn = get_db()
+        live = conn.execute("SELECT order_no FROM ord_orders WHERE status NOT IN "
+                            "('closed','cancelled') ORDER BY id LIMIT 1").fetchone()
+        conn.close()
+        assert live, "no open sales order on file — the fixture cannot run"
+        live_so = live["order_no"]
         good, _ = svc.create_pr({"title": "Fabric for the new style",
-                                 "department": "Production", "so_no": "SO-8841"},
+                                 "department": "Production", "so_no": live_so},
                                 [{"item": "Cotton twill fabric", "qty": 500,
                                   "unit_price": 60}], tech, submit=False)
         ok, msg = svc.submit_pr(good, tech)
-        assert ok, "a fabric PR carrying SO-8841 was still refused: %s" % msg
+        assert ok, "a fabric PR carrying %s was still refused: %s" % (live_so, msg)
 
         # 3. MRO does not need one — the control must not block the factory's
         #    day-to-day spares purchasing.
@@ -63,7 +72,7 @@ def run():
         conn = get_db()
         row = conn.execute("SELECT so_no FROM pr_requests WHERE id=?", (good,)).fetchone()
         conn.close()
-        assert row["so_no"] == "SO-8841", row["so_no"]
+        assert row["so_no"] == live_so, row["so_no"]
 
         # 5. ...and it actually reaches the printed PR / PO / GRN.
         from app.approvals import pdf

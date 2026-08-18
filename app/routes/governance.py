@@ -13,7 +13,7 @@ Five views (tabs):
                  _view/_manage/_approve/_admin naming convention
   rules          procurement ladder + thresholds + escalation chain, SoD state,
                  maintenance ladder, and who holds each role right now
-  findings       the five governance findings the page raises by itself
+  findings       the governance findings the page raises by itself
 
 Permission gate: access_admin.
   Chosen over view_reports because view_reports is held by ~14 roles including
@@ -503,7 +503,17 @@ def findings():
                                 "role_label": role["label"] if role else u["role"],
                                 "beyond": beyond})
 
-    return {"unheld": unheld, "star_only": star_only, "empty_roles": empty_roles,
+    # 6 — approval rungs nobody can sign. A ladder stage whose roles have no
+    # active holder is a silent deadlock: the request routes there and waits for
+    # a signature only a platform admin can give, with no error anywhere.
+    try:
+        from app.approvals.services import ladder_signer_health
+        unsignable = [x for x in ladder_signer_health() if not x["ok"]]
+    except Exception:              # a build without the procurement module
+        unsignable = []
+
+    return {"unsignable": unsignable,
+            "unheld": unheld, "star_only": star_only, "empty_roles": empty_roles,
             "single_roles": single_roles, "dead": dead, "open_routes": open_routes,
             "indirect_routes": indirect_routes, "escalations": escalations,
             "route_total": len(route_scan())}
@@ -659,6 +669,11 @@ def export_dataset(key):
         f = findings()
         headers = ["finding", "subject", "detail"]
         rows = []
+        for x in f["unsignable"]:
+            rows.append(["approval rung no active user can sign", x["stage"],
+                         "roles: " + (", ".join(x["roles"]) or "none")
+                         + ("; not in any role registry: " + ", ".join(x["unregistered"])
+                            if x["unregistered"] else "")])
         for x in f["unheld"]:
             rows.append(["permission granted but held by no active user", x["perm"],
                          "granted by: " + ", ".join(x["roles"])])

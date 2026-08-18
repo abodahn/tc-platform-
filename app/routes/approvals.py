@@ -497,11 +497,11 @@ def create():
 def _submit_error(msg):
     """Human-readable reason a submit was refused, in the reader's language for the
     one case the reader has to act on (no superior above their own role)."""
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
     if msg == "no_eligible_approver":
-        return svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]["esc_blocked_flash"]
-    if msg == "cost_object_required":
-        return ("This request buys direct materials, so it must name the sales order "
-                "it is for (DOAM §5). Add the sales order and submit again.")
+        return ui["esc_blocked_flash"]
+    if msg in ("cost_object_required", "so_unknown", "so_closed"):
+        return ui[msg + "_flash"]
     return f"Could not submit ({msg})."
 
 
@@ -1171,6 +1171,10 @@ def add_payment(pr_id):
                             "the mismatch first — an administrator can override.",
            "over_payment": "This payment would exceed the PO total. Check the amount — "
                            "an administrator can override if intentional.",
+           "exceeds_received": "Short delivery: this payment would exceed the value of "
+                               "the goods actually received. Pay for what was received, "
+                               "book the rest once it arrives — or ask an administrator "
+                               "to override.",
            "advance_not_authorised": "This is an advance payment (nothing invoiced yet). "
                                      "DOAM §4.3 requires it to be authorised first — "
                                      "record the advance authorisation on this request.",
@@ -1280,18 +1284,40 @@ def po_pdf(pr_id):
 @login_required
 @permission_required("proc_view")
 def grn_pdf(pr_id):
+    """?grn=<id> prints THAT goods-received note; without it, the latest one.
+    Each receipt event has its own pre-allocated number, so partial deliveries no
+    longer reprint one document under one number."""
     bundle = svc.get_pr(pr_id)
     if not bundle:
         abort(404)
     if bundle["pr"]["status"] not in ("partially_received", "received", "closed"):
         abort(400, "The Goods Received Note is available once a delivery is recorded.")
+    grns = bundle.get("grns") or []
+    want = request.args.get("grn", type=int)
+    grn = next((g for g in grns if g["id"] == want), None) if want else (grns[-1] if grns else None)
+    if want and not grn:
+        abort(404)
     try:
-        data = pdfgen.grn_pdf(bundle)
+        data = pdfgen.grn_pdf(bundle, grn)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
+    name = (grn or {}).get("grn_no") or pdfgen.grn_doc_no(bundle["pr"].get("pr_no"))
     return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False,
-                     download_name=f"{pdfgen.grn_doc_no(bundle['pr'].get('pr_no'))}.pdf")
+                     as_attachment=False, download_name=f"{name}.pdf")
+
+
+@bp.route("/quarantine/<int:q_id>/<decision>", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def resolve_quarantine(q_id, decision):
+    ok, msg = svc.resolve_quarantine(q_id, decision, _u(), ip=_ip())
+    flash({"return": "Over-delivery marked for return to the supplier.",
+           "accept": "Over-delivery accepted as a free issue (stock unchanged).",
+           }.get(msg, f"Could not resolve the quarantine ({msg}).")
+          if ok else {"already_resolved": "That quarantine record is already decided.",
+                      }.get(msg, f"Could not resolve the quarantine ({msg})."),
+          "success" if ok else "error")
+    return redirect(request.referrer or url_for("approvals.index"))
 
 
 # --------------------------------------------------------------------------

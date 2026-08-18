@@ -14,14 +14,20 @@ Money notes, because a report with a quietly wrong number is worse than none:
     works in EGP and says so in its labels. It is deliberately gross where
     egp_total() is net — egp_total() exists to route the approval ladder on the
     order value, these reports exist to state what the money is.
-  * the 3-way-match tolerance is max(1, grand * 1%), the SAME rule as
-    services.three_way_match(). Exceptions are reported as AMOUNTS, not as
-    English words, so they need no translation and can be sorted and totalled.
+  * the 3-way-match tolerances are the DOAM's, read from the SAME constants
+    services.three_way_match() reads: max(grand * MATCH_TOLERANCE_PCT,
+    MATCH_TOLERANCE_ABS) on value and MATCH_QTY_TOLERANCE_PCT on quantity. They
+    are interpolated into the SQL from constants.py rather than typed as
+    literals, because the previous literals (a flat 1% on value, no quantity
+    tolerance at all) made this report disagree with the control it reports on.
+    Exceptions are reported as AMOUNTS, not as English words, so they need no
+    translation and can be sorted and totalled.
   * "committed" is the SAME status set as services.budget_status(): approved and
     beyond. A request still in the approval ladder has committed nothing yet —
     proc_waiting is where the pipeline is reported.
 """
 from app.services import reporting as R
+from app.approvals import constants as C   # tolerance numbers only, no DB
 
 MODULE = "procurement"
 LABEL_EN, LABEL_AR, LABEL_TR = "Procurement", "المشتريات", "Satın Alma"
@@ -41,9 +47,14 @@ _FX = "(CASE WHEN COALESCE(p.fx_rate,1) > 0 THEN COALESCE(p.fx_rate,1) ELSE 1 EN
 _EGP = f"(CASE WHEN {_IS_EGP} THEN {_GRAND} ELSE {_GRAND} * {_FX} END)"
 _PAID_EGP = (f"(CASE WHEN {_IS_EGP} THEN COALESCE(p.paid_amount,0) "
              f"ELSE COALESCE(p.paid_amount,0) * {_FX} END)")
-# max(1, grand * 1%) — three_way_match's tolerance, expressed without a MAX()
-# aggregate (SQLite's MAX(a,b) scalar form does not exist on PostgreSQL).
-_TOL = f"(CASE WHEN {_GRAND}*0.01 > 1.0 THEN {_GRAND}*0.01 ELSE 1.0 END)"
+# three_way_match's VALUE tolerance, expressed without a MAX() aggregate
+# (SQLite's MAX(a,b) scalar form does not exist on PostgreSQL). The numbers come
+# from constants.py, so the report and the control can only ever say the same
+# thing: DOAM = max(2% of value, 500 EGP); pre-DOAM = max(1%, 1).
+_TOL_PCT = C.MATCH_TOLERANCE_PCT if C.DOAM_IN_FORCE else 1.0
+_TOL_ABS = C.MATCH_TOLERANCE_ABS if C.DOAM_IN_FORCE else 1.0
+_TOL = (f"(CASE WHEN {_GRAND}*{_TOL_PCT / 100.0!r} > {_TOL_ABS!r} "
+        f"THEN {_GRAND}*{_TOL_PCT / 100.0!r} ELSE {_TOL_ABS!r} END)")
 
 # Statuses that represent real money the company has committed to spend. EXACTLY
 # the set services.budget_status() gates a new request against — a request still
@@ -332,6 +343,12 @@ _OVER_RECEIVED = (f"CASE WHEN COALESCE(i.inv_net,0) > COALESCE(t.rcv_val,0) + {_
                   "THEN COALESCE(i.inv_net,0) - COALESCE(t.rcv_val,0) ELSE 0 END")
 _SHORT_QTY = ("CASE WHEN COALESCE(t.rcv_qty,0) < COALESCE(t.ord_qty,0) "
               "THEN COALESCE(t.ord_qty,0) - COALESCE(t.rcv_qty,0) ELSE 0 END")
+# The column above states the WHOLE shortfall — that is the point of the column,
+# the DOAM wants a short delivery visible even when it is tolerable. Whether it
+# is an EXCEPTION is a different question, and it is answered with the same
+# quantity tolerance three_way_match applies.
+_QTY_TOL = (f"(COALESCE(t.ord_qty,0) * {C.MATCH_QTY_TOLERANCE_PCT / 100.0!r})"
+            if C.DOAM_IN_FORCE else "0")
 _OUTSTANDING = f"({_GRAND} - COALESCE(p.paid_amount,0))"
 # Exposure only. An OVERPAID request has a negative outstanding, which is a real
 # fact in the column, but feeding it to a pareto produced a cumulative % that ran
@@ -350,15 +367,21 @@ R.register(**_common(
     title="Receipts, invoices & payment exposure",
     title_ar="الاستلام والفواتير والمكشوف من السداد",
     title_tr="Mal kabul, fatura ve ödeme riski",
-    desc="Ordered vs received vs invoiced vs paid, for orders that reached PO "
-         "stage. Over-billed and short-delivered are shown as amounts, using "
-         "the same 1% (min 1) tolerance as the 3-way match on the PR page.",
-    desc_ar="المطلوب مقابل المستلم مقابل المفوتر مقابل المدفوع، للطلبات التي "
-            "وصلت لأمر الشراء. الزيادة في الفوترة والنقص في التوريد تظهر كمبالغ "
-            "بنفس سماحية ١٪ (بحد أدنى ١) المستخدمة في المطابقة الثلاثية.",
-    desc_tr="Sipariş / teslim / fatura / ödeme karşılaştırması, sipariş "
-            "aşamasına gelen talepler için. Fazla faturalama ve eksik teslimat "
-            "tutar olarak, 3'lü mutabakattaki %1 (en az 1) toleransıyla.",
+    desc=("Ordered vs received vs invoiced vs paid, for orders that reached PO "
+          "stage. Over-billed and short-delivered are shown as amounts, using "
+          "exactly the tolerances the 3-way match on the PR page applies: "
+          "%g%% of value or %g EGP, whichever is greater, and %g%% of quantity."
+          % (_TOL_PCT, _TOL_ABS, C.MATCH_QTY_TOLERANCE_PCT)),
+    desc_ar=("المطلوب مقابل المستلم مقابل المفوتر مقابل المدفوع، للطلبات التي "
+             "وصلت لأمر الشراء. الزيادة في الفوترة والنقص في التوريد تظهر كمبالغ "
+             "بنفس سماحية المطابقة الثلاثية: %g%% من القيمة أو %g جنيه أيهما "
+             "أكبر، و%g%% من الكمية." % (_TOL_PCT, _TOL_ABS,
+                                        C.MATCH_QTY_TOLERANCE_PCT)),
+    desc_tr=("Sipariş / teslim / fatura / ödeme karşılaştırması, sipariş "
+             "aşamasına gelen talepler için. Fazla faturalama ve eksik teslimat "
+             "tutar olarak, 3'lü mutabakatın uyguladığı toleranslarla: değerin "
+             "%%%g'i veya %g EGP (hangisi büyükse) ve miktarın %%%g'i."
+             % (_TOL_PCT, _TOL_ABS, C.MATCH_QTY_TOLERANCE_PCT)),
     select=(
         "p.pr_no AS pr_no, p.vendor AS vendor, p.department AS department, "
         "p.status AS status, p.currency AS currency, "
@@ -421,7 +444,8 @@ R.register(**_common(
         R.kpi("exceptions", "Match exceptions", "استثناءات المطابقة",
               "Mutabakat istisnası",
               f"SUM(CASE WHEN {_HAS_INVOICE} AND ({_OVER_BILLED} > 0 "
-              f"OR {_OVER_RECEIVED} > 0 OR {_SHORT_QTY} > 0) THEN 1 ELSE 0 END)",
+              f"OR {_OVER_RECEIVED} > 0 OR {_SHORT_QTY} > {_QTY_TOL}) "
+              f"THEN 1 ELSE 0 END)",
               better="down"),
     ],
     chart=R.chart("pareto", "p.vendor", f"SUM({_EXPOSURE})", "p.vendor",

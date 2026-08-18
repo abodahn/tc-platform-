@@ -120,17 +120,47 @@ def receive_post():
     if not mat:
         flash("Pick a material first.", "error")
         return redirect(url_for("warehouse.receive"))
-    if mat.get("roll_tracked"):
-        ok, msg = svc.receive_roll(mid, request.form, _u())
+    roll = bool(mat.get("roll_tracked"))
+    form = request.form
+    # Same rule as the procurement receiving tab: a stock-in that names a PO is
+    # booked ON that PO — capped at the outstanding quantity, excess quarantined,
+    # its own GRN number allocated. post_stock=False because we book the stock
+    # ourselves right after, keeping the roll/lot detail the bridge cannot carry.
+    line = svc.po_line_for(form.get("grn_ref"), mid)
+    asked = svc.qty_of(form.get("length_m") if roll else form.get("qty"))
+    quarantined = 0.0
+    if line and asked > 0:
+        from app.approvals import services as psvc
+        ok, msg = psvc.receive_items(line["pr_id"], {line["item_id"]: asked}, _u(),
+                                     notes=form.get("notes") or None, post_stock=False)
+        if not ok:
+            flash(f"Receipt rejected on the purchase order ({msg}).", "error")
+            return redirect(url_for("warehouse.receive"))
+        # ponytail: PO booked before the stock move, so a failing move (only
+        # realistic case: a duplicate operator-typed roll number) leaves the PR
+        # ahead of the shelf. The reverse order would leave uncontrolled free
+        # stock, which is the defect being fixed. Two-phase it if that ever bites.
+        quarantined = max(0.0, asked - line["outstanding"])
+        asked = min(asked, line["outstanding"])
+        if asked <= 0:                       # the whole delivery was over-ordered
+            flash(f"Nothing outstanding on that order — {quarantined:g} held in "
+                  f"quarantine, not added to stock.", "warning")
+            return redirect(url_for("warehouse.materials"))
+        form = form.copy()
+        form["length_m" if roll else "qty"] = str(asked)
+    if roll:
+        ok, msg = svc.receive_roll(mid, form, _u())
         flash(f"Roll {msg} received." if ok else f"Receipt rejected ({msg}).",
               "success" if ok else "error")
     else:
-        ok, msg = svc.receive_qty(mid, request.form.get("qty"),
-                                  request.form.get("unit_cost"), _u(),
-                                  grn_ref=request.form.get("grn_ref"))
+        ok, msg = svc.receive_qty(mid, form.get("qty"), form.get("unit_cost"), _u(),
+                                  grn_ref=form.get("grn_ref"))
         flash("Goods received." if ok else f"Receipt rejected ({msg}).",
               "success" if ok else "error")
-    return redirect(url_for("warehouse.rolls" if mat.get("roll_tracked") else "warehouse.materials"))
+    if ok and quarantined > 0:
+        flash(f"{quarantined:g} over the ordered quantity was quarantined, not "
+              f"added to stock.", "warning")
+    return redirect(url_for("warehouse.rolls" if roll else "warehouse.materials"))
 
 
 @bp.route("/adjust", methods=["POST"])

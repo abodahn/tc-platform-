@@ -5,12 +5,31 @@
 {% include "governance/_head.html" %}
 
 <div class="sf-kpis">
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ f.unsignable|length }}</div><div class="l" data-i18n="gov.find.k_unsignable">Approval rungs nobody can sign</div></div>
   <div class="sf-kpi"><div class="v" dir="ltr">{{ f.unheld|length }}</div><div class="l" data-i18n="gov.find.k_unheld">Unheld permissions</div></div>
   <div class="sf-kpi"><div class="v" dir="ltr">{{ f.star_only|length }}</div><div class="l" data-i18n="gov.find.k_star_only">Held only by an all-permissions account</div></div>
   <div class="sf-kpi"><div class="v" dir="ltr">{{ f.empty_roles|length }}</div><div class="l" data-i18n="gov.find.k_empty">Empty roles</div></div>
   <div class="sf-kpi"><div class="v" dir="ltr">{{ f.dead|length }}</div><div class="l" data-i18n="gov.find.k_dead">Unenforced permissions</div></div>
   <div class="sf-kpi"><div class="v" dir="ltr">{{ f.open_routes|length }}</div><div class="l" data-i18n="gov.find.k_open">Unguarded routes</div></div>
   <div class="sf-kpi"><div class="v" dir="ltr">{{ f.escalations|length }}</div><div class="l" data-i18n="gov.find.k_extra">Users above their role</div></div>
+</div>
+
+{# ---- 0. approval rungs with no eligible signer ---------------------------- #}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="gov.find.unsignable">Approval rungs no active user can sign</h3>
+    <span class="muted" dir="ltr">{{ f.unsignable|length }}</span></div>
+  <div class="panel-pad"><div class="muted" style="font-size:12.5px" data-i18n="gov.find.unsignable_note">A request that reaches one of these rungs waits for a signature nobody holds the role to give. Nothing reports an error &mdash; it simply stops until a platform administrator signs it by override. Assign the role to a person in Admin &rarr; Users, or point the stage at a staffed role in Procurement &rarr; Settings.</div></div>
+  {% if f.unsignable %}
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="gov.col.stage">Stage</th><th data-i18n="gov.col.roles">Signed by</th><th data-i18n="gov.col.holders">Holders</th></tr></thead>
+    <tbody>{% for x in f.unsignable %}
+      <tr><td><b>{{ x.label }}</b><div class="muted" style="font-size:11px">{{ x.stage }}</div></td>
+        <td>{% for r in x.roles %}<span class="tag">{{ r }}</span> {% endfor %}
+            {% if x.unregistered %}<div class="muted" style="font-size:11px"><span data-i18n="gov.find.unregistered">Not in any role registry:</span> {{ x.unregistered|join(', ') }}</div>{% endif %}</td>
+        <td dir="ltr"><span class="badge b-critical">{{ x.holders }}</span></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
 </div>
 
 {# ---- 1. granted but held by nobody --------------------------------------- #}

@@ -35,11 +35,21 @@ def run():
         user = {"username": "tester", "full_name": "Tester", "id": 1}
         items = [{"item": "X", "qty": 1, "unit_price": 300000}]
 
+        # Thread is a direct material, so DOAM §5 makes the OPEX fixture name the
+        # sales order it is costed against (audit 3.4-b2) — this test is about
+        # OPEX vs CAPEX routing, not about the golden thread.
+        conn = get_db()
+        live = conn.execute("SELECT order_no FROM ord_orders WHERE status NOT IN "
+                            "('closed','cancelled') ORDER BY id LIMIT 1").fetchone()
+        conn.close()
+        assert live, "no open sales order on file — the fixture cannot run"
+
         capex_id, _ = svc.create_pr(
             {"title": "Sewing machine", "department": "Production",
              "expenditure_kind": "capex"}, items, user)
         opex_id, _ = svc.create_pr(
-            {"title": "Thread cones", "department": "Production"}, items, user)
+            {"title": "Thread cones", "department": "Production",
+             "so_no": live["order_no"]}, items, user)
 
         conn = get_db()
         capex = _stages(conn, capex_id)

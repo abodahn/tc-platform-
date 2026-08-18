@@ -225,19 +225,23 @@ DOC_AR = {
     "three_way_match": (
         "قبل الدفع، يُقارَن «المطلوب» (إجمالي أمر الشراء وكمياته) مع «المستلم» "
         "(كميات إذون الاستلام وقيمتها بسعر أمر الشراء) ومع «المفوتَر» (فواتير "
-        "المورّد المسجَّلة، بالإجمالي شاملًا الضريبة). ويُنبَّه على نقص التوريد "
-        "لكنه لا يمنع الدفع — فالدفع مقابل ما تم توريده فعلًا في استلام جزئي أمر "
-        "مشروع. أما الفوترة الزائدة فتمنع الدفع: فاتورة تتجاوز إجمالي أمر الشراء، "
-        "أو فاتورة قبل الضريبة تتجاوز قيمة ما تم استلامه. وتسمح المقارنة بهامش "
-        "تفاوت 1% من إجمالي أمر الشراء أو وحدة عملة واحدة، أيهما أكبر."),
+        "المورّد المسجَّلة، بالإجمالي شاملًا الضريبة). أما الفوترة الزائدة فتمنع "
+        "الدفع: فاتورة تتجاوز إجمالي أمر الشراء، أو فاتورة قبل الضريبة تتجاوز "
+        "قيمة ما تم استلامه. ونقص التوريد لا يمنع الدفع بل يحدّه: يُذكر النقص "
+        "بالكمية وبالقيمة، ولا يجوز أن تتجاوز المدفوعات المتراكمة قيمة ما تم "
+        "استلامه فعلًا — فالدفع مقابل ما تم توريده أمر مشروع، أما دفع قيمة أمر "
+        "الشراء كاملة مقابل توريد جزئي فلا. وتسمح المقارنة بسماحيات الدليل: 2% "
+        "من إجمالي أمر الشراء أو 500 جنيه على القيمة، أيهما أكبر، و5% على "
+        "الكمية."),
     "payment_cap": (
         "لا يمكن إثبات الدفع إلا بعد وجود أمر شراء — ولا يجوز أبدًا مقابل طلب "
         "مسوَّدة أو قيد الموافقة أو ملغى. ولا يجوز أن تتجاوز المدفوعات المتراكمة "
         "إجمالي أمر الشراء، وإذا وُجدت فواتير فلا يجوز أن تتجاوز إجمالي الفواتير "
-        "شاملًا الضريبة كذلك — أي أن الحد الفعلي هو الأقل من الاثنين، مع تطبيق "
-        "هامش تفاوت الدفع على كل منهما. ويُرفض الدفع أيضًا ما دامت المطابقة "
-        "الثلاثية تُظهر فوترة زائدة. ويمكن للمسؤول تجاوز أي من هذه القيود، "
-        "ويُسجَّل التجاوز في سجل التدقيق."),
+        "شاملًا الضريبة كذلك، وفي حالة نقص التوريد لا يجوز أن تتجاوز قيمة ما تم "
+        "استلامه فعلًا شاملة الضريبة — أي أن الحد الفعلي هو الأقل من الثلاثة "
+        "المنطبقة، مع تطبيق هامش تفاوت الدفع على كل منها. ويُرفض الدفع أيضًا ما "
+        "دامت المطابقة الثلاثية تُظهر فوترة زائدة. ويمكن للمسؤول تجاوز أي من هذه "
+        "القيود، ويُسجَّل التجاوز في سجل التدقيق."),
 }
 
 DOC_TR = {
@@ -319,21 +323,24 @@ DOC_TR = {
         "Ödemeden önce SİPARİŞ EDİLEN (PO genel toplamı ve miktarları), TESLİM "
         "ALINAN (mal kabul miktarları ve bunların sipariş fiyatıyla değeri) ve "
         "FATURALANAN (kayıtlı tedarikçi faturaları, vergi dahil brüt) "
-        "karşılaştırılır. Eksik teslim işaretlenir ancak ödemeyi ENGELLEMEZ — "
-        "kısmi bir teslimde fiilen teslim alınan için ödeme yapmak meşrudur. "
-        "Fazla faturalama ise engeller: PO toplamının üzerinde faturalanmış "
-        "olması, ya da vergi öncesi faturanın teslim alınanın değerini aşması. "
-        "Karşılaştırma, PO toplamının %1'i veya 1 para birimi (hangisi büyükse) "
-        "kadar tolerans tanır."),
+        "karşılaştırılır. Fazla faturalama ödemeyi engeller: PO toplamının "
+        "üzerinde faturalanmış olması, ya da vergi öncesi faturanın teslim "
+        "alınanın değerini aşması. Eksik teslim ödemeyi ENGELLEMEZ, SINIRLAR: "
+        "eksiklik hem miktar hem tutar olarak belirtilir ve birikimli ödeme "
+        "fiilen teslim alınanın değerini aşamaz — kısmi bir teslimde teslim "
+        "alınan için ödeme yapmak meşrudur, parçası için PO'nun tamamını ödemek "
+        "değil. Karşılaştırma DOAM toleranslarını tanır: değerde PO toplamının "
+        "%2'si veya 500 EGP (hangisi büyükse), miktarda %5."),
     "payment_cap": (
         "Bir ödeme yalnızca Satın alma emri var olduktan sonra kaydedilebilir — "
         "taslak, onay bekleyen veya iptal edilmiş bir talebe karşı asla. "
-        "Birikimli ödemeler PO genel toplamını aşamaz ve fatura mevcutsa "
-        "faturalanan brüt toplamı da aşamaz; yani pratikte üst sınır, her birine "
-        "ödeme toleransı uygulanmış hâlleriyle bu ikisinin DAHA KÜÇÜĞÜdür. 3'lü "
-        "mutabakat fazla faturalama gösterirken de ödeme reddedilir. Bir yönetici "
-        "bunların herhangi birini geçersiz kılabilir ve bu istisna denetim "
-        "kaydına girer."),
+        "Birikimli ödemeler PO genel toplamını aşamaz; fatura mevcutsa "
+        "faturalanan brüt toplamı da aşamaz; eksik teslimde ise fiilen teslim "
+        "alınanın brüt değerini aşamaz. Yani pratikte üst sınır, her birine "
+        "ödeme toleransı uygulanmış hâlleriyle geçerli olanların EN KÜÇÜĞÜdür. "
+        "3'lü mutabakat fazla faturalama gösterirken de ödeme reddedilir. Bir "
+        "yönetici bunların herhangi birini geçersiz kılabilir ve bu istisna "
+        "denetim kaydına girer."),
 }
 
 # --- PR status meanings (proc_doc sections 'status.<key>') -----------------
@@ -552,6 +559,27 @@ UI = {
                              "that role is free to sign it instead. Procurement admins "
                              "have been notified — a delegation, a second holder of the "
                              "role, or an admin override is needed.",
+        # --- DOAM §5 golden thread: the sales-order gate ---
+        "cost_object_required_flash":
+            "This request buys direct materials — fabric, yarn, trims, thread, "
+            "labels, packaging, wash or print work — so it must name the client "
+            "sales order it is costed against (DOAM §5). Pick the order from the "
+            "list and submit again. The DOAM also allows an agreed production "
+            "forecast instead of a sales order, but this system holds no forecast "
+            "register, so an open sales order is the only reference it can accept.",
+        "so_unknown_flash":
+            "The sales order on this request is not an order on file, so it is not "
+            "a cost object (DOAM §5). Pick a real, open sales order from the list "
+            "on the request and submit again. The DOAM's alternative — an agreed "
+            "production forecast — is not available: this system holds no forecast "
+            "register.",
+        "so_closed_flash":
+            "The sales order on this request is closed or cancelled, so nothing can "
+            "be costed to it (DOAM §5). Name an open sales order and submit again — "
+            "or, if this purchase is not a direct material for a client order, "
+            "remove the sales order and use the cost centre instead. The DOAM's "
+            "other option — an agreed production forecast — is not available: this "
+            "system holds no forecast register.",
     },
     "ar": {
         "text_en": "النص (بالإنجليزية)", "text_ar": "النص (بالعربية)",
@@ -584,6 +612,25 @@ UI = {
                              "الدور متفرّغ للتوقيع بدلًا منك. وقد أُبلِغ مسؤولو المشتريات "
                              "— المطلوب تفويض أو إضافة شخص ثانٍ لهذا الدور أو تدخّل من "
                              "مسؤول.",
+        "cost_object_required_flash":
+            "هذا الطلب يشتري خامات إنتاج مباشرة — أقمشة أو خيوط أو إكسسوارات أو "
+            "ليبل أو مواد تغليف أو غسيل أو طباعة — لذلك يجب أن يذكر أمر بيع العميل "
+            "الذي تُحمَّل عليه التكلفة (البند 5 من دليل الصلاحيات). اختر الأمر من "
+            "القائمة ثم أعد الإرسال. ويسمح الدليل أيضًا بـ«توقعات متفق عليها» بديلًا "
+            "عن أمر البيع، لكن النظام لا يحتفظ بسجل توقعات، فأمر البيع المفتوح هو "
+            "المرجع الوحيد المقبول.",
+        "so_unknown_flash":
+            "أمر البيع المكتوب في هذا الطلب غير مسجَّل في النظام، وبالتالي فهو ليس "
+            "مركز تكلفة صالحًا (البند 5 من دليل الصلاحيات). اختر أمر بيع حقيقيًا "
+            "ومفتوحًا من القائمة الموجودة في الطلب ثم أعد الإرسال. أما البديل الذي "
+            "يذكره الدليل — «توقعات متفق عليها» — فغير متاح لأن النظام لا يحتفظ بسجل "
+            "توقعات.",
+        "so_closed_flash":
+            "أمر البيع المذكور في هذا الطلب مقفل أو ملغى، فلا يمكن تحميل أي تكلفة "
+            "عليه (البند 5 من دليل الصلاحيات). اذكر أمر بيع مفتوحًا ثم أعد الإرسال، "
+            "أو احذف أمر البيع واستخدم مركز التكلفة إذا لم يكن هذا الشراء خامة إنتاج "
+            "مباشرة لأمر عميل. أما خيار الدليل الآخر — «توقعات متفق عليها» (forecast) — "
+            "فغير متاح لأن النظام لا يحتفظ بسجل توقعات.",
     },
     "tr": {
         "text_en": "Metin (İngilizce)", "text_ar": "Metin (Arapça)",
@@ -617,5 +664,26 @@ UI = {
                              "yerine imzalayabilecek uygun kimse yok. Satın Alma "
                              "yöneticileri bilgilendirildi — bir vekâlet, rolü taşıyan "
                              "ikinci bir kişi ya da yönetici müdahalesi gerekiyor.",
+        "cost_object_required_flash":
+            "Bu talep doğrudan üretim malzemesi satın alıyor — kumaş, iplik, "
+            "aksesuar, dikiş ipliği, etiket, ambalaj, yıkama veya baskı — bu yüzden "
+            "maliyetlendirileceği müşteri satış siparişini belirtmesi gerekir "
+            "(DOAM §5). Siparişi listeden seçip yeniden gönderin. DOAM, satış "
+            "siparişi yerine «üzerinde anlaşılmış bir tahmin»e de izin veriyor; "
+            "ancak bu sistemde tahmin kaydı tutulmadığından kabul edilebilen tek "
+            "referans açık bir satış siparişidir.",
+        "so_unknown_flash":
+            "Bu talepteki satış siparişi sistemde kayıtlı bir sipariş değil, "
+            "dolayısıyla geçerli bir maliyet nesnesi sayılmaz (DOAM §5). Talepteki "
+            "listeden gerçek ve açık bir satış siparişi seçip yeniden gönderin. "
+            "DOAM'ın öngördüğü diğer seçenek — «üzerinde anlaşılmış tahmin» — bu "
+            "sistemde tahmin kaydı bulunmadığı için kullanılamıyor.",
+        "so_closed_flash":
+            "Bu talepteki satış siparişi kapatılmış ya da iptal edilmiş; ona hiçbir "
+            "maliyet yüklenemez (DOAM §5). Açık bir satış siparişi belirtip yeniden "
+            "gönderin ya da bu alım bir müşteri siparişine ait doğrudan üretim "
+            "malzemesi değilse satış siparişini kaldırıp masraf merkezini kullanın. DOAM'ın "
+            "diğer seçeneği olan «üzerinde anlaşılmış tahmin» (forecast) ise bu sistemde "
+            "tahmin kaydı tutulmadığı için kullanılamıyor.",
     },
 }

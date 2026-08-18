@@ -50,6 +50,9 @@ def _f(v, default=0.0):
     return f if isfinite(f) else default
 
 
+qty_of = _f      # public alias: the receive route needs the same hardened parse
+
+
 def _price(v):
     """Coerce a submitted unit price. A blank / None / non-numeric / non-finite
     entry means 'no price update' and must NOT drag the weighted average to zero
@@ -652,6 +655,39 @@ def _apply_avg_cost(conn, material_id, before_stock, qty, price):
 def _avg(conn, material_id):
     r = conn.execute("SELECT avg_cost FROM wh_materials WHERE id=?", (material_id,)).fetchone()
     return _f(r["avg_cost"]) if r else 0.0
+
+
+def po_line_for(grn_ref, material_id):
+    """The open PO line a warehouse stock-in belongs to, or None.
+
+    /warehouse/receive is the SECOND door goods enter through. When the operator
+    types the PR/PO number on the form, the receipt must obey the same rule as the
+    procurement receiving tab — capped at the outstanding quantity, over-delivery
+    quarantined, one numbered GRN per delivery — instead of booking free stock the
+    order never hears about (which is what broke the three-way match).
+    Returns {pr_id, item_id, outstanding}. Never raises: no procurement tables, no
+    match, no reference -> plain unreferenced stock-in, exactly as before."""
+    ref = (grn_ref or "").strip()
+    if not ref or not material_id:
+        return None
+    conn = get_db()
+    try:
+        pr = conn.execute(
+            "SELECT id, status FROM pr_requests WHERE UPPER(pr_no)=UPPER(?) "
+            "OR UPPER(po_no)=UPPER(?)", (ref, ref)).fetchone()
+        if not pr or pr["status"] not in ("approved", "po_issued", "partially_received"):
+            return None
+        for it in conn.execute("SELECT id, item, qty, received_qty FROM pr_items "
+                               "WHERE pr_id=? ORDER BY seq, id", (pr["id"],)).fetchall():
+            mat = _resolve_material(conn, it["item"])
+            if mat and mat["id"] == material_id:
+                return {"pr_id": pr["id"], "item_id": it["id"],
+                        "outstanding": max(0.0, _f(it["qty"]) - _f(it["received_qty"]))}
+        return None
+    except Exception:
+        return None
+    finally:
+        conn.close()
 
 
 def receive_qty(material_id, qty, price, user, grn_ref=None, notes=None):

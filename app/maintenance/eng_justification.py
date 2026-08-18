@@ -18,6 +18,7 @@ justification that does not state criticality or the store stock check is exactl
 the paperwork this control exists to stop.
 """
 from app.db import get_db, utcnow
+from app.maintenance import workflow
 
 # DOAM Table 14 — "Request type"
 REQUEST_TYPES = ["breakdown", "preventive", "predictive", "improvement", "consumable"]
@@ -57,24 +58,19 @@ EMERGENCY_GRACE_HOURS = 24
 # line. The report screens, the approval flow and this gate are all built and
 # tested; turning it on is one setting once somebody signs the DOAM.
 #
-# Enable with the mnt_settings row 'ejr_gate' = '1' (Maintenance → Settings), or
-# by flipping this default after the document is signed.
-EJR_GATE_DEFAULT = False
+# Switch it on from Maintenance → Workflow & Governance → "Engineering
+# justification gate (DOAM §6)", which writes the mnt_settings row through
+# workflow.set_setting like every other governance knob.
 EJR_GATE_SETTING = "ejr_gate"
+EJR_GATE_DEFAULT = workflow.SETTINGS[EJR_GATE_SETTING][0]
 
 
 def gate_enabled(conn):
-    """Is the DOAM §6 gate switched on? Reads mnt_settings, falls back to the
-    default above. An unreadable settings table must not silently ENABLE a
-    blocking control, so any error resolves to the default."""
-    try:
-        row = conn.execute("SELECT value FROM mnt_settings WHERE key=?",
-                           (EJR_GATE_SETTING,)).fetchone()
-    except Exception:  # noqa: BLE001
-        return EJR_GATE_DEFAULT
-    if not row or row["value"] in (None, ""):
-        return EJR_GATE_DEFAULT
-    return str(row["value"]).strip().lower() in ("1", "true", "yes", "on")
+    """Is the DOAM §6 gate switched on? workflow.flag() is the same
+    override -> default read every other governance knob uses, and it already
+    resolves an unreadable settings table to the default — a blocking control
+    must never switch itself ON because a query raised."""
+    return workflow.flag(conn, EJR_GATE_SETTING)
 
 
 def _missing(row):

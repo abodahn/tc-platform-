@@ -8,6 +8,7 @@ notes. Pure reportlab (already vendored for BI); no external services.
 """
 import base64
 import io
+import json
 import os
 
 from app.approvals import constants as C
@@ -667,7 +668,10 @@ _GRN_NOTES = [
 
 
 def grn_doc_no(pr_no):
-    """PR-2026-000012 -> GRN-2026-000012 (fallback: plain GRN prefix)."""
+    """LEGACY fallback only — used for receipts booked before GRNs were persisted.
+    PR-2026-000012 -> GRN-2026-000012 (fallback: plain GRN prefix). A live receipt
+    now carries its own pre-allocated pr_grn.grn_no; deriving it here is exactly
+    what made every partial delivery reprint the same document number."""
     s = str(pr_no or "").strip()
     if s.upper().startswith("PR-"):
         return "GRN-" + s[3:]
@@ -714,26 +718,35 @@ def _grn_sign_strip(c, w, cm, y, boxes):
     return y - 0.5 * cm
 
 
-def grn_pdf(bundle):
-    """Goods Received Note: ordered vs received (with outstanding balance) per
-    line, plus a three-box manual sign-off strip. Read-only receipt record."""
+def grn_pdf(bundle, grn=None):
+    """Goods Received Note for ONE receipt event: what arrived on this delivery,
+    what was accepted, what went to quarantine, and the outstanding balance.
+    `grn` is a pr_grn row; without one this falls back to the whole-PR summary
+    printed by pre-GRN-table receipts."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
     from reportlab.pdfgen import canvas
 
     pr, items = bundle["pr"], bundle["items"]
+    by_line = {}
+    if grn:
+        try:
+            by_line = {int(l["item_id"]): l for l in json.loads(grn.get("lines_json") or "[]")}
+        except Exception:
+            by_line = {}
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
     pn = {"page": 1, "notes": _GRN_NOTES}
 
-    y = _draw_header(c, w, h, cm, "GOODS RECEIVED NOTE", grn_doc_no(pr.get("pr_no")),
+    y = _draw_header(c, w, h, cm, "GOODS RECEIVED NOTE",
+                     (grn or {}).get("grn_no") or grn_doc_no(pr.get("pr_no")),
                      "Ref " + (pr.get("po_no") or pr.get("pr_no") or ""),
                      form_code=C.FORM_CODES["grn"])
 
     # received_at is only stamped on the PR once FULLY received; for a partial
     # receipt fall back to the latest goods-receipt entry in the audit trail.
-    received_at = (pr.get("received_at") or "")[:10]
+    received_at = ((grn or {}).get("created_at") or pr.get("received_at") or "")[:10]
     if not received_at:
         for ev in bundle.get("events") or []:      # newest first
             if ev.get("action") in ("goods_received", "received"):
@@ -743,25 +756,39 @@ def grn_pdf(bundle):
     pairs = [
         ("Vendor", pr.get("vendor")), ("Department", pr.get("department")),
         ("PO No", pr.get("po_no") or pr.get("pr_no")),
-        ("Received by", pr.get("received_by")),
+        ("Received by", (grn or {}).get("received_by") or pr.get("received_by")),
         ("Received at", received_at),
         ("Delivery condition", pr.get("delivery_condition")),
     ]
     pairs += _cost_object_pairs(pr)
-    if pr.get("receipt_notes"):
-        pairs.append(("Receipt notes", pr.get("receipt_notes")))
+    if grn:
+        pairs.append(("Receipt no", "%s of this PO" % (grn.get("seq") or 1)))
+        if float(grn.get("quarantined_qty") or 0) > 0:
+            pairs.append(("Quarantined", "%s (over-delivery, NOT stocked)"
+                          % _fmt(float(grn.get("quarantined_qty") or 0))))
+    notes = (grn or {}).get("notes") or pr.get("receipt_notes")
+    if notes:
+        pairs.append(("Receipt notes", notes))
     y = _meta_grid(c, w, cm, y, pairs)
 
     rows = []
     for i, it in enumerate(items, 1):
         ordered = float(it.get("qty") or 0)
         received = float(it.get("received_qty") or 0)
-        rows.append([str(i), (it.get("item") or "", it.get("description") or ""),
-                     it.get("unit") or "", _fmt(ordered), _fmt(received),
+        line = by_line.get(it.get("id"))
+        if grn and not line:
+            continue                       # this line did not move on this delivery
+        # "this note" = the accepted quantity of THIS delivery; the cumulative
+        # figure stays visible as the outstanding balance.
+        this_note = float(line["accepted"]) if line else received
+        quar = float(line["quarantined"]) if line else 0.0
+        rows.append([str(len(rows) + 1), (it.get("item") or "", it.get("description") or ""),
+                     it.get("unit") or "", _fmt(ordered), _fmt(this_note), _fmt(quar),
                      _fmt(max(0.0, ordered - received))])
     y = _table(c, w, cm, y, [
-        (0.6, "#", "l"), (8.4, "ITEM / DESCRIPTION", "l"), (1.5, "UNIT", "l"),
-        (2.0, "ORDERED", "r"), (2.0, "RECEIVED", "r"), (2.3, "OUTSTANDING", "r")],
+        (0.6, "#", "l"), (7.2, "ITEM / DESCRIPTION", "l"), (1.3, "UNIT", "l"),
+        (1.9, "ORDERED", "r"), (2.0, "RECEIVED", "r"), (2.1, "QUARANTINED", "r"),
+        (2.2, "OUTSTANDING", "r")],
         rows, h, pn, title="Received lines", wrap_col=1)
 
     # three-box sign-off strip (page-break guard first)
@@ -774,7 +801,8 @@ def grn_pdf(bundle):
     c.drawString(1.5 * cm, y, "Goods receipt sign-off")
     y -= 0.35 * cm
     _grn_sign_strip(c, w, cm, y, [
-        ("Received by (Warehouse)", pr.get("received_by"), received_at),
+        ("Received by (Warehouse)",
+         (grn or {}).get("received_by") or pr.get("received_by"), received_at),
         ("Checked by (Purchasing)", None, None),
         ("Approved by (Manager)", None, None),
     ])

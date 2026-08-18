@@ -333,22 +333,25 @@ def main():
     # ---------------------------------------------------------------- 6
     print("\n--- 6. the money controls still state the SAME rule ------------")
     # payment_cap: cap = LOWER of PO total and invoiced gross; refused on over-billing
-    ok("[ar] payment cap keeps 'the lower of the two' + refusal on over-billing",
-       "الأقل من الاثنين" in T.DOC_AR["payment_cap"]
+    ok("[ar] payment cap keeps 'the lowest of the three' + refusal on over-billing",
+       "الأقل من الثلاثة" in T.DOC_AR["payment_cap"]
        and "فوترة زائدة" in T.DOC_AR["payment_cap"]
        and "المدفوعات المتراكمة" in T.DOC_AR["payment_cap"])
-    ok("[tr] payment cap keeps 'the lower of the two' + refusal on over-billing",
-       "DAHA KÜÇÜĞÜ" in T.DOC_TR["payment_cap"]
+    ok("[tr] payment cap keeps 'the lowest of the three' + refusal on over-billing",
+       "EN KÜÇÜĞÜ" in T.DOC_TR["payment_cap"]
        and "fazla faturalama" in T.DOC_TR["payment_cap"].lower()
        and "Birikimli ödemeler" in T.DOC_TR["payment_cap"])
-    # three_way_match: short delivery does NOT block, over-billing DOES, 1% tolerance
-    ok("[ar] 3-way match keeps 'short delivery does not block' + 1% tolerance",
-       "لا يمنع الدفع" in T.DOC_AR["three_way_match"]
-       and "1%" in T.DOC_AR["three_way_match"]
-       and "فتمنع الدفع" in T.DOC_AR["three_way_match"])
-    ok("[tr] 3-way match keeps 'short delivery does not block' + 1% tolerance",
-       "ENGELLEMEZ" in T.DOC_TR["three_way_match"]
-       and "%1" in T.DOC_TR["three_way_match"]
+    # three_way_match: short delivery does not BLOCK but does CAP, over-billing
+    # blocks, and the tolerances quoted are the DOAM's (2% / 500 on value, 5% qty)
+    ok("[ar] 3-way match keeps 'does not block, it caps' + the DOAM tolerances",
+       "لا يمنع الدفع بل يحدّه" in T.DOC_AR["three_way_match"]
+       and "2%" in T.DOC_AR["three_way_match"]
+       and "5%" in T.DOC_AR["three_way_match"]
+       and "فتمنع" in T.DOC_AR["three_way_match"])
+    ok("[tr] 3-way match keeps 'does not block, it caps' + the DOAM tolerances",
+       "ENGELLEMEZ, SINIRLAR" in T.DOC_TR["three_way_match"]
+       and "%2" in T.DOC_TR["three_way_match"]
+       and "%5" in T.DOC_TR["three_way_match"]
        and "engeller" in T.DOC_TR["three_way_match"])
     # rfq: DISTINCT vendors, waivable by single-source justification
     ok("[ar] RFQ keeps 'distinct vendors' and the single-source waiver",

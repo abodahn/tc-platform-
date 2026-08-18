@@ -1,9 +1,12 @@
 """End-to-end tests for the Procurement & Approvals cycle, on an isolated temp
 DB so the real platform.db is never touched. The admin (super_admin) can act on
-any ladder stage, so a single admin session can walk the whole cycle."""
+any ladder stage, so one admin session can sign the whole ladder — but it cannot
+also RAISE the request it signs: DOAM §3.4 forbids approving a transaction that
+names you as requestor, and no role or setting waives that. Route-driven tests
+therefore raise as a requester and sign as the admin."""
 import pytest
 
-from _support import login_admin, get_csrf
+from _support import login_admin, login_as, get_csrf
 
 
 @pytest.fixture()
@@ -98,8 +101,26 @@ def test_full_cycle_create_sign_po(app_client):
     => warehouse, factory_manager, purchasing, finance, cfo = 5 approvers
        + the requester's own submission = the 6 signatures on the paper form."""
     a, c = app_client
+    # The request is raised by a REQUESTER, not by the admin who then signs it.
+    # DOAM §3.4: "No person may approve a transaction that also names that person
+    # as requestor." This test used one admin session for both ends, which the
+    # rule now correctly refuses — the walk below is the real shape of the cycle.
+    login_as(c, a, "normal_user")
     r = _new_pr(c)                       # POSTs unit_price 48000 — it must be stripped
     assert r.status_code == 200
+    login_admin(c)                       # ...and the admin signs the stages
+
+    # One admin signing EVERY rung is now refused by the dual-role half of the
+    # SoD rule, which ships on. This test is about the ladder, the pricing gate
+    # and the PO — not about SoD — so it turns the documented exemption on
+    # explicitly, through the real settings path. The absolute half still
+    # applies and is not waivable: the requester above is a different user, and
+    # if that regressed this test fails on self_approval. SoD itself is covered
+    # by test_sod_* and app/approvals/tests_escalation.py.
+    with a.app_context():
+        from app.approvals import services as svc
+        ok, msg = svc.set_setting("sod_admin_exempt", "true")
+        assert ok, "could not enable the dual-role exemption: %s" % msg
     # find the created PR id from the DB
     with a.app_context():
         from app.approvals import services as svc

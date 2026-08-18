@@ -400,6 +400,69 @@ CREATE TABLE IF NOT EXISTS pr_po_revisions (
 CREATE INDEX IF NOT EXISTS ix_po_rev_pr ON pr_po_revisions(pr_id);
 """
 
+# Goods Received Notes. A GRN is a CONTROLLED, PRE-NUMBERED document: one row per
+# receipt EVENT, its number allocated when the goods are booked in — not derived at
+# print time, which reprinted the same number for every partial delivery.
+# pr_grn_quarantine holds what a supplier delivered OVER the ordered quantity: the
+# excess is never added to stock, it is parked here with an explicit state until
+# someone decides to accept or return it.
+_GRN_DDL = """
+CREATE TABLE IF NOT EXISTS pr_grn (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    grn_no TEXT UNIQUE,
+    pr_id INTEGER,
+    seq INTEGER,
+    lines_json TEXT,
+    accepted_qty REAL DEFAULT 0,
+    quarantined_qty REAL DEFAULT 0,
+    notes TEXT,
+    received_by TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_grn_pr ON pr_grn(pr_id);
+CREATE TABLE IF NOT EXISTS pr_grn_quarantine (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    grn_id INTEGER,
+    item_id INTEGER,
+    item TEXT,
+    ordered_qty REAL,
+    accepted_qty REAL,
+    qty REAL,
+    status TEXT DEFAULT 'quarantined',
+    resolution TEXT,
+    resolved_by TEXT,
+    resolved_at TEXT,
+    created_by TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_grn_quar_pr ON pr_grn_quarantine(pr_id);
+
+-- Return to vendor + its debit note. ONE row is both documents, because they are
+-- one event: goods rejected on receipt go back to the supplier, and the debit
+-- note is that return's financial face. `dn_no` is allocated from the row id the
+-- same way a GRN number is, so every return carries its own document number.
+-- status 'open' = the supplier still owes it back; that open value is what the
+-- vendor's outstanding dues are, and what the payable ceiling drops by.
+CREATE TABLE IF NOT EXISTS pr_returns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dn_no TEXT UNIQUE,
+    pr_id INTEGER,
+    grn_id INTEGER,
+    vendor TEXT, vendor_id INTEGER,
+    lines_json TEXT,
+    qty REAL DEFAULT 0,
+    net REAL DEFAULT 0, tax REAL DEFAULT 0, total REAL DEFAULT 0,
+    currency TEXT DEFAULT 'EGP',
+    reason TEXT,
+    status TEXT DEFAULT 'open',       -- open | settled
+    settled_by TEXT, settled_at TEXT,
+    created_by TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_pr_returns_pr ON pr_returns(pr_id);
+CREATE INDEX IF NOT EXISTS ix_pr_returns_vendor ON pr_returns(vendor, status);
+"""
+
 # Trilingual prose (added after first release). The English column stays exactly
 # as it is — it is the source of truth and the fallback; Arabic and Turkish sit
 # beside it, NULL until seeded/edited. Same guarded-ALTER pattern as above.
@@ -424,43 +487,6 @@ _ITEM_MIGRATIONS = [
     # free-text line leaves it NULL and behaves exactly as it always has.
     ("item_id", "ALTER TABLE pr_items ADD COLUMN item_id INTEGER"),
 ]
-
-
-def seed_doam_roles(conn):
-    """Create the DOAM §3.2 authority roles the ladder routes to.
-
-    These are seeded in CODE, not typed into one database. The ladder references
-    supply_chain_director and board; a database without them has stages nothing
-    can sign, so a tier-2 request would sit in a queue with no eligible approver
-    and no error to explain it. Seeding here means every environment — a fresh
-    test database, beta, production — gets them from the same source.
-
-    INSERT OR IGNORE: an admin who has since edited a role's permissions keeps
-    their version, exactly like seed_governance.
-    """
-    import json
-    # What an approver minimally needs: see the request, and sign it. Copied from
-    # the shape finance_user already uses rather than invented — an approver who
-    # cannot open the request cannot approve it either.
-    APPROVER = json.dumps(["open_module", "proc_approve", "proc_view",
-                           "view_dashboard", "view_reports"])
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    for key, label in (
-        ("supply_chain_director", "Supply Chain Director (L2)"),
-        ("plant_director",        "Plant Director (L2)"),
-        ("financial_director",    "Financial Director (L2)"),
-        ("managing_director",     "Managing Director (L1)"),
-        ("board",                 "Board of Directors"),
-    ):
-        try:
-            conn.execute(
-                "INSERT OR IGNORE INTO custom_roles "
-                "(role_key,label,perms_json,is_builtin,created_at,updated_at) "
-                "VALUES (?,?,?,0,?,?)", (key, label, APPROVER, now, now))
-        except Exception:  # noqa: BLE001
-            # custom_roles belongs to the admin module; if it is not there yet on
-            # this boot, the roles get seeded on the next one. Never fatal.
-            break
 
 
 def seed_governance(conn):
@@ -548,6 +574,7 @@ def create_and_seed(conn):
     conn.executescript(SCHEMA)
     conn.executescript(_SIGN_EVENTS_DDL)
     conn.executescript(_PO_REV_DDL)
+    conn.executescript(_GRN_DDL)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS
@@ -557,7 +584,10 @@ def create_and_seed(conn):
             conn.commit()
         except Exception:
             conn.rollback()
-    seed_doam_roles(conn)
+    # The DOAM authority roles used to be seeded into custom_roles here. They
+    # are now registered in code (constants.PROC_ROLE_PERMS -> security's RBAC
+    # merge), which is the registry can_act() reads: a role that exists only as
+    # a row this seed never committed is missing wherever the write did not land.
     seed_governance(conn)
     if conn.execute("SELECT COUNT(*) c FROM proc_vendors").fetchone()["c"] > 0:
         return  # already seeded; never overwrite

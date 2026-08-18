@@ -43,17 +43,40 @@ def ensure_user(app, username, role, password="Tc@12345"):
 
 
 def login_as(client, app, role):
-    """Log the client in as a freshly-ensured user with `role`. Returns response."""
+    """Log the client in as a freshly-ensured user with `role`. Returns response.
+
+    Logs OUT first. The login view begins `if current_user(): return redirect(...)`,
+    so posting credentials over a live session silently kept the OLD user and
+    still returned 302 — indistinguishable from success. Any test that switched
+    users mid-session was quietly running as whoever it started as.
+    """
     username = "t_" + role
     ensure_user(app, username, role)
-    return client.post("/login",
-                       data={"username": username, "password": "Tc@12345", "_csrf": get_csrf(client)},
+    client.get("/logout", follow_redirects=True)
+    resp = client.post("/login",
+                       data={"username": username, "password": "Tc@12345",
+                             "_csrf": get_csrf(client)},
                        follow_redirects=False)
+    with client.session_transaction() as sess:
+        assert sess.get("uid"), (
+            "login_as(%r) did not establish a session — the test would have run "
+            "as the previous user without saying so" % role)
+    return resp
 
 
 def login_admin(client):
-    """Log in as the seeded super-admin."""
-    return client.post("/login",
+    """Log in as the seeded super-admin.
+
+    Logs OUT first, for the same reason as login_as: the login view returns a
+    redirect untouched when a session already exists, so switching BACK to the
+    admin mid-test silently kept the previous user. Harmless when already
+    logged out.
+    """
+    client.get("/logout", follow_redirects=True)
+    resp = client.post("/login",
                        data={"username": Config.ADMIN_USER, "password": Config.ADMIN_PASSWORD,
                              "_csrf": get_csrf(client)},
                        follow_redirects=False)
+    with client.session_transaction() as sess:
+        assert sess.get("uid"), "login_admin did not establish a session"
+    return resp
