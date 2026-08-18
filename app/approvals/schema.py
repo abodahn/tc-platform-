@@ -361,6 +361,28 @@ _PR_MIGRATIONS = [
     # PO revisions (0 = original order; history kept in pr_po_revisions).
     ("fx_rate", "ALTER TABLE pr_requests ADD COLUMN fx_rate REAL DEFAULT 1"),
     ("po_rev", "ALTER TABLE pr_requests ADD COLUMN po_rev INTEGER DEFAULT 0"),
+    # DOAM Table 4 — the budget verdict this request was ROUTED on, and how far
+    # past the budget it took the department. 'budgeted' | 'no_budget' |
+    # 'over_budget'; NULL on rows that predate the check (they routed on the
+    # §4.1 budgeted ladder regardless, which is what NULL should read as).
+    ("budget_state", "ALTER TABLE pr_requests ADD COLUMN budget_state TEXT"),
+    ("budget_over_by", "ALTER TABLE pr_requests ADD COLUMN budget_over_by REAL"),
+    # Records retention (audit 3.4-b9b). The date this record may FIRST be
+    # disposed of, stamped when it is created from constants.retention_until():
+    # ten years for capital expenditure, five for everything else. Existing rows
+    # are backfilled from created_at just below, so an already-deployed database
+    # is not left with a column of NULLs that no rule can act on.
+    ("retention_until", "ALTER TABLE pr_requests ADD COLUMN retention_until TEXT"),
+    # DOAM §4.1 tier 7 / §4.2 tier 4 — the written business case a request above
+    # BUSINESS_CASE_OVER must carry. NULL is normal; almost nothing is that big.
+    ("business_case", "ALTER TABLE pr_requests ADD COLUMN business_case TEXT"),
+    # DOAM §4.4 / T&C-PUF-12 — the justification memo an off-plan order must
+    # carry (over the stock ceiling, or priced over target). NULL is normal.
+    ("deviation_memo", "ALTER TABLE pr_requests ADD COLUMN deviation_memo TEXT"),
+    # DOAM 3.4 — the OTHER cost object the clause allows: an agreed production
+    # forecast, cited instead of a client sales order. Sits beside so_no and
+    # travels the same golden thread onto the PO, the GRN and the invoice.
+    ("forecast_ref", "ALTER TABLE pr_requests ADD COLUMN forecast_ref TEXT"),
 ]
 
 # Verifiable signature events: one immutable row per approve/reject signature.
@@ -461,6 +483,25 @@ CREATE TABLE IF NOT EXISTS pr_returns (
 );
 CREATE INDEX IF NOT EXISTS ix_pr_returns_pr ON pr_returns(pr_id);
 CREATE INDEX IF NOT EXISTS ix_pr_returns_vendor ON pr_returns(vendor, status);
+
+-- ===== Agreed production forecasts (DOAM 3.4 sales-order gate, second half) =====
+-- "No direct production material may be requisitioned without a valid client
+-- sales order reference OR AGREED FORECAST." The sales-order half is validated
+-- against ord_orders; this table is the other half, and it is a REGISTER, not a
+-- free-text box: a forecast only satisfies the gate once someone with the DOAM
+-- authority for planning (Table 4 L2, SC-D) has agreed it, and only while it is
+-- inside its validity dates. status: draft -> agreed.
+CREATE TABLE IF NOT EXISTS proc_forecasts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ref TEXT UNIQUE NOT NULL,
+    description TEXT,
+    period TEXT,                      -- the production period it covers, e.g. "2026 Q1"
+    valid_from TEXT, valid_to TEXT,   -- YYYY-MM-DD; the gate checks today between them
+    status TEXT DEFAULT 'draft',      -- draft | agreed
+    agreed_by TEXT, agreed_by_name TEXT, agreed_role TEXT, agreed_at TEXT,
+    created_by TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_proc_fc_ref ON proc_forecasts(ref);
 """
 
 # Trilingual prose (added after first release). The English column stays exactly
@@ -569,6 +610,41 @@ def seed_translations(conn):
     return filled
 
 
+def backfill_retention(conn):
+    """Stamp retention_until on rows created before the column existed.
+
+    ADDITIVE and idempotent: it only ever fills NULLs, never rewrites a date that
+    is already there. Without it the retention control would be true for new
+    requests and silently absent for the whole existing register, which is the
+    half of a records rule that gets an audit finding written.
+
+    Returns the number of rows stamped.
+
+    ponytail: one UPDATE per legacy row, because "created_at + N years" has no
+    portable spelling across SQLite and PostgreSQL and the year-boundary maths
+    lives in Python. It runs ONCE — every later boot's SELECT matches nothing
+    and costs a single query. If a register ever grows large enough for that
+    first pass to matter, replace it with a dialect-branched single UPDATE.
+    """
+    from app.approvals.constants import retention_until
+    try:
+        rows = conn.execute(
+            "SELECT id, created_at, request_date, expenditure_kind FROM pr_requests "
+            "WHERE retention_until IS NULL OR TRIM(retention_until) = ''").fetchall()
+    except Exception:
+        conn.rollback()
+        return 0                     # column not there yet -> nothing to backfill
+    n = 0
+    for r in rows:
+        born = r["created_at"] or r["request_date"] or _now()
+        conn.execute("UPDATE pr_requests SET retention_until=? WHERE id=?",
+                     (retention_until(born, r["expenditure_kind"]), r["id"]))
+        n += 1
+    if n:
+        conn.commit()
+    return n
+
+
 def create_and_seed(conn):
     """Create procurement tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
@@ -584,6 +660,7 @@ def create_and_seed(conn):
             conn.commit()
         except Exception:
             conn.rollback()
+    backfill_retention(conn)
     # The DOAM authority roles used to be seeded into custom_roles here. They
     # are now registered in code (constants.PROC_ROLE_PERMS -> security's RBAC
     # merge), which is the registry can_act() reads: a role that exists only as
@@ -651,3 +728,6 @@ def create_and_seed(conn):
             "INSERT INTO proc_budgets (department, period, currency, amount, created_at) "
             "VALUES (?,?,?,?,?)", (dept, year, "EGP", amount, now))
     conn.commit()
+    # The demo PR above is a raw INSERT (not create_pr), so stamp it too rather
+    # than leaving a fresh database with one unguardable row until the next boot.
+    backfill_retention(conn)

@@ -43,11 +43,14 @@ def _logo():
     return None
 
 
-def _fmt(n):
+def _fmt(n, dec=2):
+    """Money keeps its two decimals. `dec=0` is for counts (quantities, stock):
+    120,000 pieces is 120,000, and the '.00' only eats column width."""
     try:
-        return f"{float(n):,.2f}"
+        v = float(n)
     except (TypeError, ValueError):
         return str(n or "")
+    return f"{v:,.0f}" if (dec == 0 and v == int(v)) else f"{v:,.2f}"
 
 
 # --- number to words (English) ---------------------------------------------
@@ -199,55 +202,87 @@ def _footer(c, w, cm, page, notes=None):
     c.setFillColorRGB(0, 0, 0)
 
 
-def _meta_grid(c, w, cm, y, pairs):
-    """Two-column label/value block inside a light box. Returns the new y."""
-    rows = (len(pairs) + 1) // 2
+def _meta_grid(c, w, cm, y, pairs, cols=2, upper=True):
+    """Label/value block inside a light box, `cols` fields across. Returns the new y.
+    `upper=False` prints the labels as given — the PR reproduces a customer form
+    whose wording (and casing) has to match; PO/GRN/DN keep the house uppercase."""
+    rows = (len(pairs) + cols - 1) // cols
     box_h = rows * 0.62 * cm + 0.5 * cm
     c.setStrokeColorRGB(0.88, 0.88, 0.9)
     c.setLineWidth(0.6)
     c.roundRect(1.5 * cm, y - box_h, w - 3 * cm, box_h, 4, stroke=1, fill=0)
-    colw = (w - 3 * cm) / 2
+    colw = (w - 3 * cm) / cols
     yy = y - 0.55 * cm
     for i, (label, val) in enumerate(pairs):
-        col = i % 2
+        col = i % cols
         x = 1.7 * cm + col * colw
         c.setFont("Helvetica", 7.5)
         c.setFillColorRGB(0.5, 0.5, 0.5)
-        c.drawString(x, yy, label.upper())
+        c.drawString(x, yy, label.upper() if upper else label)
         c.setFont("Helvetica-Bold", 9.5)
         c.setFillColorRGB(0.1, 0.1, 0.1)
         c.drawString(x, yy - 0.33 * cm, _clip(c, val or "—", "Helvetica-Bold", 9.5, colw - 0.6 * cm))
-        if col == 1:
+        if col == cols - 1:
             yy -= 0.62 * cm
     c.setFillColorRGB(0, 0, 0)
     return y - box_h - 0.4 * cm
 
 
-def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None, max_lines=4):
+def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None,
+           max_lines=4, font_size=8.5, pad=None):
     """Bordered table with variable-height rows. cols = [(width_cm, header, align)].
     wrap_col makes that column a rich cell: pass the cell as (item, description) —
     the item renders bold and the description wraps beneath it (up to max_lines),
-    and the row grows to fit. Paginates automatically, repeating the header."""
+    and the row grows to fit. It may also be a list of column indexes when more
+    than one column wraps. Headings are wrapped (then shrunk, then clipped) into
+    their own column, so a many-column form never bleeds one into the next.
+    `font_size` and `pad` shrink the whole table for wide forms like the 21-column
+    paper PR. Paginates automatically, repeating the header."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
     x0 = 1.5 * cm
     total_w = w - 3 * cm
     widths = [cw * cm for cw, _, _ in cols]
     scale = total_w / sum(widths)
     widths = [wd * scale for wd in widths]
-    hrh = 0.6 * cm
-    line_h = 0.36 * cm
+    if pad is None:
+        pad = 0.18 * cm
+    hdr_size = font_size - 0.5
+    line_h = font_size * 1.2                          # 0.36 cm at the default 8.5
     base_rh = 0.6 * cm
+    wcols = [] if wrap_col is None else (
+        [wrap_col] if isinstance(wrap_col, int) else list(wrap_col))
+
+    def fit_hdr(label, wd):
+        """Fit a heading inside its own column so it can never bleed into the next
+        one: wrap it, and if a word still will not fit, shrink that heading a
+        little before finally clipping it — a truncated heading is worse than a
+        slightly smaller one. Returns (font size, lines)."""
+        avail = wd - 2 * pad
+        size = hdr_size
+        while size > 5.0:
+            lines = _wrap_lines(c, label, "Helvetica-Bold", size, avail, 3)
+            if all(stringWidth(ln, "Helvetica-Bold", size) <= avail for ln in lines):
+                return size, lines
+            size -= 0.25
+        return size, [_clip(c, ln, "Helvetica-Bold", size, avail)
+                      for ln in _wrap_lines(c, label, "Helvetica-Bold", size, avail, 3)]
+
+    hdr = [fit_hdr(label, wd) for (_, label, _), wd in zip(cols, widths)]
+    hrh = max(0.6 * cm, max(len(x[1]) for x in hdr) * line_h + 0.22 * cm)
 
     def header(yy):
         c.setFillColorRGB(0.11, 0.12, 0.16)
         c.rect(x0, yy - hrh, total_w, hrh, fill=1, stroke=0)
         c.setFillColorRGB(1, 1, 1)
-        c.setFont("Helvetica-Bold", 8)
         xx = x0
-        for (cw, label, align), wd in zip(cols, widths):
-            if align == "r":
-                c.drawRightString(xx + wd - 0.18 * cm, yy - hrh + 0.19 * cm, label)
-            else:
-                c.drawString(xx + 0.18 * cm, yy - hrh + 0.19 * cm, label)
+        for (cw, label, align), wd, (hsize, lines) in zip(cols, widths, hdr):
+            c.setFont("Helvetica-Bold", hsize)
+            for k, ln in enumerate(lines):           # stacked up from the band floor
+                by = yy - hrh + 0.19 * cm + (len(lines) - 1 - k) * line_h
+                if align == "r":
+                    c.drawRightString(xx + wd - pad, by, ln)
+                else:
+                    c.drawString(xx + pad, by, ln)
             xx += wd
         c.setFillColorRGB(0, 0, 0)
         return yy - hrh
@@ -257,8 +292,8 @@ def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None, ma
         head, body = (cell if isinstance(cell, (list, tuple)) else (None, cell))
         out = []
         if head:
-            out.append((True, _clip(c, head, "Helvetica-Bold", 8.6, wd - 0.36 * cm)))
-        for ln in _wrap_lines(c, body, "Helvetica", 8.2, wd - 0.36 * cm, max_lines):
+            out.append((True, _clip(c, head, "Helvetica-Bold", font_size + 0.1, wd - 2 * pad)))
+        for ln in _wrap_lines(c, body, "Helvetica", font_size - 0.3, wd - 2 * pad, max_lines):
             if ln:
                 out.append((False, ln))
         return out or [(False, "")]
@@ -270,8 +305,8 @@ def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None, ma
     y = header(y)
     body_top = y
     for i, row in enumerate(rows):
-        lines = cell_lines(row[wrap_col], widths[wrap_col]) if wrap_col is not None else None
-        rh = max(base_rh, len(lines) * line_h + 0.22 * cm) if lines else base_rh
+        wrapped = {j: cell_lines(row[j], widths[j]) for j in wcols}
+        rh = max([base_rh] + [len(v) * line_h + 0.22 * cm for v in wrapped.values()])
         if y - rh < 3 * cm:                              # page break
             _table_borders(c, x0, y, body_top, total_w, widths)
             _footer(c, w, cm, page_notes["page"], page_notes.get("notes"))
@@ -287,25 +322,32 @@ def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None, ma
         cyc = y - rh / 2 - 0.09 * cm                      # single-line vertical centre
         xx = x0
         for idx, ((cw, _, align), wd, cell) in enumerate(zip(cols, widths, row)):
-            if idx == wrap_col:
-                ly = y - 0.36 * cm
-                for is_bold, txt in lines:
+            if idx in wrapped:
+                ly = y - line_h
+                for is_bold, txt in wrapped[idx]:
                     if is_bold:
-                        c.setFont("Helvetica-Bold", 8.6)
+                        c.setFont("Helvetica-Bold", font_size + 0.1)
                         c.setFillColorRGB(0.1, 0.1, 0.13)
                     else:
-                        c.setFont("Helvetica", 8.2)
+                        c.setFont("Helvetica", font_size - 0.3)
                         c.setFillColorRGB(0.34, 0.34, 0.38)
-                    c.drawString(xx + 0.18 * cm, ly, txt)
+                    c.drawString(xx + pad, ly, txt)
                     ly -= line_h
                 c.setFillColorRGB(0, 0, 0)
             else:
-                c.setFont("Helvetica", 8.5)
-                txt = _clip(c, cell, "Helvetica", 8.5, wd - 0.32 * cm)
+                # Same shrink-before-clip fit_hdr gives headings: a truncated
+                # number is a wrong number, so shrink the cell until it fits and
+                # only clip once 4.5pt still will not hold it.
+                s, txt = font_size, str(cell or "")
+                avail = wd - 2 * pad
+                while s > 4.5 and stringWidth(txt, "Helvetica", s) > avail:
+                    s -= 0.25
+                c.setFont("Helvetica", s)
+                txt = _clip(c, txt, "Helvetica", s, avail)
                 if align == "r":
-                    c.drawRightString(xx + wd - 0.18 * cm, cyc, txt)
+                    c.drawRightString(xx + wd - pad, cyc, txt)
                 else:
-                    c.drawString(xx + 0.18 * cm, cyc, txt)
+                    c.drawString(xx + pad, cyc, txt)
             xx += wd
         y -= rh
         if i < len(rows) - 1:                            # inner row separator
@@ -393,6 +435,10 @@ def _cost_object_pairs(pr):
     out = []
     if pr.get("so_no"):
         out.append(("Sales order", pr.get("so_no")))
+    # DOAM §3.4 — the clause's other cost object. A forecast-driven purchase has
+    # no sales order, so this IS its golden thread; it prints wherever one does.
+    if pr.get("forecast_ref"):
+        out.append(("Agreed forecast", pr.get("forecast_ref")))
     if pr.get("cost_center"):
         out.append(("Cost centre", pr.get("cost_center")))
     if pr.get("asset_code"):
@@ -400,15 +446,51 @@ def _cost_object_pairs(pr):
     return out
 
 
+# The customer's own paper PR form (sheet "Kadysoft (2)"), column for column.
+# Widths start from the xlsx column widths and are ratios, not centimetres —
+# _table normalises them onto the usable width. Twenty-one columns across one
+# landscape page is tighter than the spreadsheet, so width was moved off the
+# three columns the system can never fill (Stock days / Pending qty / Last Stock)
+# and off an oversized P.O#, onto the money and quantity columns where a clipped
+# character would change the number. Width alone is not the guarantee, though:
+# _table shrinks a cell before it clips it, so a number prints whole at any
+# magnitude and these ratios only keep the common case at full size.
+# scratchpad/fit.py walks each column's magnitudes UP until it breaks, then reads
+# rendered pages back; keep it printing "0 problems".
+_PR_COLS = [
+    (8.0, "S", "l"), (22.0, "ITEM", "l"), (40.0, "Description", "l"),
+    (9.0, "UNIT", "l"), (17.0, "QTY", "r"), (16.5, "On Hand", "r"),
+    (8.0, "Stock days", "r"), (10.5, "Pending qty", "r"),
+    (15.0, "LAST ORDER QTY.", "r"), (14.0, "LAST ORDER DATE", "l"),
+    (18.8, "VENDOR", "l"), (15.0, "UNIT PRICE", "r"), (19.0, "EST. COST", "r"),
+    (8.8, "CUR.", "l"), (16.0, "LAST ORDER PRICE", "r"), (19.0, "P.O#", "l"),
+    (8.0, "Last Stock", "r"), (16.6, "PAY. COND.", "l"), (14.0, "DEL. COND.", "l"),
+    (14.0, "ETA", "l"), (12.0, "LEAD Time", "l"),
+]
+
+
+def _chosen_lead_time(bundle):
+    """LEAD Time for the request: the lead time promised by the quote that was
+    actually chosen. There is no per-item source — proc_vendors has no
+    lead_time_days column at all, and the mnt_spare_parts one is not joined into
+    the PR bundle — so an unquoted request prints this blank for the buyer."""
+    for q in bundle.get("quotes") or []:
+        if q.get("is_chosen") and q.get("lead_time_days"):
+            return "%g days" % float(q["lead_time_days"])
+    return ""
+
+
 def pr_pdf(bundle):
-    from reportlab.lib.pagesizes import A4
+    """The customer's paper PURCHASE REQUEST form: 21 columns, landscape."""
+    from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import cm
     from reportlab.pdfgen import canvas
 
     pr, items, steps = bundle["pr"], bundle["items"], bundle["steps"]
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    w, h = A4
+    page = landscape(A4)
+    c = canvas.Canvas(buf, pagesize=page)
+    w, h = page
     pn = {"page": 1, "notes": _PR_NOTES}
 
     y = _draw_header(c, w, h, cm, "PURCHASE REQUEST", pr.get("pr_no") or "PR",
@@ -417,28 +499,44 @@ def pr_pdf(bundle):
                      if (pr.get("expenditure_kind") == "capex")
                      else C.FORM_CODES["pr"])
 
-    y = _meta_grid(c, w, cm, y, [
-        ("Title", pr.get("title")), ("Request for", pr.get("request_for")),
-        ("Requester", pr.get("requester_name") or pr.get("requester")),
-        ("Department", pr.get("department")),
-        ("Request date", pr.get("request_date")), ("Vendor", pr.get("vendor")),
-        ("Payment", pr.get("payment_condition")), ("Delivery", pr.get("delivery_condition")),
-    ] + _cost_object_pairs(pr))
-
     cur = pr.get("currency") or ""
-    rows = [[str(i), (it.get("item") or "", it.get("description") or ""),
-             it.get("unit") or "", _fmt(it.get("qty")), _fmt(it.get("current_stock")),
-             _fmt(it.get("unit_price")), _fmt(it.get("est_cost"))]
-            for i, it in enumerate(items, 1)]
-    y = _table(c, w, cm, y, [
-        (0.6, "#", "l"), (7.5, "ITEM / DESCRIPTION", "l"),
-        (1.3, "UNIT", "l"), (1.2, "QTY", "r"), (1.4, "STOCK", "r"),
-        (2.2, "UNIT PRICE", "r"), (2.4, "EST. COST", "r")], rows, h, pn,
-        title="Line items", wrap_col=1)
+    y = _meta_grid(c, w, cm, y, [
+        ("Date", pr.get("request_date")),
+        ("Order Type (Foreign - Local)", "Local" if (cur or "EGP").upper() == "EGP"
+         else "Foreign"),
+        ("PR S.N", pr.get("pr_no")),
+        ("Name of Requestor", pr.get("requester_name") or pr.get("requester")),
+        ("REQUEST FOR", pr.get("request_for")),
+        ("Department Name", pr.get("department")),
+        ("Title", pr.get("title")),
+    ] + _cost_object_pairs(pr), cols=3, upper=False)
 
+    # Stock days / Pending qty / Last Stock stay blank on purpose: nothing in the
+    # system knows them, and a printed 0 would be a claim the buyer would believe.
+    lead = _chosen_lead_time(bundle)
+    rows = [[str(i), it.get("item") or "", it.get("description") or "",
+             it.get("unit") or "", _fmt(it.get("qty"), 0),
+             _fmt(it.get("current_stock"), 0),
+             "", "", _fmt(it.get("last_order_qty"), 0), it.get("last_order_date") or "",
+             it.get("vendor") or pr.get("vendor") or "", _fmt(it.get("unit_price")),
+             _fmt(it.get("est_cost")), cur, _fmt(it.get("last_order_price")),
+             pr.get("po_no") or "", "", pr.get("payment_condition") or "",
+             pr.get("delivery_condition") or "", pr.get("req_del_date") or "", lead]
+            for i, it in enumerate(items, 1)]
+    # VENDOR / PAY. COND. / DEL. COND. wrap: they are the only place those three
+    # contract terms appear, and an Incoterm without its named place ("DDP C…")
+    # is not a delivery condition.
+    y = _table(c, w, cm, y, _PR_COLS, rows, h, pn, title="Line items",
+               wrap_col=[1, 2, 10, 17, 18], max_lines=4, font_size=6, pad=0.07 * cm)
+
+    if y - 3.4 * cm < 2.2 * cm:                      # keep the totals box whole
+        _footer(c, w, cm, pn["page"], _PR_NOTES)
+        c.showPage()
+        pn["page"] += 1
+        y = h - 2.5 * cm
     y = _totals_block(c, w, cm, y, pr, cur)
 
-    # signatures
+    # signatures (the paper form's A20:U25 notes/signature block)
     _signature_grid(c, w, h, cm, y, pr, steps, pn)
     _footer(c, w, cm, pn["page"], _PR_NOTES)
     c.showPage()
@@ -664,6 +762,8 @@ def po_pdf(bundle):
 # --------------------------------------------------------------------------
 _GRN_NOTES = [
     "• Goods received as listed above; discrepancies must be reported within 48 hours.",
+    "• Rejected quantities are NOT received, are NOT taken into stock, and are returned "
+    "to the supplier under a debit note.",
 ]
 
 
@@ -782,13 +882,14 @@ def grn_pdf(bundle, grn=None):
         # figure stays visible as the outstanding balance.
         this_note = float(line["accepted"]) if line else received
         quar = float(line["quarantined"]) if line else 0.0
+        rej = float(line.get("rejected") or 0) if line else 0.0
         rows.append([str(len(rows) + 1), (it.get("item") or "", it.get("description") or ""),
-                     it.get("unit") or "", _fmt(ordered), _fmt(this_note), _fmt(quar),
-                     _fmt(max(0.0, ordered - received))])
+                     it.get("unit") or "", _fmt(ordered), _fmt(this_note), _fmt(rej),
+                     _fmt(quar), _fmt(max(0.0, ordered - received))])
     y = _table(c, w, cm, y, [
-        (0.6, "#", "l"), (7.2, "ITEM / DESCRIPTION", "l"), (1.3, "UNIT", "l"),
-        (1.9, "ORDERED", "r"), (2.0, "RECEIVED", "r"), (2.1, "QUARANTINED", "r"),
-        (2.2, "OUTSTANDING", "r")],
+        (0.6, "#", "l"), (6.2, "ITEM / DESCRIPTION", "l"), (1.2, "UNIT", "l"),
+        (1.7, "ORDERED", "r"), (1.8, "ACCEPTED", "r"), (1.7, "REJECTED", "r"),
+        (2.0, "QUARANTINED", "r"), (2.1, "OUTSTANDING", "r")],
         rows, h, pn, title="Received lines", wrap_col=1)
 
     # three-box sign-off strip (page-break guard first)
@@ -808,6 +909,132 @@ def grn_pdf(bundle, grn=None):
     ])
 
     _footer(c, w, cm, pn["page"], _GRN_NOTES)
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+# --------------------------------------------------------------------------
+# Debit Note (return to vendor)
+# --------------------------------------------------------------------------
+_DN_NOTES = [
+    "• This debit note covers goods rejected on receipt and returned to the supplier.",
+    "• The quantities below were NOT received and were NOT taken into stock; the value "
+    "shown is deducted from what is payable against the referenced Purchase Order.",
+    "• Please issue a credit note, or replace the goods, within the agreed payment terms.",
+]
+
+
+def debit_note_pdf(bundle, ret):
+    """Debit note for ONE return-to-vendor event — same letterhead, meta grid,
+    bordered table and footer as the PR/PO/GRN, so a filed set reads as one family.
+
+    `ret` is a pr_returns row: it carries its own document number (dn_no), the
+    rejected lines, the reason and the value being debited."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.pdfgen import canvas
+
+    pr = bundle["pr"]
+    ret = dict(ret or {})
+    try:
+        lines = json.loads(ret.get("lines_json") or "[]")
+    except Exception:
+        lines = []
+    cur = ret.get("currency") or pr.get("currency") or "EGP"
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    pn = {"page": 1, "notes": _DN_NOTES}
+
+    y = _draw_header(c, w, h, cm, "DEBIT NOTE", ret.get("dn_no") or "DN",
+                     "Ref " + (pr.get("po_no") or pr.get("pr_no") or ""),
+                     form_code=C.FORM_CODES["dn"])
+
+    pairs = [
+        ("Supplier", pr.get("vendor")),
+        ("PO No", pr.get("po_no") or pr.get("pr_no")),
+        ("Department", pr.get("department")),
+        ("Raised by", ret.get("created_by")),
+        ("Date", (ret.get("created_at") or "")[:10]),
+        ("Status", "Settled by supplier" if ret.get("status") == "settled"
+         else "Open — awaiting supplier credit"),
+    ]
+    pairs += _cost_object_pairs(pr)
+    if ret.get("reason"):
+        pairs.append(("Reason for rejection", ret.get("reason")))
+    if ret.get("settled_at"):
+        pairs.append(("Settled", "%s · %s" % ((ret.get("settled_at") or "")[:10],
+                                              ret.get("settled_by") or "")))
+    y = _meta_grid(c, w, cm, y, pairs)
+
+    rows = []
+    for i, l in enumerate(lines, 1):
+        qty = float(l.get("qty") or 0)
+        up = float(l.get("unit_price") or 0)
+        rows.append([str(i), (l.get("item") or "", ""), l.get("unit") or "",
+                     _fmt(qty), _fmt(up), _fmt(round(qty * up, 2))])
+    y = _table(c, w, cm, y, [
+        (0.6, "#", "l"), (8.4, "ITEM REJECTED", "l"), (1.5, "UNIT", "l"),
+        (2.0, "QTY", "r"), (2.6, "UNIT PRICE", "r"), (2.9, "VALUE", "r")],
+        rows, h, pn, title="Returned to supplier", wrap_col=1)
+
+    # totals — built from the return's own figures, NOT the PR's
+    net = float(ret.get("net") or 0)
+    tax = float(ret.get("tax") or 0)
+    total = float(ret.get("total") or round(net + tax, 2))
+    if y - 4.2 * cm < 2.2 * cm:
+        _footer(c, w, cm, pn["page"], _DN_NOTES)
+        c.showPage()
+        pn["page"] += 1
+        y = h - 2.5 * cm
+    bx_w = 7.0 * cm
+    bx = w - 1.5 * cm - bx_w
+    tl = [("Net value returned", net)] + ([("VAT", tax)] if tax else [])
+    bx_h = 0.5 * cm * len(tl) + 0.75 * cm
+    c.setStrokeColorRGB(0.85, 0.85, 0.87)
+    c.setLineWidth(0.6)
+    c.roundRect(bx, y - bx_h, bx_w, bx_h, 4, stroke=1, fill=0)
+    yy = y - 0.45 * cm
+    c.setFont("Helvetica", 9)
+    for label, val in tl:
+        c.setFillColorRGB(0.35, 0.35, 0.35)
+        c.drawString(bx + 0.3 * cm, yy, label)
+        c.setFillColorRGB(0.1, 0.1, 0.1)
+        c.drawRightString(bx + bx_w - 0.3 * cm, yy, f"{_fmt(val)} {cur}")
+        yy -= 0.5 * cm
+    c.setFillColorRGB(0.93, 0.11, 0.14)
+    c.roundRect(bx, y - bx_h, bx_w, 0.7 * cm, 4, stroke=0, fill=1)
+    c.setFillColorRGB(1, 1, 1)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(bx + 0.3 * cm, y - bx_h + 0.24 * cm, "TOTAL DEBITED")
+    c.drawRightString(bx + bx_w - 0.3 * cm, y - bx_h + 0.24 * cm, f"{_fmt(total)} {cur}")
+    c.setFillColorRGB(0, 0, 0)
+    y -= bx_h + 0.5 * cm
+    c.setFont("Helvetica-Oblique", 8.5)
+    c.setFillColorRGB(0.3, 0.3, 0.3)
+    c.drawString(1.5 * cm, y, "Amount in words: " + _amount_words(total, cur))
+    c.setFillColorRGB(0, 0, 0)
+    y -= 0.9 * cm
+
+    if y - 3.2 * cm < 2.2 * cm:
+        _footer(c, w, cm, pn["page"], _DN_NOTES)
+        c.showPage()
+        pn["page"] += 1
+        y = h - 2.5 * cm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(1.5 * cm, y, "Return sign-off")
+    y -= 0.35 * cm
+    _grn_sign_strip(c, w, cm, y, [
+        ("Rejected by (Warehouse)", ret.get("created_by"),
+         (ret.get("created_at") or "")[:10]),
+        ("Raised by (Purchasing)", None, None),
+        ("Acknowledged by (Supplier)", None, None),
+    ])
+
+    _footer(c, w, cm, pn["page"], _DN_NOTES)
     c.showPage()
     c.save()
     buf.seek(0)

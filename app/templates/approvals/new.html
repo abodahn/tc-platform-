@@ -50,6 +50,10 @@
           <input name="so_no" list="soList" autocomplete="off" value="{{ prefill.so_no or '' }}" placeholder="SO / order number">
           <datalist id="soList">{% for o in sales_orders %}<option value="{{ o }}"></option>{% endfor %}</datalist>
           <span class="muted" style="font-size:12px" data-i18n="proc.so_hint">Required for fabric, yarn, trims, chemicals, packaging, subcontract and wash — that is the order this spend is costed against.</span></div>
+        <div class="field"><label data-i18n="proc.fc_l">Agreed forecast</label>
+          <input name="forecast_ref" list="fcList" autocomplete="off" value="{{ prefill.forecast_ref or '' }}" placeholder="Only if there is no sales order yet">
+          <datalist id="fcList">{% for f in forecasts %}<option value="{{ f.ref }}">{{ f.description or f.period or '' }}</option>{% endfor %}</datalist>
+          <span class="muted" style="font-size:12px" data-i18n="proc.fc_hint">Buying ahead of a confirmed client order? Cite an agreed forecast instead of a sales order (DOAM §3.4). Only forecasts the Supply Chain Director has agreed, and that are still in date, are listed. Fill in one or the other, not both.</span></div>
         <div class="field"><label data-i18n="proc.cc_l">Cost centre</label>
           <input name="cost_center" autocomplete="off" value="{{ prefill.cost_center or '' }}" placeholder="For MRO, facility, IT and utilities"></div>
         <div class="field"><label data-i18n="proc.dept_l">Department</label>

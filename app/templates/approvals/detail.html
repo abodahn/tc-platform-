@@ -58,13 +58,27 @@
 </div>
 {% endif %}
 
-{% if budget and budget.amount %}
+{# DOAM Table 4 — budgeted or unbudgeted, and if unbudgeted, by how much. The
+   panel now renders for a department with NO budget row too: "nothing is set"
+   is precisely the fact that put the extra signature on this ladder. #}
+{% if pr.budget_state or (budget and budget.amount) %}
 <div class="panel mt-2"><div class="panel-pad">
   <div class="flex between center wrap gap" style="margin-bottom:8px">
-    <b>{{ pr.department }} <span data-i18n="proc.budget">budget</span> · {{ budget.period }}</b>
-    <span class="badge {{ 'b-rejected' if budget.over else ('b-pending' if budget.pct >= 80 else 'b-approved') }}">
-      {{ budget.pct }}% <span data-i18n="proc.used">used</span></span>
+    <b>{{ pr.department or '—' }} <span data-i18n="proc.budget">budget</span>
+      {% if budget and budget.period %} · {{ budget.period }}{% endif %}</b>
+    <span class="flex gap center">
+      {% if pr.budget_state == 'budgeted' %}
+        <span class="badge b-approved" data-i18n="proc.budgeted">Budgeted</span>
+      {% elif pr.budget_state in ('no_budget', 'over_budget') %}
+        <span class="badge b-rejected" data-i18n="proc.unbudgeted">Unbudgeted</span>
+      {% endif %}
+      {% if budget and budget.amount %}
+      <span class="badge {{ 'b-rejected' if budget.over else ('b-pending' if budget.pct >= 80 else 'b-approved') }}">
+        {{ budget.pct }}% <span data-i18n="proc.used">used</span></span>
+      {% endif %}
+    </span>
   </div>
+  {% if budget and budget.amount %}
   <div style="height:8px;border-radius:6px;background:var(--line-2);overflow:hidden">
     <div style="height:100%;width:{{ [budget.pct, 100]|min }}%;background:{{ 'var(--crit)' if budget.over else ('var(--warn)' if budget.pct >= 80 else 'var(--ok)') }}"></div>
   </div>
@@ -74,6 +88,20 @@
     <span data-i18n="proc.remaining">Remaining</span> {{ '{:,.0f}'.format(budget.remaining) }}
     {% if budget.over %} · <b style="color:var(--crit)" data-i18n="proc.over_budget">Over budget</b>{% endif %}
   </div>
+  {% endif %}
+  {% if pr.budget_state in ('no_budget', 'over_budget') %}
+  <div class="mt-2" style="font-size:12px">
+    {% if pr.budget_state == 'over_budget' %}
+      <b style="color:var(--crit)"><span data-i18n="proc.unbud_over">Over the approved budget by</span>
+        {{ '{:,.0f}'.format(pr.budget_over_by or 0) }} {{ (budget and budget.currency) or 'EGP' }}</b>
+    {% else %}
+      <b style="color:var(--crit)" data-i18n="proc.unbud_none">No approved budget is set for this department and period.</b>
+    {% endif %}
+    <div class="muted mt-1" data-i18n="proc.unbud_why">DOAM Table 4: unbudgeted spend is approved at L1, so this request carries one extra signature. It is not refused — it needs higher authority.</div>
+  </div>
+  {% elif pr.budget_state == 'budgeted' %}
+  <div class="muted mt-2" style="font-size:12px" data-i18n="proc.budgeted_why">Within the department's approved budget for this period — routed on the §4.1 budgeted ladder.</div>
+  {% endif %}
 </div></div>
 {% endif %}
 
@@ -850,7 +878,46 @@
            something actually deviates, or when a line could not be graded. #}
         {% if deviation %}
         <div class="mt-2" style="margin-bottom:12px">
-          <b data-i18n="proc.dev_title">Deviation from plan</b>
+          {# DOAM §3.4 / Table 11 — T&C-PUF-10 Coverage Check. What is already on
+             the shelf and already on order, netted off what was asked for. #}
+          {% if deviation.coverage or deviation.coverage_blind %}
+          <b data-i18n="proc.cov_title">Coverage check</b>
+          <div class="muted" style="font-size:12.5px" data-i18n="proc.cov_why">
+            Procurement quantity is capped at the net requirement after inventory netting (§3.4).</div>
+          {% if deviation.coverage %}
+          <table class="tbl mt-2">
+            <thead><tr>
+              <th data-i18n="proc.item">Item</th>
+              <th style="text-align:end" data-i18n="proc.cov_req">Requested</th>
+              <th style="text-align:end" data-i18n="proc.cov_hand">On hand</th>
+              <th style="text-align:end" data-i18n="proc.cov_order">On order</th>
+              <th style="text-align:end" data-i18n="proc.cov_need">Net need</th>
+              <th style="text-align:end" data-i18n="proc.cov_excess">Excess</th>
+            </tr></thead>
+            <tbody>
+            {% for l in deviation.coverage %}
+              <tr>
+                <td>{{ l.item }}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.qty) }}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.on_hand) }}{% if l.coverage.reserved %}
+                  <span class="muted" data-i18n="proc.cov_reserved">reserved</span> {{ '{:,.6g}'.format(l.coverage.reserved) }}{% endif %}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.on_order) }}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.net_need) }}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums;color:{{ 'var(--crit)' if l.over_plan else 'inherit' }}">
+                  {{ '{:,.6g}'.format(l.coverage.excess) if l.over_plan else '—' }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% endif %}
+          {% if deviation.coverage_blind %}
+          <div class="muted mt-2" style="font-size:12.5px" data-i18n="proc.cov_blind">
+            Some lines carry no stock record, so their requirement could not be netted — they are reported, not assumed covered.</div>
+          {% endif %}
+          {% endif %}
+          {% if deviation.off_plan %}
+          <b class="{{ 'mt-3' if (deviation.coverage or deviation.coverage_blind) else '' }}"
+             style="display:inline-block" data-i18n="proc.dev_title">Deviation from plan</b>
           <table class="tbl mt-2">
             <thead><tr>
               <th data-i18n="proc.item">Item</th>
@@ -872,6 +939,7 @@
             {% endfor %}
             </tbody>
           </table>
+          {% endif %}
           {% if deviation.stages %}
           <div class="muted mt-2" style="font-size:12.5px">
             <span data-i18n="proc.dev_extra">Extra approvals required by §4.4</span>:

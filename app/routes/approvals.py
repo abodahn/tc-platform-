@@ -775,9 +775,14 @@ def _deviation_context(pr_id, pr):
                                    pr_id, exc)
         return None
     off = [l for l in dev["lines"] if l["grade"] != "on_plan"]
-    if not off and not dev["unassessable"]:
+    # DOAM §3.4 — the coverage check is shown whether or not it found anything:
+    # "we netted this and it is clean" is a result, and the lines that could not
+    # be netted at all have to be visible or the reader assumes they were.
+    cov = [l for l in dev["lines"] if l.get("coverage")]
+    if not off and not dev["unassessable"] and not cov and not dev["coverage_blind"]:
         return None
     dev["off_plan"] = off
+    dev["coverage"] = cov
     return dev
 
 
@@ -935,12 +940,20 @@ def add_forecast():
 @permission_required("proc_approve")
 def agree_forecast(fc_id):
     ok, msg = svc.agree_forecast(fc_id, _u())
-    flash(f"Forecast {msg} agreed — direct material may now be requisitioned "
-          f"against it while it is in date." if ok
-          else ("Only the Supply Chain Director (or a Procurement admin) may "
-                "agree a forecast." if msg == "not_authorised"
-                else f"Could not agree the forecast ({msg})."),
-          "success" if ok else "error")
+    if ok:
+        text = (f"Forecast {msg} agreed — direct material may now be "
+                f"requisitioned against it while it is in date.")
+    elif msg == "not_authorised":
+        text = ("Only the Supply Chain Director (or a Procurement admin) may "
+                "agree a forecast.")
+    elif msg == "own_forecast":
+        # Separation of duties: translated, because it is the one refusal here
+        # the reader has to act on (find a second signatory).
+        text = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"][
+            "own_forecast_flash"]
+    else:
+        text = f"Could not agree the forecast ({msg})."
+    flash(text, "success" if ok else "error")
     return redirect(url_for("approvals.forecasts"))
 
 

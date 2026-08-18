@@ -535,3 +535,89 @@ R.register(**_common(
                   "Most-typed off-catalogue items", "أكثر الأصناف كتابةً خارج الكتالوج",
                   "En çok yazılan katalog dışı kalemler"),
 ))
+
+
+# ---------------------------------------------------------------------------
+# N. Records retention — what may be disposed of, and what may NOT
+# ---------------------------------------------------------------------------
+# Audit 3.4-b9b: retention existed only as the words "5 yrs" / "10 yrs" on the
+# controlled-forms page. Every request now carries retention_until, and this is
+# the REPORT a records officer works from — deliberately a report and not a job.
+# Nothing here deletes anything: it lists what has passed its date so a human can
+# retire records one at a time (services.dispose_pr, which refuses anything still
+# inside its window). An unattended purge of financial records is a much larger
+# risk than keeping them too long.
+_RET_DUE = ("(CASE WHEN COALESCE(NULLIF(TRIM(p.retention_until),''),'9999-12-31') "
+            "<= date('now') THEN '1' ELSE '0' END)")
+
+R.register(**_common(
+    key="proc_retention",
+    title="Records retention & disposal",
+    title_ar="حفظ السجلات والتخلص منها",
+    title_tr="Kayıt saklama ve imha",
+    desc="Every live purchase record with the date it may FIRST be disposed of "
+         "— 10 years for capital expenditure, 5 for everything else, counted "
+         "from the day it was raised. 'Disposal due' = Yes means the retention "
+         "period has passed and a records officer may retire the record; "
+         "nothing is ever removed automatically.",
+    desc_ar="كل سجل شراء قائم مع تاريخ أول موعد يجوز فيه التخلص منه — 10 سنوات "
+            "للنفقات الرأسمالية و5 سنوات لما عداها، محسوبة من تاريخ إنشائه. "
+            "«حان التخلص = نعم» تعني انتهاء مدة الحفظ وجواز إحالة السجل للتخلص "
+            "بقرار موظف السجلات؛ ولا يُحذف أي سجل تلقائياً.",
+    desc_tr="Her canlı satın alma kaydı ve ilk imha edilebileceği tarih — "
+            "yatırım harcamaları için 10 yıl, diğerleri için 5 yıl, kaydın "
+            "açıldığı günden sayılır. 'İmha zamanı = Evet' saklama süresinin "
+            "dolduğunu ve kayıt sorumlusunun kaydı emekliye ayırabileceğini "
+            "gösterir; hiçbir kayıt otomatik silinmez.",
+    select=(
+        "p.pr_no AS pr_no, p.title AS title, p.department AS department, "
+        "p.status AS status, COALESCE(NULLIF(TRIM(p.expenditure_kind),''),'opex') AS kind, "
+        f"{_EGP} AS egp, COALESCE(p.request_date, p.created_at) AS raised, "
+        "p.retention_until AS retention_until, "
+        f"{_RET_DUE} AS due"
+    ),
+    frm="pr_requests p",
+    base_where=["COALESCE(p.is_active,1) = 1"],
+    order="COALESCE(p.retention_until,'9999-12-31') ASC, p.id ASC",
+    date_col="p.created_at",
+    columns=[
+        R.col("pr_no", "PR No", "رقم الطلب", "Talep No"),
+        R.col("title", "Title", "العنوان", "Başlık"),
+        R.col("department", "Department", "الإدارة", "Departman"),
+        R.col("status", "Status", "الحالة", "Durum"),
+        R.col("kind", "Expenditure", "نوع الإنفاق", "Harcama türü"),
+        R.col("egp", "Value (EGP)", "القيمة (ج.م)", "Değer (EGP)", "num",
+              total=f"SUM({_EGP})"),
+        R.col("raised", "Raised", "تاريخ الإنشاء", "Açılış", "date"),
+        R.col("retention_until", "Keep until", "يُحفظ حتى", "Saklama sonu", "date"),
+        R.col("due", "Disposal due", "حان التخلص", "İmha zamanı"),
+    ],
+    filters=[
+        R.filt("due", "Disposal due", "حان التخلص", "İmha zamanı", _RET_DUE,
+               "select", "=", [("1", "Yes", "نعم", "Evet"),
+                               ("0", "No", "لا", "Hayır")]),
+        R.filt("kind", "Expenditure", "نوع الإنفاق", "Harcama türü",
+               "COALESCE(NULLIF(TRIM(p.expenditure_kind),''),'opex')", "select", "=",
+               [("opex", "Operating", "تشغيلي", "İşletme"),
+                ("capex", "Capital", "رأسمالي", "Yatırım")]),
+        R.filt("department", "Department", "الإدارة", "Departman", "p.department"),
+        R.filt("status", "Status", "الحالة", "Durum", "p.status", "select", "=",
+               _STATUS_OPTS),
+    ],
+    kpis=[
+        R.kpi("n", "Records held", "سجلات محفوظة", "Saklanan kayıt", "COUNT(*)"),
+        R.kpi("due", "Disposal due", "حان التخلص عنها", "İmha zamanı gelen",
+              f"SUM(CASE WHEN {_RET_DUE} = '1' THEN 1 ELSE 0 END)", better="none"),
+        R.kpi("capex", "Capital (10-year)", "رأسمالي (10 سنوات)",
+              "Yatırım (10 yıl)",
+              "SUM(CASE WHEN LOWER(TRIM(COALESCE(p.expenditure_kind,'opex'))) = 'capex' "
+              "THEN 1 ELSE 0 END)", better="none"),
+        R.kpi("unstamped", "No retention date", "بلا تاريخ حفظ", "Saklama tarihi yok",
+              "SUM(CASE WHEN TRIM(COALESCE(p.retention_until,'')) = '' THEN 1 ELSE 0 END)",
+              better="down"),
+    ],
+    chart=R.chart("bar", "substr(COALESCE(p.retention_until,'—'),1,4)", "COUNT(*)",
+                  "substr(COALESCE(p.retention_until,'—'),1,4)",
+                  "Records falling due by year", "السجلات المستحقة حسب السنة",
+                  "Yıla göre süresi dolan kayıtlar"),
+))

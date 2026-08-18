@@ -285,6 +285,36 @@ def single_source_stage(ladder, kind=None):
     return None
 
 
+# --- Budgeted vs unbudgeted spend (DOAM Table 4) ----------------------------
+# §4.1 is titled "OPEX Ladder (BUDGETED)", so every tier in OPEX_MATRIX above
+# describes PLANNED spend. Table 4 puts the other kind somewhere specific:
+#
+#   L1  GM / CFO — major commitments within board-approved budgets AND
+#                  UNBUDGETED ITEMS UP TO THE L1 LIMIT.
+#
+# So money spent against no approved plan is not a tier-1 purchase that happens
+# to be small — it is an L1 commitment whatever its size. It is NOT refused: the
+# DOAM permits unbudgeted spend up to the L1 limit, it just prices it in
+# signatures.
+UNBUDGETED_LEVEL = "L1"
+
+
+def unbudgeted_stage(ladder, kind=None):
+    """The ONE extra stage an unbudgeted request needs, or None when `ladder`
+    already reaches L1 (there is nothing left to escalate to).
+
+    Same shape as single_source_stage(): a request can be single-source AND
+    unbudgeted, and each control asks for at most one extra signature."""
+    want = LEVEL_ORDER.index(UNBUDGETED_LEVEL)
+    if any(LEVEL_ORDER.index(DOAM_LEVEL.get(s, "L4")) >= want for s in (ladder or [])):
+        return None
+    matrix = MATRICES.get((kind or "opex").strip().lower(), OPEX_MATRIX)
+    for s in DOAM_LADDER:
+        if s in matrix and DOAM_LEVEL.get(s) == UNBUDGETED_LEVEL:
+            return s
+    return None
+
+
 # --- Pricing gate (controlled Procure-to-Pay) -------------------------------
 # A purchase request is raised WITHOUT any commercial value: the requester only
 # states what they need (item, qty, unit, spec). Pricing is entered later, by
@@ -430,14 +460,15 @@ PROC_PERMISSIONS = [
     "proc_create",     # raise purchase requests
     "proc_approve",    # act on an approval stage the user is eligible for
     "proc_purchasing", # purchasing actions: issue PO, manage vendors
+    "proc_pay",        # release payments to suppliers (DOAM 7.3.4)
     "proc_admin",      # settings, approval matrix, act on any stage, vendors
 ]
 
 # New roles introduced by this module -> the procurement permissions they hold.
 PROC_ROLE_PERMS = {
     "purchasing_manager": ["proc_view", "proc_create", "proc_approve", "proc_purchasing"],
-    "finance_manager": ["proc_view", "proc_create", "proc_approve"],
-    "cfo": ["proc_view", "proc_approve"],
+    "finance_manager": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
+    "cfo": ["proc_view", "proc_approve", "proc_pay"],
     "ceo": ["proc_view", "proc_approve"],
     "warehouse_manager": ["proc_view", "proc_create", "proc_approve"],
     # DOAM §3.2 authority roles that STAGE_ROLES routes to. Registered HERE, in
@@ -460,8 +491,6 @@ PROC_ROLE_PERMS = {
     "storekeeper": ["proc_view", "proc_create", "proc_approve"],
     "factory_manager": ["proc_view", "proc_create", "proc_approve"],
     "finance_user": ["proc_view", "proc_approve"],
-    "finance_manager": ["proc_view", "proc_approve", "proc_pay"],
-    "cfo": ["proc_view", "proc_approve", "proc_pay"],
     "production_manager": ["proc_view", "proc_create"],
     "production_supervisor": ["proc_view", "proc_create"],
     "maintenance_manager": ["proc_view", "proc_create"],
@@ -530,7 +559,10 @@ CONTROLLED_FORMS = [
      "/procurement/new"),
     ("T&C-PUF-09", "Engineering Justification", "Justify spares and MRO", "3 yrs",
      "/maintenance/justifications"),
-    ("T&C-PUF-10", "Coverage Check", "Net requirement after netting", "1 yr", None),
+    # No longer a paper form with no digital equivalent: the netting runs on
+    # every priced request and prints on the request page (§3.4 coverage check).
+    ("T&C-PUF-10", "Coverage Check", "Net requirement after netting", "1 yr",
+     "/procurement/list"),
     ("T&C-PUF-11", "Intercompany Reconciliation", "Taypa PO versus requirement",
      "1 yr", None),
     ("T&C-PUF-12", "Justification Memo", "Over-plan quantity or over-target price",
@@ -636,24 +668,89 @@ SO_MANDATORY_KEYWORDS = (
     "chemical", "dye", "dyestuff", "wash", "washing", "print", "printing",
     "embroider", "embroidery", "embroidered", "subcontract", "sub-contract",
     "cmt", "cut make trim",
+    # trims and materials a merchandiser types but the prose of Table 12 never
+    # spells out. Singular stems the (?:s|es)? rule cannot reach on its own, and
+    # multi-word forms chosen over the bare stem where the bare stem is also a
+    # maintenance word ("piping" is pipework, "packing" is gland packing).
+    "rib", "taffeta", "elastane", "spandex", "grosgrain", "bias binding",
+    "binding tape", "piping cord", "snap", "shoulder pad", "hook and eye",
+    "buckram", "sequin", "bra cup", "sliver", "roll goods", "tissue paper",
+    "silica gel", "neck board", "back board", "collar bone", "butterfly",
+    "gum tape",
     # the requester saying it in so many words
     "direct material", "raw material",
 )
 
-# Phrases that LOOK like a trim but are maintenance / IT / facility stock. They
-# are struck out of the text before matching, so an electrician ordering PUSH
-# BUTTONS or a workshop ordering BUTTON HEAD screws is not sent away to find a
-# sales order it has no business carrying. Anything else in the same line still
-# matches — this removes the phrase, not the check.
-SO_EXEMPT_PHRASES = (
-    "push button", "push-button", "pushbutton", "button head",
-    "label printer", "labelling machine", "labeling machine",
-    "print head", "printhead", "thread tap", "threading tap", "thread gauge",
+# Same list in the other two languages this system is written in. Every refusal
+# message below is translated into Arabic and Turkish, so AR/TR requesters are
+# expected by design — and an English-only trigger means the same purchase is
+# refused in English and waved through in Arabic.
+#
+# These are matched as PLAIN SUBSTRINGS, not whole words: Arabic prefixes the
+# article and conjunctions straight onto the noun (قماش -> القماش، وأقمشة) and
+# Turkish agglutinates its suffixes with consonant mutation (iplik -> ipliği),
+# so \b is both wrong and inert here. ASCII-folded spellings are listed beside
+# the diacritic ones because keyboards without Turkish layout are normal here.
+SO_MANDATORY_KEYWORDS_AR = (
+    "قماش", "أقمشة", "اقمشة", "خيط", "خيوط", "غزل", "بطانة", "حشو",
+    "سوستة", "سحاب", "زرار", "أزرار", "ازرار", "كبسون", "مطاط",
+    "تيكيت", "ليبل", "بطاقة تعليق", "إكسسوار", "اكسسوار",
+    "تغليف", "كرتون", "بوليباج", "شماعة",
+    "صباغة", "صبغة", "غسيل", "طباعة", "تطريز",
+    "خامات", "خامة", "دانتيل", "شريط لاصق",
+)
+SO_MANDATORY_KEYWORDS_TR = (
+    "kumaş", "kumas", "iplik", "ipliğ", "iplig", "dokuma", "örgü", "orgu",
+    "astar", "elyaf", "pamuklu",
+    "fermuar", "düğme", "dugme", "çıtçıt", "citcit", "toka", "lastik bant",
+    "etiket", "aksesuar", "askı kartı", "aski karti",
+    "ambalaj", "koli", "poşet", "poset", "askılık",
+    "boya", "boyama", "yıkama", "yikama", "baskı", "baski", "nakış", "nakis",
+    "dikiş ipliği", "dikis iplik", "hammadde",
 )
 
+# Phrases that LOOK like a trim but are maintenance / IT / facility stock. They
+# are struck out of the text before matching, so a workshop ordering BUTTON HEAD
+# screws or a stores desk ordering a LABEL PRINTER ribbon is not sent away to
+# find a sales order it has no business carrying. Anything else in the same line
+# still matches — this removes the phrase, not the check.
+#
+# Everything here is an unambiguous MRO noun: nobody sews a snap ring onto a
+# shirt. Genuinely ambiguous wording lives in SO_EXEMPT_IF_MRO below instead.
+SO_EXEMPT_PHRASES = (
+    "button head", "label printer", "labelling machine", "labeling machine",
+    "print head", "printhead", "thread tap", "threading tap", "thread gauge",
+    "snap ring", "snap gauge", "snap-on", "brake pad", "mouse pad",
+    "power cord", "extension cord", "cord grip", "butterfly valve",
+    "butterfly nut", "rib joint plier",
+)
+
+# ...and the wording that is a trim OR a control part depending on what else is
+# on the line. Struck out ONLY when the line also carries a maintenance /
+# electrical / IT context word, because "Push button 4-hole 18L for shirts" is a
+# garment button order in the auditor's own words with one word bolted on the
+# front, and an unconditional strike made the exemption list the way around the
+# very string it was tested on.
+SO_EXEMPT_IF_MRO = ("push button", "push-button", "pushbutton")
+
+_MRO_CONTEXT = re.compile(
+    r"\b(switch|panel|valve|screw|bolt|relay|contactor|electric|electrical|"
+    r"wiring|machine|motor|control|socket|plc|sensor|lamp|indicator|"
+    r"emergency|enclosure|cabinet|printer|maintenance|spare)\b")
+
 _SO_EXEMPT_RE = re.compile("|".join(re.escape(p) for p in SO_EXEMPT_PHRASES))
+_SO_EXEMPT_MRO_RE = re.compile("|".join(re.escape(p) for p in SO_EXEMPT_IF_MRO))
 _SO_RE = re.compile(r"\b(?:%s)(?:s|es)?\b"
                     % "|".join(re.escape(k) for k in SO_MANDATORY_KEYWORDS))
+# Arabic and Turkish: substring match, for the reasons above.
+_SO_RE_INTL = re.compile("|".join(
+    re.escape(k) for k in SO_MANDATORY_KEYWORDS_AR + SO_MANDATORY_KEYWORDS_TR))
+# Shapes rather than words. A textile weight/count with its unit, and a style
+# number, are both loud garment signals that no keyword list can enumerate:
+# "150gsm" has no word boundary in front of "gsm", and "Style 4471 material buy"
+# says nothing a bare stem could safely catch ("material handling" is MRO).
+_SO_SHAPE_RE = re.compile(
+    r"\b\d+\s*(?:gsm|g/?m2|denier|dtex|tex)\b|\bstyle\s*#?\s*\d")
 
 # Sales-order statuses that are NOT a live cost object. A requisition may not be
 # raised against one: the order is finished or gone, so nothing can be costed to
@@ -664,9 +761,19 @@ SO_CLOSED_STATUSES = ("closed", "cancelled")
 def cost_object_required(texts):
     """Does this requisition need a sales-order reference? `texts` is every
     category / item string on the request. Returns "sales_order" when Table 12
-    makes it mandatory, else None (asset or cost centre, requester's choice)."""
+    makes it mandatory, else None (asset or cost centre, requester's choice).
+
+    ponytail: a keyword heuristic, not an enforced control — it is only as good
+    as its vocabulary, in three languages. The structural fix is mandatory
+    server-validated catalogue linkage on PR lines; until that lands, describe
+    this leg as a heuristic in the DOAM compliance statement."""
     blob = " ".join(str(t or "").lower() for t in texts)
-    return "sales_order" if _SO_RE.search(_SO_EXEMPT_RE.sub(" ", blob)) else None
+    if _SO_RE_INTL.search(blob) or _SO_SHAPE_RE.search(blob):
+        return "sales_order"
+    clean = _SO_EXEMPT_RE.sub(" ", blob)
+    if _MRO_CONTEXT.search(blob):
+        clean = _SO_EXEMPT_MRO_RE.sub(" ", clean)
+    return "sales_order" if _SO_RE.search(clean) else None
 
 
 # DOAM §4.4 — Purchase Order Approval by Deviation. Beyond the value ladder, an
@@ -679,10 +786,12 @@ def cost_object_required(texts):
 #   price  5-15% over target                                          FIN-D, memo, quotes
 #   price   >15% over target                                          FIN-D + MD, memo
 #
-# The document's middle quantity row ("over plan, within the stock ceiling") needs
-# a per-item PLAN quantity, which this system does not hold — there is no purchase
-# plan module. Rather than invent one from the reorder level and grade real orders
-# against a guess, that row is reported as "not assessable" wherever it applies.
+# The document's middle quantity row ("over plan, within the stock ceiling") is
+# graded by the §3.4 COVERAGE CHECK: "procurement quantity is capped at the net
+# requirement after inventory netting". The plan quantity is not invented — it is
+# computed per line from the stock master (see services.deviation_findings), and
+# a line with no stock record is still reported "not assessable" rather than
+# guessed either way.
 DEVIATION_PRICE_BANDS = [
     (5.0,  [],                  "price_5"),      # standard approvers + 3 quotes
     (15.0, ["finance"],         "price_15"),
@@ -704,21 +813,38 @@ def price_deviation_pct(unit_price, target):
     return (unit_price - target) / target * 100.0
 
 
-def deviation_grade(pct_over, over_ceiling=False):
+# DOAM §3.4 — "A quantity above plan ... requires a justification memo and a
+# higher approval per Section 4.4." One authority above the value tier is the
+# Plant Director: one rung lighter than pushing stock past its ceiling outright,
+# which the row below it already costs PD + SCD.
+DEVIATION_OVER_PLAN_STAGES = ["factory_manager"]
+
+
+def deviation_grade(pct_over, over_ceiling=False, over_plan=False):
     """The §4.4 grade for one line. Returns
     {"grade", "stages", "memo", "quotes"} — `stages` are EXTRA approvals on top
-    of the value ladder."""
-    if over_ceiling:
-        # The heavier of the two rows always wins; quantity above the ceiling is
-        # the one the document calls out as the trigger.
-        return {"grade": "over_ceiling", "stages": ["factory_manager", "scd"],
-                "memo": True, "quotes": False}
-    if pct_over is None or pct_over <= 0:
-        return {"grade": "on_plan", "stages": [], "memo": False, "quotes": False}
-    for ceiling, stages, grade in DEVIATION_PRICE_BANDS:
-        if ceiling is None or pct_over <= ceiling:
-            return {"grade": grade, "stages": list(stages), "memo": True, "quotes": True}
-    return {"grade": "on_plan", "stages": [], "memo": False, "quotes": False}
+    of the value ladder.
+
+    A quantity finding names the GRADE, because that is the row the document
+    calls out as the trigger — but it no longer swallows the price stages. An
+    order that is both above the net requirement and 20% over target needs both
+    sets of eyes, and the old early return dropped the Financial Director from
+    exactly that case."""
+    grade = {"grade": "on_plan", "stages": [], "memo": False, "quotes": False}
+    if pct_over is not None and pct_over > 0:
+        for ceiling, stages, name in DEVIATION_PRICE_BANDS:
+            if ceiling is None or pct_over <= ceiling:
+                grade = {"grade": name, "stages": list(stages), "memo": True,
+                         "quotes": True}
+                break
+    if not (over_ceiling or over_plan):
+        return grade
+    qty_stages = (["factory_manager", "scd"] if over_ceiling
+                  else list(DEVIATION_OVER_PLAN_STAGES))
+    grade["grade"] = "over_ceiling" if over_ceiling else "over_plan"
+    grade["stages"] = qty_stages + [s for s in grade["stages"] if s not in qty_stages]
+    grade["memo"] = True
+    return grade
 
 
 # DOAM §4.3 — "Advance up to 25% of PO value: FIN-D. Above 30%: CFO or MD, with

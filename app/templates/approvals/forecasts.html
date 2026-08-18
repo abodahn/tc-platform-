@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Agreed Forecasts{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.fc_title">Agreed Production Forecasts</h1>
+    <div class="sub" data-i18n="proc.fc_sub">DOAM §3.4 lets direct production material be bought against a valid client sales order OR an agreed forecast. This is the forecast register: a forecast only counts once the Supply Chain Director has agreed it, and only while it is in date.</div>
+  </div>
+</div>
+
+<div class="grid cols-2" style="align-items:start">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.fc_list">Forecast register</h3></div>
+    <div class="panel-pad" style="overflow-x:auto">
+      {% if forecasts %}
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.fc_ref">Reference</th>
+          <th data-i18n="proc.fc_desc">Description</th>
+          <th data-i18n="proc.fc_period">Period covered</th>
+          <th data-i18n="proc.fc_valid">Valid</th>
+          <th data-i18n="proc.fc_agreed_by">Agreed by</th>
+          <th data-i18n="proc.fc_status">Status</th>
+        </tr></thead>
+        <tbody>
+        {% for f in forecasts %}
+          <tr>
+            <td style="font-weight:600">{{ f.ref }}</td>
+            <td>{{ f.description or '' }}</td>
+            <td>{{ f.period or '' }}</td>
+            <td style="white-space:nowrap">{{ f.valid_from or '' }} → {{ f.valid_to or '' }}</td>
+            <td>
+              {% if f.agreed_by %}{{ f.agreed_by_name or f.agreed_by }}<div class="muted" style="font-size:11px">{{ (f.agreed_at or '')[:10] }}</div>
+              {% else %}<span class="muted" data-i18n="proc.fc_not_agreed">Not agreed</span>{% endif %}
+            </td>
+            <td>
+              {% if f.active %}<span class="tag" style="color:var(--ok)" data-i18n="proc.fc_active">Active — satisfies the gate</span>
+              {% elif f.status == 'agreed' %}<span class="tag" style="color:var(--warn)" data-i18n="proc.fc_expired">Out of date</span>
+              {% else %}<span class="tag" data-i18n="proc.fc_draft">Draft</span>{% endif %}
+              {% if can_agree and f.status != 'agreed' %}
+              <form method="post" action="{{ url_for('approvals.agree_forecast', fc_id=f.id) }}" style="display:inline">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button class="btn btn-primary" type="submit" style="padding:2px 8px;font-size:12px" data-i18n="proc.fc_agree">Agree</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="muted" data-i18n="proc.fc_none">No forecasts recorded yet. Until one is recorded and agreed, direct production material must name a client sales order.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if can_add %}
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.fc_new">Record a forecast</h3></div>
+    <div class="panel-pad">
+      <form method="post" action="{{ url_for('approvals.add_forecast') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field"><label data-i18n="proc.fc_ref">Reference *</label>
+          <input name="ref" required autocomplete="off" placeholder="e.g. FC-2026-Q1"></div>
+        <div class="field"><label data-i18n="proc.fc_desc">Description</label>
+          <input name="description" autocomplete="off" placeholder="What the forecast covers"></div>
+        <div class="field"><label data-i18n="proc.fc_period">Period covered</label>
+          <input name="period" autocomplete="off" placeholder="e.g. 2026 Q1"></div>
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="proc.fc_from">Valid from</label>
+            <input type="date" name="valid_from"></div>
+          <div class="field"><label data-i18n="proc.fc_to">Valid to</label>
+            <input type="date" name="valid_to"></div>
+        </div>
+        <span class="muted" style="font-size:12px" data-i18n="proc.fc_hint_dates">Leave the dates blank and the forecast runs from today for 90 days — one production quarter. It stops satisfying the gate the day it ends.</span>
+        <div style="margin-top:10px">
+          <button class="btn btn-primary" type="submit" data-i18n="proc.fc_save">Save as draft</button>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:8px" data-i18n="proc.fc_hint_agree">A draft forecast buys nothing. Table 4 L2 of the DOAM puts operational and inventory replenishment with the Supply Chain Director, so only the Supply Chain Director (or a Procurement admin) can agree one.</div>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

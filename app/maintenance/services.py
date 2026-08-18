@@ -839,6 +839,27 @@ def sync_sla_breaches(conn=None):
                        f"resolution SLA.", "ticket", t["id"], "critical",
                        f"/maintenance/tickets/{t['id']}")
                 flagged += 1
+
+        # DOAM §7.4.2 — an emergency purchase may proceed, but its justification
+        # follows within 24 hours. emergency_deadline() writes that date; this is
+        # what READS it. Deduped against the notification already raised, so it
+        # stays safe on every dashboard load without a new column.
+        from app.maintenance.eng_justification import (EMERGENCY_GRACE_HOURS,
+                                                       emergency_overdue)
+        for j in conn.execute(
+                "SELECT id, ejr_no, is_emergency, status, emergency_due_at "
+                "FROM mnt_eng_justifications WHERE is_active=1 AND is_emergency=1 "
+                "AND status <> 'approved' AND emergency_due_at IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM mnt_notifications n "
+                "WHERE n.entity_type='ejr' AND n.entity_id=mnt_eng_justifications.id)"
+                ).fetchall():
+            if emergency_overdue(j):
+                notify(conn, "maintenance_manager", "Emergency justification overdue",
+                       f"{j['ejr_no']} passed its {EMERGENCY_GRACE_HOURS}-hour documentation "
+                       f"deadline and is still unsigned.", "ejr", j["id"], "critical",
+                       f"/maintenance/justifications/{j['id']}")
+                flagged += 1
+
         if flagged:
             conn.commit()
         return flagged

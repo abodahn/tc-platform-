@@ -562,24 +562,44 @@ UI = {
         # --- DOAM §5 golden thread: the sales-order gate ---
         "cost_object_required_flash":
             "This request buys direct materials — fabric, yarn, trims, thread, "
-            "labels, packaging, wash or print work — so it must name the client "
-            "sales order it is costed against (DOAM §5). Pick the order from the "
-            "list and submit again. The DOAM also allows an agreed production "
-            "forecast instead of a sales order, but this system holds no forecast "
-            "register, so an open sales order is the only reference it can accept.",
+            "labels, packaging, wash or print work — so it must name what it is "
+            "costed against (DOAM §3.4): either the client sales order, or an "
+            "agreed production forecast. Pick one from the lists on the request "
+            "and submit again.",
         "so_unknown_flash":
             "The sales order on this request is not an order on file, so it is not "
             "a cost object (DOAM §5). Pick a real, open sales order from the list "
-            "on the request and submit again. The DOAM's alternative — an agreed "
-            "production forecast — is not available: this system holds no forecast "
-            "register.",
+            "on the request and submit again — or, if this material is being bought "
+            "ahead of a confirmed client order, clear the sales order and cite an "
+            "agreed production forecast instead.",
         "so_closed_flash":
             "The sales order on this request is closed or cancelled, so nothing can "
-            "be costed to it (DOAM §5). Name an open sales order and submit again — "
-            "or, if this purchase is not a direct material for a client order, "
-            "remove the sales order and use the cost centre instead. The DOAM's "
-            "other option — an agreed production forecast — is not available: this "
-            "system holds no forecast register.",
+            "be costed to it (DOAM §5). Name an open sales order and submit again, "
+            "or clear it and cite an agreed production forecast if the material is "
+            "being bought ahead of a confirmed order. If this purchase is not a "
+            "direct material for a client order at all, remove the sales order and "
+            "use the cost centre instead.",
+        # --- DOAM §3.4, the clause's other half: "...or agreed forecast" ---
+        "fc_unknown_flash":
+            "The forecast reference on this request is not in the forecast "
+            "register, so it is not a cost object (DOAM §3.4). Record it under "
+            "Procurement → Agreed Forecasts and have the Supply Chain Director "
+            "agree it, or name an open client sales order instead.",
+        "fc_unapproved_flash":
+            "The forecast on this request is still a draft. A forecast becomes a "
+            "cost object only when it is AGREED — the DOAM puts operational and "
+            "inventory replenishment with the Supply Chain Director (Table 4 L2), "
+            "so ask for it to be agreed, or name an open client sales order.",
+        "fc_expired_flash":
+            "The forecast on this request is outside its validity dates, so nothing "
+            "can be bought against it (DOAM §3.4). Have a current forecast agreed "
+            "for this period, or name an open client sales order instead.",
+        "own_forecast_flash":
+            "You drafted this forecast, so you may not also agree it. A forecast "
+            "is the alternative to a client sales order, so one signature on both "
+            "ends of it would let the same person invent a cost object and then "
+            "spend against it. Ask another Supply Chain Director or Procurement "
+            "admin to agree it.",
     },
     "ar": {
         "text_en": "النص (بالإنجليزية)", "text_ar": "النص (بالعربية)",
@@ -614,23 +634,40 @@ UI = {
                              "مسؤول.",
         "cost_object_required_flash":
             "هذا الطلب يشتري خامات إنتاج مباشرة — أقمشة أو خيوط أو إكسسوارات أو "
-            "ليبل أو مواد تغليف أو غسيل أو طباعة — لذلك يجب أن يذكر أمر بيع العميل "
-            "الذي تُحمَّل عليه التكلفة (البند 5 من دليل الصلاحيات). اختر الأمر من "
-            "القائمة ثم أعد الإرسال. ويسمح الدليل أيضًا بـ«توقعات متفق عليها» بديلًا "
-            "عن أمر البيع، لكن النظام لا يحتفظ بسجل توقعات، فأمر البيع المفتوح هو "
-            "المرجع الوحيد المقبول.",
+            "ليبل أو مواد تغليف أو غسيل أو طباعة — لذلك يجب أن يذكر ما تُحمّل "
+            "عليه تكلفته (البند 3-4 من دليل الصلاحيات): إما أمر بيع العميل وإما "
+            "توقعات إنتاج معتمدة. اختر أحدهما من القوائم الموجودة في الطلب ثم "
+            "أعد الإرسال.",
         "so_unknown_flash":
-            "أمر البيع المكتوب في هذا الطلب غير مسجَّل في النظام، وبالتالي فهو ليس "
+            "أمر البيع المكتوب في هذا الطلب غير مسجّل في النظام، وبالتالي فهو ليس "
             "مركز تكلفة صالحًا (البند 5 من دليل الصلاحيات). اختر أمر بيع حقيقيًا "
-            "ومفتوحًا من القائمة الموجودة في الطلب ثم أعد الإرسال. أما البديل الذي "
-            "يذكره الدليل — «توقعات متفق عليها» — فغير متاح لأن النظام لا يحتفظ بسجل "
-            "توقعات.",
+            "ومفتوحًا من القائمة ثم أعد الإرسال — أو امسح أمر البيع واذكر "
+            "توقعات إنتاج معتمدة إذا كنت تشتري قبل تأكيد أمر العميل.",
         "so_closed_flash":
-            "أمر البيع المذكور في هذا الطلب مقفل أو ملغى، فلا يمكن تحميل أي تكلفة "
-            "عليه (البند 5 من دليل الصلاحيات). اذكر أمر بيع مفتوحًا ثم أعد الإرسال، "
-            "أو احذف أمر البيع واستخدم مركز التكلفة إذا لم يكن هذا الشراء خامة إنتاج "
-            "مباشرة لأمر عميل. أما خيار الدليل الآخر — «توقعات متفق عليها» (forecast) — "
-            "فغير متاح لأن النظام لا يحتفظ بسجل توقعات.",
+            "أمر البيع المذكور في هذا الطلب مقفل أو ملغى، فلا يمكن تحميل أي "
+            "تكلفة عليه (البند 5 من دليل الصلاحيات). اذكر أمر بيع مفتوحًا ثم "
+            "أعد الإرسال، أو امسحه واذكر توقعات إنتاج معتمدة إذا كان "
+            "الشراء قبل تأكيد أمر العميل، أو احذف أمر البيع واستخدم مركز "
+            "التكلفة إذا لم يكن هذا الشراء خامة إنتاج مباشرة لأمر عميل.",
+        "fc_unknown_flash":
+            "مرجع التوقعات المذكور في هذا الطلب غير موجود في سجل التوقعات، "
+            "فليس مركز تكلفة (البند 3-4 من دليل الصلاحيات). سجّله في صفحة "
+            "التوقعات المعتمدة واطلب اعتماد مدير سلسلة الإمداد له، أو اذكر "
+            "أمر بيع عميل مفتوحًا بدلًا منه.",
+        "fc_unapproved_flash":
+            "التوقعات المذكورة في هذا الطلب ما زالت مسودة. ولا تصبح التوقعات "
+            "مركز تكلفة إلا بعد اعتمادها — ويضع الدليل مسؤولية التشغيل "
+            "وإعادة تدبير المخزون لدى مدير سلسلة الإمداد (الجدول 4 المستوى "
+            "الثاني)، فاطلب اعتمادها أو اذكر أمر بيع عميل مفتوحًا.",
+        "fc_expired_flash":
+            "التوقعات المذكورة في هذا الطلب خارج مدة سريانها، فلا يمكن الشراء "
+            "مقابلها (البند 3-4 من دليل الصلاحيات). اعتمد توقعات سارية لهذه "
+            "الفترة، أو اذكر أمر بيع عميل مفتوحًا بدلًا منها.",
+        "own_forecast_flash":
+            "أنت من سجّل هذه التوقعات، فلا يجوز أن تعتمدها بنفسك. التوقعات بديل "
+            "عن أمر بيع العميل، ولو وقّع الشخص نفسه على طرفيها لأصبح بإمكانه أن "
+            "ينشئ مركز تكلفة ثم ينفق عليه. اطلب من مدير سلسلة إمداد آخر أو من "
+            "مسؤول مشتريات آخر اعتمادها."
     },
     "tr": {
         "text_en": "Metin (İngilizce)", "text_ar": "Metin (Arapça)",
@@ -667,23 +704,41 @@ UI = {
         "cost_object_required_flash":
             "Bu talep doğrudan üretim malzemesi satın alıyor — kumaş, iplik, "
             "aksesuar, dikiş ipliği, etiket, ambalaj, yıkama veya baskı — bu yüzden "
-            "maliyetlendirileceği müşteri satış siparişini belirtmesi gerekir "
-            "(DOAM §5). Siparişi listeden seçip yeniden gönderin. DOAM, satış "
-            "siparişi yerine «üzerinde anlaşılmış bir tahmin»e de izin veriyor; "
-            "ancak bu sistemde tahmin kaydı tutulmadığından kabul edilebilen tek "
-            "referans açık bir satış siparişidir.",
+            "neye maliyetlendirildiğini belirtmesi gerekir (DOAM §3.4): ya müşteri "
+            "satış siparişi ya da onaylı bir üretim tahmini. Talepteki listelerden "
+            "birini seçip yeniden gönderin.",
         "so_unknown_flash":
             "Bu talepteki satış siparişi sistemde kayıtlı bir sipariş değil, "
             "dolayısıyla geçerli bir maliyet nesnesi sayılmaz (DOAM §5). Talepteki "
-            "listeden gerçek ve açık bir satış siparişi seçip yeniden gönderin. "
-            "DOAM'ın öngördüğü diğer seçenek — «üzerinde anlaşılmış tahmin» — bu "
-            "sistemde tahmin kaydı bulunmadığı için kullanılamıyor.",
+            "listeden gerçek ve açık bir satış siparişi seçip yeniden gönderin — ya "
+            "da malzeme kesinleşmiş bir müşteri siparişinden önce alınıyorsa satış "
+            "siparişini boşaltıp onaylı bir üretim tahmini belirtin.",
         "so_closed_flash":
             "Bu talepteki satış siparişi kapatılmış ya da iptal edilmiş; ona hiçbir "
             "maliyet yüklenemez (DOAM §5). Açık bir satış siparişi belirtip yeniden "
-            "gönderin ya da bu alım bir müşteri siparişine ait doğrudan üretim "
-            "malzemesi değilse satış siparişini kaldırıp masraf merkezini kullanın. DOAM'ın "
-            "diğer seçeneği olan «üzerinde anlaşılmış tahmin» (forecast) ise bu sistemde "
-            "tahmin kaydı tutulmadığı için kullanılamıyor.",
+            "gönderin, ya da alım kesinleşmiş bir siparişten önce yapılıyorsa onaylı "
+            "bir üretim tahmini belirtin. Bu alım bir müşteri siparişine ait "
+            "doğrudan üretim malzemesi değilse satış siparişini kaldırıp masraf "
+            "merkezini kullanın.",
+        "fc_unknown_flash":
+            "Bu talepteki tahmin referansı tahmin kaydında yok, dolayısıyla bir "
+            "maliyet nesnesi değil (DOAM §3.4). Onu Onaylı Tahminler sayfasında "
+            "kaydedip Tedarik Zinciri Direktörüne onaylatın ya da açık bir müşteri "
+            "satış siparişi belirtin.",
+        "fc_unapproved_flash":
+            "Bu talepteki tahmin hâlâ taslak. Bir tahmin ancak ONAYLANDIĞINDA maliyet "
+            "nesnesi olur — DOAM, operasyonel ve stok ikmal sorumluluğunu Tedarik "
+            "Zinciri Direktörüne verir (Tablo 4 L2). Onaylanmasını isteyin ya da "
+            "açık bir müşteri satış siparişi belirtin.",
+        "fc_expired_flash":
+            "Bu talepteki tahmin geçerlilik tarihlerinin dışında; ona dayanılarak "
+            "hiçbir şey satın alınamaz (DOAM §3.4). Bu dönem için güncel bir tahmin "
+            "onaylatın ya da açık bir müşteri satış siparişi belirtin.",
+        "own_forecast_flash":
+            "Bu tahmini siz taslak olarak girdiniz, bu yüzden onu kendiniz "
+            "onaylayamazsınız. Tahmin, müşteri satış siparişinin alternatifidir; "
+            "iki ucunda da aynı imza olursa aynı kişi hem maliyet nesnesini "
+            "yaratmış hem de ona harcama yapmış olur. Onayı başka bir Tedarik "
+            "Zinciri Direktöründen ya da Satın Alma yöneticisinden isteyin."
     },
 }

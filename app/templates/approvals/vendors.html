@@ -21,6 +21,7 @@
           <th data-i18n="proc.contact">Contact</th>
           <th data-i18n="proc.terms">Terms</th>
           <th data-i18n="proc.rating">Rating</th>
+          <th data-i18n="proc.rtv.dues">Outstanding dues</th>
         </tr></thead>
         <tbody>
         {% for v in vendors %}
@@ -30,10 +31,14 @@
             <td>{{ v.contact_person or '—' }}<div class="muted" style="font-size:12px">{{ v.phone or '' }}</div></td>
             <td>{{ v.payment_terms or '—' }}</td>
             <td>{% if v.rating %}<span class="tag">★ {{ '%.1f'|format(v.rating) }}</span>{% else %}—{% endif %}</td>
+            <td>{% if v.dues %}<span style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(v.dues) }}</span>
+                <div class="muted" style="font-size:12px">{{ v.dues_count }} <span data-i18n="proc.rtv.open_dn">open debit note(s)</span></div>
+                {% else %}—{% endif %}</td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
+      <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.rtv.dues_note">Outstanding dues are the open debit notes raised for goods rejected on receipt and returned — value the supplier still owes back.</div>
       {% else %}
       <div class="muted" data-i18n="proc.no_vendors">No vendors yet.</div>
       {% endif %}

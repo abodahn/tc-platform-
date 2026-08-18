@@ -126,13 +126,25 @@ def run():
         chk("the Engineering Head signs it",
             E.decide(conn, ejr_id, True, {"username": "eng_head"}) == (True, "approved"))
         conn.commit()
+        # A second, still-DRAFT report, to prove the requester cannot satisfy the
+        # gate with their own unsigned justification.
+        draft_id, _ = E.create(conn, {"machine_id": mid, "request_type": "breakdown",
+                                      "description": "d", "root_cause": "r",
+                                      "criticality": "routine", "downtime_risk": "x",
+                                      "stock_on_hand": 1, "stock_checked_with": "store",
+                                      "alternatives": "none"}, {"username": "tech"})
+        conn.commit()
         conn.close()
 
         c = spares_pr("Spares with an approved EJR")
-        conn = get_db()
-        conn.execute("UPDATE pr_requests SET ejr_id=? WHERE id=?", (ejr_id, c))
-        conn.commit()
-        conn.close()
+        # The ONLY path that can satisfy the gate — the same service the
+        # POST /procurement/pr/<id>/engineering-justification route calls. Raw
+        # SQL here would leave the unblock path untested and the gate could
+        # become unsatisfiable in production without this test noticing.
+        chk("a DRAFT report cannot be attached",
+            svc.attach_ejr(c, draft_id, buyer) == (False, "ejr_not_approved"))
+        okatt, m = svc.attach_ejr(c, ejr_id, buyer)
+        chk("attach_ejr cites the approved report (%s)" % m, okatt)
         okc, msgc = purchasing_signoff(c)
         chk("gate on + approved EJR attached: Purchasing signs off (%s)" % msgc, okc)
 
@@ -151,7 +163,102 @@ def run():
         okd, msgd = purchasing_signoff(d)
         chk("min/max replenishment stays exempt with the gate on (%s)" % msgd, okd)
 
-        # ---- 7. and it can be switched back off the same way -----------------
+        # ---- 7. a BROKEN maintenance module must not freeze all purchasing ---
+        # The gate fails closed on a real evaluation error, but "maintenance is
+        # not installed" is not an evaluation error: there are then no
+        # maintenance requisitions to gate, and refusing Production's stationery
+        # over an ImportError is a bigger failure than the one it guards against.
+        def plain_pr(title, dept="Production"):
+            pr_id, _ = svc.create_pr(
+                {"title": title, "department": dept},
+                [{"item": "A4 paper", "qty": 10, "unit_price": 0}],
+                {"username": "clerk", "id": 8}, priced=False)
+            conn = get_db()
+            li = conn.execute("SELECT id FROM pr_items WHERE pr_id=?",
+                              (pr_id,)).fetchone()["id"]
+            conn.close()
+            svc.price_pr(pr_id, {li: 30.0}, {"tax_rate": 0}, buyer)
+            svc.set_single_source(pr_id, "Framework stationery supplier", buyer)
+            return pr_id
+
+        import importlib
+        import sys
+        MOD = "app.maintenance.eng_justification"
+
+        e = plain_pr("Stationery while the maintenance module is unimportable")
+        sys.modules[MOD] = None          # any import of it now raises ImportError
+        try:
+            oke, msge = purchasing_signoff(e)
+        finally:
+            sys.modules.pop(MOD, None)
+        chk("an unimportable maintenance module does not block Production (%s)" % msge,
+            oke)
+
+        # ...but a genuine evaluation failure still fails CLOSED.
+        EJ = importlib.import_module(MOD)
+        orig_check = EJ.ejr_gate_check
+
+        def _boom(*a, **k):
+            raise ValueError("simulated query failure")
+        EJ.ejr_gate_check = _boom
+        try:
+            f = spares_pr("Spares while the gate itself is broken")
+            okf, msgf = purchasing_signoff(f)
+        finally:
+            EJ.ejr_gate_check = orig_check
+        chk("a failing gate evaluation still refuses (%s)" % msgf,
+            (not okf) and msgf == "ejr_check_failed:ValueError")
+
+        # A renamed/removed registry key must degrade the gate to OFF, not raise
+        # at import time (which is what made the ImportError above reachable).
+        saved = wf.SETTINGS.pop("ejr_gate")
+        try:
+            reloaded = importlib.reload(EJ)
+            chk("a missing registry key degrades to off instead of raising",
+                reloaded.EJR_GATE_DEFAULT is False)
+        except KeyError:
+            chk("a missing registry key degrades to off instead of raising", False)
+        finally:
+            wf.SETTINGS["ejr_gate"] = saved
+            importlib.reload(EJ)
+
+        # ---- 8. the emergency deadline is PARSED, not string-compared --------
+        base = "2026-08-18 10:00:00"
+        cap = "2026-08-19 10:00:00"
+        chk("no date supplied -> the 24h cap", E.emergency_deadline(base) == cap)
+        chk("a tighter deadline is honoured",
+            E.emergency_deadline(base, "2026-08-18 14:00:00") == "2026-08-18 14:00:00")
+        chk("the browser's datetime-local format is accepted",
+            E.emergency_deadline(base, "2026-08-18T14:00") == "2026-08-18 14:00:00")
+        chk("a longer deadline cannot be granted",
+            E.emergency_deadline(base, "2099-01-01 00:00:00") == cap)
+        chk("junk falls back to the cap, it does not become the deadline",
+            E.emergency_deadline(base, "1") == cap)
+        # unpadded used to sort ABOVE the cap and be discarded; it is now read
+        # as the date it obviously is.
+        chk("an unpadded date is parsed, not mis-sorted",
+            E.emergency_deadline(base, "2026-8-19 09:00") == "2026-08-19 09:00:00")
+
+        # ---- 9. and something actually READS that deadline -------------------
+        conn = get_db()
+        E.create(conn, {
+            "machine_id": mid, "request_type": "breakdown", "description": "Overdue",
+            "root_cause": "r", "criticality": "safety", "downtime_risk": "x",
+            "stock_on_hand": 0, "stock_checked_with": "store", "alternatives": "none",
+            "is_emergency": True, "emergency_due_at": "2000-01-01 00:00:00"},
+            {"username": "tech"})
+        conn.commit()
+        from app.maintenance import services as msvc
+        n1 = msvc.sync_sla_breaches(conn)
+        overdue = conn.execute(
+            "SELECT COUNT(*) c FROM mnt_notifications WHERE entity_type='ejr'"
+        ).fetchone()["c"]
+        n2 = msvc.sync_sla_breaches(conn)
+        conn.close()
+        chk("the SLA sweep flags an overdue emergency report (%s)" % n1, overdue == 1)
+        chk("and does not re-notify on the next sweep", n2 == 0)
+
+        # ---- 10. and it can be switched back off the same way ----------------
         conn = get_db()
         wf.reset_setting(conn, "ejr_gate", admin)
         chk("reset_setting returns it to the shipped default",

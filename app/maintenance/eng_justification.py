@@ -17,6 +17,8 @@ The gate refuses on MISSING FIELDS as well as on a missing report, because a
 justification that does not state criticality or the store stock check is exactly
 the paperwork this control exists to stop.
 """
+from datetime import datetime, timedelta, timezone
+
 from app.db import get_db, utcnow
 from app.maintenance import workflow
 
@@ -49,6 +51,47 @@ MRO_DEPARTMENTS = {"general maintenance", "maintenance", "engineering", "worksho
 # §7.4.2 — an emergency may proceed, but the report follows within 24 hours.
 EMERGENCY_GRACE_HOURS = 24
 
+
+def emergency_deadline(created_at, supplied=None):
+    """When an emergency report becomes overdue: creation + EMERGENCY_GRACE_HOURS.
+
+    The grace period was a constant nothing read — the due date was whatever the
+    author typed into a free-text box, so "within 24 hours" was enforced by the
+    person it constrains. It is now DERIVED, and a supplied value may only bring
+    the deadline FORWARD: a team that wants to hold itself to four hours may,
+    nobody gets to grant themselves a week.
+    """
+    try:
+        base = datetime.strptime(str(created_at)[:19], "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        base = datetime.now(timezone.utc).replace(tzinfo=None)
+    limit = base + timedelta(hours=EMERGENCY_GRACE_HOURS)
+    cap = limit.strftime("%Y-%m-%d %H:%M:%S")
+    # PARSED, not string-compared: the browser sends "2026-08-19T10:00" and a
+    # hand-typed "1" used to sort below every date and become the deadline.
+    # Anything unparseable falls back to the cap.
+    supplied = str(supplied or "").strip().replace("T", " ")[:19]
+    sup = None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            sup = datetime.strptime(supplied, fmt)
+            break
+        except ValueError:
+            pass
+    return sup.strftime("%Y-%m-%d %H:%M:%S") if sup and sup < limit else cap
+
+
+def emergency_overdue(row, now=None):
+    """Is this emergency report past its 24-hour deadline and still unsigned?
+
+    The reader that makes emergency_deadline mean something — called by the
+    maintenance SLA sweep, which raises the notification.
+    """
+    if not row or not row["is_emergency"] or row["status"] == "approved":
+        return False
+    due = str(row["emergency_due_at"] or "")[:19]
+    return bool(due) and due < (now or utcnow())[:19]
+
 # The gate is OFF by default, and deliberately so.
 #
 # Switching it on stops every spares / MRO / maintenance-department requisition
@@ -62,7 +105,9 @@ EMERGENCY_GRACE_HOURS = 24
 # justification gate (DOAM §6)", which writes the mnt_settings row through
 # workflow.set_setting like every other governance knob.
 EJR_GATE_SETTING = "ejr_gate"
-EJR_GATE_DEFAULT = workflow.SETTINGS[EJR_GATE_SETTING][0]
+# .get, not []: renaming the registry key must degrade the gate to "off", not
+# raise at import time and take purchasing down with it.
+EJR_GATE_DEFAULT = workflow.SETTINGS.get(EJR_GATE_SETTING, (False,))[0]
 
 
 def gate_enabled(conn):
@@ -185,7 +230,10 @@ def create(conn, data, user):
          data.get("stock_on_hand") if data.get("stock_on_hand") not in ("", None) else None,
          data.get("stock_checked_with"), data.get("alternatives"),
          1 if data.get("is_emergency") else 0,
-         data.get("emergency_due_at"), (user or {}).get("username"), now))
+         # DOAM §7.4.2 grace period, applied rather than merely written down.
+         emergency_deadline(now, data.get("emergency_due_at"))
+         if data.get("is_emergency") else None,
+         (user or {}).get("username"), now))
     return cur.lastrowid, ejr_no
 
 

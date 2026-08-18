@@ -99,18 +99,21 @@ chk("every DOAM stage has at least one role that can act on it",
 # ---------------------------------------------------------------- §4.3
 print("\nDOAM §4.3 — sourcing bands")
 SOURCING = [
-    (10_000,        1, "spot"),
-    (50_000,        1, "spot"),
-    (50_000.01,     3, "compare"),
-    (500_000,       3, "compare"),
-    (500_000.01,    3, "negotiate"),
-    (2_000_000,     3, "negotiate"),
-    (2_000_000.01,  3, "tender"),
+    (10_000,        1),
+    (50_000,        1),
+    (50_000.01,     3),
+    (500_000,       3),
+    (500_000.01,    3),
+    (2_000_000,     3),
+    (2_000_000.01,  3),
 ]
-for total, quotes, mode in SOURCING:
+for total, quotes in SOURCING:
     b = C.sourcing_band(total)
-    chk(f"{total:>13,.2f} -> {b['quotes']} quote(s), {b['mode']:<9}",
-        b["quotes"] == quotes and b["mode"] == mode, f"expected {quotes}/{mode}")
+    chk(f"{total:>13,.2f} -> {b['quotes']} quote(s)",
+        b["quotes"] == quotes, f"expected {quotes}")
+chk("a band carries ONLY the rule this system enforces",
+    all(set(b) == {"over", "quotes"} for b in C.SOURCING_BANDS),
+    "'mode'/'governance' named off-system procedures and nothing read them")
 
 print("\n  single source must be approved ONE LEVEL ABOVE the value tier (§4.3)")
 for total, want in ((5_000, "L2"), (100_000, "L1"), (300_000, "L1"),
