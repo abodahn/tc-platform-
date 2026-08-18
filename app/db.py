@@ -506,6 +506,29 @@ def _open_db():
     return conn
 
 
+def pg_host_kind():
+    """Which Render host the live connection actually resolved to: "internal"
+    (the private network) or "external" (out to the public internet and back).
+
+    _pg_candidates() puts the internal host first, but nothing ever reported
+    WHICH one won, so a silent fallback to external looked identical to success
+    while charging a public-internet round trip to every query on every page.
+    Measured on production: 324 ms per statement.
+
+    Returns a CATEGORY, never the host or the URL — /api/health is public and
+    this repository is public. The database hostname is not for either.
+    """
+    url = _RESOLVED_PG_URL
+    if not url:
+        return None
+    host = urlsplit(url).hostname or ""
+    if host.startswith("dpg-") and "." not in host:
+        return "internal"
+    if host.endswith("-postgres.render.com"):
+        return "external"
+    return "other"
+
+
 def utcnow():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 

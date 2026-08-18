@@ -12,7 +12,7 @@ from flask import Blueprint, jsonify, request, current_app
 from werkzeug.security import check_password_hash
 
 from config import Config
-from app.db import get_db
+from app.db import get_db, pg_host_kind
 from app.auth import login_required
 from app.security import has_permission
 from app.services import health as health_svc
@@ -80,6 +80,12 @@ def health():
         "db_connect_ms": t_conn,
         "db_query_ms": t_query,
         "db_pooled": pooled,
+        # internal | external — which Render network the connection took.
+        # A silent fallback to the external host charges a public-internet
+        # round trip to every statement on every page, and looked exactly
+        # like success until this was reported. Category only, never the
+        # hostname: this endpoint is public.
+        "db_host": pg_host_kind() if deep else None,
         "python": sys.version.split()[0],
         "env": Config.ENV,
     })
