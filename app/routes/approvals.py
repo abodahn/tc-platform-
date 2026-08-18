@@ -13,6 +13,11 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
                    abort, flash, jsonify, send_file, current_app)
 
 from app.auth import login_required, permission_required, current_user, user_can
+# Module scope on purpose. This module used to import get_db inside each
+# function that needed it, and twice a helper called it without that line: the
+# NameError went into a bare `except` and the feature silently reported
+# "nothing to show". One import here is the fix that a third caller cannot undo.
+from app.db import get_db
 from app.approvals import services as svc
 from app.approvals import pdf as pdfgen
 from app.approvals import constants as C
@@ -616,6 +621,27 @@ def detail(pr_id):
                 queued = True
                 break
     has_sig = bool((user or {}).get("sig_png"))
+    # DOAM Table 5 — the English source wording behind the proc.act.* i18n keys,
+    # so the action box says what THIS signature is before the client swaps in
+    # the reader's language (and still says it if the key is ever missing).
+    _act = (actionable or {}).get("action") or "approve"
+    act_why = C.STEP_ACTION_WHY[_act]
+    act_sign = "%s & sign" % C.STEP_ACTION_LABELS[_act]
+    # DOAM Table 4 L2 — PD owns production/maintenance, SC-D owns operational and
+    # inventory replenishment. Only shown when one of them was actually left off.
+    l2_dom = svc.l2_domain_of(pr_id)[0]
+    _on = {s["stage"] for s in bundle["steps"]}
+    if not (l2_dom and (_on & {"factory_manager", "scd"})
+            and not {"factory_manager", "scd"} <= _on):
+        l2_dom = None
+    # Same wording as the proc.l2.* i18n keys, so the pre-swap render and the
+    # English dictionary do not drift apart.
+    l2_note = ("DOAM Table 4: the Plant Director owns production and maintenance "
+               "commitments, so he is the only L2 signature on this request. The "
+               "Supply Chain Director does not sign it." if l2_dom == "plant" else
+               "DOAM Table 4: the Supply Chain Director owns operational and "
+               "inventory replenishment, so he is the only L2 signature on this "
+               "request. The Plant Director does not sign it." if l2_dom else "")
     cur_label = " + ".join(C.stage_label(s) for s in current_stages) if current_stages else None
     can_purchasing = user_can("proc_purchasing")
     is_priced = (pr.get("pricing_status") or "priced") == "priced"
@@ -661,6 +687,8 @@ def detail(pr_id):
     show_commercial = is_priced or can_purchasing
     return render_template("approvals/detail.html", active="proc_list",
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
+                           act_why=act_why, act_sign=act_sign,
+                           l2_domain=l2_dom, l2_note=l2_note,
                            stage_label=C.stage_label, queued=queued,
                            current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
                            match=svc.three_way_match(pr_id),
@@ -759,11 +787,6 @@ def _deviation_context(pr_id, pr):
     (an unpriced request, or every line on plan)."""
     if (pr.get("pricing_status") or "priced") != "priced":
         return None
-    # get_db is imported per-function in this module; without this line the call
-    # below raised NameError on EVERY request and the bare `except` turned that
-    # into "nothing to show" — so the §4.4 panel has never once rendered, and
-    # the justification memo it now collects would be unreachable from the UI.
-    from app.db import get_db
     try:
         conn = get_db()
         try:
@@ -808,8 +831,8 @@ def _ejr_context(pr_id, pr):
                 out["ejr_choices"] = ejr.approved_for_picker(conn)
         finally:
             conn.close()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 — fail soft, but never in silence
+        current_app.logger.warning("EJR panel unavailable for PR %s: %s", pr_id, exc)
     return out
 
 
@@ -946,11 +969,11 @@ def agree_forecast(fc_id):
     elif msg == "not_authorised":
         text = ("Only the Supply Chain Director (or a Procurement admin) may "
                 "agree a forecast.")
-    elif msg == "own_forecast":
-        # Separation of duties: translated, because it is the one refusal here
-        # the reader has to act on (find a second signatory).
+    elif msg in ("own_forecast", "fc_expired"):
+        # Translated, because these are the refusals the reader has to act on:
+        # find a second signatory, or register a forecast for this period.
         text = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"][
-            "own_forecast_flash"]
+            "own_forecast_flash" if msg == "own_forecast" else "fc_lapsed_flash"]
     else:
         text = f"Could not agree the forecast ({msg})."
     flash(text, "success" if ok else "error")
@@ -1028,10 +1051,12 @@ def approve(pr_id):
                                 "your signature.",
                "dual_role": "You already signed another stage of this request — a "
                             "different approver must take this one.",
-               "deviation_memo_required": "This order is off plan (over target price or "
-                                          "over the stock ceiling). DOAM §4.4 requires a "
-                                          "written justification memo before it is signed — "
-                                          "record it in the Deviation from plan panel.",
+               "deviation_memo_required": "This order is off plan (over target price, over "
+                                          "the stock ceiling, or above the net requirement "
+                                          "after inventory netting — §3.4). DOAM §4.4 "
+                                          "requires a written justification memo before it "
+                                          "is signed — record it in the Coverage check / "
+                                          "Deviation from plan panel.",
                "business_case_required": "Above 10,000,000 EGP the DOAM requires a written "
                                          "business case alongside Board approval. Record it "
                                          "before signing.",
@@ -1169,6 +1194,14 @@ def email_po(pr_id):
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
+_RECEIVE_ERR = {
+    "not_receivable": "This request is not open for receiving — a receipt can only "
+                      "be booked on an approved, issued or received purchase order.",
+    "nothing_received": "Enter an accepted or a rejected quantity on at least one line.",
+    "not_found": "That purchase request no longer exists.",
+}
+
+
 @bp.route("/pr/<int:pr_id>/receive", methods=["POST"])
 @login_required
 @permission_required("proc_purchasing")
@@ -1202,7 +1235,8 @@ def receive(pr_id):
                                 rejects=rejects, reject_reason=reason or None)
     flash({"received": "Delivery fully confirmed.", "partial": "Partial receipt recorded."}.get(msg, "Receipt recorded.")
           + (" Rejected goods returned to the supplier under a debit note." if rejects else "")
-          if ok else f"Could not record receipt ({msg}).", "success" if ok else "error")
+          if ok else _RECEIVE_ERR.get(msg, f"Could not record receipt ({msg})."),
+          "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -1272,29 +1306,13 @@ def add_payment(pr_id):
         "reference": f.get("reference", "").strip(), "paid_at": f.get("paid_at", "").strip(),
         "invoice_id": f.get("invoice_id"), "notes": f.get("notes", "").strip(),
     }, _u(), ip=_ip(), force=(user_can("proc_admin") and f.get("override") == "1"))
+    # Refusals in the reader's language, the way _submit_error does it: these
+    # gates are described in AR and TR on /procurement/workflow, so the sentence
+    # that fires must not arrive in English only. labels() already falls back to
+    # the English wording for any key a language has not translated.
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
     flash(f"Payment recorded ({res})." if ok else
-          {"not_payable": "Payments start once the Purchase Order is issued.",
-           "match_blocked": "Payment blocked: the 3-way match shows over-billing "
-                            "(invoice exceeds the PO or the received value). Resolve "
-                            "the mismatch first — an administrator can override.",
-           "over_payment": "This payment would exceed the PO total. Check the amount — "
-                           "an administrator can override if intentional.",
-           "exceeds_received": "Short delivery: this payment would exceed the value of "
-                               "the goods actually received. Pay for what was received, "
-                               "book the rest once it arrives — or ask an administrator "
-                               "to override.",
-           "advance_not_authorised": "This is an advance payment (nothing invoiced yet). "
-                                     "DOAM §4.3 requires it to be authorised first — "
-                                     "record the advance authorisation on this request.",
-           "advance_exceeds_authorised": "This payment is larger than the advance that "
-                                         "was authorised. Re-authorise for the higher "
-                                         "percentage, or reduce the amount.",
-           "advance_guarantee_required": "An advance above 25% on an order over "
-                                         "500,000 EGP needs a bank guarantee reference.",
-           "advance_vendor_not_approved": "No advance may be paid to a supplier off the "
-                                          "approved vendor list (DOAM §4.3). Add the "
-                                          "supplier to the vendor master first.",
-           }.get(res, f"Could not record payment ({res})."),
+          ui.get(str(res) + "_flash") or f"Could not record payment ({res}).",
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 

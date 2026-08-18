@@ -305,6 +305,12 @@ _STEP_MIGRATIONS = [
     # value-derived rung from a control rung, so re-saving pricing deleted the
     # §4.3 single-source and §4.4 deviation escalations with no trace.
     ("origin", "ALTER TABLE pr_steps ADD COLUMN origin TEXT DEFAULT 'ladder'"),
+    # DOAM Table 5 — WHAT the signature on this rung is: review | approve |
+    # endorse. Until this column existed a rung had two outcomes (approve /
+    # reject) and the RACI letters the DOAM assigns per activity could not be
+    # evidenced from system records at all. Defaults to 'approve', so every row
+    # written before this migration keeps exactly the meaning it was given.
+    ("action_type", "ALTER TABLE pr_steps ADD COLUMN action_type TEXT DEFAULT 'approve'"),
 ]
 
 # Columns added to pr_requests after first release (tax + goods receipt + PO email
@@ -501,7 +507,6 @@ CREATE TABLE IF NOT EXISTS proc_forecasts (
     agreed_by TEXT, agreed_by_name TEXT, agreed_role TEXT, agreed_at TEXT,
     created_by TEXT, created_at TEXT
 );
-CREATE INDEX IF NOT EXISTS ix_proc_fc_ref ON proc_forecasts(ref);
 """
 
 # Trilingual prose (added after first release). The English column stays exactly
@@ -645,6 +650,32 @@ def backfill_retention(conn):
     return n
 
 
+def drop_legacy_doam_role_rows(conn):
+    """Delete the rows the removed seed_doam_roles() left behind.
+
+    The DOAM authority roles are registered in code now. security.load_db_roles()
+    lets a custom_roles row REPLACE the code definition, so those five leftover
+    rows SHADOW it: on any database the old seed reached, financial_director has
+    the seed's five permissions and never the proc_pay the code grants it — the
+    drift the seed was removed to stop, frozen into the environments that matter.
+
+    Only rows still carrying the seed's exact permission list are deleted; an
+    admin who has since edited one keeps their version. Idempotent: after the
+    first boot the DELETE matches nothing.
+    """
+    seeded = '["open_module", "proc_approve", "proc_view", "view_dashboard", "view_reports"]'
+    try:
+        cur = conn.execute(
+            "DELETE FROM custom_roles WHERE role_key IN "
+            "('supply_chain_director','plant_director','financial_director',"
+            "'managing_director','board') AND perms_json = ?", (seeded,))
+        conn.commit()
+    except Exception:
+        conn.rollback()    # custom_roles belongs to the admin module; not here yet
+        return 0
+    return cur.rowcount if (cur.rowcount or 0) > 0 else 0
+
+
 def create_and_seed(conn):
     """Create procurement tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
@@ -665,6 +696,8 @@ def create_and_seed(conn):
     # are now registered in code (constants.PROC_ROLE_PERMS -> security's RBAC
     # merge), which is the registry can_act() reads: a role that exists only as
     # a row this seed never committed is missing wherever the write did not land.
+    # The rows it already wrote shadow that code definition, so clear them once.
+    drop_legacy_doam_role_rows(conn)
     seed_governance(conn)
     if conn.execute("SELECT COUNT(*) c FROM proc_vendors").fetchone()["c"] > 0:
         return  # already seeded; never overwrite
@@ -713,9 +746,13 @@ def create_and_seed(conn):
     ladder = build_ladder(total)
     for i, stage in enumerate(ladder, start=1):
         conn.execute(
-            """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, activated_at, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
-            (pr_id, i, stage, "pending", stage_label(stage), now if i == 1 else None, now))
+            """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role,
+               activated_at, created_at, action_type)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            # DOAM Table 5: the top of the ladder commits (A), everyone below it
+            # verifies (R) — the same rule services.stamp_step_actions applies.
+            (pr_id, i, stage, "pending", stage_label(stage), now if i == 1 else None,
+             now, "approve" if i == len(ladder) else "review"))
     conn.execute(
         "INSERT INTO pr_events (pr_id, actor, action, detail, created_at) VALUES (?,?,?,?,?)",
         (pr_id, "store", "submitted", f"Submitted for {len(ladder)} approvals", now))

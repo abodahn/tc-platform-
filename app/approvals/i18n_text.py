@@ -402,14 +402,17 @@ DOC = {
 STAGE_LABEL = {
     "en": {"requester": "Requester", "warehouse": "Warehouse",
            "factory_manager": "Factory Manager", "purchasing": "Purchasing",
-           "finance": "Finance", "cfo": "CFO", "ceo": "CEO"},
+           "finance": "Finance", "cfo": "CFO", "ceo": "CEO",
+           "scd": "Supply Chain Director", "bod": "Board of Directors"},
     "ar": {"requester": "مقدّم الطلب", "warehouse": "المخزن",
            "factory_manager": "مدير المصنع", "purchasing": "المشتريات",
            "finance": "الإدارة المالية", "cfo": "المدير المالي (CFO)",
-           "ceo": "الرئيس التنفيذي (CEO)"},
+           "ceo": "الرئيس التنفيذي (CEO)",
+           "scd": "مدير سلسلة الإمداد", "bod": "مجلس الإدارة"},
     "tr": {"requester": "Talep eden", "warehouse": "Depo",
            "factory_manager": "Fabrika Müdürü", "purchasing": "Satın Alma",
-           "finance": "Finans", "cfo": "CFO", "ceo": "CEO"},
+           "finance": "Finans", "cfo": "CFO", "ceo": "CEO",
+           "scd": "Tedarik Zinciri Direktörü", "bod": "Yönetim Kurulu"},
 }
 
 GATE_LABEL = {
@@ -490,6 +493,11 @@ ROLE_LABEL = {
         "warehouse_manager": "مدير المخازن",
         "cfo": "المدير المالي (CFO)",
         "ceo": "الرئيس التنفيذي (CEO)",
+        "supply_chain_director": "مدير سلسلة الإمداد",
+        "plant_director": "مدير عام المصنع",
+        "financial_director": "المدير المالي",
+        "managing_director": "العضو المنتدب",
+        "board": "مجلس الإدارة",
         "hr_officer": "مسؤول الموارد البشرية",
         "hr_probation_admin": "مسؤول فترة الاختبار (الموارد البشرية)",
     },
@@ -521,6 +529,11 @@ ROLE_LABEL = {
         "warehouse_manager": "Depo Müdürü",
         "cfo": "Mali İşler Direktörü (CFO)",
         "ceo": "Genel Müdür (CEO)",
+        "supply_chain_director": "Tedarik Zinciri Direktörü",
+        "plant_director": "Fabrika Direktörü",
+        "financial_director": "Mali İşler Direktörü",
+        "managing_director": "Murahhas Aza",
+        "board": "Yönetim Kurulu",
         "hr_officer": "İK Sorumlusu",
         "hr_probation_admin": "İK Deneme Süresi Yöneticisi",
     },
@@ -594,12 +607,47 @@ UI = {
             "The forecast on this request is outside its validity dates, so nothing "
             "can be bought against it (DOAM §3.4). Have a current forecast agreed "
             "for this period, or name an open client sales order instead.",
+        "fc_lapsed_flash":
+            "This forecast's validity dates have already passed, so agreeing "
+            "it would buy nothing: the gate would refuse every request that "
+            "cited it. Record a forecast covering the current period instead.",
         "own_forecast_flash":
             "You drafted this forecast, so you may not also agree it. A forecast "
             "is the alternative to a client sales order, so one signature on both "
             "ends of it would let the same person invent a cost object and then "
             "spend against it. Ask another Supply Chain Director or Procurement "
             "admin to agree it.",
+        # --- DOAM §4.3 / §7.3.3 / §7.3.4: why a payment was refused ---
+        # Same gates the governance page describes in this reader's language;
+        # the refusal itself used to arrive in English only.
+        "not_payable_flash": "Payments start once the Purchase Order is issued.",
+        "match_blocked_flash":
+            "Payment blocked: the 3-way match shows over-billing (invoice exceeds "
+            "the PO or the received value). Resolve the mismatch first — an "
+            "administrator can override.",
+        "over_payment_flash":
+            "This payment would exceed the PO total. Check the amount — an "
+            "administrator can override if intentional.",
+        "exceeds_invoiced_flash":
+            "This payment would exceed what the supplier has invoiced. Book the "
+            "invoice first, or reduce the amount — an administrator can override.",
+        "exceeds_received_flash":
+            "Short delivery: this payment would exceed the value of the goods "
+            "actually received. Pay for what was received, book the rest once it "
+            "arrives — or ask an administrator to override.",
+        "advance_not_authorised_flash":
+            "This is an advance payment (nothing invoiced yet). DOAM §4.3 requires "
+            "it to be authorised first — record the advance authorisation on this "
+            "request.",
+        "advance_exceeds_authorised_flash":
+            "This payment is larger than the advance that was authorised. "
+            "Re-authorise for the higher percentage, or reduce the amount.",
+        "advance_guarantee_required_flash":
+            "An advance above 25% on an order over 500,000 EGP needs a bank "
+            "guarantee reference.",
+        "advance_vendor_not_approved_flash":
+            "No advance may be paid to a supplier off the approved vendor list "
+            "(DOAM §4.3). Add the supplier to the vendor master first.",
     },
     "ar": {
         "text_en": "النص (بالإنجليزية)", "text_ar": "النص (بالعربية)",
@@ -663,11 +711,44 @@ UI = {
             "التوقعات المذكورة في هذا الطلب خارج مدة سريانها، فلا يمكن الشراء "
             "مقابلها (البند 3-4 من دليل الصلاحيات). اعتمد توقعات سارية لهذه "
             "الفترة، أو اذكر أمر بيع عميل مفتوحًا بدلًا منها.",
+        "fc_lapsed_flash":
+            "انتهت مدة سريان هذه التوقعات، فاعتمادها لن يتيح أي شراء: سيرفض "
+            "النظام كل طلب يستند إليها. سجّل توقعات تغطي الفترة الحالية بدلًا منها.",
         "own_forecast_flash":
             "أنت من سجّل هذه التوقعات، فلا يجوز أن تعتمدها بنفسك. التوقعات بديل "
             "عن أمر بيع العميل، ولو وقّع الشخص نفسه على طرفيها لأصبح بإمكانه أن "
             "ينشئ مركز تكلفة ثم ينفق عليه. اطلب من مدير سلسلة إمداد آخر أو من "
-            "مسؤول مشتريات آخر اعتمادها."
+            "مسؤول مشتريات آخر اعتمادها.",
+        # --- DOAM §4.3 / §7.3.3 / §7.3.4: why a payment was refused ---
+        # Same gates the governance page describes in this reader's language;
+        # the refusal itself used to arrive in English only.
+        "not_payable_flash": "لا يبدأ السداد إلا بعد إصدار أمر الشراء.",
+        "match_blocked_flash":
+            "السداد موقوف: المطابقة الثلاثية تُظهر زيادة في الفوترة (الفاتورة تتجاوز "
+            "أمر الشراء أو قيمة المستلم). عالج الفرق أولًا — ويمكن لمسؤول النظام "
+            "التجاوز.",
+        "over_payment_flash":
+            "هذا السداد يتجاوز إجمالي أمر الشراء. راجع المبلغ — ويمكن لمسؤول النظام "
+            "التجاوز إذا كان مقصودًا.",
+        "exceeds_invoiced_flash":
+            "هذا السداد يتجاوز ما فوتره المورد. سجّل الفاتورة أولًا أو خفّض المبلغ — "
+            "ويمكن لمسؤول النظام التجاوز.",
+        "exceeds_received_flash":
+            "نقص في التوريد: هذا السداد يتجاوز قيمة البضاعة المستلمة فعلًا. ادفع "
+            "مقابل ما تم استلامه وسجّل الباقي عند وصوله — أو اطلب من مسؤول النظام "
+            "التجاوز.",
+        "advance_not_authorised_flash":
+            "هذه دفعة مقدّمة (لا توجد فواتير بعد). يشترط البند 4-3 من دليل الصلاحيات "
+            "اعتمادها أولًا — سجّل اعتماد الدفعة المقدّمة على هذا الطلب.",
+        "advance_exceeds_authorised_flash":
+            "هذا السداد أكبر من الدفعة المقدّمة المعتمدة. اعتمد نسبة أعلى أو خفّض "
+            "المبلغ.",
+        "advance_guarantee_required_flash":
+            "الدفعة المقدّمة التي تتجاوز 25% على طلب تزيد قيمته عن 500,000 جنيه تحتاج "
+            "إلى مرجع خطاب ضمان بنكي.",
+        "advance_vendor_not_approved_flash":
+            "لا يجوز دفع أي دفعة مقدّمة لمورد خارج قائمة الموردين المعتمدين (البند "
+            "4-3). أضف المورد إلى سجل الموردين أولًا.",
     },
     "tr": {
         "text_en": "Metin (İngilizce)", "text_ar": "Metin (Arapça)",
@@ -734,11 +815,46 @@ UI = {
             "Bu talepteki tahmin geçerlilik tarihlerinin dışında; ona dayanılarak "
             "hiçbir şey satın alınamaz (DOAM §3.4). Bu dönem için güncel bir tahmin "
             "onaylatın ya da açık bir müşteri satış siparişi belirtin.",
+        "fc_lapsed_flash":
+            "Bu tahminin geçerlilik tarihleri geçmiş; onaylamak hiçbir şey satın "
+            "aldırmaz: ona dayanan her talep reddedilir. Bunun yerine mevcut dönemi "
+            "kapsayan bir tahmin kaydedin.",
         "own_forecast_flash":
             "Bu tahmini siz taslak olarak girdiniz, bu yüzden onu kendiniz "
             "onaylayamazsınız. Tahmin, müşteri satış siparişinin alternatifidir; "
             "iki ucunda da aynı imza olursa aynı kişi hem maliyet nesnesini "
             "yaratmış hem de ona harcama yapmış olur. Onayı başka bir Tedarik "
-            "Zinciri Direktöründen ya da Satın Alma yöneticisinden isteyin."
+            "Zinciri Direktöründen ya da Satın Alma yöneticisinden isteyin.",
+        # --- DOAM §4.3 / §7.3.3 / §7.3.4: why a payment was refused ---
+        # Same gates the governance page describes in this reader's language;
+        # the refusal itself used to arrive in English only.
+        "not_payable_flash":
+            "Ödemeler ancak Satın Alma Siparişi düzenlendikten sonra başlar.",
+        "match_blocked_flash":
+            "Ödeme engellendi: 3'lü mutabakat fazla faturalama gösteriyor (fatura, "
+            "siparişi veya teslim alınan değeri aşıyor). Önce farkı giderin — bir "
+            "yönetici geçersiz kılabilir.",
+        "over_payment_flash":
+            "Bu ödeme sipariş toplamını aşıyor. Tutarı kontrol edin — kasıtlıysa bir "
+            "yönetici geçersiz kılabilir.",
+        "exceeds_invoiced_flash":
+            "Bu ödeme, tedarikçinin faturaladığı tutarı aşıyor. Önce faturayı "
+            "kaydedin ya da tutarı düşürün — bir yönetici geçersiz kılabilir.",
+        "exceeds_received_flash":
+            "Eksik teslimat: bu ödeme fiilen teslim alınan malın değerini aşıyor. "
+            "Teslim alınan kadarını ödeyin, kalanı geldiğinde kaydedin — ya da bir "
+            "yöneticiden geçersiz kılmasını isteyin.",
+        "advance_not_authorised_flash":
+            "Bu bir avans ödemesidir (henüz fatura yok). DOAM §4.3 önce "
+            "yetkilendirilmesini şart koşar — avans yetkisini bu talebe kaydedin.",
+        "advance_exceeds_authorised_flash":
+            "Bu ödeme, yetkilendirilen avanstan büyük. Daha yüksek yüzde için "
+            "yeniden yetki alın ya da tutarı düşürün.",
+        "advance_guarantee_required_flash":
+            "500.000 EGP üzerindeki bir siparişte %25'i aşan avans için banka "
+            "teminat mektubu referansı gerekir.",
+        "advance_vendor_not_approved_flash":
+            "Onaylı tedarikçi listesi dışındaki bir tedarikçiye avans ödenemez "
+            "(DOAM §4.3). Önce tedarikçiyi tedarikçi ana kaydına ekleyin.",
     },
 }

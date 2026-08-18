@@ -11,6 +11,8 @@ platform admin could clear.
 
 Run:  python app/approvals/tests_doam_signers.py
 """
+import ast
+import io
 import os
 import sys
 import tempfile
@@ -100,6 +102,32 @@ def run():
             sorted(x["stage"] for x in findings()["unsignable"]
                    if x["stage"] in C.DOAM_LADDER) == sorted(unsignable))
 
+        # ---- 4b. no duplicate keys in the role tables. Python keeps the LAST
+        # literal, so a repeated key deletes the earlier grant at import time
+        # with no error anywhere — that is how finance_manager lost proc_create.
+        tree = ast.parse(io.open(C.__file__, encoding="utf-8").read())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)):
+                continue
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if not names or names[0] not in ("PROC_ROLE_PERMS", "PROC_ROLE_LABELS",
+                                             "STAGE_ROLES"):
+                continue
+            keys = [k.value for k in node.value.keys if isinstance(k, ast.Constant)]
+            dupes = sorted({k for k in keys if keys.count(k) > 1})
+            chk("%-16s declares every key exactly once" % names[0], not dupes, dupes)
+        chk("finance_manager can still raise a request",
+            "proc_create" in C.PROC_ROLE_PERMS["finance_manager"])
+        chk("proc_pay is a registered permission (grantable in Admin -> Roles)",
+            "proc_pay" in C.PROC_PERMISSIONS)
+        from app.security import PERMISSIONS as _PERMS
+        chk("proc_pay reached the platform permission catalogue",
+            "proc_pay" in _PERMS)
+        for _role, _perms in C.PROC_ROLE_PERMS.items():
+            chk("role %-22s grants only registered permissions" % _role,
+                not [p for p in _perms if p not in C.PROC_PERMISSIONS],
+                [p for p in _perms if p not in C.PROC_PERMISSIONS])
+
         # ---- 5. the REAL flow: a 60,000 EGP tier-2 request ----------------
         buyer = {"username": "purchasing", "role": "purchasing_manager", "id": 1}
         pr_id, _ = _unpriced(svc, "Tier-2 spend", "Production", "Spindle motor")
@@ -145,6 +173,22 @@ def run():
                           ("factory", "factory_manager")):
             good, msg = svc.act_on_step(pr_id, {"username": who, "role": role, "id": 0}, "approve")
             chk("%-11s signs their rung" % who, good, msg)
+        # ---- 6b. the DENY half. Without this the whole file would still pass
+        # if can_act() returned True for everybody, or if STAGE_ROLES['scd']
+        # were widened by accident.
+        intruder = {"username": "fin_fixture", "role": "finance_manager", "id": 7}
+        chk("a non-scd approver is refused on the scd stage",
+            not svc.can_act(intruder, "scd"))
+        bad, why = svc.act_on_step(pr_id, intruder, "approve")
+        chk("a non-scd approver cannot sign the scd rung", not bad, why)
+        conn = get_db()
+        parked = conn.execute("SELECT status, approver_user FROM pr_steps "
+                              "WHERE pr_id=? AND stage='scd'", (pr_id,)).fetchone()
+        conn.close()
+        chk("the refused rung is untouched — still pending, still unsigned",
+            parked["status"] == "pending" and not parked["approver_user"],
+            dict(parked))
+
         good, msg = svc.act_on_step(pr_id, scd, "approve")
         chk("the Supply Chain Director signs the final tier-2 rung", good, msg)
 

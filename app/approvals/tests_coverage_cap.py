@@ -22,6 +22,14 @@ one that never does:
     E  at the reorder level     -> passes clean (the auto-reorder lane keeps
                                    moving instead of being escalated 100% of
                                    the time, which is the same as broken)
+    F  stock LANDS after pricing-> flagged at the Purchasing rung: the rung and
+                                   the retained numbers are created there, not
+                                   only at pricing time
+    G  a second PR still in the -> flagged (the everyday duplicate); the FIRST
+       ladder                      request stays clean, so two simultaneous
+                                   requests do not each block the other
+    H  free-text line naming a  -> flagged: omitting the type-ahead's hidden
+       real spare                  spare_id is not a way out of the check
 """
 import os
 import tempfile
@@ -41,8 +49,21 @@ def run():
         from app.db import get_db
         from app.approvals import services as svc
         buyer = {"username": "buyer", "role": "purchasing_manager", "id": 1}
-        tech = {"username": "tech", "id": 9}
+        # The requester must be somebody who can actually reach POST
+        # /procurement/new. maintenance_technician does not hold proc_create and
+        # gets a 403 there, so a file claiming to use the UI's entry points may
+        # not raise its requests as one.
+        tech = {"username": "store", "role": "storekeeper", "id": 9}
+        from app.approvals import constants as C
+        assert "proc_create" in C.PROC_ROLE_PERMS.get(tech["role"], []), (
+            "%s cannot POST /procurement/new, so nothing below goes through the "
+            "entry point the web UI uses" % tech["role"])
         seat = [0]
+        # DOAM Table 4 puts spend with no approved budget behind it at L1, and a
+        # throwaway database has no budgets at all. Fund the department so this
+        # file measures the §3.4 coverage cap and nothing else — the same reason
+        # sourcing() is deferred until after each ladder is read.
+        svc.set_budget("Maintenance", 10_000_000)
 
         def stages(pr_id):
             conn = get_db()
@@ -284,6 +305,121 @@ def run():
             "policy asks for and must not be escalated: %s -> %s"
             % (e_before, e_after))
 
+        # ── F. the stock lands AFTER pricing ──────────────────────────────────
+        # The commonest real trigger, because stock moves every day while a
+        # request sits in the ladder. Grading used to run only inside price_pr
+        # while the memo gate recomputed from live stock at the Purchasing rung,
+        # so the buyer was blocked for a memo, deviation_findings asked for a
+        # Plant Director, and NO rung and NO audit row were ever created — the
+        # memo half of §4.4 fired and the signature half silently did not.
+        f_sid = spare("SP-COV-F", "Bobbin case", stock=0, reorder=0,
+                      maxlvl=100000, cost=25.0)
+        f = raise_pr("Priced while empty", "Bobbin case", 50, f_sid)
+        price(f, 25.0)
+        assert not deviation_rungs(f), (
+            "priced against an empty shelf: nothing to escalate yet (%s)"
+            % deviation_rungs(f))
+        f_ladder = stages(f)
+        # A QUOTE, not a single-source note: waiving competition appends a
+        # factory_manager rung of its own under §4.3, and a rung that would have
+        # been there anyway proves nothing about §3.4.
+        ok, msg = svc.add_quote(f, {"vendor": "OEM Spares Ltd", "amount": 1250,
+                                    "currency": "EGP"}, buyer)
+        assert ok, msg
+        sign_until(f, "purchasing")
+        # 400 units are delivered while the request is mid-ladder.
+        conn = get_db()
+        conn.execute("UPDATE mnt_spare_parts SET stock_qty=400 WHERE id=?", (f_sid,))
+        conn.commit(); conn.close()
+        ok, msg = sign_one(f)
+        assert not ok and msg == "deviation_memo_required", (
+            "the goods arrived and the buyer still signed: %s / %s" % (ok, msg))
+        assert deviation_rungs(f) == ["factory_manager"], (
+            "the gate demanded the memo but never created the signature §3.4 "
+            "exists to add: %s -> %s (deviation rungs %s)"
+            % (f_ladder, stages(f), deviation_rungs(f)))
+        conn = get_db()
+        fev = conn.execute("SELECT detail FROM pr_events WHERE pr_id=? AND "
+                           "action='deviation_approval'", (f,)).fetchone()
+        conn.close()
+        assert fev and "on hand 400" in fev["detail"], (
+            "nothing was retained about the netting that blocked the buyer: %s"
+            % (fev and fev["detail"]))
+        ok, msg = svc.set_doam_document(
+            f, "deviation_memo", "Delivery landed late; order kept for the "
+            "shutdown buffer.", buyer)
+        assert ok, msg
+        ok, msg = sign_one(f)
+        assert ok, "memo written and the sign-off is still refused: %s" % msg
+        assert state(f)[1] == "factory_manager", (
+            "the rung added at the Purchasing gate must be the next one to "
+            "sign: %s" % (state(f),))
+
+        # ── G. two requests in the ladder, neither of them a PO yet ───────────
+        # A pending PR is a planned order. procure_bridge already treats one as
+        # an open replenishment and dedups the auto-reorder on it; the coverage
+        # check used to count only po_issued/partially_received, so the everyday
+        # duplicate sailed through. Only requests raised BEFORE this one net
+        # against it, so the two do not each declare the other the duplicate.
+        g_sid = spare("SP-COV-G", "Take-up lever", stock=0, reorder=0,
+                      maxlvl=100000, cost=25.0)
+        g1 = raise_pr("First request", "Take-up lever", 50, g_sid)
+        g2 = raise_pr("Second request", "Take-up lever", 50, g_sid)
+        price(g1, 25.0)
+        price(g2, 25.0)
+        assert findings(g1)["lines"][0]["coverage"]["net_need"] == 50, (
+            "the FIRST request is the real requirement and must stay clean: %s"
+            % findings(g1)["lines"][0]["coverage"])
+        assert not deviation_rungs(g1), deviation_rungs(g1)
+        g2cov = findings(g2)["lines"][0]["coverage"]
+        assert g2cov["on_order"] == 50 and g2cov["net_need"] == 0, (
+            "a second request for a part already on order must net to zero: %s"
+            % g2cov)
+        assert deviation_rungs(g2) == ["factory_manager"], (
+            "the commonest duplicate of all bought no extra signature: %s"
+            % deviation_rungs(g2))
+        sourcing(g1)
+        sign_until(g1, "purchasing")
+        ok, msg = sign_one(g1)
+        assert ok, (
+            "the first request was blocked by the duplicate raised after it: %s"
+            % msg)
+
+        # ── H. free text instead of the type-ahead ────────────────────────────
+        # spare_id is a hidden field the requester's own browser posts. Skipping
+        # the type-ahead used to return coverage=None / on_plan / no memo — the
+        # free pass costs one keystroke, which is the same objection this
+        # control raises against pr_items.current_stock.
+        h_sid = spare("SP-COV-H", "Presser foot", stock=400, reorder=20,
+                      maxlvl=100000, cost=25.0)
+        h = raise_pr("Typed by hand", "Presser foot", 50)     # no spare_id
+        h_before = stages(h)
+        price(h, 25.0)
+        h_dev = findings(h)
+        hcov = h_dev["lines"][0]["coverage"]
+        assert hcov and hcov["net_need"] == 0 and hcov["by_name"], (
+            "omitting the hidden field switched the check off: %s" % hcov)
+        assert h_dev["coverage_blind"] == 0, h_dev
+        assert deviation_rungs(h) == ["factory_manager"], (
+            "a hand-typed line for a part with 400 on the shelf must cost the "
+            "same signature as the linked one: %s -> %s" % (h_before, stages(h)))
+        assert h_dev["memo"], "the memo is owed on the hand-typed line too"
+        # …and an AMBIGUOUS name is still not guessed at. Two active spares share
+        # the name, so the line stays unassessed rather than netted at random.
+        spare("SP-COV-I1", "Guide bar", stock=400, reorder=0, maxlvl=100000, cost=25.0)
+        spare("SP-COV-I2", "Guide bar", stock=400, reorder=0, maxlvl=100000, cost=25.0)
+        i = raise_pr("Ambiguous name", "Guide bar", 50)
+        price(i, 25.0)
+        i_dev = findings(i)
+        assert i_dev["lines"][0]["coverage"] is None and i_dev["coverage_blind"] == 1, (
+            "two parts answer to that name — netting against one of them is a "
+            "guess, not a check: %s" % i_dev["lines"][0])
+        assert not deviation_rungs(i), deviation_rungs(i)
+
+        # ── the browser really can post both shapes ───────────────────────────
+        _http(app, spare("SP-COV-J", "Cam follower", stock=400, reorder=20,
+                         maxlvl=100000, cost=25.0))
+
         # ── the numbers have to be readable on the request itself ─────────────
         _render(app, a, d)
 
@@ -295,8 +431,101 @@ def run():
         print("D no stock record       ->", " -> ".join(d_after),
               "(unassessable, unchanged, signed)")
         print("E at reorder point      ->", " -> ".join(e_after), "(unchanged)")
+        print("F stock lands after pricing ->", " -> ".join(f_ladder), "=>",
+              " -> ".join(stages(f)), "+ memo refused until written")
+        print("G duplicate PR in ladder    -> first clean, second",
+              deviation_rungs(g2))
+        print("H free text, no spare_id    ->", " -> ".join(stages(h)),
+              "(matched by name); ambiguous name stays unassessed")
         print("PASS: §3.4 net-requirement cap fires on the real flow, both ways")
         return True
+
+
+def _http(app, sid):
+    """The claim above is that every request goes through the entry points the
+    web UI uses. Prove it rather than assert it: sign in as a real seeded user
+    who holds proc_create and POST /procurement/new exactly as the form does —
+    unit_price[]=0 (the requester price lockout) and the spare_id[] hidden field
+    the type-ahead fills. Then post the SAME line with that hidden field left
+    empty, which is all it takes to skip the type-ahead, and confirm the netting
+    still sees it."""
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        conn = get_db()
+        u = conn.execute("SELECT id, username, session_epoch FROM users "
+                         "WHERE role='storekeeper' AND is_active=1 "
+                         "ORDER BY id LIMIT 1").fetchone()
+        conn.close()
+    assert u, "no seeded storekeeper — the role that raises spares requests"
+
+    with app.test_client() as cl:
+        with cl.session_transaction() as s:
+            s["uid"] = u["id"]
+            s["ep"] = u["session_epoch"] or 0
+            s["_csrf_token"] = "tok"
+
+        def post(title, with_link):
+            r = cl.post("/procurement/new", data={
+                "_csrf": "tok", "title": title, "department": "Maintenance",
+                "item[]": "Cam follower", "description[]": "", "unit[]": "Pcs",
+                "qty[]": "50", "current_stock[]": "0",
+                "unit_price[]": "0",                 # the requester lockout
+                "spare_id[]": str(sid) if with_link else "",
+                "item_id[]": ""}, follow_redirects=False)
+            assert r.status_code in (301, 302), (
+                "POST /procurement/new was refused (%s) — this user cannot "
+                "raise a request at all" % r.status_code)
+            with app.app_context():
+                from app.db import get_db as _g
+                c = _g()
+                try:
+                    row = c.execute("SELECT id, status FROM pr_requests "
+                                    "WHERE title=?", (title,)).fetchone()
+                    assert row, "the POST did not create a request"
+                    # A request that silently stayed a DRAFT has no ladder at
+                    # all, so "no deviation rung" would mean nothing.
+                    assert row["status"] == "pending", (
+                        "%s was not submitted (status %s)" % (title, row["status"]))
+                    return row["id"]
+                finally:
+                    c.close()
+
+        for title, with_link in (("HTTP linked line", True),
+                                 ("HTTP free-text line", False)):
+            pr_id = post(title, with_link)
+            with app.app_context():
+                from app.db import get_db as _g
+                c = _g()
+                try:
+                    li = c.execute("SELECT id, unit_price, spare_id FROM pr_items "
+                                   "WHERE pr_id=?", (pr_id,)).fetchone()
+                    assert float(li["unit_price"] or 0) == 0, (
+                        "the requester priced the line: %s" % li["unit_price"])
+                    assert bool(li["spare_id"]) is with_link, (
+                        "spare_id came back %r for with_link=%s"
+                        % (li["spare_id"], with_link))
+                finally:
+                    c.close()
+                ok, msg = svc.price_pr(pr_id, {li["id"]: 25.0}, {}, {
+                    "username": "buyer", "role": "purchasing_manager", "id": 1})
+                assert ok, msg
+                c = _g()
+                try:
+                    dev = svc.deviation_findings(c, pr_id)
+                    rungs = [r["stage"] for r in c.execute(
+                        "SELECT stage FROM pr_steps WHERE pr_id=? AND "
+                        "origin='deviation'", (pr_id,)).fetchall()]
+                finally:
+                    c.close()
+            cov = dev["lines"][0]["coverage"]
+            assert cov and cov["net_need"] == 0 and dev["memo"], (
+                "%s: 400 on the shelf and the netting missed it (%s)"
+                % (title, cov))
+            assert rungs == ["factory_manager"], (
+                "%s bought no extra signature: %s" % (title, rungs))
+    print("HTTP  POST /procurement/new both with and without the hidden "
+          "spare_id[] -> both netted, both escalated")
 
 
 def _render(app, flagged_pr, blind_pr):

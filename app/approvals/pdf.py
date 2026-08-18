@@ -574,9 +574,15 @@ def _esc_lines(steps):
     return out
 
 
+# DOAM Table 5 letters, printed on the signature block.
+_ACTION_WORDS = {"review": "REVIEW (R)", "approve": "APPROVE (A)",
+                 "endorse": "ENDORSE (E)"}
+
+
 def _signature_grid(c, w, h, cm, y, pr, steps, pn):
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(1.5 * cm, y, "Approval signatures")
+    c.drawString(1.5 * cm, y, "Approval signatures (DOAM Table 5: P prepare / "
+                              "R review / A approve / E endorse)")
     y -= 0.35 * cm
     for line in _esc_lines(steps):
         c.setFont("Helvetica-Oblique", 7.4)
@@ -584,11 +590,18 @@ def _signature_grid(c, w, h, cm, y, pr, steps, pn):
         c.drawString(1.5 * cm, y, _clip(c, line, "Helvetica-Oblique", 7.4, w - 3 * cm))
         c.setFillColorRGB(0, 0, 0)
         y -= 0.3 * cm
-    blocks = [{"role": "Requester", "name": pr.get("requester_name") or pr.get("requester"),
+    blocks = [{"role": "Requester — PREPARE (P)",
+               "name": pr.get("requester_name") or pr.get("requester"),
                "sig": None, "date": (pr.get("submitted_at") or pr.get("request_date") or "")[:10],
                "status": "originator"}]
     for s in steps:
+        # DOAM Table 5 — the block says WHAT the signature is (Review / Approve /
+        # Endorse), not just whose it is. Without it the printed form evidences a
+        # signature was collected and nothing about the authority it carried.
+        act = str(s.get("action") or s.get("action_type") or "approve").lower()
+        act = act if act in _ACTION_WORDS else "approve"
         blocks.append({"role": (s.get("approver_role") or s.get("stage") or "")
+                       + " — " + _ACTION_WORDS[act]
                        + (" (ESCALATED)" if s.get("esc_from") else ""),
                        "name": s.get("approver_name"), "sig": s.get("sig_png"),
                        "date": (s.get("acted_at") or "")[:10], "status": s.get("status"),

@@ -12,6 +12,7 @@ control that cannot fire in production. Nothing below injects a price.
 """
 import os
 import tempfile
+from datetime import datetime, timedelta
 
 
 def _app():
@@ -90,6 +91,13 @@ def run():
                 ok, msg = svc.act_on_step(pr_id, who, "approve")
                 assert ok, "could not walk past %s: %s" % (cur, msg)
             raise AssertionError("never reached %s" % stage)
+
+        def next_signer():
+            """A fresh eligible signer. Used where walk_to cannot be: signing is
+            the thing that must be refused."""
+            seat[0] += 1
+            return {"username": "signer%d" % seat[0], "role": "super_admin",
+                    "id": 100 + seat[0]}
 
         def row(pr_id):
             conn = get_db()
@@ -335,6 +343,119 @@ def run():
         assert all(set(b) == {"over", "quotes"} for b in C.SOURCING_BANDS), C.SOURCING_BANDS
 
         # =================================================================
+        # 8. The repair round -- the four defects the verifier found
+        # =================================================================
+        # ---- 8a. re-pricing must not walk past the 4.4 gate ------------------
+        # The memo and the raised quote requirement were checked ONLY on the
+        # Purchasing rung, but price_pr stays open while a request circulates:
+        # price on plan, collect Purchasing's signature, then re-price 40% over
+        # and the order reached 'approved' carrying neither document.
+        rp, _ = svc.create_pr({"title": "Re-priced later", "department": "Quality"},
+                              [{"item": "Target part", "qty": 10, "unit_price": 0,
+                                "item_id": iid}], tech, priced=False)
+        price(rp, 100.0)                       # exactly on the 100.00 ERP target
+        quotes(rp, 1, 1000.0)                  # the 1,000 EGP band wants one
+        pur = walk_to(rp, "purchasing")
+        ok, msg = svc.act_on_step(rp, pur, "approve")
+        assert ok, "an on-plan 1,000 EGP order should sign at purchasing: %s" % msg
+        price(rp, 140.0)                       # ...now 40% over, mid-ladder
+        conn = get_db()
+        dev_rp = svc.deviation_findings(conn, rp)
+        after_pur = _stages(conn, rp)
+        conn.close()
+        assert dev_rp["memo"] and dev_rp["quotes"], dev_rp
+        above = [st for st in after_pur if st not in ("warehouse", "purchasing")]
+        assert above, "re-pricing added no rung above Purchasing: %s" % after_pur
+        nxt = walk_to(rp, above[0])
+        ok, msg = svc.act_on_step(rp, nxt, "approve")
+        assert not ok and msg == "needs_quotes", (
+            "a re-price to 40%% over target after Purchasing signed must still "
+            "demand three quotes: %s / %s" % (ok, msg))
+        quotes(rp, 2, 1400.0)
+        ok, msg = svc.act_on_step(rp, nxt, "approve")
+        assert not ok and msg == "deviation_memo_required", (
+            "the order reached the next rung with no justification memo -- the "
+            "4.4 gate only ever ran on the Purchasing rung: %s / %s" % (ok, msg))
+        ok, msg = svc.set_doam_document(
+            rp, "deviation_memo",
+            "Supplier re-quoted after the tariff change; 40% over the ERP cost "
+            "is the market and the line stops without the part.", pur)
+        assert ok, msg
+        ok, msg = svc.act_on_step(rp, nxt, "approve")
+        assert ok, "the memo did not unblock the rung above Purchasing: %s" % msg
+        # ...and the gate does not fire on the rungs BELOW Purchasing, where the
+        # buyer who owns both documents has not been asked for them yet.
+        low, _ = svc.create_pr({"title": "Off plan, low rung", "department": "Quality"},
+                               [{"item": "Target part", "qty": 10, "unit_price": 0,
+                                 "item_id": iid}], tech, priced=False)
+        price(low, 140.0)
+        conn = get_db(); l_low = _stages(conn, low); conn.close()
+        assert l_low[0] != "purchasing", l_low
+        ok, msg = svc.act_on_step(low, walk_to(low, l_low[0]), "approve")
+        assert ok, ("a rung below Purchasing was blocked on a document only "
+                    "Purchasing can supply: %s" % msg)
+        print("re-price: on-plan signed, re-priced 40% over -> quotes then memo "
+              "demanded on the rung above Purchasing")
+
+        # ---- 8b. keep-until is the LAST day kept, not the first day disposable
+        today = svc._now()[:10]
+        conn = get_db()
+        conn.execute("UPDATE pr_requests SET retention_until=? WHERE id=?", (today, c))
+        conn.commit(); conn.close()
+        ok, msg = svc.dispose_pr(c, {"username": "admin"})
+        assert not ok and msg == "retained_until:" + today, (
+            "a record labelled 'keep until %s' was disposable ON %s -- one day "
+            "short of the stated period: %s / %s" % (today, today, ok, msg))
+        yday = (datetime.strptime(today, "%Y-%m-%d")
+                - timedelta(days=1)).strftime("%Y-%m-%d")
+        conn = get_db()
+        conn.execute("UPDATE pr_requests SET retention_until=? WHERE id=?", (yday, c))
+        conn.commit(); conn.close()
+        ok, msg = svc.dispose_pr(c, {"username": "admin"})
+        assert ok, "the day after the keep-until date it must be disposable: %s" % msg
+        print("retention: refused ON %s, allowed the day after %s" % (today, yday))
+
+        # ---- 8c. a retired record is out of the register for signing too -----
+        ret, _ = unpriced("Retired mid-flight", "Quality", "Air filter")
+        price(ret, 900)
+        quotes(ret, 1, 900)
+        conn = get_db()
+        conn.execute("UPDATE pr_requests SET retention_until='2001-01-01' WHERE id=?",
+                     (ret,))
+        conn.commit(); conn.close()
+        ok, msg = svc.dispose_pr(ret, {"username": "admin"})
+        assert ok, msg
+        ok, msg = svc.act_on_step(ret, next_signer(), "approve")
+        assert not ok and msg == "retired", (
+            "a record retired from the register was signed anyway: %s / %s" % (ok, msg))
+        assert row(ret)["status"] == "pending", "the retired record advanced"
+        print("retired record: signature refused at the approval chokepoint")
+
+        # ---- 8d. the DOAM 6 panel -- the same dead helper, one function down -
+        conn = get_db()
+        conn.execute("INSERT INTO mnt_machines (code, name, department, criticality) "
+                     "VALUES (?,?,?,?)", ("MC-EJR", "Gearbox line", "Maintenance", "high"))
+        mid = conn.execute("SELECT id FROM mnt_machines WHERE code=?",
+                           ("MC-EJR",)).fetchone()["id"]
+        eid2, _ = E.create(conn, {"machine_id": mid, "request_type": "breakdown",
+                                  "description": "Gearbox seal weeping oil",
+                                  "root_cause": "Seal hardened past service life",
+                                  "criticality": "production_critical",
+                                  "downtime_risk": "Line stops within a shift",
+                                  "stock_on_hand": 0, "stock_checked_with": "store",
+                                  "alternatives": "No equivalent seal in stores"}, tech)
+        ok, msg = E.submit(conn, eid2)
+        assert ok, msg
+        ok, msg = E.decide(conn, eid2, True, {"username": "enghead"})
+        assert ok, msg
+        conn.commit(); conn.close()
+        mro, _ = unpriced("Gearbox seal", "Maintenance", "Gearbox seal")
+        price(mro, 400)
+        quotes(mro, 1, 400)
+        mro_buyer = walk_to(mro, "purchasing")
+        _http_ejr(app, svc, mro, mro_buyer, eid2)
+
+        # =================================================================
         # 7. ...and all of it is REACHABLE from the browser
         # =================================================================
         # Every control above is entered or satisfied through the request page.
@@ -385,10 +506,8 @@ def _http(app, off_plan_pr, huge_pr, C):
             assert r.status_code == 200, (pr_id, r.status_code)
             html = r.get_data(as_text=True)
             used = set(re.findall(r'data-i18n(?:-ph)?="([^"]+)"', html))
-            # Scoped to the keys THIS task adds. The page also carries
-            # 'nav.proc_forecasts', which is missing from all three files — a
-            # sidebar entry another lane added without its translations, and
-            # not this change's to fix or to police.
+            # Scoped to the keys THIS task adds — the page carries plenty of
+            # keys other lanes own, and policing those is not this check's job.
             mine = {k for k in used
                     if k.startswith(("proc.ret_", "proc.memo_", "proc.bcase_"))}
             assert mine, "none of the new controls rendered at all"
@@ -426,6 +545,82 @@ def _http(app, off_plan_pr, huge_pr, C):
             "an expired record could not be retired through the UI")
     print("http: panels render, every key resolves in en/ar/tr, "
           "retire refused inside the window and accepted outside it")
+
+
+def _http_ejr(app, svc, pr_id, buyer, ejr_id):
+    """DOAM 6 through the browser, with the gate switched on the way an admin
+    switches it on.
+
+    _ejr_context() had the identical missing-import-into-a-bare-except bug as
+    the 4.4 panel, so it always returned its all-false default and the panel
+    never rendered. With the gate on, that left Purchasing refused on every
+    spares requisition with no way to clear it from the UI.
+    """
+    import re
+
+    with app.app_context():
+        from app.db import get_db
+        conn = get_db()
+        u = conn.execute("SELECT id, session_epoch FROM users WHERE role='super_admin' "
+                         "AND is_active=1 ORDER BY id LIMIT 1").fetchone()
+        conn.close()
+
+    with app.test_client() as cl:
+        with cl.session_transaction() as sess:
+            sess["uid"] = u["id"]
+            sess["ep"] = u["session_epoch"] or 0
+
+        def page():
+            r = cl.get("/procurement/pr/%d" % pr_id)
+            assert r.status_code == 200, r.status_code
+            return r.get_data(as_text=True)
+
+        html = page()
+        tok = re.search(r'name="_csrf" value="([^"]*)"', html).group(1)
+
+        # switch the gate ON through the real settings screen
+        r = cl.post("/maintenance/workflow/setting",
+                    data={"_csrf": tok, "key": "ejr_gate", "value": "1"},
+                    follow_redirects=True)
+        assert r.status_code == 200, r.status_code
+        with app.app_context():
+            from app.db import get_db
+            from app.maintenance import eng_justification as E
+            conn = get_db()
+            on = E.gate_enabled(conn)
+            conn.close()
+        assert on, "the settings screen did not switch the DOAM 6 gate on"
+
+        # with the gate on, Purchasing is blocked...
+        ok, msg = svc.act_on_step(pr_id, buyer, "approve")
+        assert not ok and msg == "ejr_missing", (ok, msg)
+
+        # ...and the page must offer the way to clear it
+        html = page()
+        assert "proc.ejr." in html, (
+            "the DOAM 6 panel did not render -- _ejr_context called get_db with "
+            "no import and the bare except reported 'no report required'")
+        assert "/engineering-justification" in html, (
+            "no attach-report form: Purchasing is blocked with no browser path")
+        assert 'value="%d"' % ejr_id in html, (
+            "the approved report is not in the picker")
+
+        r = cl.post("/procurement/pr/%d/engineering-justification" % pr_id,
+                    data={"_csrf": tok, "ejr_id": str(ejr_id)},
+                    follow_redirects=True)
+        assert "cited on this request" in r.get_data(as_text=True), \
+            r.get_data(as_text=True)[:400]
+
+        ok, msg = svc.act_on_step(pr_id, buyer, "approve")
+        assert ok, "citing the report from the browser did not clear the gate: %s" % msg
+        assert "proc.ejr.ok" in page(), "the cited report is not shown on the record"
+
+        # leave the gate as it was found
+        cl.post("/maintenance/workflow/setting",
+                data={"_csrf": tok, "key": "ejr_gate", "reset": "1"},
+                follow_redirects=True)
+    print("http: DOAM 6 gate switched on from the settings screen, panel renders, "
+          "report cited from the browser, purchasing signature cleared")
 
 
 if __name__ == "__main__":

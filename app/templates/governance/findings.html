@@ -5,7 +5,7 @@
 {% include "governance/_head.html" %}
 
 <div class="sf-kpis">
-  <div class="sf-kpi"><div class="v" dir="ltr">{{ f.unsignable|length }}</div><div class="l" data-i18n="gov.find.k_unsignable">Approval rungs nobody can sign</div></div>
+  <div class="sf-kpi"><div class="v" dir="ltr">{{ '?' if f.unsignable_error else f.unsignable|length }}</div><div class="l" data-i18n="gov.find.k_unsignable">Approval rungs nobody can sign</div></div>
   <div class="sf-kpi"><div class="v" dir="ltr">{{ f.unheld|length }}</div><div class="l" data-i18n="gov.find.k_unheld">Unheld permissions</div></div>
   <div class="sf-kpi"><div class="v" dir="ltr">{{ f.star_only|length }}</div><div class="l" data-i18n="gov.find.k_star_only">Held only by an all-permissions account</div></div>
   <div class="sf-kpi"><div class="v" dir="ltr">{{ f.empty_roles|length }}</div><div class="l" data-i18n="gov.find.k_empty">Empty roles</div></div>
@@ -17,7 +17,11 @@
 {# ---- 0. approval rungs with no eligible signer ---------------------------- #}
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="gov.find.unsignable">Approval rungs no active user can sign</h3>
-    <span class="muted" dir="ltr">{{ f.unsignable|length }}</span></div>
+    <span class="muted" dir="ltr">{{ '?' if f.unsignable_error else f.unsignable|length }}</span></div>
+  {% if f.unsignable_error %}
+  <div class="panel-pad"><div class="badge b-critical" data-i18n="gov.find.uncheckable">This check could not be run &mdash; the result below is NOT an all-clear.</div>
+    <div class="muted" style="font-size:12px;margin-top:6px" dir="ltr">{{ f.unsignable_error }}</div></div>
+  {% endif %}
   <div class="panel-pad"><div class="muted" style="font-size:12.5px" data-i18n="gov.find.unsignable_note">A request that reaches one of these rungs waits for a signature nobody holds the role to give. Nothing reports an error &mdash; it simply stops until a platform administrator signs it by override. Assign the role to a person in Admin &rarr; Users, or point the stage at a staffed role in Procurement &rarr; Settings.</div></div>
   {% if f.unsignable %}
   <div class="tbl-wrap"><table class="tbl">
@@ -29,7 +33,7 @@
         <td dir="ltr"><span class="badge b-critical">{{ x.holders }}</span></td></tr>
     {% endfor %}</tbody>
   </table></div>
-  {% else %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
+  {% elif not f.unsignable_error %}<div class="empty" data-i18n="gov.find.none">Nothing found in this category.</div>{% endif %}
 </div>
 
 {# ---- 1. granted but held by nobody --------------------------------------- #}

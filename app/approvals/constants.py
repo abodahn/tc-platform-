@@ -110,6 +110,127 @@ DOAM_LEVEL = {
 }
 LEVEL_ORDER = ["L4", "L3", "L2", "L1", "BOD"]
 
+# --- DOAM Table 5: WHAT a signature is, not just that one was collected ------
+# "P (Prepare) Initiates the activity ... R (Review) Verifies accuracy, budget,
+#  and policy compliance before approval. A (Approve) Final authority to commit
+#  ... E (Endorse) Senior support of a decision at another level formally
+#  approves."
+#
+# P is the requester: raising the request IS their signature, and they never
+# appear in pr_steps. The three that DO land on a ladder rung are below, and
+# which one a rung carries is decided by the rung's PLACE in the ladder, not by
+# who fills it — that is the only reading of Table 5 that survives a ladder
+# whose shape changes when the request is priced:
+#
+#   A  the top rung of the VALUE ladder — DOAM §4.1/§4.2 name it the authority
+#      that commits the money, whatever value tier the request lands in;
+#   R  every rung below it, which verifies and passes it up;
+#   E  a rung a CONTROL added ABOVE the value tier (§4.3 single source, Table 4
+#      unbudgeted, §4.4 deviation). That is Table 5's "senior support of a
+#      decision at another level" word for word: the decision was taken at the
+#      value tier, and a senior signs in support of it.
+#
+# Nothing here changes WHO signs or in what order — it only records what the
+# signature was, which is what makes the section-7 RACI evidenceable.
+STEP_ACTIONS = ["review", "approve", "endorse"]
+STEP_ACTION_DEFAULT = "approve"
+# RACI letter per action, for the signature block and the printed PDF.
+STEP_ACTION_CODE = {"review": "R", "approve": "A", "endorse": "E"}
+# English labels; AR/TR are client-side i18n keys (proc.act.*).
+STEP_ACTION_LABELS = {"review": "Review", "approve": "Approve", "endorse": "Endorse"}
+# Past tense, for the audit trail. The pr_events.action key differs per action
+# too ('reviewed' / 'approved' / 'endorsed'), so a Review is distinguishable
+# from an Approve by a query, not only by reading the sentence.
+STEP_ACTION_PAST = {"review": "reviewed", "approve": "approved", "endorse": "endorsed"}
+STEP_ACTION_WHY = {
+    "review": "DOAM Table 5 R — verified accuracy, budget and policy compliance "
+              "before approval.",
+    "approve": "DOAM Table 5 A — final authority to commit at this value tier.",
+    "endorse": "DOAM Table 5 E — senior support, one level above the tier that "
+               "took the decision.",
+}
+# Rung origins that are a CONTROL escalation rather than the value ladder. Kept
+# beside the actions because that is the only thing that reads it.
+CONTROL_ORIGINS = ("single_source", "unbudgeted", "deviation")
+
+
+def step_action(origin, is_top_of_value_ladder):
+    """Table 5 letter for one rung. `origin` is pr_steps.origin."""
+    if (origin or "ladder") in CONTROL_ORIGINS:
+        return "endorse"
+    return "approve" if is_top_of_value_ladder else "review"
+
+
+# --- DOAM Table 4 L2: the two directors own DIFFERENT things -----------------
+# "FIN-D owns payment control; SC-D owns operational and inventory
+#  replenishment; PD owns production and maintenance commitments."
+#
+# OPEX_MATRIX puts factory_manager (PD) and scd (SC-D) at the SAME threshold, so
+# above 10,000 both joined every ladder on amount alone. That is not unsafe — it
+# collects a signature nobody asked for, never one fewer — so this split is an
+# EFFICIENCY fix and is written to fail towards BOTH signatures:
+#
+#   * only ever drops ONE of the two, never both, and only for OPEX (the CAPEX
+#     ladder in §4.2 is a joint PD + CFO approval with SC-D reviewing — both are
+#     mandatory there by name, not by amount);
+#   * only when the signals point ONE way. A request carrying a maintenance
+#     signal AND a materials signal is genuinely both, and keeps both signers;
+#   * a department that has explicitly configured the dropped stage in its own
+#     responsibility matrix keeps it — the department said so on purpose.
+#
+# Departments whose spend is a maintenance/production commitment by nature.
+# Same set the §6 engineering gate uses, kept here rather than imported so a
+# missing maintenance module cannot change who signs a purchase.
+PD_DEPARTMENTS = {"general maintenance", "maintenance", "engineering", "workshop",
+                  "utilities", "maintenance & engineering"}
+# Departments whose spend IS the inventory-replenishment function.
+SCD_DEPARTMENTS = {"warehouse", "stores", "store", "logistics", "supply chain",
+                   "planning", "materials"}
+# Source modules that name the domain outright.
+PD_SOURCE_MODULES = {"maintenance"}      # ticket-raised or spare auto-reorder
+SCD_SOURCE_MODULES = {"costing"}         # order material buy raised from costing
+
+
+def l2_domain(department, source_module, has_spare_line, texts):
+    """Which L2 director owns this commitment: "plant", "supply_chain", or None.
+
+    None means "cannot be told apart" — the caller must then keep BOTH, which is
+    exactly today's behaviour. Never guesses.
+
+    `texts` is every catalogue-category / item string on the request; the direct
+    materials list Table 12 already drives (cost_object_required) is reused as
+    the materials signal, because a fabric/yarn/trims buy IS the inventory
+    replenishment SC-D owns.
+    """
+    dept = str(department or "").strip().lower()
+    src = str(source_module or "").strip().lower()
+    plant = src in PD_SOURCE_MODULES or bool(has_spare_line) or dept in PD_DEPARTMENTS
+    supply = src in SCD_SOURCE_MODULES or dept in SCD_DEPARTMENTS \
+        or cost_object_required(texts or ()) == "sales_order"
+    if plant == supply:
+        return None                      # both signals, or neither -> both sign
+    return "plant" if plant else "supply_chain"
+
+
+# The stage each domain keeps, and therefore the other one it drops.
+L2_DOMAIN_STAGE = {"plant": "factory_manager", "supply_chain": "scd"}
+
+
+def apply_l2_domain(stages, domain):
+    """Drop the L2 director this request's domain does not belong to.
+
+    Safe by construction: it removes at most one stage, only when BOTH L2
+    directors are on the ladder, and only for a domain that was positively
+    identified."""
+    keep = L2_DOMAIN_STAGE.get(domain or "")
+    if not keep:
+        return list(stages)
+    drop = next((s for s in L2_DOMAIN_STAGE.values() if s != keep), None)
+    if keep not in stages or drop not in stages:
+        return list(stages)              # not the both-directors case: leave it
+    return [s for s in stages if s != drop]
+
+
 # Which platform roles may act on each stage. super_admin (and anyone with the
 # proc_admin permission) can act on ANY stage — handled in the service layer.
 #
@@ -561,8 +682,13 @@ CONTROLLED_FORMS = [
      "/maintenance/justifications"),
     # No longer a paper form with no digital equivalent: the netting runs on
     # every priced request and prints on the request page (§3.4 coverage check).
-    ("T&C-PUF-10", "Coverage Check", "Net requirement after netting", "1 yr",
-     "/procurement/list"),
+    # Scope is stated honestly — the netting reads mnt_spare_parts, so MRO
+    # spares are covered and direct materials (wh_materials, which carries its
+    # own stock_qty/reserved_qty/reorder_level) are NOT: there is no pr_items
+    # link to a material, so those lines report "not assessable". Claiming
+    # unqualified coverage here would read to an auditor as a produced form.
+    ("T&C-PUF-10", "Coverage Check", "Net requirement after netting (MRO spares)",
+     "1 yr", "/procurement/list"),
     ("T&C-PUF-11", "Intercompany Reconciliation", "Taypa PO versus requirement",
      "1 yr", None),
     ("T&C-PUF-12", "Justification Memo", "Over-plan quantity or over-target price",

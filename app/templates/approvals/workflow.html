@@ -216,7 +216,9 @@
           <span class="tag"><span data-i18n="pwf.set.payment_tolerance_pct">Payment tolerance</span>:
             {{ '%g'|format(v.knobs|selectattr('key','equalto','payment_tolerance_pct')|map(attribute='effective')|first) }}%</span>
         {% elif g.section == 'three_way_match' %}
-          <span class="tag">{{ '%g'|format(v.match_tolerance_pct) }}% <span data-i18n="pwf.fixed">fixed</span></span>
+          <span class="tag">{{ '%g'|format(v.match_tolerance_pct) }}% / {{ '{:,.0f}'.format(v.match_tolerance_abs) }} EGP /
+            {{ '%g'|format(v.match_qty_tolerance_pct) }}% <span data-i18n="pwf.qty_word">qty</span>
+            <span data-i18n="pwf.fixed">fixed</span></span>
         {% endif %}
       </div>
       <p class="mt-2" style="margin:0;line-height:1.7">{{ g.body }}</p>

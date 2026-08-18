@@ -8,7 +8,7 @@ import time
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 
-from app.auth import login_required, permission_required, current_user
+from app.auth import login_required, permission_required, current_user, user_can
 from app.warehouse import services as svc
 from app.warehouse.constants import MATERIAL_KINDS, ROLL_STATUS, SIZES
 
@@ -127,28 +127,32 @@ def receive_post():
     # its own GRN number allocated. post_stock=False because we book the stock
     # ourselves right after, keeping the roll/lot detail the bridge cannot carry.
     line = svc.po_line_for(form.get("grn_ref"), mid)
-    asked = svc.qty_of(form.get("length_m") if roll else form.get("qty"))
-    quarantined = 0.0
-    if line and asked > 0:
-        from app.approvals import services as psvc
-        ok, msg = psvc.receive_items(line["pr_id"], {line["item_id"]: asked}, _u(),
-                                     notes=form.get("notes") or None, post_stock=False)
-        if not ok:
-            flash(f"Receipt rejected on the purchase order ({msg}).", "error")
+    delivered = svc.qty_of(form.get("length_m") if roll else form.get("qty"))
+    asked, quarantined = delivered, 0.0
+    if line and delivered > 0:
+        # Booking a receipt onto a PO writes pr_requests.status and received_qty,
+        # mints a GRN and opens the payment path — a proc_purchasing action. This
+        # route is only wh_manage, so a storekeeper could close a PO for payment
+        # here after being refused on the procurement door. Refuse instead of
+        # quietly booking free stock the order never hears about.
+        if not user_can("proc_purchasing"):
+            flash("That reference belongs to a purchase order. Receiving against a "
+                  "PO needs purchasing rights — use the Receiving tab on the "
+                  "request, or receive here without the PO reference.", "error")
             return redirect(url_for("warehouse.receive"))
-        # ponytail: PO booked before the stock move, so a failing move (only
-        # realistic case: a duplicate operator-typed roll number) leaves the PR
-        # ahead of the shelf. The reverse order would leave uncontrolled free
-        # stock, which is the defect being fixed. Two-phase it if that ever bites.
-        quarantined = max(0.0, asked - line["outstanding"])
-        asked = min(asked, line["outstanding"])
-        if asked <= 0:                       # the whole delivery was over-ordered
-            flash(f"Nothing outstanding on that order — {quarantined:g} held in "
-                  f"quarantine, not added to stock.", "warning")
-            return redirect(url_for("warehouse.materials"))
+        quarantined = max(0.0, delivered - line["outstanding"])
+        asked = min(delivered, line["outstanding"])
         form = form.copy()
         form["length_m" if roll else "qty"] = str(asked)
-    if roll:
+
+    # Stock move FIRST. Booking the PO first and then failing the move (a duplicate
+    # operator-typed roll number is the realistic case) left the PR marked received
+    # with nothing on the shelf — and the three-way match then made that phantom
+    # delivery payable. Nothing is booked unless the goods actually landed.
+    ok, msg = True, ""
+    if line and asked <= 0:
+        pass                       # the whole delivery is over the order: quarantine only
+    elif roll:
         ok, msg = svc.receive_roll(mid, form, _u())
         flash(f"Roll {msg} received." if ok else f"Receipt rejected ({msg}).",
               "success" if ok else "error")
@@ -157,9 +161,18 @@ def receive_post():
                                   grn_ref=form.get("grn_ref"))
         flash("Goods received." if ok else f"Receipt rejected ({msg}).",
               "success" if ok else "error")
-    if ok and quarantined > 0:
-        flash(f"{quarantined:g} over the ordered quantity was quarantined, not "
-              f"added to stock.", "warning")
+    if ok and line and delivered > 0:
+        from app.approvals import services as psvc
+        # the RAW delivered quantity: receive_items does its own capping and is
+        # what writes the quarantine row for the excess.
+        pok, pmsg = psvc.receive_items(line["pr_id"], {line["item_id"]: delivered}, _u(),
+                                       notes=form.get("notes") or None, post_stock=False)
+        if not pok:
+            flash(f"Stock booked, but the purchase order refused the receipt ({pmsg}).",
+                  "error")
+        elif quarantined > 0:
+            flash(f"{quarantined:g} over the ordered quantity was quarantined, not "
+                  f"added to stock.", "warning")
     return redirect(url_for("warehouse.rolls" if roll else "warehouse.materials"))
 
 

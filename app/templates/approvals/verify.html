@@ -42,7 +42,13 @@
       <dl>
         <dt>Document</dt><dd>{{ pr.pr_no }}{% if pr.po_no %} · {{ pr.po_no }}{% endif %}</dd>
         <dt>Title</dt><dd>{{ pr.title or "—" }}</dd>
-        <dt>Action</dt><dd>{{ "Approved" if ev.action == "approve" else "Rejected" }}</dd>
+        {#- DOAM Table 5: the signing record says which of R / A / E it was.
+            'approve' also covers every event written before the action types
+            existed, which is exactly what those rows meant. -#}
+        <dt>Action</dt><dd>{{ {"approve": "Approved (A: final authority to commit)",
+                               "review":  "Reviewed (R: verified accuracy, budget and policy)",
+                               "endorse": "Endorsed (E: senior support, one level above)",
+                               "reject":  "Rejected"}.get(ev.action, "Rejected") }}</dd>
         <dt>Signed by</dt><dd>{{ ev.signer_name or ev.signer }}</dd>
         <dt>Stage</dt><dd>{{ ev.stage }} (step {{ ev.seq }})</dd>
         <dt>Signed at</dt><dd>{{ ev.created_at }} UTC</dd>

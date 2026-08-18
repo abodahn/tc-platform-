@@ -506,13 +506,24 @@ def findings():
     # 6 — approval rungs nobody can sign. A ladder stage whose roles have no
     # active holder is a silent deadlock: the request routes there and waits for
     # a signature only a platform admin can give, with no error anywhere.
+    # A control that cannot be evaluated must never render as a clean zero: the
+    # only reason this page exists is to be the place an admin finds the
+    # deadlock. Missing module -> the check does not apply; anything else (a
+    # pre-migration database with no proc_delegations, an aborted PG
+    # transaction) -> say so on the page.
     try:
         from app.approvals.services import ladder_signer_health
-        unsignable = [x for x in ladder_signer_health() if not x["ok"]]
-    except Exception:              # a build without the procurement module
-        unsignable = []
+    except ImportError:            # a build without the procurement module
+        unsignable, unsignable_error = [], ""
+    else:
+        try:
+            unsignable = [x for x in ladder_signer_health() if not x["ok"]]
+            unsignable_error = ""
+        except Exception as exc:
+            # trimmed: this renders on an admin page, not into a log
+            unsignable, unsignable_error = [], str(exc)[:300]
 
-    return {"unsignable": unsignable,
+    return {"unsignable": unsignable, "unsignable_error": unsignable_error,
             "unheld": unheld, "star_only": star_only, "empty_roles": empty_roles,
             "single_roles": single_roles, "dead": dead, "open_routes": open_routes,
             "indirect_routes": indirect_routes, "escalations": escalations,
@@ -669,6 +680,9 @@ def export_dataset(key):
         f = findings()
         headers = ["finding", "subject", "detail"]
         rows = []
+        if f["unsignable_error"]:   # same rule as the page: never export a clean zero
+            rows.append(["approval rungs COULD NOT BE CHECKED", "ladder_signer_health",
+                         f["unsignable_error"]])
         for x in f["unsignable"]:
             rows.append(["approval rung no active user can sign", x["stage"],
                          "roles: " + (", ".join(x["roles"]) or "none")

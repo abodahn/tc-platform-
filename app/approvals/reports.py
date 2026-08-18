@@ -345,11 +345,21 @@ _SHORT_QTY = ("CASE WHEN COALESCE(t.rcv_qty,0) < COALESCE(t.ord_qty,0) "
               "THEN COALESCE(t.ord_qty,0) - COALESCE(t.rcv_qty,0) ELSE 0 END")
 # The column above states the WHOLE shortfall — that is the point of the column,
 # the DOAM wants a short delivery visible even when it is tolerable. Whether it
-# is an EXCEPTION is a different question, and it is answered with the same
-# quantity tolerance three_way_match applies.
-_QTY_TOL = (f"(COALESCE(t.ord_qty,0) * {C.MATCH_QTY_TOLERANCE_PCT / 100.0!r})"
-            if C.DOAM_IN_FORCE else "0")
-_OUTSTANDING = f"({_GRAND} - COALESCE(p.paid_amount,0))"
+# is an EXCEPTION is a different question, and it is answered PER LINE with the
+# same quantity tolerance three_way_match applies. Per line, because the summed
+# quantities above mix units: 1,000 metres of thread delivered in full hides two
+# machines that never arrived, and the KPI would report the order as clean.
+_QTY_FACTOR = 1.0 - (C.MATCH_QTY_TOLERANCE_PCT / 100.0 if C.DOAM_IN_FORCE else 0.0)
+_QTY_EXC = ("EXISTS (SELECT 1 FROM pr_items x WHERE x.pr_id = p.id AND "
+            f"COALESCE(x.received_qty,0) < COALESCE(x.qty,0) * {_QTY_FACTOR!r} - 1e-9)")
+# Goods returned to the supplier on receipt: an OPEN debit note is value this PO
+# will never be paid, because add_payment/three_way_match refuse to release it.
+# Without this join the report told finance a supplier was still owed exactly the
+# money the payment gate was holding back, on a row it also labelled 'paid'.
+_DN = ("LEFT JOIN (SELECT pr_id, SUM(COALESCE(total,0)) AS dn_open "
+       "FROM pr_returns WHERE status='open' GROUP BY pr_id) d ON d.pr_id = p.id")
+_DN_OPEN = "COALESCE(d.dn_open,0)"
+_OUTSTANDING = f"({_GRAND} - {_DN_OPEN} - COALESCE(p.paid_amount,0))"
 # Exposure only. An OVERPAID request has a negative outstanding, which is a real
 # fact in the column, but feeding it to a pareto produced a cumulative % that ran
 # past 100 and then came back down — an invented number. The chart sums what is
@@ -370,17 +380,22 @@ R.register(**_common(
     desc=("Ordered vs received vs invoiced vs paid, for orders that reached PO "
           "stage. Over-billed and short-delivered are shown as amounts, using "
           "exactly the tolerances the 3-way match on the PR page applies: "
-          "%g%% of value or %g EGP, whichever is greater, and %g%% of quantity."
+          "%g%% of value or %g EGP, whichever is greater, and %g%% of quantity. "
+          "Outstanding is net of open debit notes (Debited back): that value is "
+          "held back by the payment gate, so counting it as owed "
+          "overstates exposure."
           % (_TOL_PCT, _TOL_ABS, C.MATCH_QTY_TOLERANCE_PCT)),
     desc_ar=("المطلوب مقابل المستلم مقابل المفوتر مقابل المدفوع، للطلبات التي "
              "وصلت لأمر الشراء. الزيادة في الفوترة والنقص في التوريد تظهر كمبالغ "
              "بنفس سماحية المطابقة الثلاثية: %g%% من القيمة أو %g جنيه أيهما "
-             "أكبر، و%g%% من الكمية." % (_TOL_PCT, _TOL_ABS,
+             "أكبر، و%g%% من الكمية. المتبقي للسداد بعد خصم الإشعارات المدينة "
+             "المفتوحة، لأن بوابة الدفع تحجز هذه القيمة." % (_TOL_PCT, _TOL_ABS,
                                         C.MATCH_QTY_TOLERANCE_PCT)),
     desc_tr=("Sipariş / teslim / fatura / ödeme karşılaştırması, sipariş "
              "aşamasına gelen talepler için. Fazla faturalama ve eksik teslimat "
              "tutar olarak, 3'lü mutabakatın uyguladığı toleranslarla: değerin "
-             "%%%g'i veya %g EGP (hangisi büyükse) ve miktarın %%%g'i."
+             "%%%g'i veya %g EGP (hangisi büyükse) ve miktarın %%%g'i. Bakiye, açık "
+             "borç dekontları düşülerek hesaplanır; o tutarı ödeme kapısı zaten tutar."
              % (_TOL_PCT, _TOL_ABS, C.MATCH_QTY_TOLERANCE_PCT)),
     select=(
         "p.pr_no AS pr_no, p.vendor AS vendor, p.department AS department, "
@@ -389,13 +404,14 @@ R.register(**_common(
         "COALESCE(i.inv_gross,0) AS invoiced, "
         "COALESCE(t.rcv_val,0) AS received_value, "
         "COALESCE(p.paid_amount,0) AS paid, "
+        f"{_DN_OPEN} AS dn_open, "
         f"{_OUTSTANDING} AS outstanding, "
         f"{_OVER_BILLED} AS over_billed, "
         f"{_OVER_RECEIVED} AS over_received, "
         f"{_SHORT_QTY} AS short_qty, "
         "p.payment_status AS payment_status, p.due_date AS due_date"
     ),
-    frm=f"pr_requests p {_INV} {_ITM}",
+    frm=f"pr_requests p {_INV} {_ITM} {_DN}",
     base_where=["COALESCE(p.is_active,1) = 1",
                 "p.status IN ('po_issued','partially_received','received','closed')"],
     order="p.due_date ASC, p.id DESC",
@@ -414,6 +430,8 @@ R.register(**_common(
               total="SUM(COALESCE(i.inv_gross,0))"),
         R.col("paid", "Paid", "المدفوع", "Ödenen", "num",
               total="SUM(COALESCE(p.paid_amount,0))"),
+        R.col("dn_open", "Debited back", "إشعارات مدينة مفتوحة", "Borç dekontu",
+              "num", total=f"SUM({_DN_OPEN})"),
         R.col("outstanding", "Outstanding", "المتبقي للسداد", "Bakiye", "num",
               total=f"SUM({_OUTSTANDING})"),
         R.col("over_billed", "Over-billed", "زيادة فوترة", "Fazla fatura", "num",
@@ -444,7 +462,7 @@ R.register(**_common(
         R.kpi("exceptions", "Match exceptions", "استثناءات المطابقة",
               "Mutabakat istisnası",
               f"SUM(CASE WHEN {_HAS_INVOICE} AND ({_OVER_BILLED} > 0 "
-              f"OR {_OVER_RECEIVED} > 0 OR {_SHORT_QTY} > {_QTY_TOL}) "
+              f"OR {_OVER_RECEIVED} > 0 OR {_QTY_EXC}) "
               f"THEN 1 ELSE 0 END)",
               better="down"),
     ],

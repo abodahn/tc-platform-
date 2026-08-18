@@ -162,9 +162,12 @@ def run():
         # 6. Validity is not decoration: an out-of-date forecast is refused,
         #    even though it is agreed and signed by the right person.
         # ---------------------------------------------------------------
+        # Signed while it was in force, and the window has since closed — the
+        # only way an AGREED forecast can be out of date, because agree_forecast
+        # refuses to sign a window that has already passed (section 10).
         ok, ref = svc.create_forecast(
             {"ref": "FC-2025-Q4", "description": "Last season", "period": "2025 Q4",
-             "valid_from": _day(-200), "valid_to": _day(-30)}, tech)
+             "valid_from": _day(-200), "valid_to": _day(1)}, tech)
         assert ok, ref
         conn = get_db()
         old_id = conn.execute("SELECT id FROM proc_forecasts WHERE ref=?",
@@ -172,6 +175,11 @@ def run():
         conn.close()
         ok, msg = svc.agree_forecast(old_id, scd)
         assert ok, msg
+        conn = get_db()
+        conn.execute("UPDATE proc_forecasts SET valid_to=? WHERE id=?",
+                     (_day(-30), old_id))
+        conn.commit()
+        conn.close()
 
         _, ok, msg = submit(FABRIC, forecast_ref="FC-2025-Q4")
         assert not ok and msg == "fc_expired", (
@@ -237,7 +245,8 @@ def run():
         # ---------------------------------------------------------------
         for lang in ("en", "ar", "tr"):
             ui = svc.labels(lang)["ui"]
-            for key in ("fc_unknown_flash", "fc_unapproved_flash", "fc_expired_flash"):
+            for key in ("fc_unknown_flash", "fc_unapproved_flash",
+                        "fc_expired_flash", "fc_lapsed_flash"):
                 assert ui.get(key), "%s missing in %s" % (key, lang)
         from app.routes import approvals as rt
         with app.test_request_context("/procurement/new"):
@@ -331,6 +340,99 @@ def run():
                              .read_text(encoding="utf-8"))
             missing = sorted(k for k in keys if not (dic.get(k) or "").strip())
             assert not missing, "%s.json is missing %s" % (lang, missing)
+
+        # ---------------------------------------------------------------
+        # 9. The BROWSER's own path: the request form POST, not create_pr().
+        #    A field the route silently dropped would pass every check above.
+        # ---------------------------------------------------------------
+        def post_new(**header):
+            data = {"_csrf": "tok", "action": "submit", "title": FABRIC,
+                    "department": "Production", "item[]": FABRIC, "qty[]": "500",
+                    "unit_price[]": "0", "unit[]": "Mtr"}
+            data.update(header)
+            client.post("/procurement/new", data=data)
+            conn = get_db()
+            row = dict(conn.execute("SELECT * FROM pr_requests ORDER BY id DESC "
+                                    "LIMIT 1").fetchone())
+            conn.close()
+            return row
+
+        row = post_new(forecast_ref="FC-UI-1")
+        assert row["forecast_ref"] == "FC-UI-1", row["forecast_ref"]
+        assert row["status"] == "pending", (
+            "the form's own POST could not submit against an agreed forecast: %s"
+            % row["status"])
+        assert float(row["total"] or 0) == 0, "the requester priced the request"
+
+        # A junk forecast cited BESIDE a valid sales order is still junk: it is
+        # persisted and printed on the PR, PO, GRN and debit note, so it is
+        # checked whether or not the SO half of the clause is satisfied.
+        row = post_new(so_no=LIVE_SO, forecast_ref="TOTAL-GARBAGE-9999")
+        assert row["status"] == "draft", (
+            "a junk forecast rode in on a valid sales order: %s" % row["status"])
+        # ...and the same pair, both valid, still goes through.
+        row = post_new(so_no=LIVE_SO, forecast_ref="FC-UI-1")
+        assert row["status"] == "pending", row["status"]
+        assert ("Agreed forecast", "FC-UI-1") in pdf._cost_object_pairs(row)
+
+        # ---------------------------------------------------------------
+        # 10. Dates are STORED as the gate compares them — text. strptime
+        #     accepts '2026-8-1', which text-sorts above '2026-08-18'.
+        # ---------------------------------------------------------------
+        def unpadded(offset):
+            d = datetime.now(timezone.utc) + timedelta(days=offset)
+            return "%d-%d-%d" % (d.year, d.month, d.day)
+
+        assert svc.create_forecast({"ref": "FC-UNPADDED-OLD",
+                                    "valid_from": unpadded(-200),
+                                    "valid_to": unpadded(-30)}, tech)[0]
+        conn = get_db()
+        old = dict(conn.execute("SELECT * FROM proc_forecasts WHERE ref=?",
+                                ("FC-UNPADDED-OLD",)).fetchone())
+        conn.close()
+        assert (old["valid_from"], old["valid_to"]) == (_day(-200), _day(-30)), old
+        # ...so a closed window cannot be signed, and cannot be cited.
+        assert svc.agree_forecast(old["id"], scd) == (False, "fc_expired")
+        # ...and the screen refuses it too, without an untranslated code.
+        as_user(ids["scd"])
+        r = client.post("/procurement/forecasts/%d/agree" % old["id"],
+                        data={"_csrf": "tok"}, follow_redirects=True)
+        page = r.get_data(as_text=True)
+        assert "(fc_expired)" not in page, "raw refusal code shown to the reader"
+        conn = get_db()
+        st = conn.execute("SELECT status FROM proc_forecasts WHERE id=?",
+                          (old["id"],)).fetchone()["status"]
+        conn.close()
+        assert st == "draft", "the screen agreed a forecast whose window had closed"
+        _, ok, msg = submit(FABRIC, forecast_ref="FC-UNPADDED-OLD")
+        assert not ok and msg in ("fc_unapproved", "fc_expired"), (ok, msg)
+
+        # The mirror: an in-force window posted unpadded still works.
+        assert svc.create_forecast({"ref": "FC-UNPADDED-NOW",
+                                    "valid_from": unpadded(-5),
+                                    "valid_to": unpadded(60)}, tech)[0]
+        conn = get_db()
+        cur_id = conn.execute("SELECT id FROM proc_forecasts WHERE ref=?",
+                              ("FC-UNPADDED-NOW",)).fetchone()["id"]
+        conn.close()
+        assert svc.agree_forecast(cur_id, scd)[0]
+        assert svc.forecast_state("FC-UNPADDED-NOW") == "active"
+        _, ok, msg = submit(FABRIC, forecast_ref="FC-UNPADDED-NOW")
+        assert ok, msg
+
+        # ---------------------------------------------------------------
+        # 11. One reference = one row: the register is as case-insensitive
+        #     as the lookup, and the reference cannot be a paragraph.
+        # ---------------------------------------------------------------
+        assert svc.create_forecast({"ref": "fc-2026-q1"}, tech) == (
+            False, "duplicate_ref"), "a case variant became a second register row"
+        assert svc.forecast_state("fc-2026-q1") == "active"
+        assert svc.create_forecast({"ref": "x" * 5000}, tech)[0]
+        conn = get_db()
+        longest = conn.execute("SELECT MAX(LENGTH(ref)) AS n FROM "
+                               "proc_forecasts").fetchone()["n"]
+        conn.close()
+        assert longest <= 80, "a %d-character reference reached the documents" % longest
 
         print("PASS: no reference / junk SO / junk forecast / draft forecast / "
               "expired forecast REFUSED; open sales order and agreed in-date "

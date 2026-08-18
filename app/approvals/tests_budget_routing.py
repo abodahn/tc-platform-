@@ -159,6 +159,43 @@ def run():
         assert se == "budgeted" and "cfo" not in le, (
             "with a budget in place the same submit routes tier 1: %r / %s" % (se, le))
 
+        # ---- and it is on the REQUEST PAGE, not just in the database ---------
+        conn = get_db()
+        conn.execute("INSERT OR IGNORE INTO users (id, username, password_hash, "
+                     "full_name, role, is_active, created_at) "
+                     "VALUES (1,'viewer','x','Viewer','super_admin',1,'2026-01-01')")
+        conn.commit(); conn.close()
+        client = app.test_client()
+        with client.session_transaction() as s:
+            s["uid"] = 1
+            s["ep"] = 0
+
+        def page(pr_id):
+            r = client.get("/procurement/pr/%d" % pr_id)
+            assert r.status_code == 200, "request page %d -> %s" % (pr_id, r.status_code)
+            return r.get_data(as_text=True)
+
+        pa, pc = page(a), page(c)
+        assert 'data-i18n="proc.budgeted"' in pa and 'data-i18n="proc.unbudgeted"' not in pa, \
+            "the budgeted request must say so"
+        assert 'data-i18n="proc.unbudgeted"' in pc, "the unbudgeted request must say so"
+        assert 'data-i18n="proc.unbud_over"' in pc and "3,000" in pc, \
+            "and state by how much it is over"
+        pd_ = page(d)
+        assert 'data-i18n="proc.unbud_none"' in pd_, (
+            "a department with no budget at all must be named as unbudgeted too")
+
+        # every new string is translated, or it renders as its own key
+        import json
+        keys = ("proc.budgeted", "proc.budgeted_why", "proc.unbudgeted",
+                "proc.unbud_none", "proc.unbud_over", "proc.unbud_why")
+        for lang in ("en", "ar", "tr"):
+            with open(os.path.join(app.root_path, "static", "i18n", lang + ".json"),
+                      encoding="utf-8") as fh:
+                have = json.load(fh)
+            missing = [k for k in keys if not (have.get(k) or "").strip()]
+            assert not missing, "%s.json is missing %s" % (lang, missing)
+
         print("budgeted   5,000 Quality   ->", " -> ".join(la))
         print("unbudgeted 5,000 Cutting   ->", " -> ".join(lb))
         print("over budget 5,000 Finishing->", " -> ".join(lc), "(over by %.0f)" % oc)

@@ -163,7 +163,7 @@ def _raise_pr(conn, spare) -> str:
     return pr_no
 
 
-def post_receipt_to_stock(pr_id, receipts, user=None) -> float:
+def post_receipt_to_stock(pr_id, receipts, user=None, free=False) -> float:
     """Reverse leg: push a goods receipt into maintenance spare stock.
 
     `receipts` = {item_id: qty_received_now}. Generalised (cross-module mesh):
@@ -174,6 +174,9 @@ def post_receipt_to_stock(pr_id, receipts, user=None) -> float:
         lines predate the spare_id column posts the summed receipt as before;
       * a ticket-sourced PR (source_ref 'ticket:<id>') notifies the maintenance
         team and drops a parts-arrived comment on the ticket.
+    free=True books the quantity at zero unit cost (an accepted over-delivery is a
+    free issue: it lands on the shelf, and receive_stock reads a zero price as 'no
+    cost update', so the weighted average does not move).
     Returns total qty posted. Never raises."""
     conn = get_db()
     try:
@@ -203,7 +206,8 @@ def post_receipt_to_stock(pr_id, receipts, user=None) -> float:
                 if add <= 0 or not it["spare_id"]:
                     continue
                 ok, err = receive_stock(int(it["spare_id"]), add,
-                                        float(it["unit_price"] or 0), actor)
+                                        0.0 if free else float(it["unit_price"] or 0),
+                                        actor)
                 if ok:
                     posted += add
                 else:
@@ -219,7 +223,8 @@ def post_receipt_to_stock(pr_id, receipts, user=None) -> float:
                     total_qty += add
                     unit_price = float(it["unit_price"] or 0) or unit_price
             if total_qty > 0:
-                ok, err = receive_stock(spare_id, total_qty, unit_price, actor)
+                ok, err = receive_stock(spare_id, total_qty,
+                                        0.0 if free else unit_price, actor)
                 if ok:
                     posted = total_qty
                 else:

@@ -69,22 +69,28 @@ def run():
             conn.close()
             return r["stage"] if r else None
 
-        def po(title, qty, unit, tax=0):
-            """A PR the way the UI produces one, walked to a live PO.
+        def po_lines(title, lines, tax=0):
+            """A multi-line PR the way the UI produces one, walked to a live PO.
 
-            Submitted with NO price (the requester price lockout), priced at the
-            pricing gate, signed up the ladder, PO issued. Returns (pr_id, line_id).
+            `lines` is [(item, unit_of_measure, qty, unit_price)]. Submitted with
+            NO price (the requester price lockout), priced at the pricing gate,
+            signed up the ladder, PO issued. Returns (pr_id, [line_id, ...]).
             """
             pr_id, _ = svc.create_pr(
                 {"title": title, "department": "Production", "currency": "EGP",
                  "vendor": "B7 Vendor"},
-                [{"item": "Widget", "qty": qty, "unit_price": 0}], reqr, priced=False)
+                [{"item": it, "unit": uom, "qty": q, "unit_price": 0}
+                 for it, uom, q, _u in lines], reqr, priced=False)
             conn = get_db()
-            li = conn.execute("SELECT id FROM pr_items WHERE pr_id=?",
-                              (pr_id,)).fetchone()["id"]
+            lids = [r["id"] for r in conn.execute(
+                "SELECT id FROM pr_items WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()]
             conn.close()
-            ok, msg = svc.price_pr(pr_id, {li: unit}, {"tax_rate": tax}, buyer)
+            assert len(lids) == len(lines), (lids, lines)
+            ok, msg = svc.price_pr(
+                pr_id, {li: u for li, (_i, _m, _q, u) in zip(lids, lines)},
+                {"tax_rate": tax}, buyer)
             assert ok, "pricing gate refused: %s" % msg
+            total = sum(q * u for _i, _m, q, u in lines)
             for _ in range(15):
                 stage = current_stage(pr_id)
                 if stage is None:
@@ -94,17 +100,26 @@ def run():
                     seq[0] += 1
                     for n, mult in (("A", 1.0), ("B", 1.05)):
                         svc.add_quote(pr_id, {"vendor": "B7 Vendor %s%d" % (n, seq[0]),
-                                              "amount": qty * unit * mult}, buyer)
+                                              "amount": total * mult}, buyer)
                     continue
                 assert ok, "ladder stuck on %s: %s" % (title, msg)
                 if msg == "approved":
                     break
             ok, msg = svc.issue_po(pr_id, buyer)
             assert ok, "PO not issued for %s: %s" % (title, msg)
-            return pr_id, li
+            return pr_id, lids
+
+        def po(title, qty, unit, tax=0):
+            """The single-line case, which is most of this file."""
+            pr_id, lids = po_lines(title, [("Widget", "Pcs", qty, unit)], tax)
+            return pr_id, lids[0]
 
         def recv(pr_id, li, qty):
             ok, msg = svc.receive_items(pr_id, {li: qty}, signer["warehouse"])
+            assert ok, "receipt refused: %s" % msg
+
+        def recv_many(pr_id, per_line):
+            ok, msg = svc.receive_items(pr_id, per_line, signer["warehouse"])
             assert ok, "receipt refused: %s" % msg
 
         def bill(pr_id, no, amount, tax=0):
@@ -120,9 +135,9 @@ def run():
             conn = get_db()
             r = conn.execute(
                 "SELECT (%s) AS over_billed, (%s) AS over_received, (%s) AS short_qty, "
-                "(%s) AS qty_tol, (%s) AS tol FROM pr_requests p %s %s WHERE p.id=?"
+                "(%s) AS qty_exc, (%s) AS tol FROM pr_requests p %s %s WHERE p.id=?"
                 % (RPT._OVER_BILLED, RPT._OVER_RECEIVED, RPT._SHORT_QTY,
-                   RPT._QTY_TOL, RPT._TOL, RPT._INV, RPT._ITM), (pr_id,)).fetchone()
+                   RPT._QTY_EXC, RPT._TOL, RPT._INV, RPT._ITM), (pr_id,)).fetchone()
             conn.close()
             return dict(r)
 
@@ -190,7 +205,7 @@ def run():
         assert any("Short delivery" in f for f in me["flags"]), (
             "an in-tolerance shortfall must still be VISIBLE: %r" % me["flags"])
         re_ = report(e)
-        assert re_["short_qty"] == 5 and re_["short_qty"] <= re_["qty_tol"], (
+        assert re_["short_qty"] == 5 and not re_["qty_exc"], (
             "report must state the shortfall but not call it an exception: %r" % re_)
 
         # 100 ordered, 94 received -> 6 short, one unit past the 5% line.
@@ -203,7 +218,7 @@ def run():
         assert mf["short_qty"] == 6.0 and not mf["qty_ok"], mf
         assert mf["status"] == "mismatch", mf
         rf = report(f)
-        assert rf["short_qty"] > rf["qty_tol"], (
+        assert rf["qty_exc"], (
             "report must call a 6-of-100 shortfall an exception: %r" % rf)
 
         # ...and the constant is genuinely the reader, not a 5 typed into the code:
@@ -268,11 +283,137 @@ def run():
         assert not okp and msgp.startswith("advance_"), (
             "the received-value cap must not swallow the advance gate: %s" % msgp)
 
+        # ================================================================
+        # (d) VERIFIER FINDING (major): the quantity tolerance was applied to a
+        #     raw SUM across lines of different units and wildly different unit
+        #     values, so a materially short delivery read as "matched".
+        #     1,000 Mtr @ 1 + 2 Pcs @ 5,000 = 11,000 EGP (the shape of a thread
+        #     line beside two machines; the items are named neutrally because
+        #     "thread" is a DIRECT MATERIAL and would pull in the §3.4 gate).
+        #     The metres arrive in full, NEITHER unit does: 2 of 1,002 units
+        #     short = 0.2% of the summed quantity, inside a 5% scalar tolerance —
+        #     while 10,000 of the 11,000 EGP ordered never arrived.
+        # ================================================================
+        m_id, m_li = po_lines("B7 mixed units", [("Widget A", "Mtr", 1000, 1.0),
+                                                 ("Widget B", "Pcs", 2, 5000.0)])
+        recv_many(m_id, {m_li[0]: 1000, m_li[1]: 0})
+        bill(m_id, "B7-M", 11_000.00)
+        mm = svc.three_way_match(m_id)
+        assert mm["ordered_grand"] == 11_000.00 and mm["received_value"] == 1_000.00, mm
+        assert not mm["qty_ok"], (
+            "a whole line missing must fail the quantity check even though the "
+            "SUMMED shortfall is 2 of 1,002 units: %r" % mm)
+        assert mm["status"] == "mismatch", mm
+        rm = report(m_id)
+        assert rm["qty_exc"], (
+            "the Match exceptions KPI must see the same shortfall the control "
+            "sees, or the report and the control drift: %r" % rm)
+        # ...and a per-line shortfall INSIDE the tolerance still passes on a
+        # multi-line order, so the fix is per-line, not "any shortfall at all".
+        n_id, n_li = po_lines("B7 mixed units, both in tolerance",
+                              [("Widget A", "Mtr", 1000, 1.0),
+                               ("Widget B", "Pcs", 20, 500.0)])
+        recv_many(n_id, {n_li[0]: 960, n_li[1]: 19})       # 4% and 5% short
+        bill(n_id, "B7-N", 10_460.00)
+        mn = svc.three_way_match(n_id)
+        assert mn["qty_ok"] and mn["status"] == "matched", mn
+        assert not report(n_id)["qty_exc"], report(n_id)
+
+        # ================================================================
+        # (e) VERIFIER FINDING (minor): the short-delivery flag quoted the
+        #     received value, but add_payment caps against `payable`, which an
+        #     open debit note pulls strictly lower. The buyer must read the
+        #     number that is actually enforced.
+        # ================================================================
+        assert ("capped at %s" % format(mg["payable"], ",.2f")) in mg["flags"][0], (
+            "the flag must quote the ENFORCED ceiling: %r" % mg["flags"][0])
+
+        # ================================================================
+        # (f) VERIFIER FINDING (minor): advance_gate_check compared NET invoiced
+        #     against GROSS payments, so on a taxed PR the VAT slice of an
+        #     ordinary payment looked like an unauthorised advance and the buyer
+        #     was told to approve the vendor instead of that the goods are short.
+        # ================================================================
+        t_id, t_li = po("B7 taxed short delivery", 100, 100.0, tax=14)
+        recv(t_id, t_li, 96)
+        bill(t_id, "B7-T", 10_000.00, tax=1_400.00)        # full order, gross 11,400
+        mt = svc.three_way_match(t_id)
+        assert mt["received_grand"] == 10_944.00, mt       # 9,600 x 1.14
+        okp, msgp = pay(t_id, 11_400.00)
+        assert not okp and msgp == "exceeds_received", (
+            "a taxed short delivery must be refused for being SHORT, not for "
+            "looking like an advance: %s / %s" % (okp, msgp))
+        okp, msgp = pay(t_id, 11_053.45)                   # cap + 1% + one piastre
+        assert not okp and msgp == "exceeds_received", (okp, msgp)
+        okp, msgp = pay(t_id, 11_053.44)                   # 9,600 x 1.14 x 1.01
+        assert okp, "exactly at the taxed cap must be accepted: %s" % msgp
+
+        # ================================================================
+        # (g) VERIFIER FINDING (minor): every payment refusal was hardcoded
+        #     English in a trilingual module.
+        # ================================================================
+        for lang in ("en", "ar", "tr"):
+            ui = svc.labels(lang)["ui"]
+            for key in ("not_payable", "match_blocked", "over_payment",
+                        "exceeds_invoiced", "exceeds_received",
+                        "advance_not_authorised", "advance_exceeds_authorised",
+                        "advance_guarantee_required", "advance_vendor_not_approved"):
+                assert (ui.get(key + "_flash") or "").strip(), (lang, key)
+            if lang != "en":
+                assert ui["exceeds_received_flash"] !=                     svc.labels("en")["ui"]["exceeds_received_flash"], lang
+
+        # ...and on the REAL route, in Arabic. `g` is already paid to its cap,
+        # so any further payment is refused with exceeds_received.
+        conn = get_db()
+        conn.execute("UPDATE users SET lang_pref='ar' WHERE id=1")
+        conn.commit()
+        conn.close()
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["uid"], sess["ep"], sess["_csrf_token"] = 1, 0, "tok"
+        # 100 more: still inside the PO total and inside the invoiced total, so
+        # only the received-value cap can refuse it.
+        r = client.post("/procurement/pr/%d/payment" % g,
+                        data={"_csrf": "tok", "amount": "100"},
+                        follow_redirects=True)
+        body = r.get_data(as_text=True)
+        assert r.status_code == 200, r.status_code
+        ar = svc.labels("ar")["ui"]["exceeds_received_flash"]
+        assert ar[:40] in body, (
+            "the refusal reached an Arabic reader in English: %s"
+            % ascii([l for l in body.splitlines() if "TC_FLASH" in l])[:400])
+        assert "Short delivery: this payment" not in body, "English leaked too"
+        conn = get_db()
+        conn.execute("UPDATE users SET lang_pref=NULL WHERE id=1")
+        conn.commit()
+        paid_now = conn.execute("SELECT paid_amount FROM pr_requests WHERE id=?",
+                                (g,)).fetchone()["paid_amount"]
+        conn.close()
+        assert float(paid_now) == 9_696.00, ("the refusal must not move the money",
+                                             paid_now)
+
+        # ================================================================
+        # (h) VERIFIER FINDING (minor): the governance page advertised only the
+        #     2%, omitting the 500 EGP floor (the binding half under 25,000) and
+        #     the quantity tolerance entirely.
+        # ================================================================
+        wf = svc.workflow_view("Production", "en")
+        assert wf["match_tolerance_abs"] == C.MATCH_TOLERANCE_ABS, wf
+        assert wf["match_qty_tolerance_pct"] == C.MATCH_QTY_TOLERANCE_PCT, wf
+        page = " ".join(client.get("/procurement/workflow")
+                        .get_data(as_text=True).split())
+        assert '2% / 500 EGP / 5% <span data-i18n="pwf.qty_word">qty</span>' in page, (
+            "the governance page still advertises only half the tolerance")
+
+        print("mixed-unit PO   : 1,000 Mtr in full + 0 of 2 Pcs ->", mm["status"])
+        print("                  report exception:", bool(rm["qty_exc"]))
         print("value tolerance  : 10,500.00 matched / 10,500.01 blocked (floor 500)")
         print("                   102,000.00 matched / 102,000.01 blocked (2%)")
         print("qty tolerance    : 95/100 matched / 94/100 mismatch (5% = 5 units)")
         print("short-delivery   :", me["flags"][0])
         print("payment cap      : 10,000.00 refused, 9,696.01 refused, 9,696.00 paid")
+        print("taxed short PO   : 11,400 refused as exceeds_received, 11,053.44 paid")
+        print("flag quotes cap  :", mg["flags"][0].rsplit(";", 1)[-1].strip())
         print("report vs control: same tolerance, same verdict on all four boundaries")
         print("PASS: 3.4-b7 closed on the real flow")
         return True
