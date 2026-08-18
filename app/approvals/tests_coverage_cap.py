@@ -30,6 +30,8 @@ one that never does:
                                    requests do not each block the other
     H  free-text line naming a  -> flagged: omitting the type-ahead's hidden
        real spare                  spare_id is not a way out of the check
+    K  requester adjusted the   -> named on the request the signers read; quiet
+       stock being netted          for another user's edit and for a receipt
 """
 import os
 import tempfile
@@ -416,6 +418,48 @@ def run():
             "guess, not a check: %s" % i_dev["lines"][0])
         assert not deviation_rungs(i), deviation_rungs(i)
 
+        # ── K. the requester moved the master the cap nets against ────────────
+        # maint_store and proc_create sit together in the seeded storekeeper
+        # role, so the person asking for the part can adjust its stock — the
+        # same objection §4.4 raises against pr_items.current_stock, one table
+        # over. The formula stays; the fact goes on the request the signers read.
+        from app.maintenance import services as msvc
+        k_sid = spare("SP-COV-K", "Rotary hook", stock=100, reorder=0,
+                      maxlvl=100000, cost=25.0)
+        ok, msg = msvc.adjust_stock(k_sid, 400, "recount", tech)   # the REQUESTER
+        assert ok, msg
+        k = raise_pr("Master moved by the asker", "Rotary hook", 50, k_sid)
+        price(k, 25.0)
+        conn = get_db()
+        kev = conn.execute("SELECT detail FROM pr_events WHERE pr_id=? AND "
+                           "action='coverage_self_edit'", (k,)).fetchall()
+        conn.close()
+        assert len(kev) == 1 and "SP-COV-K" in kev[0]["detail"] \
+            and tech["username"] in kev[0]["detail"], (
+                "the signers were not told the netted master was moved by the "
+                "requester: %s" % [dict(r) for r in kev])
+        # …and it stays quiet when it should: another user's adjustment, and an
+        # ordinary receipt (documented by the flow that made it) are not the dial.
+        k2_sid = spare("SP-COV-K2", "Rotary hook 2", stock=100, reorder=0,
+                       maxlvl=100000, cost=25.0)
+        assert msvc.adjust_stock(k2_sid, 400, "recount",
+                                 {"username": "someone_else", "role": "storekeeper"})[0]
+        k2 = raise_pr("Master moved by somebody else", "Rotary hook 2", 50, k2_sid)
+        price(k2, 25.0)
+        k3_sid = spare("SP-COV-K3", "Rotary hook 3", stock=100, reorder=0,
+                       maxlvl=100000, cost=25.0)
+        assert msvc.receive_stock(k3_sid, 300, 25.0, tech)[0]
+        k3 = raise_pr("Ordinary receipt", "Rotary hook 3", 50, k3_sid)
+        price(k3, 25.0)
+        conn = get_db()
+        quiet = conn.execute(
+            "SELECT COUNT(*) n FROM pr_events WHERE pr_id IN (?,?) AND "
+            "action='coverage_self_edit'", (k2, k3)).fetchone()["n"]
+        conn.close()
+        assert quiet == 0, (
+            "a note that fires on every maintenance request is the same as no "
+            "note at all: %s" % quiet)
+
         # ── the browser really can post both shapes ───────────────────────────
         _http(app, spare("SP-COV-J", "Cam follower", stock=400, reorder=20,
                          maxlvl=100000, cost=25.0))
@@ -437,6 +481,8 @@ def run():
               deviation_rungs(g2))
         print("H free text, no spare_id    ->", " -> ".join(stages(h)),
               "(matched by name); ambiguous name stays unassessed")
+        print("K requester adjusted the netted master -> named on the request "
+              "(quiet for another user's adjustment and for a receipt)")
         print("PASS: §3.4 net-requirement cap fires on the real flow, both ways")
         return True
 

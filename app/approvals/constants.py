@@ -884,6 +884,60 @@ _SO_SHAPE_RE = re.compile(
 SO_CLOSED_STATUSES = ("closed", "cancelled")
 
 
+# Machine-part nouns. Deliberately NOT the machinery words in _MRO_CONTEXT: a
+# part is a discrete component, so "guide" can qualify "thread", whereas
+# "machine" must not — "denim rolls for the cutting machine" is a real material
+# buy. "hook" is absent on purpose: "hook and loop" and "hook and eye" are
+# trims, and including it let Velcro through with no sales order.
+_MRO_PART_WORDS = (
+    "guide", "foot", "holder", "feeder", "roller", "blade", "spring", "head",
+    "plate", "case", "seal", "bearing", "needle", "stand", "tension", "cutter",
+    "applicator", "pump", "gear", "pulley", "bushing", "nozzle", "filter",
+    "looper", "bobbin", "presser", "gauge", "shaft", "clamp", "knife", "lever",
+    "cam", "reel", "bracket", "arm", "guard", "cover", "housing",
+)
+_MRO_PART_RE = re.compile(r"^(?:%s)s?$" % "|".join(_MRO_PART_WORDS))
+_MATERIAL_WORD_RE = re.compile(r"^(?:%s)(?:s|es)?$"
+                               % "|".join(re.escape(k) for k in SO_MANDATORY_KEYWORDS
+                                          if " " not in k))
+_WORD_RE = re.compile(r"[a-z0-9%/#.-]+")
+
+
+def _every_material_run_is_a_part(text):
+    """True when every maximal run of material words is immediately followed by
+    a machine-part noun — i.e. each one is a compound like "thread guide" rather
+    than a material being bought.
+
+    False when there are no material words at all, so the caller still falls
+    through to its normal check; this only ever EXEMPTS, never adds a gate."""
+    words = _WORD_RE.findall(text)
+    if not words:
+        return False
+    seen_material = False
+    i, n = 0, len(words)
+    while i < n:
+        if not _MATERIAL_WORD_RE.match(words[i]):
+            i += 1
+            continue
+        seen_material = True
+        j = i
+        while j < n and _MATERIAL_WORD_RE.match(words[j]):
+            j += 1
+        # The run is words[i:j]. A part noun must sit immediately after it, or
+        # one word later — "elastic tape roller" puts a noun between the two
+        # ("tape" is half of the multi-word keyword "twill tape", so it is not
+        # a material word on its own). ONE word of slack only: two is enough for
+        # "cotton twill fabric for the guide" to smuggle a material buy in
+        # behind a part noun.
+        if j < n and _MRO_PART_RE.match(words[j]):
+            i = j + 1
+        elif j + 1 < n and _MRO_PART_RE.match(words[j + 1]):
+            i = j + 2
+        else:
+            return False
+    return seen_material
+
+
 def cost_object_required(texts):
     """Does this requisition need a sales-order reference? `texts` is every
     category / item string on the request. Returns "sales_order" when Table 12
@@ -899,6 +953,23 @@ def cost_object_required(texts):
     clean = _SO_EXEMPT_RE.sub(" ", blob)
     if _MRO_CONTEXT.search(blob):
         clean = _SO_EXEMPT_MRO_RE.sub(" ", clean)
+    # A machine PART whose name contains a material word is still a machine
+    # part: "thread guide", "zipper foot", "denim needle", "yarn tension
+    # spring" are sewing-machine components, and gating them demanded a sales
+    # order a technician has no business citing — measured, 11 of 15 realistic
+    # spare names, and a cost centre did not clear it either. They could not be
+    # bought at all.
+    #
+    # The rule is COMPOUND-NOUN adjacency, not "a part noun appears somewhere".
+    # A maximal run of material words is exempt only when a part noun follows it
+    # immediately, which is what makes it a compound. That distinction is the
+    # whole control: "elastic tape roller" is a part (the run ends in a part
+    # noun), while "guide for the feeder plus cotton twill fabric" is a material
+    # buy smuggled onto a spare line (the run "cotton twill fabric" is followed
+    # by nothing). Exempting on a bare part noun anywhere let exactly that
+    # through, and the sales-order gate's own test caught it.
+    if _every_material_run_is_a_part(clean):
+        return None
     return "sales_order" if _SO_RE.search(clean) else None
 
 
