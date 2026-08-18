@@ -629,10 +629,16 @@ def detail(pr_id):
     act_sign = "%s & sign" % C.STEP_ACTION_LABELS[_act]
     # DOAM Table 4 L2 — PD owns production/maintenance, SC-D owns operational and
     # inventory replenishment. Only shown when one of them was actually left off.
-    l2_dom = svc.l2_domain_of(pr_id)[0]
+    # The sentence names the director who is actually ON the ladder, not the
+    # classifier's verdict: dept_ladder applies the split to the DOAM floor and
+    # then merges the department responsibility matrix back on top, which can
+    # leave the OTHER director on. The verdict is only consulted to confirm the
+    # split is WHY one of them is missing (rather than a short ladder), and it
+    # rides along on the bundle get_pr already built — no second connection.
     _on = {s["stage"] for s in bundle["steps"]}
-    if not (l2_dom and (_on & {"factory_manager", "scd"})
-            and not {"factory_manager", "scd"} <= _on):
+    l2_dom = ("plant" if "factory_manager" in _on and "scd" not in _on else
+              "supply_chain" if "scd" in _on and "factory_manager" not in _on else None)
+    if not bundle.get("l2_domain"):
         l2_dom = None
     # Same wording as the proc.l2.* i18n keys, so the pre-swap render and the
     # English dictionary do not drift apart.

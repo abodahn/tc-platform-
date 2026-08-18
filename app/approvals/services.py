@@ -584,7 +584,13 @@ def get_pr(pr_id):
                 s["overdue"] = hrs > C.SLA_HOURS_PER_STAGE
                 s["due_soon"] = (not s["overdue"]) and hrs > C.SLA_WARN_HOURS
         step_ds.append(s)
+    # DOAM Table 4 L2 — the verdict, from the rows already in hand. The request
+    # page needs it to decide whether the split is WHY a director is missing;
+    # computing it here costs nothing, where l2_domain_of() would open a second
+    # connection and re-query the same two tables on every view.
     return {"pr": pr_d, "items": [dict(r) for r in items], "steps": step_ds,
+            "l2_domain": C.l2_domain(pr_d.get("department"), pr_d.get("source_module"),
+                                     any(_pr_field(r, "spare_id") for r in items)),
             "events": [dict(r) for r in events], "attachments": [dict(r) for r in atts],
             "quotes": [dict(r) for r in quotes],
             "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments],
@@ -678,10 +684,9 @@ def pr_l2_domain(conn, pr_id):
     """DOAM Table 4 L2 — which director owns THIS request: ("plant" |
     "supply_chain" | None, reason).
 
-    Reads only what the request already carries: the department, the source
-    module it was raised from, whether any line is a stocked spare, and the
-    catalogue category / item text. None = it cannot be told apart, and the
-    caller must keep both directors.
+    Reads only master data the request already carries: the department, the
+    source module it was raised from, and whether any line is a stocked spare.
+    None = it cannot be told apart, and the caller must keep both directors.
 
     Never raises: a missing column on an old database, or a table the deploy has
     not reached, means "cannot be told apart", which is the today behaviour.
@@ -692,37 +697,22 @@ def pr_l2_domain(conn, pr_id):
             (pr_id,)).fetchone()
         if not pr:
             return None, "no_request"
-        lines = conn.execute(
-            "SELECT item, description, spare_id, item_id FROM pr_items WHERE pr_id=?",
-            (pr_id,)).fetchall()
+        spare = conn.execute(
+            "SELECT 1 FROM pr_items WHERE pr_id=? AND spare_id IS NOT NULL LIMIT 1",
+            (pr_id,)).fetchone() is not None
     except Exception:                     # noqa: BLE001 — see docstring
         return None, "unreadable"
-    texts, spare = [], False
-    cat_ids = []
-    for ln in lines:
-        texts.append(_pr_field(ln, "item"))
-        texts.append(_pr_field(ln, "description"))
-        if _pr_field(ln, "spare_id"):
-            spare = True
-        if _pr_field(ln, "item_id"):
-            cat_ids.append(_pr_field(ln, "item_id"))
-    if cat_ids:
-        try:
-            texts += [r["category_name"] for r in conn.execute(
-                "SELECT category_name FROM proc_items WHERE id IN (%s)"
-                % ",".join("?" * len(cat_ids)), tuple(cat_ids)).fetchall()]
-        except Exception:                 # noqa: BLE001 — catalogue not deployed
-            pass
     dom = C.l2_domain(_pr_field(pr, "department"), _pr_field(pr, "source_module"),
-                      spare, texts)
+                      spare)
     if not dom:
         return None, "ambiguous"
     src = str(_pr_field(pr, "source_module") or "").strip().lower()
+    # Every branch below is reachable and the last one is total: with item text
+    # out of the signal set, a non-None domain can only have come from the
+    # source module, a spare line or the department.
     why = ("maintenance_origin" if src in C.PD_SOURCE_MODULES else
            "spare_part_line" if spare and dom == "plant" else
-           "costing_origin" if src in C.SCD_SOURCE_MODULES else
-           "department" if str(_pr_field(pr, "department") or "").strip().lower()
-           in (C.PD_DEPARTMENTS | C.SCD_DEPARTMENTS) else "direct_materials")
+           "costing_origin" if src in C.SCD_SOURCE_MODULES else "department")
     return dom, why
 
 
@@ -1288,7 +1278,7 @@ def submit_pr(pr_id, user, ip=None):
         # against the budget, and apply_budget_state asks again the moment
         # Purchasing prices it. Not a hole — the purchasing rung cannot be signed
         # while a request is unpriced, so nothing reaches a decision unasked.
-        _bud = (budget_check(conn, pr["department"], _own)
+        _bud = (budget_check(conn, pr["department"], _own, pr_id=pr_id)
                 if (_pr_field(pr, "pricing_status") or "priced") == "priced"
                 else {"unbudgeted": False, "state": None, "over_by": None, "status": None})
         _stages = dept_ladder(conn, pr["department"], _route_on,
@@ -1296,16 +1286,23 @@ def submit_pr(pr_id, user, ip=None):
         # DOAM §4.3 — a single-source award is signed one level above the value
         # tier. Applied here as well as in set_single_source(), because the
         # justification can be recorded on the draft before it is ever submitted.
+        # `_origin` carries WHICH control put a stage on the ladder through to the
+        # INSERT below. Defaulting them all to 'ladder' stamped the Table 5 letter
+        # of a value rung onto a control rung, and put them outside the scope the
+        # controls use to take their own rungs back off again.
+        _origin = {}
         if str(_pr_field(pr, "single_source_reason") or "").strip():
             _extra = C.single_source_stage(_stages, _pr_field(pr, "expenditure_kind"))
             if _extra:
                 _stages = _stages + [_extra]
+                _origin[_extra] = "single_source"
         # DOAM Table 4 — §4.1 is the BUDGETED ladder, so spend with no approved
         # plan behind it takes the L1 signature on top, whatever its value.
         if _bud["unbudgeted"]:
             _ux = C.unbudgeted_stage(_stages, _pr_field(pr, "expenditure_kind"))
             if _ux:
                 _stages = _stages + [_ux]
+                _origin[_ux] = "unbudgeted"
         rungs = rungs_from_stages(_stages)
         # SoD escalation, resolved BEFORE anything is written: a rung whose only
         # eligible signer is the requester climbs one level up the org chart. A
@@ -1368,10 +1365,11 @@ def submit_pr(pr_id, user, ip=None):
                 e_role, e_from = esc.get(stage, (None, None))
                 conn.execute(
                     """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role,
-                       activated_at, created_at, esc_role, esc_from)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                       activated_at, created_at, esc_role, esc_from, origin)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (pr_id, i, stage, "pending", stage_label(stage),
-                     now if i == 1 else None, now, e_role, e_from))
+                     now if i == 1 else None, now, e_role, e_from,
+                     _origin.get(stage, "ladder")))
                 if e_role:
                     audit(conn, pr_id, user.get("username") if user else "system",
                           "escalated_stage",
@@ -1521,10 +1519,25 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
               + ", ".join(x["pr_no"] or ("#%s" % x["id"]) for x in _sibs) + ".")
     target = [s for s in dept_ladder(conn, department, _route_on, kind, pr_id=pr_id)
               if s in VALUE_STAGES]
+    # DOAM Table 4's rung is re-decided from scratch on every re-price, so drop
+    # the not-yet-reached one HERE and let apply_budget_state (which both callers
+    # run immediately after this) put it back on top of the freshly reconciled
+    # value rungs. Without this the control rung keeps the low seq it was first
+    # written at, so the CFO is asked to sign before the directors below it and
+    # the ladder becomes a function of pricing HISTORY rather than of (value,
+    # budget state). Signed / active rungs are never touched (seq > cur_seq).
+    conn.execute("DELETE FROM pr_steps WHERE pr_id=? AND origin='unbudgeted' "
+                 "AND status='pending' AND seq>?", (pr_id, cur_seq))
     existing = conn.execute(
         "SELECT id, seq, stage, status, esc_role, approver_user, "
         "COALESCE(origin,'ladder') AS origin FROM pr_steps "
         "WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()
+    # Every rung still here is one the value ladder may count on: §4.3 and §4.4
+    # rungs are only ever ADDED and never removed, and the one control rung that
+    # IS removable (Table 4's) was just dropped above if it is still ahead of the
+    # request. What survives that DELETE has been signed or is being signed, so
+    # the signature it stands for genuinely exists. Filtering by origin here
+    # instead would append a SECOND cfo rung behind a deviation one.
     have = {r["stage"] for r in existing}
     max_seq = max([r["seq"] for r in existing] or [0])
     now = _now()
@@ -1989,6 +2002,28 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         conn.close()
 
 
+def _unbudgeted_authority_given(pr_id, pr):
+    """True when this request was ROUTED as unbudgeted and the L1 rung Table 4
+    added for it has actually been signed.
+
+    The note the L1 approver read says the spend "is not refused — it needs
+    higher authority, not refusal". Refusing the PO afterwards contradicts the
+    signature the control itself asked for. A request that reached 'approved'
+    without ever being routed as unbudgeted (budget_state NULL or 'budgeted' —
+    e.g. the budget was cut after approval) never got that signature, so the
+    original block still applies to it.
+    """
+    if (_pr_field(pr, "budget_state") or "") not in ("no_budget", "over_budget"):
+        return False
+    conn = get_db()
+    try:
+        return conn.execute(
+            "SELECT 1 FROM pr_steps WHERE pr_id=? AND origin='unbudgeted' "
+            "AND status='approved' LIMIT 1", (pr_id,)).fetchone() is not None
+    finally:
+        conn.close()
+
+
 def issue_po(pr_id, user, ip=None, force=False):
     """Mark an approved PR's PO as issued (purchasing action). When an explicit
     department budget exists and this PO would leave it exceeded, issuing is
@@ -2003,7 +2038,7 @@ def issue_po(pr_id, user, ip=None, force=False):
             return False, "not_approved"
     finally:
         conn.close()
-    if not force:
+    if not force and not _unbudgeted_authority_given(pr_id, pr):
         b = budget_status(pr["department"])   # PR already counted in 'spent' (approved)
         if b and b.get("amount") is not None and b.get("over"):
             return False, "over_budget"
@@ -4133,6 +4168,14 @@ def set_budget(department, amount, period=None, currency="EGP", user=None):
         conn.close()
 
 
+# The SQL twin of egp_commitment(): tax-inclusive, fx-converted EGP. `spent` and
+# the request being weighed against it MUST be the same kind of number — summing
+# raw `total` counted a 100 USD @ 50 commitment as 100 EGP, i.e. a fiftieth of
+# itself, and compared an ex-VAT sum against a tax-inclusive request.
+_EGP_GROSS_SQL = ("COALESCE(total,0) * COALESCE(NULLIF(fx_rate,0),1) "
+                  "* (1 + COALESCE(tax_rate,0)/100.0)")
+
+
 def budget_status(department, period=None, extra=0.0, conn=None):
     """Return {amount, spent, remaining, pct, over} for a department+period.
     'spent' = committed spend (approved / po_issued / closed) this period; 'extra'
@@ -4152,7 +4195,7 @@ def budget_status(department, period=None, extra=0.0, conn=None):
         b = conn.execute("SELECT amount, currency FROM proc_budgets WHERE department=? AND period=?",
                          (department, period)).fetchone()
         spent = conn.execute(
-            "SELECT COALESCE(SUM(total),0) s FROM pr_requests WHERE department=? "
+            "SELECT COALESCE(SUM(" + _EGP_GROSS_SQL + "),0) s FROM pr_requests WHERE department=? "
             "AND status IN ('approved','po_issued','partially_received','received','closed') "
             "AND substr(COALESCE(request_date, created_at),1,4)=?", (department, period)).fetchone()["s"]
     finally:
@@ -4173,7 +4216,7 @@ def budget_status(department, period=None, extra=0.0, conn=None):
 BUDGET_STATES = ("budgeted", "no_budget", "over_budget")
 
 
-def budget_check(conn, department, egp_total, period=None):
+def budget_check(conn, department, egp_total, period=None, pr_id=None):
     """Is this commitment inside the department's approved budget for the period?
 
     Answered with budget_status() — the same proc_budgets row and the same
@@ -4192,7 +4235,20 @@ def budget_check(conn, department, egp_total, period=None):
         # No cost owner means no approved plan behind the spend, and a blank
         # department must not be the cheap way past this gate.
         return {"unbudgeted": True, "state": "no_budget", "over_by": None, "status": None}
-    st = budget_status(department, period, extra=egp_total, conn=conn)
+    # The other requests already circulating priced against this same budget are
+    # LIVE commitment too, and 'spent' cannot see them (they are not approved
+    # yet). Weighing only this request's own value made the control splittable:
+    # three concurrent 8,000 requests against a 10,000 budget each read
+    # "budgeted" and none picked up the L1 rung. Counted only for the ROUTING
+    # verdict — budget_status()'s displayed 'spent' still means settled spend.
+    live = 0.0
+    if pr_id:
+        live = conn.execute(
+            "SELECT COALESCE(SUM(" + _EGP_GROSS_SQL + "),0) s FROM pr_requests "
+            "WHERE department=? AND status='pending' AND pricing_status='priced' "
+            "AND id<>? AND substr(COALESCE(request_date, created_at),1,4)=?",
+            (department, pr_id, period or _period())).fetchone()["s"] or 0.0
+    st = budget_status(department, period, extra=(egp_total or 0) + live, conn=conn)
     if not st or st.get("amount") is None:
         return {"unbudgeted": True, "state": "no_budget", "over_by": None, "status": st}
     if st.get("over"):
@@ -4221,7 +4277,7 @@ def apply_budget_state(conn, pr_id, pr=None, ip=None):
         return {"unbudgeted": False, "state": None, "over_by": None, "status": None}
     department = _pr_field(pr, "department")
     kind = _pr_field(pr, "expenditure_kind") or "opex"
-    bud = budget_check(conn, department, egp_commitment(pr))
+    bud = budget_check(conn, department, egp_commitment(pr), pr_id=pr_id)
     was = _pr_field(pr, "budget_state") or ""
     conn.execute("UPDATE pr_requests SET budget_state=?, budget_over_by=? WHERE id=?",
                  (bud["state"], bud["over_by"], pr_id))

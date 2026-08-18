@@ -18,6 +18,9 @@ import tempfile
 
 
 def _app():
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))))
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "raci.db")
     os.environ.pop("DATABASE_URL", None)
@@ -154,6 +157,34 @@ def run():
         assert "factory_manager" in lg and "scd" in lg, (
             "an explicit department matrix row must survive the domain split: %s" % lg)
 
+        # 8. THE CASE THAT MATTERS MOST HERE: a production department buying a
+        #    DIRECT MATERIAL. Fabric/yarn/thread wording is a keyword heuristic
+        #    over free text the REQUESTER types, and it used to count as a
+        #    supply-chain signal on its own — so the commonest purchase in an
+        #    apparel plant dropped the Plant Director on a description, and a
+        #    requester could choose which director signs by how he worded it.
+        conn = get_db()
+        _so = conn.execute("SELECT order_no FROM ord_orders WHERE status NOT IN "
+                           "('closed','cancelled') ORDER BY id LIMIT 1").fetchone()
+        conn.close()
+        assert _so, "no open sales order on file — the fixture cannot run"
+        for _dept in ("Production", "Cutting", "Sewing", "Finishing", "Embroidery"):
+            p, _ = svc.create_pr({"title": "Fabric for " + _dept, "department": _dept},
+                                 [{"item": "Cotton fabric 150gsm", "qty": 1,
+                                   "unit_price": 0}], tech, submit=False, priced=False)
+            conn = get_db()
+            conn.execute("UPDATE pr_requests SET so_no=? WHERE id=?",
+                         (_so["order_no"], p))
+            conn.commit(); conn.close()
+            okk, msg = svc.submit_pr(p, tech)
+            assert okk, "%s could not raise a fabric requisition: %s" % (_dept, msg)
+            price(p, 50000)
+            conn = get_db(); lp = _stages(conn, p); conn.close()
+            assert "factory_manager" in lp and "scd" in lp, (
+                "%s buying fabric lost a director to the wording of the line "
+                "item — the department names no domain, so both must sign: %s"
+                % (_dept, lp))
+
         # the reason is on the record, not only in the shape of the ladder
         conn = get_db(); eva = _events(conn, a); conn.close()
         dom = [dt for ac, dt in eva if ac == "l2_domain"]
@@ -200,6 +231,43 @@ def run():
             "tier — Table 5 E, not a second A: %s" % ai)
         assert sum(1 for _, act in ai if act == "approve") == 1, ai
         assert sum(1 for _, act in ai if act == "endorse") == 1, ai
+
+        # ...and the SAME business fact must print the SAME letters whichever way
+        # it was recorded. Purchasing may put the justification on the DRAFT —
+        # set_single_source says so in as many words ("A draft picks this up when
+        # it is submitted") — and then submit_pr, not _append_single_source_rung,
+        # is what appends the §4.3 rung. submit_pr wrote its rows with no origin
+        # at all, so the control rung fell back to 'ladder': it was stamped A, the
+        # real top of the value tier was demoted to R, both printed that way on
+        # the PDF, and pricing then deleted the rung outright.
+        i2, _ = svc.create_pr({"title": "OEM drive, waived on the draft",
+                               "department": "IT"},
+                              [{"item": "Servo drive", "qty": 1, "unit_price": 0}],
+                              tech, submit=False, priced=False)
+        okk, msg = svc.set_single_source(i2, "Proprietary OEM part",
+                                         {"username": "purch", "id": 3})
+        assert okk, msg
+        okk, msg = svc.submit_pr(i2, tech)
+        assert okk, msg
+        conn = get_db(); ai2 = _acts(conn, i2); conn.close()
+        assert ai2[-1][1] == "endorse", (
+            "a §4.3 rung appended at SUBMIT is the same control rung as one "
+            "appended after pricing — Table 5 E, not the value tier's A: %s" % ai2)
+        assert sum(1 for _, act in ai2 if act == "approve") == 1, ai2
+        price(i2, 60000)                  # and the pricing gate must not eat it
+        conn = get_db()
+        ai2p = _acts(conn, i2)
+        oi2 = [(r["stage"], r["origin"]) for r in conn.execute(
+            "SELECT stage, COALESCE(origin,'ladder') AS origin FROM pr_steps "
+            "WHERE pr_id=? ORDER BY seq, id", (i2,)).fetchall()]
+        conn.close()
+        assert ("cfo", "single_source") in oi2, (
+            "pricing deleted the §4.3 escalation: %s" % oi2)
+        assert sum(1 for _, act in ai2p if act == "endorse") == 1, ai2p
+        assert sum(1 for _, act in ai2p if act == "approve") == 1, ai2p
+        assert sorted(ai2p) == sorted(ai), (
+            "same purchase, same signatures, different letters depending only on "
+            "WHEN the waiver was typed: %s vs %s" % (ai2p, ai))
 
         # ...and the ROW ORDER and SIGNERS are byte-identical to what they were
         # before this change: recording what a signature is may not move who

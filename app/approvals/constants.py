@@ -174,7 +174,9 @@ def step_action(origin, is_top_of_value_ladder):
 #     ladder in §4.2 is a joint PD + CFO approval with SC-D reviewing — both are
 #     mandatory there by name, not by amount);
 #   * only when the signals point ONE way. A request carrying a maintenance
-#     signal AND a materials signal is genuinely both, and keeps both signers;
+#     signal AND a supply signal is genuinely both, and keeps both signers;
+#   * only on MASTER DATA the requester does not type: the source module, a
+#     stocked-spare line, the department. Item text is NOT a signal here;
 #   * a department that has explicitly configured the dropped stage in its own
 #     responsibility matrix keeps it — the department said so on purpose.
 #
@@ -191,22 +193,26 @@ PD_SOURCE_MODULES = {"maintenance"}      # ticket-raised or spare auto-reorder
 SCD_SOURCE_MODULES = {"costing"}         # order material buy raised from costing
 
 
-def l2_domain(department, source_module, has_spare_line, texts):
+def l2_domain(department, source_module, has_spare_line):
     """Which L2 director owns this commitment: "plant", "supply_chain", or None.
 
     None means "cannot be told apart" — the caller must then keep BOTH, which is
     exactly today's behaviour. Never guesses.
 
-    `texts` is every catalogue-category / item string on the request; the direct
-    materials list Table 12 already drives (cost_object_required) is reused as
-    the materials signal, because a fabric/yarn/trims buy IS the inventory
-    replenishment SC-D owns.
+    Item TEXT is deliberately not a signal. The obvious candidate was the direct
+    materials list Table 12 drives (cost_object_required), on the reasoning that
+    a fabric/yarn/trims buy is the replenishment SC-D owns. It is a keyword
+    heuristic over free text the requester types, and it fires on any material
+    word — so Production, Cutting, Sewing or Finishing buying fabric, the
+    commonest purchase in the plant, scored supply-only and DROPPED the Plant
+    Director on wording. That heuristic is fine deciding "does this need a cost
+    object", where being wrong asks for more data; it must not decide "does this
+    director sign", where being wrong removes a signature.
     """
     dept = str(department or "").strip().lower()
     src = str(source_module or "").strip().lower()
     plant = src in PD_SOURCE_MODULES or bool(has_spare_line) or dept in PD_DEPARTMENTS
-    supply = src in SCD_SOURCE_MODULES or dept in SCD_DEPARTMENTS \
-        or cost_object_required(texts or ()) == "sales_order"
+    supply = src in SCD_SOURCE_MODULES or dept in SCD_DEPARTMENTS
     if plant == supply:
         return None                      # both signals, or neither -> both sign
     return "plant" if plant else "supply_chain"
