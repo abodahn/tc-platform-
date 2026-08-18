@@ -550,8 +550,15 @@ def pg_db_region():
     url = _RESOLVED_PG_URL or ""
     host = urlsplit(url).hostname or ""
     if host.endswith("-postgres.render.com"):
-        tail = host.split(".")[-4] if host.count(".") >= 3 else ""
-        return tail.replace("-postgres", "") or None
+        # dpg-<id>-a . <region>-postgres . render . com  ->  the region is [-3].
+        # [-4] was the DATABASE ID, and this is a public endpoint: the first
+        # deploy of this helper published the host identifier. Guarded below so
+        # a parsing slip can never republish it.
+        parts = host.split(".")
+        region = parts[-3].replace("-postgres", "") if len(parts) >= 3 else ""
+        if not region or region.startswith("dpg-"):
+            return None
+        return region
     return None
 
 
