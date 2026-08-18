@@ -301,6 +301,10 @@ _STEP_MIGRATIONS = [
     # esc_from = the role(s) it was escalated FROM. Both NULL = a normal rung.
     ("esc_role", "ALTER TABLE pr_steps ADD COLUMN esc_role TEXT"),
     ("esc_from", "ALTER TABLE pr_steps ADD COLUMN esc_from TEXT"),
+    # WHY this rung exists. Without it the post-pricing reconcile cannot tell a
+    # value-derived rung from a control rung, so re-saving pricing deleted the
+    # §4.3 single-source and §4.4 deviation escalations with no trace.
+    ("origin", "ALTER TABLE pr_steps ADD COLUMN origin TEXT DEFAULT 'ladder'"),
 ]
 
 # Columns added to pr_requests after first release (tax + goods receipt + PO email

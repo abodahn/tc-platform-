@@ -70,8 +70,15 @@ def run():
         conn.close()
         assert short_capex == capex, \
             "a department matrix overrode the capital ladder: %s" % short_capex
-        assert short_opex == ["warehouse"], \
-            "the department matrix should still govern OPEX: %s" % short_opex
+        # This read `== ["warehouse"]`, encoding the OLD behaviour where a
+        # department matrix REPLACED the ladder outright. That was the hole the
+        # compliance audit found: one row cut a department to a single signature
+        # and skipped the pricing, RFQ and engineering gates with it. The matrix
+        # is now a floor a department may add to, never cut below.
+        for stage in C.build_ladder(300000, "opex"):
+            assert stage in short_opex, \
+                "the department matrix dropped %s from the OPEX ladder: %s" % (
+                    stage, short_opex)
 
         print("CAPEX  300k ->", " -> ".join(capex))
         print("OPEX   300k ->", " -> ".join(opex))

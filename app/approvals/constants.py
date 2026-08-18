@@ -387,7 +387,12 @@ SLA_WARN_HOURS = 24            # amber "due soon" threshold
 # proc_admin permission) bypass both rules so a small team can still walk a
 # request through the whole ladder. Set to False later for strict mode, where
 # admins are subject to SoD exactly like everyone else.
-SOD_ADMIN_EXEMPT = True
+# Ships OFF. On, one platform admin could sign two different rungs of the same
+# request — verified end to end: a single account carried a 300k CAPEX request
+# through purchasing, PD, SCD, FIND, CFO, MD and the Board. A site that really
+# is one or two people can switch it on deliberately; it must not be the
+# default, because the default is what an auditor finds in production.
+SOD_ADMIN_EXEMPT = False
 
 
 # --- SoD escalation chain (one level up the org chart) ----------------------

@@ -951,6 +951,49 @@ def pr_amounts(pr):
             "grand": round(subtotal + tax, 2)}
 
 
+def egp_commitment(pr):
+    """EGP-equivalent TOTAL COMMITTED VALUE — tax included.
+
+    DOAM §3.4: "All limits ... represent the total value of a commitment." The
+    purchase order the company signs is gross (pdf.py prints Grand Total =
+    subtotal + VAT), so routing on the ex-VAT subtotal left a live gap under
+    EVERY threshold: at 14% VAT a net 9,900 order commits 11,286 but routed in
+    the "up to 10,000" tier. The same gap sat under 200,000, 500,000, 2,000,000
+    and 5,000,000 — and the tax rate is entered by Purchasing at the very gate
+    that sets the price, so it was the buyer's to exploit.
+
+    egp_total() (net) is deliberately kept for everything that reports or
+    reconciles a subtotal; only APPROVAL ROUTING moves to this one.
+    """
+    if pr is None:
+        return 0.0
+    def _g(key):
+        try:
+            return pr.get(key) if isinstance(pr, dict) else pr[key]
+        except (KeyError, IndexError):
+            return None
+    # Built from _g, not pr_amounts(pr): a row selected before this change
+    # exists without a tax_rate column, and routing must degrade to the net
+    # figure rather than raise on the way to deciding who signs.
+    try:
+        subtotal = float(_g("total") or 0)
+    except (TypeError, ValueError):
+        subtotal = 0.0
+    try:
+        rate_pct = float(_g("tax_rate") or 0)
+    except (TypeError, ValueError):
+        rate_pct = 0.0
+    grand = round(subtotal + subtotal * rate_pct / 100.0, 2)
+    cur = str(_g("currency") or "EGP").strip().upper()
+    if cur == "EGP":
+        return round(grand, 2)
+    try:
+        rate = float(_g("fx_rate") or 1)
+    except (TypeError, ValueError):
+        rate = 1.0
+    return round(grand * (rate if rate > 0 else 1.0), 2)
+
+
 def submit_pr(pr_id, user, ip=None):
     """Build the approval ladder and move the PR into 'pending'. Idempotent-ish:
     only acts on draft/rejected PRs. Returns (ok, msg)."""
@@ -974,7 +1017,7 @@ def submit_pr(pr_id, user, ip=None):
         # DOAM §3.4 — route on the 30-day aggregate when related purchases exist,
         # so three 9,000 requests cannot each duck a 10,000 threshold. The
         # aggregate can only ever LENGTHEN the ladder (max of the two).
-        _own = egp_total(pr)
+        _own = egp_commitment(pr)          # DOAM §3.4: tax-inclusive
         _agg, _sibs = aggregated_total(conn, pr_id, pr, _own)
         _route_on = max(_own, _agg)
         _stages = dept_ladder(conn, pr["department"], _route_on,
@@ -1123,7 +1166,7 @@ def aggregated_total(conn, pr_id, pr, own_egp=None):
 
     Returns (aggregate_egp, [siblings]) where each sibling is
     {"pr_no", "id", "egp"}. The PR's own value is included in the aggregate."""
-    own = egp_total(pr) if own_egp is None else own_egp
+    own = egp_commitment(pr) if own_egp is None else own_egp
     mine = _item_keys(conn.execute(
         "SELECT item, item_id, spare_id FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall())
     if not mine:
@@ -1131,7 +1174,7 @@ def aggregated_total(conn, pr_id, pr, own_egp=None):
     since = (datetime.now(timezone.utc)
              - timedelta(days=C.AGGREGATION_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     rows = conn.execute(
-        "SELECT id, pr_no, total, currency, fx_rate FROM pr_requests "
+        "SELECT id, pr_no, total, currency, fx_rate, tax_rate FROM pr_requests "
         "WHERE department=? AND id<>? AND created_at>=? "
         "AND COALESCE(expenditure_kind,'opex')=? "
         "AND status NOT IN ('draft','cancelled','rejected')",
@@ -1150,7 +1193,7 @@ def aggregated_total(conn, pr_id, pr, own_egp=None):
         pid = ln["pr_id"]
         if pid in related or not (_item_keys([ln]) & mine):
             continue
-        related[pid] = egp_total(by_id[pid])
+        related[pid] = egp_commitment(by_id[pid])
     total = round(own + sum(related.values()), 2)
     sibs = [{"id": pid, "pr_no": by_id[pid]["pr_no"], "egp": amt}
             for pid, amt in related.items()]
@@ -1164,8 +1207,8 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     qualify. Never touches steps that are approved, rejected, or currently active,
     so an in-flight approval is never disturbed."""
     row = conn.execute(
-        "SELECT current_seq, currency, fx_rate, requester, pr_no, expenditure_kind "
-        "FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        "SELECT id, current_seq, currency, fx_rate, requester, pr_no, department, "
+        "expenditure_kind, tax_rate FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
     cur_seq = (row["current_seq"] or 0) if row else 0
     # Read the OPEX/CAPEX flag here rather than making both callers pass it —
     # it lives on the row we are already fetching.
@@ -1175,14 +1218,28 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     # making each caller convert) keeps the call sites unchanged — price_pr and
     # set_fx pass the raw total, and any currency/fx_rate they just UPDATEd in
     # this same transaction is already visible to this SELECT.
-    total_egp = egp_total({"total": total,
-                           "currency": row["currency"] if row else "EGP",
-                           "fx_rate": row["fx_rate"] if row else 1})
-    # Reuse the tested department-aware ladder, keep only the value stages.
-    target = [s for s in dept_ladder(conn, department, total_egp, kind)
+    total_egp = egp_commitment({"total": total,
+                                "tax_rate": row["tax_rate"] if row else 0,
+                                "currency": row["currency"] if row else "EGP",
+                                "fx_rate": row["fx_rate"] if row else 1})
+    # DOAM §3.4, and this is where it actually bites: every request the UI
+    # creates is submitted at zero (the requester price lockout), so the
+    # aggregate computed at submit carried nothing. Pricing is the first moment
+    # a real value exists, so the 30-day aggregate must be recomputed HERE or
+    # the anti-split control never fires on a real request.
+    _agg, _sibs = aggregated_total(conn, pr_id, row, total_egp)
+    _route_on = max(total_egp, _agg)
+    if _sibs and _agg > total_egp:
+        conn.execute("UPDATE pr_requests SET agg_total=? WHERE id=?", (_agg, pr_id))
+        audit(conn, pr_id, "system", "aggregated",
+              f"DOAM §3.4: repriced and routed on the {C.AGGREGATION_WINDOW_DAYS}-day "
+              f"aggregate of {_agg:,.2f} EGP (this request {total_egp:,.2f}) — related: "
+              + ", ".join(x["pr_no"] or ("#%s" % x["id"]) for x in _sibs) + ".")
+    target = [s for s in dept_ladder(conn, department, _route_on, kind)
               if s in VALUE_STAGES]
     existing = conn.execute(
-        "SELECT id, seq, stage, status, esc_role, approver_user FROM pr_steps "
+        "SELECT id, seq, stage, status, esc_role, approver_user, "
+        "COALESCE(origin,'ladder') AS origin FROM pr_steps "
         "WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()
     have = {r["stage"] for r in existing}
     max_seq = max([r["seq"] for r in existing] or [0])
@@ -1191,7 +1248,16 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     for r in existing:
         if r["stage"] in VALUE_STAGES and r["stage"] not in target \
            and r["status"] == "pending" and r["seq"] > cur_seq:
+            # A rung placed by a CONTROL (§4.3 single source, §4.4 deviation)
+            # is not a value rung and must survive a re-price. Without this,
+            # anyone able to price a request could strip its escalations by
+            # saving the same price again, and nothing was written down.
+            if r["origin"] != "ladder":
+                continue
             conn.execute("DELETE FROM pr_steps WHERE id=?", (r["id"],))
+            audit(conn, pr_id, "system", "ladder_rung_removed",
+                  f"{stage_label(r['stage'])} dropped: the repriced value "
+                  f"{_route_on:,.2f} EGP no longer requires it.")
     # 2) append any newly-required value rungs (in ladder order) after the last seq
     #    — with the same SoD escalation the submit-time ladder gets, because a
     #    value rung that only the requester could sign would deadlock identically.
@@ -1221,9 +1287,9 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                                                _holders=_holders, _busy=_busy)
             conn.execute(
                 "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, "
-                "created_at, esc_role, esc_from) VALUES (?,?,?,?,?,?,?,?)",
+                "created_at, esc_role, esc_from, origin) VALUES (?,?,?,?,?,?,?,?,?)",
                 (pr_id, nxt, s, "pending", stage_label(s), now,
-                 "" if why == "no_superior" else e_role, e_from))
+                 "" if why == "no_superior" else e_role, e_from, "ladder"))
             if why == "escalated":
                 audit(conn, pr_id, "system", "escalated_stage",
                       f"{stage_label(s)}: signing escalated from {e_from or '—'} to "
@@ -1429,9 +1495,15 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         # handful of admin signatures — same result, one fewer query for everyone.
         role = user.get("role")
         _is_admin = role == "super_admin" or has_permission(role, "proc_admin")
+        # DOAM §3.4: "No person may approve a transaction that also names that
+        # person as requestor or beneficiary." That one is absolute — it is the
+        # single control standing between one account and a self-authorised
+        # purchase, so NO setting and no admin role waives it. Only the
+        # dual-role rule below stays waivable, because a genuinely small team
+        # can have one person legitimately holding two ladder roles.
+        if pr["requester"] == uname:
+            return False, "self_approval"
         if not (_is_admin and bool_setting(conn, "sod_admin_exempt")):
-            if pr["requester"] == uname:
-                return False, "self_approval"
             other = conn.execute(
                 "SELECT 1 FROM pr_steps WHERE pr_id=? AND id!=? AND approver_user=? "
                 "AND status IN ('approved','rejected') LIMIT 1",
@@ -1999,12 +2071,20 @@ def deviation_findings(conn, pr_id):
     spares = {}
     sids = [r["spare_id"] for r in rows if r["spare_id"]]
     if sids:
+        # mnt_spare_parts, not "mnt_spares", and the cost column is avg_cost.
+        # The wrong names inside a bare `except Exception: spares = {}` meant the
+        # quantity-over-ceiling half of §4.4 silently never ran — no error, no
+        # log, just a control that always found nothing. The except is narrowed
+        # so a genuinely absent maintenance module still degrades to price-only
+        # grading, but a query mistake is logged instead of swallowed.
         try:
             spares = {r["id"]: r for r in conn.execute(
-                "SELECT id, stock_qty, max_level, unit_cost FROM mnt_spares "
+                "SELECT id, stock_qty, max_level, avg_cost FROM mnt_spare_parts "
                 "WHERE id IN (%s)" % ",".join("?" * len(sids)), tuple(sids)).fetchall()}
-        except Exception:
-            spares = {}          # maintenance module absent -> price grading only
+        except Exception as exc:
+            spares = {}
+            logging.getLogger(__name__).warning(
+                "DOAM 4.4: spare-part ceilings unavailable, grading on price only (%s)", exc)
 
     lines, stages, memo, quotes, blind = [], [], False, False, 0
     for r in rows:
@@ -2013,8 +2093,8 @@ def deviation_findings(conn, pr_id):
         target = None
         if c is not None and c["has_cost"]:
             target = float(c["cost_price"] or 0)
-        elif s is not None and (s["unit_cost"] or 0) > 0:
-            target = float(s["unit_cost"])
+        elif s is not None and (s["avg_cost"] or 0) > 0:
+            target = float(s["avg_cost"])
         ceiling = float(s["max_level"]) if s is not None and (s["max_level"] or 0) > 0 else None
         over_ceiling = bool(
             ceiling is not None
@@ -2061,9 +2141,9 @@ def apply_deviation_stages(conn, pr_id, pr):
         e_role, e_from, why = _esc_columns(conn, st, pr["requester"], _roles, _chain)
         conn.execute(
             "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at, "
-            "esc_role, esc_from) VALUES (?,?,?,?,?,?,?,?)",
+            "esc_role, esc_from, origin) VALUES (?,?,?,?,?,?,?,?,?)",
             (pr_id, seq, st, "pending", stage_label(st), _now(),
-             "" if why == "no_superior" else e_role, e_from))
+             "" if why == "no_superior" else e_role, e_from, "deviation"))
         added.append(st)
     if added:
         grades = ", ".join(sorted({l["grade"] for l in dev["lines"]
@@ -2088,8 +2168,12 @@ def vendor_approved(conn, name):
 def advance_required_authority(pr, pct):
     """The DOAM §4.3 rule for this request: which stages may authorise an advance
     of `pct`, and whether a bank guarantee is required. Split out so the gate,
-    the authorising call and the UI all read the SAME rule."""
-    return C.advance_rule(pr_amounts(pr)["grand"], pct)
+    the authorising call and the UI all read the SAME rule.
+
+    The 500,000 guarantee threshold is an EGP figure, so the PO value must be
+    converted first. Passing the raw PR total let a USD 20,000 order (about
+    1,000,000 EGP) read as 20,000 and walk past the guarantee rule entirely."""
+    return C.advance_rule(egp_commitment(pr), pct)
 
 
 def authorize_advance(pr_id, pct, guarantee_ref, user, ip=None):
@@ -2146,6 +2230,8 @@ def advance_gate_check(conn, pr, amount):
     already = float(_pr_field(pr, "paid_amount") or 0)
     if float(invoiced or 0) >= already + amount - 0.01:
         return True, ""                  # covered by invoices — not an advance
+    # The PERCENTAGE is currency-agnostic (paid / total, same units), so it uses
+    # the PR's own grand total; the RULE below needs EGP for its 500,000 test.
     grand = pr_amounts(pr)["grand"]
     pct = ((already + amount) / grand * 100.0) if grand > 0 else 100.0
     if not vendor_approved(conn, _pr_field(pr, "vendor")):
@@ -2155,7 +2241,7 @@ def advance_gate_check(conn, pr, amount):
         return False, "advance_not_authorised"
     if pct > authorised + 0.01:
         return False, "advance_exceeds_authorised"
-    rule = C.advance_rule(grand, pct)
+    rule = C.advance_rule(egp_commitment(pr), pct)
     if rule["guarantee"] and not str(_pr_field(pr, "bank_guarantee_ref") or "").strip():
         return False, "advance_guarantee_required"
     return True, ""
@@ -2564,7 +2650,7 @@ def rfq_gate_check(conn, pr):
     # not the raw foreign figure — a 60,000 TRY (~3,000 EGP) order must not
     # trigger the competitive-quote rule meant for 25,000+ EGP purchases.
     try:
-        total = float(egp_total(pr))
+        total = float(egp_commitment(pr))
     except (TypeError, ValueError):
         total = 0.0
     # DOAM §4.3 bands when the matrix is in force: 1 quote up to 50,000, three to
@@ -2647,9 +2733,9 @@ def _append_single_source_rung(conn, pr_id, pr):
                                        escalation_map(conn))
     conn.execute(
         "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at, "
-        "esc_role, esc_from) VALUES (?,?,?,?,?,?,?,?)",
+        "esc_role, esc_from, origin) VALUES (?,?,?,?,?,?,?,?,?)",
         (pr_id, seq, extra, "pending", stage_label(extra), _now(),
-         "" if why == "no_superior" else e_role, e_from))
+         "" if why == "no_superior" else e_role, e_from, "single_source"))
     audit(conn, pr_id, "system", "single_source_escalation",
           f"Competition waived — DOAM §4.3 adds {stage_label(extra)} as the "
           f"approval one level above the value tier.")

@@ -1016,7 +1016,13 @@ def submit(pr_id):
 @login_required
 @permission_required("proc_purchasing")
 def issue_po(pr_id):
-    ok, res = svc.issue_po(pr_id, _u(), ip=_ip(), force=user_can("proc_admin"))
+    # An override must be ASKED FOR, not inherited from a role. Passing
+    # force=user_can("proc_admin") meant the three-way match, the payment cap,
+    # the budget check and the DOAM §4.3 advance authorisation were all silently
+    # off for every admin on every request — a bypass nobody chose and nobody
+    # could see. Now the caller has to tick "override" and the reason is audited.
+    _override = user_can("proc_admin") and request.form.get("override") == "1"
+    ok, res = svc.issue_po(pr_id, _u(), ip=_ip(), force=_override)
     flash(f"Purchase Order {res} issued." if ok else
           {"over_budget": "The department budget for this period is exceeded — "
                           "an administrator must issue this PO (or raise the budget).",
@@ -1157,7 +1163,7 @@ def add_payment(pr_id):
         "amount": f.get("amount"), "method": f.get("method", "").strip(),
         "reference": f.get("reference", "").strip(), "paid_at": f.get("paid_at", "").strip(),
         "invoice_id": f.get("invoice_id"), "notes": f.get("notes", "").strip(),
-    }, _u(), ip=_ip(), force=user_can("proc_admin"))
+    }, _u(), ip=_ip(), force=(user_can("proc_admin") and f.get("override") == "1"))
     flash(f"Payment recorded ({res})." if ok else
           {"not_payable": "Payments start once the Purchase Order is issued.",
            "match_blocked": "Payment blocked: the 3-way match shows over-billing "
