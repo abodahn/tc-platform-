@@ -12,7 +12,7 @@ from flask import Blueprint, jsonify, request, current_app
 from werkzeug.security import check_password_hash
 
 from config import Config
-from app.db import get_db, pg_host_kind
+from app.db import get_db, pg_host_kind, pg_internal_failure, pg_db_region
 from app.auth import login_required
 from app.security import has_permission
 from app.services import health as health_svc
@@ -86,6 +86,11 @@ def health():
         # like success until this was reported. Category only, never the
         # hostname: this endpoint is public.
         "db_host": pg_host_kind() if deep else None,
+        # Why the private host was refused ("dns" = the web service and the
+        # database are in different regions), and the database's own region
+        # to compare against the service's. Categories only.
+        "db_internal_fail": pg_internal_failure() if deep else None,
+        "db_region": pg_db_region() if deep else None,
         "python": sys.version.split()[0],
         "env": Config.ENV,
     })
