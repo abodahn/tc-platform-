@@ -162,6 +162,35 @@ class _PGCursor:
     def __iter__(self):
         return (self._wrap(r) for r in self._raw)
 
+    @property
+    def rowcount(self):
+        """How many rows the last statement touched.
+
+        sqlite3 cursors carry this, psycopg2 cursors carry this, and this shim
+        carried neither — so four call sites worked in every test and every
+        SQLite environment and raised AttributeError the moment they ran on
+        PostgreSQL. It took the production schema bootstrap down: the seed could
+        not report how many rows it filled, the exception was recorded as
+        bootstrap_error, and schema_ready stayed false with every data page
+        serving "database unavailable".
+
+        Returns -1 when the driver cannot say, which is psycopg2's own
+        convention, so `(cur.rowcount or 0) > 0` reads false rather than
+        exploding."""
+        try:
+            n = self._raw.rowcount
+        except AttributeError:
+            return -1
+        return -1 if n is None else n
+
+    def __getattr__(self, name):
+        """Anything else this shim does not wrap goes straight to the driver.
+
+        The rowcount outage was one missing attribute away from being three more
+        (description, arraysize, statusmessage). Delegating means the next one
+        does not have to be found in production."""
+        return getattr(self._raw, name)
+
 
 def _pg_session_guards(raw):
     """Stop a statement from waiting on a lock forever.
