@@ -18,28 +18,36 @@
   </div>
 </div>
 
+{# Each card is a link to the records it counts, because a number a manager
+   cannot open is a dead end. "Waiting on me" goes to My Work, NOT to
+   ?mine=1 — that filter means "requests I raised", which is a different set of
+   records and would quietly answer the wrong question. #}
 <div class="grid cols-4">
-  <div class="kpi info">
-    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-kanban"></use></svg></div></div>
+  <a class="kpi info kpi-link" href="{{ url_for('approvals.listing', status='pending') }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-kanban"></use></svg></div>
+      <svg class="ico kpi-go" aria-hidden="true"><use href="#i-external"></use></svg></div>
     <div class="kval">{{ kpi.pending }}</div>
     <div class="klabel" data-i18n="proc.k_pending">Pending approval</div>
-  </div>
-  <div class="kpi{{ ' warn' if kpi.my_queue else '' }}">
+  </a>
+  <a class="kpi kpi-link{{ ' warn' if kpi.my_queue else '' }}" href="{{ url_for('main.my_work') }}">
     <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-check"></use></svg></div>
-      {% if kpi.my_queue %}<span class="ktrend b-warning">{{ kpi.my_queue }}</span>{% endif %}</div>
+      {% if kpi.my_queue %}<span class="ktrend b-warning">{{ kpi.my_queue }}</span>{% endif %}
+      <svg class="ico kpi-go" aria-hidden="true"><use href="#i-external"></use></svg></div>
     <div class="kval">{{ kpi.my_queue }}</div>
     <div class="klabel" data-i18n="proc.k_myqueue">Waiting on me</div>
-  </div>
-  <div class="kpi good">
-    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-check"></use></svg></div></div>
+  </a>
+  <a class="kpi good kpi-link" href="{{ url_for('approvals.listing', status='approved') }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-check"></use></svg></div>
+      <svg class="ico kpi-go" aria-hidden="true"><use href="#i-external"></use></svg></div>
     <div class="kval">{{ kpi.approved }}</div>
     <div class="klabel" data-i18n="proc.k_approved">Approved</div>
-  </div>
-  <div class="kpi">
-    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-wallet"></use></svg></div></div>
+  </a>
+  <a class="kpi kpi-link" href="{{ url_for('approvals.listing', status='pending') }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-wallet"></use></svg></div>
+      <svg class="ico kpi-go" aria-hidden="true"><use href="#i-external"></use></svg></div>
     <div class="kval">{{ '{:,.0f}'.format(kpi.value_pending or 0) }}</div>
     <div class="klabel" data-i18n="proc.k_value">Pending value (EGP)</div>
-  </div>
+  </a>
 </div>
 
 <div class="grid cols-2 mt-4" style="align-items:start">

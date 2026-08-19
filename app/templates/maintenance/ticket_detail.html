@@ -207,7 +207,7 @@
         {% elif t.status=='spare_required' and mcan('maint_technician') %}
           <form method="post" action="{{ url_for('maintenance.ticket_request_parts', tid=t.id) }}">
             <div class="field"><label data-i18n="m.part">Spare part</label>
-              <select name="spare_id" required>{% for s in spares %}<option value="{{ s.id }}">{{ s.code }} · {{ s.name }} ({{ s.stock_qty }} {{ s.uom }})</option>{% endfor %}</select></div>
+              <select name="spare_id" required data-src="/api/lookup/spares">{% for s in spares %}<option value="{{ s.id }}">{{ s.code }} · {{ s.name }} ({{ s.stock_qty }} {{ s.uom }})</option>{% endfor %}</select></div>
             <div class="grid cols-2">
               <div class="field"><label data-i18n="m.qty">Quantity</label><input name="qty" type="number" min="1" step="any" value="1" required></div>
               <div class="field"><label data-i18n="m.urgency">Urgency</label>

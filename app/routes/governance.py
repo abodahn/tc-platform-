@@ -13,7 +13,7 @@ Five views (tabs):
                  _view/_manage/_approve/_admin naming convention
   rules          procurement ladder + thresholds + escalation chain, SoD state,
                  maintenance ladder, and who holds each role right now
-  findings       the five governance findings the page raises by itself
+  findings       the governance findings the page raises by itself
 
 Permission gate: access_admin.
   Chosen over view_reports because view_reports is held by ~14 roles including
@@ -503,7 +503,28 @@ def findings():
                                 "role_label": role["label"] if role else u["role"],
                                 "beyond": beyond})
 
-    return {"unheld": unheld, "star_only": star_only, "empty_roles": empty_roles,
+    # 6 — approval rungs nobody can sign. A ladder stage whose roles have no
+    # active holder is a silent deadlock: the request routes there and waits for
+    # a signature only a platform admin can give, with no error anywhere.
+    # A control that cannot be evaluated must never render as a clean zero: the
+    # only reason this page exists is to be the place an admin finds the
+    # deadlock. Missing module -> the check does not apply; anything else (a
+    # pre-migration database with no proc_delegations, an aborted PG
+    # transaction) -> say so on the page.
+    try:
+        from app.approvals.services import ladder_signer_health
+    except ImportError:            # a build without the procurement module
+        unsignable, unsignable_error = [], ""
+    else:
+        try:
+            unsignable = [x for x in ladder_signer_health() if not x["ok"]]
+            unsignable_error = ""
+        except Exception as exc:
+            # trimmed: this renders on an admin page, not into a log
+            unsignable, unsignable_error = [], str(exc)[:300]
+
+    return {"unsignable": unsignable, "unsignable_error": unsignable_error,
+            "unheld": unheld, "star_only": star_only, "empty_roles": empty_roles,
             "single_roles": single_roles, "dead": dead, "open_routes": open_routes,
             "indirect_routes": indirect_routes, "escalations": escalations,
             "route_total": len(route_scan())}
@@ -586,6 +607,20 @@ def rules_view():
                               for r in roles})
 
 
+@bp.route("/forms")
+@login_required
+@permission_required("access_admin")
+def forms_view():
+    """DOAM Annex, Table 20 — the register of controlled forms, and where each
+    one lives in this system. An entry with no route is listed as not yet
+    produced here, which is the honest answer for an auditor."""
+    from app.approvals import constants as PC
+    rows = [{"code": c, "form": f, "purpose": p, "retention": r, "route": u}
+            for c, f, p, r, u in PC.CONTROLLED_FORMS]
+    return _tab("forms", forms=rows,
+                live=sum(1 for r in rows if r["route"]), total=len(rows))
+
+
 @bp.route("/findings")
 @login_required
 @permission_required("access_admin")
@@ -645,6 +680,14 @@ def export_dataset(key):
         f = findings()
         headers = ["finding", "subject", "detail"]
         rows = []
+        if f["unsignable_error"]:   # same rule as the page: never export a clean zero
+            rows.append(["approval rungs COULD NOT BE CHECKED", "ladder_signer_health",
+                         f["unsignable_error"]])
+        for x in f["unsignable"]:
+            rows.append(["approval rung no active user can sign", x["stage"],
+                         "roles: " + (", ".join(x["roles"]) or "none")
+                         + ("; not in any role registry: " + ", ".join(x["unregistered"])
+                            if x["unregistered"] else "")])
         for x in f["unheld"]:
             rows.append(["permission granted but held by no active user", x["perm"],
                          "granted by: " + ", ".join(x["roles"])])

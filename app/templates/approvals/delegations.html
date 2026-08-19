@@ -53,12 +53,12 @@
       <form method="post" action="{{ url_for('approvals.add_delegation') }}">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <div class="field"><label data-i18n="proc.deleg_from">From (whose authority)</label>
-          <select name="from_user" required>
+          <select name="from_user" required data-src="/api/lookup/users">
             <option value=""></option>
             {% for u in users %}<option value="{{ u.username }}">{{ u.full_name or u.username }} — {{ u.role }}</option>{% endfor %}
           </select></div>
         <div class="field"><label data-i18n="proc.deleg_to">To (who acts)</label>
-          <select name="to_user" required>
+          <select name="to_user" required data-src="/api/lookup/users">
             <option value=""></option>
             {% for u in users %}<option value="{{ u.username }}">{{ u.full_name or u.username }} — {{ u.role }}</option>{% endfor %}
           </select></div>

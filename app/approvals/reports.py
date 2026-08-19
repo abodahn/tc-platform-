@@ -14,14 +14,20 @@ Money notes, because a report with a quietly wrong number is worse than none:
     works in EGP and says so in its labels. It is deliberately gross where
     egp_total() is net — egp_total() exists to route the approval ladder on the
     order value, these reports exist to state what the money is.
-  * the 3-way-match tolerance is max(1, grand * 1%), the SAME rule as
-    services.three_way_match(). Exceptions are reported as AMOUNTS, not as
-    English words, so they need no translation and can be sorted and totalled.
+  * the 3-way-match tolerances are the DOAM's, read from the SAME constants
+    services.three_way_match() reads: max(grand * MATCH_TOLERANCE_PCT,
+    MATCH_TOLERANCE_ABS) on value and MATCH_QTY_TOLERANCE_PCT on quantity. They
+    are interpolated into the SQL from constants.py rather than typed as
+    literals, because the previous literals (a flat 1% on value, no quantity
+    tolerance at all) made this report disagree with the control it reports on.
+    Exceptions are reported as AMOUNTS, not as English words, so they need no
+    translation and can be sorted and totalled.
   * "committed" is the SAME status set as services.budget_status(): approved and
     beyond. A request still in the approval ladder has committed nothing yet —
     proc_waiting is where the pipeline is reported.
 """
 from app.services import reporting as R
+from app.approvals import constants as C   # tolerance numbers only, no DB
 
 MODULE = "procurement"
 LABEL_EN, LABEL_AR, LABEL_TR = "Procurement", "المشتريات", "Satın Alma"
@@ -41,9 +47,14 @@ _FX = "(CASE WHEN COALESCE(p.fx_rate,1) > 0 THEN COALESCE(p.fx_rate,1) ELSE 1 EN
 _EGP = f"(CASE WHEN {_IS_EGP} THEN {_GRAND} ELSE {_GRAND} * {_FX} END)"
 _PAID_EGP = (f"(CASE WHEN {_IS_EGP} THEN COALESCE(p.paid_amount,0) "
              f"ELSE COALESCE(p.paid_amount,0) * {_FX} END)")
-# max(1, grand * 1%) — three_way_match's tolerance, expressed without a MAX()
-# aggregate (SQLite's MAX(a,b) scalar form does not exist on PostgreSQL).
-_TOL = f"(CASE WHEN {_GRAND}*0.01 > 1.0 THEN {_GRAND}*0.01 ELSE 1.0 END)"
+# three_way_match's VALUE tolerance, expressed without a MAX() aggregate
+# (SQLite's MAX(a,b) scalar form does not exist on PostgreSQL). The numbers come
+# from constants.py, so the report and the control can only ever say the same
+# thing: DOAM = max(2% of value, 500 EGP); pre-DOAM = max(1%, 1).
+_TOL_PCT = C.MATCH_TOLERANCE_PCT if C.DOAM_IN_FORCE else 1.0
+_TOL_ABS = C.MATCH_TOLERANCE_ABS if C.DOAM_IN_FORCE else 1.0
+_TOL = (f"(CASE WHEN {_GRAND}*{_TOL_PCT / 100.0!r} > {_TOL_ABS!r} "
+        f"THEN {_GRAND}*{_TOL_PCT / 100.0!r} ELSE {_TOL_ABS!r} END)")
 
 # Statuses that represent real money the company has committed to spend. EXACTLY
 # the set services.budget_status() gates a new request against — a request still
@@ -332,7 +343,23 @@ _OVER_RECEIVED = (f"CASE WHEN COALESCE(i.inv_net,0) > COALESCE(t.rcv_val,0) + {_
                   "THEN COALESCE(i.inv_net,0) - COALESCE(t.rcv_val,0) ELSE 0 END")
 _SHORT_QTY = ("CASE WHEN COALESCE(t.rcv_qty,0) < COALESCE(t.ord_qty,0) "
               "THEN COALESCE(t.ord_qty,0) - COALESCE(t.rcv_qty,0) ELSE 0 END")
-_OUTSTANDING = f"({_GRAND} - COALESCE(p.paid_amount,0))"
+# The column above states the WHOLE shortfall — that is the point of the column,
+# the DOAM wants a short delivery visible even when it is tolerable. Whether it
+# is an EXCEPTION is a different question, and it is answered PER LINE with the
+# same quantity tolerance three_way_match applies. Per line, because the summed
+# quantities above mix units: 1,000 metres of thread delivered in full hides two
+# machines that never arrived, and the KPI would report the order as clean.
+_QTY_FACTOR = 1.0 - (C.MATCH_QTY_TOLERANCE_PCT / 100.0 if C.DOAM_IN_FORCE else 0.0)
+_QTY_EXC = ("EXISTS (SELECT 1 FROM pr_items x WHERE x.pr_id = p.id AND "
+            f"COALESCE(x.received_qty,0) < COALESCE(x.qty,0) * {_QTY_FACTOR!r} - 1e-9)")
+# Goods returned to the supplier on receipt: an OPEN debit note is value this PO
+# will never be paid, because add_payment/three_way_match refuse to release it.
+# Without this join the report told finance a supplier was still owed exactly the
+# money the payment gate was holding back, on a row it also labelled 'paid'.
+_DN = ("LEFT JOIN (SELECT pr_id, SUM(COALESCE(total,0)) AS dn_open "
+       "FROM pr_returns WHERE status='open' GROUP BY pr_id) d ON d.pr_id = p.id")
+_DN_OPEN = "COALESCE(d.dn_open,0)"
+_OUTSTANDING = f"({_GRAND} - {_DN_OPEN} - COALESCE(p.paid_amount,0))"
 # Exposure only. An OVERPAID request has a negative outstanding, which is a real
 # fact in the column, but feeding it to a pareto produced a cumulative % that ran
 # past 100 and then came back down — an invented number. The chart sums what is
@@ -350,15 +377,26 @@ R.register(**_common(
     title="Receipts, invoices & payment exposure",
     title_ar="الاستلام والفواتير والمكشوف من السداد",
     title_tr="Mal kabul, fatura ve ödeme riski",
-    desc="Ordered vs received vs invoiced vs paid, for orders that reached PO "
-         "stage. Over-billed and short-delivered are shown as amounts, using "
-         "the same 1% (min 1) tolerance as the 3-way match on the PR page.",
-    desc_ar="المطلوب مقابل المستلم مقابل المفوتر مقابل المدفوع، للطلبات التي "
-            "وصلت لأمر الشراء. الزيادة في الفوترة والنقص في التوريد تظهر كمبالغ "
-            "بنفس سماحية ١٪ (بحد أدنى ١) المستخدمة في المطابقة الثلاثية.",
-    desc_tr="Sipariş / teslim / fatura / ödeme karşılaştırması, sipariş "
-            "aşamasına gelen talepler için. Fazla faturalama ve eksik teslimat "
-            "tutar olarak, 3'lü mutabakattaki %1 (en az 1) toleransıyla.",
+    desc=("Ordered vs received vs invoiced vs paid, for orders that reached PO "
+          "stage. Over-billed and short-delivered are shown as amounts, using "
+          "exactly the tolerances the 3-way match on the PR page applies: "
+          "%g%% of value or %g EGP, whichever is greater, and %g%% of quantity. "
+          "Outstanding is net of open debit notes (Debited back): that value is "
+          "held back by the payment gate, so counting it as owed "
+          "overstates exposure."
+          % (_TOL_PCT, _TOL_ABS, C.MATCH_QTY_TOLERANCE_PCT)),
+    desc_ar=("المطلوب مقابل المستلم مقابل المفوتر مقابل المدفوع، للطلبات التي "
+             "وصلت لأمر الشراء. الزيادة في الفوترة والنقص في التوريد تظهر كمبالغ "
+             "بنفس سماحية المطابقة الثلاثية: %g%% من القيمة أو %g جنيه أيهما "
+             "أكبر، و%g%% من الكمية. المتبقي للسداد بعد خصم الإشعارات المدينة "
+             "المفتوحة، لأن بوابة الدفع تحجز هذه القيمة." % (_TOL_PCT, _TOL_ABS,
+                                        C.MATCH_QTY_TOLERANCE_PCT)),
+    desc_tr=("Sipariş / teslim / fatura / ödeme karşılaştırması, sipariş "
+             "aşamasına gelen talepler için. Fazla faturalama ve eksik teslimat "
+             "tutar olarak, 3'lü mutabakatın uyguladığı toleranslarla: değerin "
+             "%%%g'i veya %g EGP (hangisi büyükse) ve miktarın %%%g'i. Bakiye, açık "
+             "borç dekontları düşülerek hesaplanır; o tutarı ödeme kapısı zaten tutar."
+             % (_TOL_PCT, _TOL_ABS, C.MATCH_QTY_TOLERANCE_PCT)),
     select=(
         "p.pr_no AS pr_no, p.vendor AS vendor, p.department AS department, "
         "p.status AS status, p.currency AS currency, "
@@ -366,13 +404,14 @@ R.register(**_common(
         "COALESCE(i.inv_gross,0) AS invoiced, "
         "COALESCE(t.rcv_val,0) AS received_value, "
         "COALESCE(p.paid_amount,0) AS paid, "
+        f"{_DN_OPEN} AS dn_open, "
         f"{_OUTSTANDING} AS outstanding, "
         f"{_OVER_BILLED} AS over_billed, "
         f"{_OVER_RECEIVED} AS over_received, "
         f"{_SHORT_QTY} AS short_qty, "
         "p.payment_status AS payment_status, p.due_date AS due_date"
     ),
-    frm=f"pr_requests p {_INV} {_ITM}",
+    frm=f"pr_requests p {_INV} {_ITM} {_DN}",
     base_where=["COALESCE(p.is_active,1) = 1",
                 "p.status IN ('po_issued','partially_received','received','closed')"],
     order="p.due_date ASC, p.id DESC",
@@ -391,6 +430,8 @@ R.register(**_common(
               total="SUM(COALESCE(i.inv_gross,0))"),
         R.col("paid", "Paid", "المدفوع", "Ödenen", "num",
               total="SUM(COALESCE(p.paid_amount,0))"),
+        R.col("dn_open", "Debited back", "إشعارات مدينة مفتوحة", "Borç dekontu",
+              "num", total=f"SUM({_DN_OPEN})"),
         R.col("outstanding", "Outstanding", "المتبقي للسداد", "Bakiye", "num",
               total=f"SUM({_OUTSTANDING})"),
         R.col("over_billed", "Over-billed", "زيادة فوترة", "Fazla fatura", "num",
@@ -421,7 +462,8 @@ R.register(**_common(
         R.kpi("exceptions", "Match exceptions", "استثناءات المطابقة",
               "Mutabakat istisnası",
               f"SUM(CASE WHEN {_HAS_INVOICE} AND ({_OVER_BILLED} > 0 "
-              f"OR {_OVER_RECEIVED} > 0 OR {_SHORT_QTY} > 0) THEN 1 ELSE 0 END)",
+              f"OR {_OVER_RECEIVED} > 0 OR {_QTY_EXC}) "
+              f"THEN 1 ELSE 0 END)",
               better="down"),
     ],
     chart=R.chart("pareto", "p.vendor", f"SUM({_EXPOSURE})", "p.vendor",
@@ -510,4 +552,90 @@ R.register(**_common(
     chart=R.chart("bar", "MAX(i.item)", "COUNT(*)", _OFF_KEY,
                   "Most-typed off-catalogue items", "أكثر الأصناف كتابةً خارج الكتالوج",
                   "En çok yazılan katalog dışı kalemler"),
+))
+
+
+# ---------------------------------------------------------------------------
+# N. Records retention — what may be disposed of, and what may NOT
+# ---------------------------------------------------------------------------
+# Audit 3.4-b9b: retention existed only as the words "5 yrs" / "10 yrs" on the
+# controlled-forms page. Every request now carries retention_until, and this is
+# the REPORT a records officer works from — deliberately a report and not a job.
+# Nothing here deletes anything: it lists what has passed its date so a human can
+# retire records one at a time (services.dispose_pr, which refuses anything still
+# inside its window). An unattended purge of financial records is a much larger
+# risk than keeping them too long.
+_RET_DUE = ("(CASE WHEN COALESCE(NULLIF(TRIM(p.retention_until),''),'9999-12-31') "
+            "<= date('now') THEN '1' ELSE '0' END)")
+
+R.register(**_common(
+    key="proc_retention",
+    title="Records retention & disposal",
+    title_ar="حفظ السجلات والتخلص منها",
+    title_tr="Kayıt saklama ve imha",
+    desc="Every live purchase record with the date it may FIRST be disposed of "
+         "— 10 years for capital expenditure, 5 for everything else, counted "
+         "from the day it was raised. 'Disposal due' = Yes means the retention "
+         "period has passed and a records officer may retire the record; "
+         "nothing is ever removed automatically.",
+    desc_ar="كل سجل شراء قائم مع تاريخ أول موعد يجوز فيه التخلص منه — 10 سنوات "
+            "للنفقات الرأسمالية و5 سنوات لما عداها، محسوبة من تاريخ إنشائه. "
+            "«حان التخلص = نعم» تعني انتهاء مدة الحفظ وجواز إحالة السجل للتخلص "
+            "بقرار موظف السجلات؛ ولا يُحذف أي سجل تلقائياً.",
+    desc_tr="Her canlı satın alma kaydı ve ilk imha edilebileceği tarih — "
+            "yatırım harcamaları için 10 yıl, diğerleri için 5 yıl, kaydın "
+            "açıldığı günden sayılır. 'İmha zamanı = Evet' saklama süresinin "
+            "dolduğunu ve kayıt sorumlusunun kaydı emekliye ayırabileceğini "
+            "gösterir; hiçbir kayıt otomatik silinmez.",
+    select=(
+        "p.pr_no AS pr_no, p.title AS title, p.department AS department, "
+        "p.status AS status, COALESCE(NULLIF(TRIM(p.expenditure_kind),''),'opex') AS kind, "
+        f"{_EGP} AS egp, COALESCE(p.request_date, p.created_at) AS raised, "
+        "p.retention_until AS retention_until, "
+        f"{_RET_DUE} AS due"
+    ),
+    frm="pr_requests p",
+    base_where=["COALESCE(p.is_active,1) = 1"],
+    order="COALESCE(p.retention_until,'9999-12-31') ASC, p.id ASC",
+    date_col="p.created_at",
+    columns=[
+        R.col("pr_no", "PR No", "رقم الطلب", "Talep No"),
+        R.col("title", "Title", "العنوان", "Başlık"),
+        R.col("department", "Department", "الإدارة", "Departman"),
+        R.col("status", "Status", "الحالة", "Durum"),
+        R.col("kind", "Expenditure", "نوع الإنفاق", "Harcama türü"),
+        R.col("egp", "Value (EGP)", "القيمة (ج.م)", "Değer (EGP)", "num",
+              total=f"SUM({_EGP})"),
+        R.col("raised", "Raised", "تاريخ الإنشاء", "Açılış", "date"),
+        R.col("retention_until", "Keep until", "يُحفظ حتى", "Saklama sonu", "date"),
+        R.col("due", "Disposal due", "حان التخلص", "İmha zamanı"),
+    ],
+    filters=[
+        R.filt("due", "Disposal due", "حان التخلص", "İmha zamanı", _RET_DUE,
+               "select", "=", [("1", "Yes", "نعم", "Evet"),
+                               ("0", "No", "لا", "Hayır")]),
+        R.filt("kind", "Expenditure", "نوع الإنفاق", "Harcama türü",
+               "COALESCE(NULLIF(TRIM(p.expenditure_kind),''),'opex')", "select", "=",
+               [("opex", "Operating", "تشغيلي", "İşletme"),
+                ("capex", "Capital", "رأسمالي", "Yatırım")]),
+        R.filt("department", "Department", "الإدارة", "Departman", "p.department"),
+        R.filt("status", "Status", "الحالة", "Durum", "p.status", "select", "=",
+               _STATUS_OPTS),
+    ],
+    kpis=[
+        R.kpi("n", "Records held", "سجلات محفوظة", "Saklanan kayıt", "COUNT(*)"),
+        R.kpi("due", "Disposal due", "حان التخلص عنها", "İmha zamanı gelen",
+              f"SUM(CASE WHEN {_RET_DUE} = '1' THEN 1 ELSE 0 END)", better="none"),
+        R.kpi("capex", "Capital (10-year)", "رأسمالي (10 سنوات)",
+              "Yatırım (10 yıl)",
+              "SUM(CASE WHEN LOWER(TRIM(COALESCE(p.expenditure_kind,'opex'))) = 'capex' "
+              "THEN 1 ELSE 0 END)", better="none"),
+        R.kpi("unstamped", "No retention date", "بلا تاريخ حفظ", "Saklama tarihi yok",
+              "SUM(CASE WHEN TRIM(COALESCE(p.retention_until,'')) = '' THEN 1 ELSE 0 END)",
+              better="down"),
+    ],
+    chart=R.chart("bar", "substr(COALESCE(p.retention_until,'—'),1,4)", "COUNT(*)",
+                  "substr(COALESCE(p.retention_until,'—'),1,4)",
+                  "Records falling due by year", "السجلات المستحقة حسب السنة",
+                  "Yıla göre süresi dolan kayıtlar"),
 ))

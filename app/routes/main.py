@@ -121,12 +121,12 @@ def inject_globals():
                      and (scope is None or it[0] in scope)]
             if items:
                 visible_nav.append({"section": section["section"], "items": items})
-        # Admins additionally see the not-yet-built modules under "In Progress".
-        if is_admin and not scope:
-            wip = [it for section in NAV for it in section["items"]
-                   if user_has_permission(user, it[4]) and it[0] in WIP_KEYS]
-            if wip:
-                visible_nav.append({"section": "nav.in_progress", "items": wip})
+        # Placeholder modules are hidden from the sidebar for EVERYONE now,
+        # admins included. Six "coming soon" rows sitting among working modules
+        # was a real part of why this menu felt confusing, and an admin does not
+        # need a menu entry to reach an unbuilt page: they stay in the App
+        # Launcher, which lists the `systems` table rather than NAV.
+        del is_admin
     return {
         "cu": user,
         "cu_role_label": role_label(user["role"]) if user else "",
@@ -1121,4 +1121,5 @@ def my_work():
     total_actions = (len(data["sign_queue"]) + len(data["maint_approvals"])
                      + len(data["prob_pending"]) + len(data["late_milestones"])
                      + len(data["cmp_caps"]) + len(data["cmp_expiring"]))
-    return render_template("my_work.html", user=user, total_actions=total_actions, **data)
+    return render_template("my_work.html", user=user, total_actions=total_actions,
+                           active="my_work", **data)

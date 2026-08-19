@@ -1,9 +1,12 @@
 """End-to-end tests for the Procurement & Approvals cycle, on an isolated temp
 DB so the real platform.db is never touched. The admin (super_admin) can act on
-any ladder stage, so a single admin session can walk the whole cycle."""
+any ladder stage, so one admin session can sign the whole ladder — but it cannot
+also RAISE the request it signs: DOAM §3.4 forbids approving a transaction that
+names you as requestor, and no role or setting waives that. Route-driven tests
+therefore raise as a requester and sign as the admin."""
 import pytest
 
-from _support import login_admin, get_csrf
+from _support import login_admin, login_as, get_csrf
 
 
 @pytest.fixture()
@@ -33,11 +36,25 @@ def _new_pr(c, total_unit=48000, qty=1, title="Repair battery"):
 
 def test_constants_ladder():
     from app.approvals import constants as C
-    assert C.build_ladder(5000) == ["warehouse", "factory_manager", "purchasing"]
-    # 48,000 -> 5 approvers (+requester = 6 signatures), matching the paper form
-    assert C.build_ladder(48000) == ["warehouse", "factory_manager", "purchasing",
-                                      "finance", "cfo"]
-    assert "ceo" in C.build_ladder(200000)
+    # DOAM §4.1 tier 1 (up to 10,000 EGP): the Procurement Manager carries it.
+    # The Plant Director became a value-gated L2 approver from tier 2 upward.
+    assert C.build_ladder(5000) == ["warehouse", "purchasing"]
+    # DOAM §4.1 tier 2 (10,001–200,000): approval sits with the Plant / Supply
+    # Chain Director. Finance and the CFO are NOT involved at this value — the
+    # single most consequential difference from the paper form this replaced,
+    # which collected five approvers here including both of them.
+    assert C.build_ladder(48000) == ["warehouse", "purchasing",
+                                     "factory_manager", "scd"]
+    # Each tier boundary, from both sides — the band edge is where money goes to
+    # the wrong signature silently.
+    assert C.build_ladder(200_000)[-1] == "scd"          # tier 2 top
+    assert C.build_ladder(200_000.01)[-1] == "finance"   # tier 3, Financial Director
+    assert C.build_ladder(500_000.01)[-1] == "cfo"       # tier 4, MD or CFO
+    assert C.build_ladder(2_000_000.01)[-1] == "ceo"     # tier 5, MD and CFO
+    assert C.build_ladder(5_000_000.01)[-1] == "bod"     # tier 6, the Board
+    # CAPEX (§4.2) is a different ladder for the same money.
+    assert C.build_ladder(300_000, "capex")[-1] == "ceo"
+    assert "warehouse" not in C.build_ladder(300_000, "capex")
 
 
 def test_index_and_seeded_demo(app_client):
@@ -84,8 +101,26 @@ def test_full_cycle_create_sign_po(app_client):
     => warehouse, factory_manager, purchasing, finance, cfo = 5 approvers
        + the requester's own submission = the 6 signatures on the paper form."""
     a, c = app_client
+    # The request is raised by a REQUESTER, not by the admin who then signs it.
+    # DOAM §3.4: "No person may approve a transaction that also names that person
+    # as requestor." This test used one admin session for both ends, which the
+    # rule now correctly refuses — the walk below is the real shape of the cycle.
+    login_as(c, a, "normal_user")
     r = _new_pr(c)                       # POSTs unit_price 48000 — it must be stripped
     assert r.status_code == 200
+    login_admin(c)                       # ...and the admin signs the stages
+
+    # One admin signing EVERY rung is now refused by the dual-role half of the
+    # SoD rule, which ships on. This test is about the ladder, the pricing gate
+    # and the PO — not about SoD — so it turns the documented exemption on
+    # explicitly, through the real settings path. The absolute half still
+    # applies and is not waivable: the requester above is a different user, and
+    # if that regressed this test fails on self_approval. SoD itself is covered
+    # by test_sod_* and app/approvals/tests_escalation.py.
+    with a.app_context():
+        from app.approvals import services as svc
+        ok, msg = svc.set_setting("sod_admin_exempt", "true")
+        assert ok, "could not enable the dual-role exemption: %s" % msg
     # find the created PR id from the DB
     with a.app_context():
         from app.approvals import services as svc
@@ -99,12 +134,13 @@ def test_full_cycle_create_sign_po(app_client):
         assert bundle["pr"]["pricing_status"] == "unpriced"
         assert float(bundle["pr"]["total"] or 0) == 0.0
         assert float(bundle["items"][0]["unit_price"] or 0) == 0.0
-        # an unpriced request routes the demand stages only
+        # an unpriced request routes the demand stages only, and under the DOAM
+        # those are Warehouse + Procurement Manager (§4.1 tier 1)
         assert [s["stage"] for s in bundle["steps"]] == \
-            ["warehouse", "factory_manager", "purchasing"] == C.DEMAND_STAGES
+            ["warehouse", "purchasing"] == C.DEMAND_STAGES
 
     # demand stages sign first (admin is super_admin -> may act on any stage)
-    for stage in ("warehouse", "factory_manager"):
+    for stage in ("warehouse",):
         tok = get_csrf(c)
         c.post(f"/procurement/pr/{pr_id}/approve", data={"_csrf": tok, "comment": "ok"},
                follow_redirects=True)
@@ -136,7 +172,7 @@ def test_full_cycle_create_sign_po(app_client):
         assert b["pr"]["pricing_status"] == "priced"
         assert float(b["pr"]["total"]) == 48000.0
         assert [s["stage"] for s in b["steps"]] == \
-            ["warehouse", "factory_manager", "purchasing", "finance", "cfo"] \
+            ["warehouse", "purchasing", "factory_manager", "scd"] \
             == C.build_ladder(48000)
         # RFQ GATE at 48,000 (>= 25,000) with no quotes yet
         assert svc.act_on_step(pr_id, ADMIN, "approve") == (False, "needs_quotes")
@@ -147,8 +183,11 @@ def test_full_cycle_create_sign_po(app_client):
                data={"_csrf": get_csrf(c), "vendor": vendor, "amount": amt},
                content_type="multipart/form-data", follow_redirects=True)
 
-    # purchasing + the two value stages now sign
-    for stage in ("purchasing", "finance", "cfo"):
+    # Purchasing and the value-gated rungs now sign. DERIVED from the ladder
+    # rather than named: the DOAM decides who those rungs are, and a hard-coded
+    # list here would silently stop testing the real policy the day it changes.
+    from app.approvals import constants as _C
+    for stage in [s for s in _C.build_ladder(48000) if s != "warehouse"]:
         tok = get_csrf(c)
         c.post(f"/procurement/pr/{pr_id}/approve", data={"_csrf": tok, "comment": "ok"},
                follow_redirects=True)
@@ -159,10 +198,13 @@ def test_full_cycle_create_sign_po(app_client):
 
     with a.app_context():
         from app.approvals import services as svc
+        from app.approvals import constants as C
         b = svc.get_pr(pr_id)
         assert b["pr"]["status"] == "approved"
         assert b["pr"]["po_no"]
-        assert len(b["steps"]) == 5
+        # Four rungs at 48,000 under DOAM §4.1 tier 2, not the paper form's five:
+        # the ladder stops at the two L2 directors and never reaches the CFO.
+        assert len(b["steps"]) == len(C.build_ladder(48000)) == 4
         assert all(s["status"] == "approved" for s in b["steps"])
 
     # PDFs render
@@ -370,6 +412,10 @@ _USERS = {
     "purchasing": {"username": "purchasing", "role": "purchasing_manager"},
     "finance": {"username": "finance", "role": "finance_manager"},
     "cfo": {"username": "cfo", "role": "cfo"},
+    # DOAM §3.2 L2 / BOD authorities, added when the matrix came into force.
+    "scd": {"username": "scd", "role": "supply_chain_director"},
+    "ceo": {"username": "md", "role": "ceo"},
+    "bod": {"username": "board", "role": "board"},
 }
 
 
@@ -397,7 +443,9 @@ def test_strict_sequence_advances_one_by_one(app_client):
     act advances the request by exactly one step."""
     a, c = app_client
     pid = _make_pr(a, c, "Seq2")
-    order = ["warehouse", "factory_manager", "purchasing", "finance", "cfo"]
+    # DOAM §4.1 tier 2 for the 48,000 test request: the value rungs are the
+    # two L2 directors, not Finance and the CFO.
+    order = ["warehouse", "purchasing", "factory_manager", "scd"]
     with a.app_context():
         from app.approvals import services as svc
         from app.approvals import constants as C
@@ -410,7 +458,7 @@ def test_strict_sequence_advances_one_by_one(app_client):
                 assert svc.act_on_step(pid, _USERS[later], "approve")[1] == "forbidden"
             if stage == "purchasing":
                 # pricing + RFQ gates fire here; satisfying pricing is what
-                # appends finance + cfo to the ladder
+                # appends the value-gated L2 directors to the ladder
                 _gate_and_price(svc, pid, _USERS["purchasing"])
                 assert [s["stage"] for s in svc.get_pr(pid)["steps"]] == order \
                     == C.build_ladder(48000)
@@ -438,27 +486,31 @@ def test_reject_at_first_stage_bounces_to_requester(app_client):
 
 
 def test_reject_at_later_stage_after_some_approved(app_client):
-    """Warehouse+Factory+Purchasing approve (Purchasing through the pricing and
-    RFQ gates), then Finance rejects -> whole PR rejected; earlier signatures
-    kept, later stage (CFO) never reached."""
+    """Warehouse and Purchasing approve (Purchasing through the pricing and RFQ
+    gates), then the Plant Director rejects -> whole PR rejected; earlier
+    signatures kept, the Supply Chain Director never reached.
+
+    The rejecting rung is a DOAM L2 director rather than Finance: at 48,000 EGP
+    the DOAM's tier 2 ladder ends at the two directors and never reaches Finance
+    or the CFO at all."""
     a, c = app_client
     pid = _make_pr(a, c, "RejLate")
     with a.app_context():
         from app.approvals import services as svc
-        for stage in ("warehouse", "factory_manager"):
-            assert svc.act_on_step(pid, _USERS[stage], "approve")[1] == "advanced"
+        assert svc.act_on_step(pid, _USERS["warehouse"], "approve")[1] == "advanced"
         # purchasing cannot sign an unpriced request, and once priced at 48,000
         # cannot sign without competitive quotes; both gates asserted here
         _gate_and_price(svc, pid, _USERS["purchasing"])
         assert svc.act_on_step(pid, _USERS["purchasing"], "approve")[1] == "advanced"
-        ok, msg = svc.act_on_step(pid, _USERS["finance"], "reject", comment="too costly")
+        ok, msg = svc.act_on_step(pid, _USERS["factory_manager"], "reject",
+                                  comment="too costly")
         assert ok and msg == "rejected"
         b = svc.get_pr(pid)
         assert b["pr"]["status"] == "rejected"
         st = {s["stage"]: s["status"] for s in b["steps"]}
         assert st["warehouse"] == "approved" and st["purchasing"] == "approved"
-        assert st["finance"] == "rejected"
-        assert st["cfo"] == "pending"  # never reached
+        assert st["factory_manager"] == "rejected"
+        assert st["scd"] == "pending"  # never reached
 
 
 def test_no_action_after_rejection(app_client):
@@ -478,7 +530,11 @@ def test_resubmit_rebuilds_ladder_fresh(app_client):
     with a.app_context():
         from app.approvals import services as svc
         svc.act_on_step(pid, _USERS["warehouse"], "approve")            # advance once
-        svc.act_on_step(pid, _USERS["factory_manager"], "reject", comment="redo")
+        # Reject at the SECOND demand rung. Under the DOAM that is Purchasing,
+        # not the Plant Director — an unpriced request only carries the demand
+        # rungs, and the Plant Director became value-gated at tier 2.
+        from app.approvals import constants as C
+        svc.act_on_step(pid, _USERS[C.DEMAND_STAGES[1]], "reject", comment="redo")
         requester = {"username": "admin", "role": "super_admin"}
         ok, _ = svc.submit_pr(pid, requester)
         assert ok

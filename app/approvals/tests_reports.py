@@ -268,8 +268,10 @@ with app.app_context():
 
     # =====================================================================
     print("\n-- proc_payables: 3-way-match exposure on B --")
-    # PO gross 2,000.00 ; tolerance = max(1, 1% of 2000) = 20.00
-    # invoiced 2,200.00 -> over-billed by 2200 - 2000 = 200.00 (2200 > 2020)
+    # PO gross 2,000.00 ; DOAM value tolerance = max(2% of 2000, 500) = 500.00
+    # invoiced 2,200.00 -> inside that tolerance, so over-billed reports 0.00.
+    # (It read 200.00 while the report still used a flat 1%; the report now uses
+    #  the same constants as services.three_way_match, which passes this invoice.)
     # received value 6 x 100 = 600.00 -> invoiced over receipt 2200 - 600 = 1,600.00
     # short qty = 10 ordered - 6 received = 4
     # outstanding = 2000 - 500 paid = 1,500.00
@@ -281,21 +283,21 @@ with app.app_context():
     ok("received value = 6 x 100 = 600.00", near(rp.get("received_value"), 600))
     ok("paid = 500.00 ; outstanding = 2000 - 500 = 1,500.00",
        near(rp.get("paid"), 500) and near(rp.get("outstanding"), 1500))
-    ok("over-billed = 2200 - 2000 = 200.00 (tolerance 20.00 exceeded)",
-       near(rp.get("over_billed"), 200))
+    ok("over-billed = 0.00 (200.00 over is inside the 500.00 DOAM tolerance)",
+       near(rp.get("over_billed"), 0))
     ok("invoiced over receipt = 2200 - 600 = 1,600.00",
        near(rp.get("over_received"), 1600))
     ok("short qty = 10 - 6 = 4", near(rp.get("short_qty"), 4))
     kpp = {k["key"]: k["value"] for k in resp["kpis"]}
     ok("KPI match exceptions = 1", near(kpp.get("exceptions"), 1))
     # Tolerance really is applied: a 10.00 over-bill on a 2,000.00 PO is inside
-    # the 20.00 tolerance and must report 0, not 10.
+    # the 500.00 tolerance and must report 0, not 10.
     conn = get_db()
     conn.execute("UPDATE pr_invoices SET amount=2010 WHERE invoice_no='RPT-INV-1'")
     conn.commit()
     conn.close()
     tol = R.run(R.get("proc_payables"), {"vendor": "RPTVEND2"})
-    ok("a 10.00 over-bill is inside the 20.00 tolerance -> over-billed 0.00",
+    ok("a 10.00 over-bill is inside the 500.00 tolerance -> over-billed 0.00",
        near(tol["rows"][0].get("over_billed"), 0))
     conn = get_db()
     conn.execute("UPDATE pr_invoices SET amount=2200 WHERE invoice_no='RPT-INV-1'")

@@ -28,6 +28,8 @@
      href="{{ url_for('governance.responsibility_view') }}" data-i18n="gov.tab.responsibility">Responsibility matrix</a>
   <a class="btn btn-sm {{ 'btn-primary' if tab == 'rules' else 'btn-ghost' }}"
      href="{{ url_for('governance.rules_view') }}" data-i18n="gov.tab.rules">Rules &amp; ladders</a>
+  <a class="btn btn-sm {{ 'btn-primary' if tab == 'forms' else 'btn-ghost' }}"
+     href="{{ url_for('governance.forms_view') }}" data-i18n="gov.tab.forms">Controlled forms</a>
   <a class="btn btn-sm {{ 'btn-primary' if tab == 'findings' else 'btn-ghost' }}"
      href="{{ url_for('governance.findings_view') }}" data-i18n="gov.tab.findings">Findings</a>
 </div>

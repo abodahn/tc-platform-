@@ -34,16 +34,54 @@ from werkzeug.security import generate_password_hash  # noqa: E402
 from app import create_app  # noqa: E402
 from app.db import get_db  # noqa: E402
 
-# username, role, full name, what they do in the ladder
+# username, role, full name, what they do in the cycle.
+# Thresholds below are the DOAM §4.1 OPEX ladder now in force — NOT the older
+# 10k/25k/100k figures this cast was first written against, which would send you
+# looking for a CFO signature on a request that no longer needs one.
 CAST = [
-    ("req.tester",       "normal_user",       "Requester Tester",   "Raises a request (NO pricing — commercial fields are hidden)"),
-    ("wh.tester",        "warehouse_manager", "Warehouse Tester",   "Warehouse approval (demand stage)"),
-    ("fm.tester",        "factory_manager",   "Factory Mgr Tester", "Factory Manager approval (demand stage)"),
-    ("buyer.tester",     "purchasing_manager","Purchasing Tester",  "PURCHASING — enters pricing at the gate  <-- the new part"),
-    ("fin.tester",       "finance_manager",   "Finance Tester",     "Finance approval (joins when total >= 10,000)"),
-    ("cfo.tester",       "cfo",               "CFO Tester",         "CFO approval (joins when total >= 25,000)"),
-    ("ceo.tester",       "ceo",               "CEO Tester",         "CEO approval (joins when total >= 100,000)"),
+    # --- Procurement: DOAM §4.1 / §4.2 ladder, in signing order ---------------
+    ("req.tester",   "normal_user",           "Requester Tester",    "Raises a request. Cannot see or enter any price"),
+    ("wh.tester",    "warehouse_manager",     "Warehouse Tester",    "Warehouse rung — always required on OPEX"),
+    ("buyer.tester", "purchasing_manager",    "Purchasing Tester",   "PRICING GATE: enters the commercial value, runs sourcing"),
+    ("pd.tester",    "plant_director",        "Plant Director",      "Joins above 10,000 — production and maintenance spend"),
+    ("scd.tester",   "supply_chain_director", "Supply Chain Dir",    "Joins above 10,000 — inventory replenishment"),
+    ("fin.tester",   "financial_director",    "Financial Director",  "Joins above 200,000. ALSO RELEASES PAYMENT (DOAM 7.3.4)"),
+    ("cfo.tester",   "cfo",                   "CFO Tester",          "Joins above 500,000. Authorises advances over 25%"),
+    ("md.tester",    "managing_director",     "Managing Director",   "Joins above 2,000,000. CAPEX above 250,000"),
+    ("bod.tester",   "board",                 "Board Tester",        "Joins above 5,000,000. CAPEX above 2,000,000"),
+
+    # --- Maintenance: ticket -> spares -> work order -------------------------
+    ("tech.tester",  "maintenance_technician","Technician Tester",   "Raises tickets, diagnoses, requests spare parts"),
+    ("mm.tester",    "maintenance_manager",   "Maintenance Manager", "Assigns tickets, approves spares, closes work orders"),
+    ("store.tester", "storekeeper",           "Storekeeper Tester",  "Issues spare parts, receives goods against a PO"),
 ]
+
+
+
+def _guard_weak_password_on_production(pw):
+    """A trivial password is fine on a local test database and nowhere else.
+
+    This cast includes the Board, the Managing Director and the Financial
+    Director — the accounts that sign the largest commitments and release money.
+    A four-digit password on those roles in a real database is not a test
+    shortcut, it is an open door, so this refuses outright when the target is
+    PostgreSQL (which is what production uses) rather than local SQLite.
+    """
+    from config import Config
+    url = (getattr(Config, "DATABASE_URL", "") or os.environ.get("DATABASE_URL") or "")
+    is_pg = url.startswith(("postgres://", "postgresql://"))
+    weak = len(pw) < 8 or pw.isdigit() or pw.lower() in {"password", "test", "admin"}
+    if is_pg and weak:
+        sys.exit(
+            "REFUSED: the target database is PostgreSQL, which is what "
+            "production uses, and TC_SEED_PASSWORD is trivial. This cast "
+            "includes the Board, the Managing Director and the Financial "
+            "Director. Use a strong password, or seed a local SQLite "
+            "database instead.")
+    if weak:
+        print("  ! Weak password accepted for a LOCAL SQLite database only.")
+        print("  ! Do not reuse these accounts anywhere else.")
+        print("")
 
 
 def _password():
@@ -57,6 +95,7 @@ def _password():
 
 def main():
     password, generated = _password()
+    _guard_weak_password_on_production(password)
     app = create_app()
     created, updated = [], []
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

@@ -40,6 +40,22 @@
           <input name="title" required autocomplete="off" data-ac data-polish="title" value="{{ prefill.title or '' }}" placeholder="e.g. Repair forklift battery"></div>
         <div class="field"><label data-i18n="proc.request_for_l">Request for</label>
           <input name="request_for" autocomplete="off" data-ac value="{{ prefill.request_for or '' }}" placeholder="Asset / machine / area"></div>
+        <div class="field"><label data-i18n="proc.kind_l">Expenditure type</label>
+          <select name="expenditure_kind" id="expKind">
+            <option value="opex" {{ 'selected' if (prefill.expenditure_kind or 'opex') != 'capex' }} data-i18n="proc.kind_opex">Operating (OPEX) — consumables, spares, services</option>
+            <option value="capex" {{ 'selected' if prefill.expenditure_kind == 'capex' }} data-i18n="proc.kind_capex">Capital (CAPEX) — machinery, vehicles, buildings, IT assets</option>
+          </select>
+          <span class="muted" style="font-size:12px" data-i18n="proc.kind_hint">Capital purchases follow the DOAM capital authority ladder — every level signs, and the Managing Director signs above 250,000 EGP.</span></div>
+        <div class="field"><label data-i18n="proc.so_l">Sales order</label>
+          <input name="so_no" list="soList" autocomplete="off" value="{{ prefill.so_no or '' }}" placeholder="SO / order number">
+          <datalist id="soList">{% for o in sales_orders %}<option value="{{ o }}"></option>{% endfor %}</datalist>
+          <span class="muted" style="font-size:12px" data-i18n="proc.so_hint">Required for fabric, yarn, trims, chemicals, packaging, subcontract and wash — that is the order this spend is costed against.</span></div>
+        <div class="field"><label data-i18n="proc.fc_l">Agreed forecast</label>
+          <input name="forecast_ref" list="fcList" autocomplete="off" value="{{ prefill.forecast_ref or '' }}" placeholder="Only if there is no sales order yet">
+          <datalist id="fcList">{% for f in forecasts %}<option value="{{ f.ref }}">{{ f.description or f.period or '' }}</option>{% endfor %}</datalist>
+          <span class="muted" style="font-size:12px" data-i18n="proc.fc_hint">Buying ahead of a confirmed client order? Cite an agreed forecast instead of a sales order (DOAM §3.4). Only forecasts the Supply Chain Director has agreed, and that are still in date, are listed. Fill in one or the other, not both.</span></div>
+        <div class="field"><label data-i18n="proc.cc_l">Cost centre</label>
+          <input name="cost_center" autocomplete="off" value="{{ prefill.cost_center or '' }}" placeholder="For MRO, facility, IT and utilities"></div>
         <div class="field"><label data-i18n="proc.dept_l">Department</label>
           <select name="department" id="deptSel">
             <option value=""></option>
@@ -49,7 +65,7 @@
         <div class="field"><label data-i18n="proc.date_l">Request date</label>
           <input type="date" name="request_date" value="{{ '' }}"></div>
         <div class="field"><label data-i18n="proc.vendor_l">Vendor</label>
-          <select name="vendor">
+          <select name="vendor" data-src="/api/lookup/vendors">
             <option value=""></option>
             {% for v in vendors %}<option value="{{ v.name }}" {{ 'selected' if prefill.vendor==v.name }}>{{ v.name }}</option>{% endfor %}
             {% if prefill.vendor and prefill.vendor not in vendors|map(attribute='name')|list %}<option value="{{ prefill.vendor }}" selected>{{ prefill.vendor }}</option>{% endif %}
@@ -398,7 +414,10 @@
         var t = document.querySelector('input[name=title]'); if (t && dr.title) t.value = dr.title;
         var rf = document.querySelector('input[name=request_for]'); if (rf && dr.request_for) rf.value = dr.request_for;
         var nt = document.querySelector('textarea[name=notes]'); if (nt && dr.notes) nt.value = dr.notes;
-        if (deptSelEl && dr.department) deptSelEl.value = dr.department;
+        // dispatch: the department picker is a searchable combobox, and it
+        // repaints its visible text off the select's change event.
+        if (deptSelEl && dr.department) { deptSelEl.value = dr.department;
+          deptSelEl.dispatchEvent(new Event('change', { bubbles: true })); }
         if (dr.items && dr.items.length){
           rows.innerHTML = '';
           dr.items.forEach(function(it){ addRow(); fillRow(rows.lastElementChild, it); });
@@ -623,7 +642,12 @@
     if (unitSel) {
       var u = (opt.dataset.unit || '').toLowerCase();
       Array.prototype.some.call(unitSel.options, function (o) {
-        if (o.value.toLowerCase() === u) { unitSel.value = o.value; return true; }
+        if (o.value.toLowerCase() === u) {
+          unitSel.value = o.value;
+          // see above — tells the combobox to repaint its visible text
+          unitSel.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }
         return false;
       });
     }

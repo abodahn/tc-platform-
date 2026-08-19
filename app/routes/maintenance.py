@@ -20,6 +20,7 @@ from app.maintenance import services as svc
 from app.maintenance import constants as C
 from app.maintenance import ai as ai_engine
 from app.maintenance import workflow as wf
+from app.maintenance import eng_justification as ejr
 
 bp = Blueprint("maintenance", __name__, url_prefix="/maintenance")
 
@@ -116,7 +117,17 @@ def mbadge(value):
 
 @bp.app_context_processor
 def _inject():
-    return {"mbadge": lambda v: _BADGE.get(v, "b-unknown"), "C": C, "mcan": _can}
+    return {"mbadge": lambda v: _BADGE.get(v, "b-unknown"), "C": C, "mcan": _can,
+            # kanban board: may a card in status X be dropped on THIS COLUMN?
+            # Not "on the column's first status" — mmove_ok(status, col[0]) was
+            # what this used, and it disagreed with the move endpoint, which asks
+            # whether ANY status in the column is reachable. Measured on a real
+            # board: a submitted ticket advertised column 1 only, while the
+            # endpoint accepted 0, 1 and 4 — so two legal columns rendered inert
+            # and the card could not be dragged to them. Both now call the same
+            # _board_target, so the board and the endpoint cannot drift again.
+            "mmove_ok": svc.can_transition,
+            "mboard_ok": lambda status, statuses: bool(_board_target(status, statuses))}
 
 
 # --------------------------------------------------------------------------
@@ -219,9 +230,17 @@ def ai_insights():
     finally:
         conn.close()
     high = [r for r in risks if r["band"] == "high"]
-    return render_template("maintenance/ai.html", risks=risks, reorder=reorder,
-                           repeated=repeated, anomalies=anomalies, pm_opt=pm_opt, sla=sla,
-                           high=high, active="maint_ai")
+    # Render the ranked TOP of the list, not all of it. risk_ranking scores the
+    # whole fleet (5,108 machines), and putting every row in the table produced a
+    # 3.8 MB HTML page — the queries were fixed but the page was still enormous,
+    # which is what made moving between screens feel slow. The KPI keeps counting
+    # the full fleet from `analyzed`, so no number on the page changes; only the
+    # tail of a table nobody scrolls to is left out, and the page says so.
+    AI_TABLE_CAP = 150
+    return render_template("maintenance/ai.html", risks=risks[:AI_TABLE_CAP],
+                           analyzed=len(risks), shown=min(len(risks), AI_TABLE_CAP),
+                           reorder=reorder, repeated=repeated, anomalies=anomalies,
+                           pm_opt=pm_opt, sla=sla, high=high, active="maint_ai")
 
 
 @bp.route("/floor")
@@ -326,8 +345,15 @@ def ticket_new():
                 svc.save_attachments(request.files.getlist("photos"), "ticket", tid, "issue", _u())
                 flash("m_ticket_created", "success")
                 return redirect(url_for("maintenance.ticket_detail", tid=tid))
-    machines = _all("SELECT id,code,name,department,area,line_no FROM mnt_machines WHERE is_active=1 ORDER BY code")
+    # The fleet is thousands of machines. The picker searches server-side
+    # (/api/lookup/machines); only a first page goes into the HTML — as the
+    # offline fallback, plus whatever ?machine= asked for so it shows selected.
     prefill = request.args.get("machine", "")
+    machines = list(_all("SELECT id,code,name,department,area,line_no FROM mnt_machines "
+                         "WHERE is_active=1 ORDER BY code LIMIT 25"))
+    if prefill.isdigit() and not any(str(m["id"]) == prefill for m in machines):
+        machines = list(_all("SELECT id,code,name,department,area,line_no FROM mnt_machines "
+                             "WHERE id=?", (int(prefill),))) + machines
     return render_template("maintenance/ticket_new.html", machines=machines, prefill=prefill,
                            active="maint_new")
 
@@ -478,6 +504,66 @@ def ticket_reopen(tid):
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
 
 
+def _board_target(current, statuses):
+    """First status in a kanban column that is a LEGAL move from `current`.
+
+    The column's primary status is not always reachable — the board groups
+    several statuses per column and the transition graph does not follow that
+    grouping. Returns None when the column cannot accept the card at all, which
+    is what greys it out on the board.
+    """
+    for st in statuses:
+        if st != current and svc.can_transition(current, st):
+            return st
+    return None
+
+
+@bp.route("/tickets/<int:tid>/move", methods=["POST"])
+@login_required
+def ticket_move(tid):
+    """Kanban drag-and-drop: move a ticket to a board column's primary status.
+
+    Same permission as the other status-changing ticket actions (assign / reject
+    / close / reopen). NEVER forces: an illegal move is refused with its reason
+    so the board can roll the card back and say why.
+    """
+    _require("maint_manage")
+    body = request.get_json(silent=True) or {}
+    conn = _db()
+    try:
+        cur = conn.execute("SELECT status FROM mnt_tickets WHERE id=?", (tid,)).fetchone()
+        cur = cur["status"] if cur else None
+        # A column holds SEVERAL statuses and its first one is not always the
+        # legal move: from 'assigned' the only step forward is 'diagnosis',
+        # which sits second in its own column. Targeting the column's first
+        # status blindly made every drop illegal and froze the board after one
+        # move. Resolve the column to the first status in it that the transition
+        # table actually allows, and keep that table server-side only.
+        col = body.get("col")
+        if col is not None and str(col).strip().lstrip("-").isdigit()                 and 0 <= int(col) < len(C.TICKET_BOARD):
+            target = _board_target(cur, C.TICKET_BOARD[int(col)][2]) or ""
+        else:
+            target = str(body.get("target") or "").strip()
+        if target not in C.TICKET_STATUSES:
+            ok, msg = False, "invalid_transition"
+        else:
+            ok, msg = svc.set_ticket_status(conn, tid, target, _u(), request.remote_addr)
+            if ok:
+                conn.commit()
+        row = conn.execute("SELECT status FROM mnt_tickets WHERE id=?", (tid,)).fetchone()
+    finally:
+        conn.close()
+    status = row["status"] if row else None
+    return jsonify({
+        "ok": ok, "error": msg, "status": status,
+        "status_label": mtext(status) if status else "",
+        "badge": _BADGE.get(status, "b-unknown"),
+        # columns this ticket may now be dropped on, by board index
+        "allow": [i for i, (_k, _t, sts) in enumerate(C.TICKET_BOARD)
+                  if _board_target(status, sts)],
+    })
+
+
 @bp.route("/tickets/<int:tid>/attach", methods=["POST"])
 @login_required
 def ticket_attach(tid):
@@ -553,9 +639,18 @@ def machines():
     # "show me only the current fleet" filter the owner's decision depends on.
     q = (request.args.get("q") or "").strip()
     fleet = request.args.get("fleet") or ""
+    # The dashboard counts "7 machines stopped" and a supervisor needs to know
+    # WHICH seven. Validated against the known statuses rather than dropped into
+    # the query, so a hand-typed ?status= cannot reach the SQL.
+    status = (request.args.get("status") or "").strip().lower()
+    if status not in {s for s in getattr(C, "MACHINE_STATUSES", ())}:
+        status = ""
     where, args = ["is_active=1"], []
     if fleet == "current":
         where.append("in_register_2023=1")
+    if status:
+        where.append("status=?")
+        args.append(status)
     if q:
         where.append("(LOWER(code) LIKE ? OR LOWER(name) LIKE ? OR LOWER(serial) LIKE ? "
                      "OR LOWER(legacy_card_no) LIKE ? OR LOWER(brand) LIKE ? "
@@ -568,7 +663,8 @@ def machines():
     rows = _all("SELECT * FROM mnt_machines WHERE " + w + " ORDER BY code LIMIT %d"
                 % MACHINE_LIST_CAP, tuple(args))
     return render_template("maintenance/machines.html", machines=rows, total=total,
-                           q=q, fleet=fleet, cap=MACHINE_LIST_CAP, active="maint_machines")
+                           q=q, fleet=fleet, status=status, statuses=C.MACHINE_STATUSES,
+                           cap=MACHINE_LIST_CAP, active="maint_machines")
 
 
 @bp.route("/machines/<int:mid>")
@@ -646,6 +742,156 @@ def locations():
                            levels=levels, active="maint_locations")
 
 
+# --------------------------------------------------------------------------
+# Engineering Justification Report — DOAM §6, form T&C-PUF-09
+#
+# The gate that consumes these lives in app/maintenance/eng_justification.py and
+# fires at the Purchasing stage. These screens exist so there is somewhere to
+# raise and sign a report BEFORE that gate is switched on — turning the gate on
+# without them would block maintenance purchasing with no way to unblock it.
+# --------------------------------------------------------------------------
+@bp.route("/justifications")
+@login_required
+def justifications():
+    """The register of Engineering Justification Reports."""
+    _require("maint_view")
+    status = (request.args.get("status") or "").strip() or None
+    conn = _db()
+    try:
+        rows = [dict(r) for r in ejr.listing(conn, status=status)]
+        counts = {r["status"]: r["c"] for r in conn.execute(
+            "SELECT status, COUNT(*) c FROM mnt_eng_justifications "
+            "WHERE is_active=1 GROUP BY status").fetchall()}
+        gate_on = ejr.gate_enabled(conn)
+    finally:
+        conn.close()
+    return render_template("maintenance/justifications.html", rows=rows, status=status,
+                           counts=counts, gate_on=gate_on, active="maint_ejr")
+
+
+@bp.route("/justifications/new", methods=["GET", "POST"])
+@login_required
+def justification_new():
+    """Raise a report. DOAM Table 14's eight fields are all on this one form
+    because the report is only useful complete — submitting is what enforces it."""
+    _require("maint_ticket_create")
+    conn = _db()
+    try:
+        # Fallback page only — the picker searches /api/lookup/machines.
+        machines = conn.execute(
+            "SELECT id, code, name, area, line_no, criticality FROM mnt_machines "
+            "WHERE is_active=1 ORDER BY code LIMIT 25").fetchall()
+        if request.method == "POST":
+            form = {k: (request.form.get(k) or "").strip() for k in (
+                "machine_id", "location", "request_type", "description", "root_cause",
+                "criticality", "downtime_risk", "stock_on_hand", "stock_checked_with",
+                "alternatives", "emergency_due_at")}
+            form["is_emergency"] = bool(request.form.get("is_emergency"))
+            ejr_id, ejr_no = ejr.create(conn, form, _u())
+            # "Save and send for signature" in one action when asked for, so the
+            # common path is not two clicks; the incomplete-field refusal still
+            # applies and comes back as a flash rather than a silent draft.
+            if request.form.get("submit_now"):
+                good, msg = ejr.submit(conn, ejr_id)
+                if not good and msg.startswith("incomplete"):
+                    flash("Saved as a draft. Still needed: " + msg.split(":", 1)[1], "warning")
+                elif good:
+                    flash(f"{ejr_no} sent to Engineering for signature.", "success")
+            else:
+                flash(f"{ejr_no} saved as a draft.", "success")
+            conn.commit()
+            return redirect(url_for("maintenance.justification", jid=ejr_id))
+        machines = [dict(m) for m in machines]
+    finally:
+        conn.close()
+    return render_template("maintenance/justification_form.html", machines=machines,
+                           request_types=ejr.REQUEST_TYPES, criticalities=ejr.CRITICALITIES,
+                           active="maint_ejr")
+
+
+@bp.route("/justifications/<int:jid>")
+@login_required
+def justification(jid):
+    """One report, its missing fields if any, and the Engineering Head's sign-off."""
+    _require("maint_view")
+    conn = _db()
+    try:
+        row = ejr.get(conn, jid)
+        if not row:
+            abort(404)
+        row = dict(row)
+        missing = ejr.missing_labels(conn, jid)
+        prs = conn.execute(
+            "SELECT id, pr_no, title, status, total, currency FROM pr_requests "
+            "WHERE ejr_id=? AND is_active=1 ORDER BY id DESC", (jid,)).fetchall()
+    finally:
+        conn.close()
+    return render_template("maintenance/justification.html", r=row, missing=missing,
+                           prs=[dict(p) for p in prs],
+                           can_decide=_can("maint_approve"), active="maint_ejr")
+
+
+@bp.route("/justifications/<int:jid>/submit", methods=["POST"])
+@login_required
+def justification_submit(jid):
+    _require("maint_ticket_create")
+    conn = _db()
+    try:
+        good, msg = ejr.submit(conn, jid)
+        conn.commit()
+    finally:
+        conn.close()
+    if good:
+        flash("Sent to Engineering for signature.", "success")
+    elif msg.startswith("incomplete"):
+        flash("Cannot send yet. Still needed: " + msg.split(":", 1)[1], "error")
+    else:
+        flash(f"Could not send this report ({msg}).", "error")
+    return redirect(url_for("maintenance.justification", jid=jid))
+
+
+@bp.route("/justifications/<int:jid>/decide", methods=["POST"])
+@login_required
+def justification_decide(jid):
+    """The Engineering Head's technical approval (DOAM Table 13 step 3, an L3
+    authority). Signed with the approver's stored digital signature, so the
+    printed report carries the same signature as a procurement document."""
+    _require("maint_approve")
+    approve = (request.form.get("decision") or "").lower() == "approve"
+    note = (request.form.get("note") or "").strip() or None
+    u = _u()
+    sig_png, _sig_name = _ejr_signature((u or {}).get("username"))
+    conn = _db()
+    try:
+        good, msg = ejr.decide(conn, jid, approve, u, note=note, signature=sig_png)
+        conn.commit()
+    finally:
+        conn.close()
+    if good:
+        flash("Report approved." if approve else "Report rejected.", "success")
+    elif msg == "self_approval_blocked":
+        # DOAM §3.4 — no person may approve a transaction that names them as
+        # requestor. Said plainly, because "forbidden" would look like a bug.
+        flash("You raised this report, so you cannot also sign it. "
+              "Segregation of duties applies.", "error")
+    elif msg == "not_pending":
+        flash("This report is not waiting for a signature.", "error")
+    else:
+        flash(f"Could not record that decision ({msg}).", "error")
+    return redirect(url_for("maintenance.justification", jid=jid))
+
+
+def _ejr_signature(username):
+    """The approver's stored signature image, or (None, None)."""
+    if not username:
+        return None, None
+    try:
+        from app.approvals.services import _user_sig
+        return _user_sig(username)
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
 @bp.route("/needle-costs")
 @login_required
 def needle_costs():
@@ -706,8 +952,28 @@ def spares():
             finally:
                 conn.close()
         return redirect(url_for("maintenance.spares"))
-    rows = _all("SELECT * FROM mnt_spare_parts WHERE is_active=1 ORDER BY code")
-    return render_template("maintenance/spares.html", spares=rows, active="maint_spares")
+    # Same reason as the machine status filter: the dashboard counts parts that
+    # are out or below reorder, and the storekeeper needs the list, not the
+    # number. Comparing to reorder_level (not min_level) matches the auto-reorder
+    # bridge, so the two never disagree about what "low" means.
+    stock = (request.args.get("stock") or "").strip().lower()
+    where = ["is_active=1"]
+    if stock == "out":
+        where.append("COALESCE(stock_qty,0) <= 0")
+    elif stock == "low":
+        where.append("COALESCE(stock_qty,0) > 0 AND "
+                     "COALESCE(stock_qty,0) <= COALESCE(reorder_level,0)")
+    else:
+        stock = ""
+    q = (request.args.get("q") or "").strip()
+    args = []
+    if q:
+        where.append("(LOWER(code) LIKE ? OR LOWER(name) LIKE ? OR LOWER(category) LIKE ?)")
+        args += ["%" + q.lower() + "%"] * 3
+    rows = _all("SELECT * FROM mnt_spare_parts WHERE " + " AND ".join(where)
+                + " ORDER BY code", tuple(args))
+    return render_template("maintenance/spares.html", spares=rows, stock=stock, q=q,
+                           active="maint_spares")
 
 
 @bp.route("/spares/<int:sid>")
@@ -891,7 +1157,17 @@ def pm():
             "ORDER BY w.id DESC LIMIT 30").fetchall()
     finally:
         conn.close()
+    # Overdue and due-soon first, then the rest — and cap what is rendered. All
+    # 452 plans with their checklists inline made a 489 KB page, and the plans a
+    # supervisor needs are the ones that are late, not the ones due in November.
+    _ORDER = {"overdue": 0, "due_soon": 1, "scheduled": 2}
+    plans.sort(key=lambda p: (_ORDER.get(p["pm_status"], 3), p["next_due"] or ""))
+    total_plans = len(plans)
+    plans = plans[:150]
+    keep = {p["id"] for p in plans}
+    checklists = {k: v for k, v in checklists.items() if k in keep}
     return render_template("maintenance/pm.html", plans=plans, checklists=checklists,
+                           total_plans=total_plans, shown_plans=len(plans),
                            wos=wos, active="maint_pm")
 
 
@@ -931,13 +1207,150 @@ def pm_complete(wid):
     return redirect(url_for("maintenance.pm"))
 
 
+_CAL_STATES = ("overdue", "due_soon", "scheduled", "completed")
+
+
 @bp.route("/calendar")
 @login_required
 def calendar():
+    """Month grid of preventive maintenance, scoped to the dates on screen.
+
+    The old view asked for every active plan with no bound and printed one flat
+    list; a fleet with a few hundred machines shipped its whole backlog to the
+    browser. This one asks the DB only for the 4-6 weeks the grid can show, so
+    the page costs a month of work instead of the entire fleet.
+    """
     _require("maint_view")
-    pm_plans = _all("SELECT p.*, m.code mcode FROM mnt_pm_plans p JOIN mnt_machines m ON m.id=p.machine_id "
-                    "WHERE p.active=1 ORDER BY p.next_due")
-    return render_template("maintenance/calendar.html", pm_plans=pm_plans, active="maint_calendar")
+    # Local imports: this view is itself named `calendar`, so a module-level
+    # `import calendar` would be shadowed by the def.
+    import calendar as _cal
+    from datetime import datetime, timedelta, timezone
+
+    today = datetime.now(timezone.utc).date()
+    try:
+        anchor = datetime.strptime((request.args.get("month") or "")[:7], "%Y-%m").date()
+        if not 1970 <= anchor.year <= 2999:      # keep prev/next arithmetic in range
+            raise ValueError
+    except (ValueError, TypeError):
+        anchor = today.replace(day=1)
+
+    # ponytail: week starts Monday (stdlib default). Add a per-user first-weekday
+    # setting when a floor actually asks for a Saturday-start calendar.
+    weeks = _cal.Calendar(0).monthdatescalendar(anchor.year, anchor.month)
+    lo = weeks[0][0].isoformat()
+    hi = (weeks[-1][-1] + timedelta(days=1)).isoformat()   # exclusive; also covers
+    #                                     rows that stored a time after the date
+
+    # ---- filters (sanitised here so nav links can only carry known values) ----
+    raw_machine = (request.args.get("machine") or "").strip()
+    f_machine = int(raw_machine) if raw_machine.isdigit() else None
+    f_freq = (request.args.get("freq") or "").strip()
+    f_freq = f_freq if f_freq in C.PM_FREQUENCIES else ""
+    f_status = (request.args.get("status") or "").strip()
+    f_status = f_status if f_status in _CAL_STATES else ""
+
+    def _scope(prefix, date_col):
+        w, a = ["{}.{}>=?".format(prefix, date_col), "{}.{}<?".format(prefix, date_col)], [lo, hi]
+        if f_machine:
+            w.append("{}.machine_id=?".format(prefix))
+            a.append(f_machine)
+        if f_freq:
+            w.append("p.frequency=?")
+            a.append(f_freq)
+        return " AND ".join(w), a
+
+    plan_where, plan_args = _scope("p", "next_due")
+    wo_where, wo_args = _scope("w", "scheduled_date")
+
+    conn = _db()
+    try:
+        # Plans whose next due date lands in view. A plan that already generated
+        # its work order for that date is skipped so the day shows one entry.
+        plan_rows = conn.execute(
+            "SELECT p.id, p.title, p.frequency, p.next_due d, p.assigned_to, p.machine_id, "
+            "m.code mcode, m.name mname FROM mnt_pm_plans p "
+            "JOIN mnt_machines m ON m.id=p.machine_id "
+            "WHERE p.active=1 AND " + plan_where + " AND NOT EXISTS ("
+            "SELECT 1 FROM mnt_pm_work_orders w WHERE w.plan_id=p.id "
+            "AND w.scheduled_date=p.next_due) ORDER BY p.next_due, m.code", plan_args).fetchall()
+        wo_rows = conn.execute(
+            "SELECT w.id, w.pm_no, w.scheduled_date d, w.status, w.assigned_to, w.machine_id, "
+            "p.title, p.frequency, m.code mcode, m.name mname FROM mnt_pm_work_orders w "
+            "LEFT JOIN mnt_pm_plans p ON p.id=w.plan_id "
+            "LEFT JOIN mnt_machines m ON m.id=w.machine_id "
+            "WHERE " + wo_where + " ORDER BY w.scheduled_date, m.code", wo_args).fetchall()
+        machines = conn.execute(
+            "SELECT id, code, name FROM mnt_machines WHERE is_active=1 ORDER BY code").fetchall()
+        # Imported plans often arrive with no next_due at all (450 of 452 in the
+        # current fleet). They cannot sit on a date, so count them rather than
+        # let the calendar imply the backlog is empty.
+        undated = conn.execute(
+            "SELECT COUNT(*) c FROM mnt_pm_plans WHERE active=1 "
+            "AND (next_due IS NULL OR next_due='')").fetchone()["c"]
+    finally:
+        conn.close()
+
+    soon = today + timedelta(days=7)
+
+    def _state(iso, wo_status):
+        if wo_status in ("completed", "closed"):
+            return "completed"
+        try:
+            d = datetime.strptime(iso, "%Y-%m-%d").date()
+        except ValueError:
+            return "scheduled"
+        return "overdue" if d < today else ("due_soon" if d <= soon else "scheduled")
+
+    by_day, month_items = {}, []
+    mkey = anchor.strftime("%Y-%m")
+    for r in list(plan_rows) + list(wo_rows):
+        row = dict(r)
+        iso = (row.get("d") or "")[:10]
+        item = {
+            "kind": "wo" if "pm_no" in row else "plan",
+            "ref": row.get("pm_no") or "",
+            "title": row.get("title") or row.get("pm_no") or "PM",
+            "mcode": row.get("mcode") or "—", "mname": row.get("mname") or "",
+            "machine_id": row.get("machine_id"), "freq": row.get("frequency") or "",
+            "who": row.get("assigned_to") or "", "date": iso,
+            "state": _state(iso, row.get("status")),
+        }
+        if f_status and item["state"] != f_status:
+            continue
+        by_day.setdefault(iso, []).append(item)
+        if iso.startswith(mkey):
+            month_items.append(item)
+    for lst in by_day.values():
+        lst.sort(key=lambda i: (i["mcode"], i["title"]))
+
+    grid = [[{"iso": d.isoformat(), "day": d.day, "dow": d.weekday(),
+              "out": d.month != anchor.month, "is_today": d == today,
+              "items": by_day.get(d.isoformat(), [])} for d in wk] for wk in weeks]
+
+    keep = {}
+    if f_machine:
+        keep["machine"] = f_machine
+    if f_freq:
+        keep["freq"] = f_freq
+    if f_status:
+        keep["status"] = f_status
+    prev_m = (anchor - timedelta(days=1)).replace(day=1)
+    next_m = (anchor.replace(day=28) + timedelta(days=7)).replace(day=1)
+
+    return render_template(
+        "maintenance/calendar.html", active="maint_calendar",
+        grid=grid, weeks_dow=[d.weekday() for d in weeks[0]],
+        month_num=anchor.month, month_label=_cal.month_name[anchor.month], year=anchor.year,
+        summary={"due": sum(1 for i in month_items if i["state"] != "completed"),
+                 "overdue": sum(1 for i in month_items if i["state"] == "overdue"),
+                 "completed": sum(1 for i in month_items if i["state"] == "completed")},
+        total=sum(len(v) for v in by_day.values()), undated=undated,
+        machines=machines, states=_CAL_STATES,
+        f_machine=f_machine, f_freq=f_freq, f_status=f_status,
+        url_prev=url_for("maintenance.calendar", month=prev_m.strftime("%Y-%m"), **keep),
+        url_next=url_for("maintenance.calendar", month=next_m.strftime("%Y-%m"), **keep),
+        url_today=url_for("maintenance.calendar", month=today.strftime("%Y-%m"), **keep),
+        month_key=mkey)
 
 
 # --------------------------------------------------------------------------
@@ -1212,7 +1625,7 @@ def import_page():
             conn.close()
     return render_template("maintenance/import.html", kind=kind, result=None,
                            reg_result=reg_result, reg_parsed=reg_parsed,
-                           reg_stats=reg_stats, accept=ACCEPT, active="maint_settings",
+                           reg_stats=reg_stats, accept=ACCEPT, active="maint_import",
                            cols=(IMPORT_SPECS.get(kind) or {}).get("headers"))
 
 
@@ -1390,7 +1803,7 @@ def import_run(kind):
             flash("m_import_nothing", "error")
         return render_template("maintenance/import.html", kind=kind,
                                result={"added": added, "skipped": skipped, "errors": errors},
-                               accept=ACCEPT, active="maint_settings",
+                               accept=ACCEPT, active="maint_import",
                                cols=spec.get("headers"))
 
     if kind == "pm_checklist":
@@ -1438,7 +1851,7 @@ def import_run(kind):
             flash("m_import_nothing", "error")
         return render_template("maintenance/import.html", kind=kind,
                                result={"added": added, "skipped": skipped, "errors": errors},
-                               accept=ACCEPT, active="maint_settings",
+                               accept=ACCEPT, active="maint_import",
                                cols=spec.get("headers"))
 
     if kind == "pm_plans":
@@ -1493,7 +1906,7 @@ def import_run(kind):
             flash("m_import_nothing", "error")
         return render_template("maintenance/import.html", kind=kind,
                                result={"added": added, "skipped": skipped, "errors": errors},
-                               accept=ACCEPT, active="maint_settings",
+                               accept=ACCEPT, active="maint_import",
                                cols=spec.get("headers"))
 
     conn = _db()

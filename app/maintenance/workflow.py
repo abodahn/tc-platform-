@@ -47,6 +47,11 @@ SETTINGS = {
     "critical_cost_threshold": (CRITICAL_COST_DEFAULT, "num", 0.0, 1e9),
     "auto_reorder_pr":         (True, "bool", None, None),
     "duplicate_ticket_guard":  (True, "bool", None, None),
+    # DOAM §6 engineering-justification gate. Ships OFF: switching it on stops
+    # every spares / MRO requisition that has no Engineering-Head-signed report,
+    # so an existing site must turn it on deliberately, not discover it on
+    # upgrade morning. eng_justification.gate_enabled reads it through flag().
+    "ejr_gate":                (False, "bool", None, None),
 }
 
 # Where each knob's default comes from, and who reads it (shown on the page).
@@ -62,6 +67,7 @@ SETTING_SOURCE = {
                                 "services._pick_matrix_levels"),
     "auto_reorder_pr": ("on", "procure_bridge._enabled"),
     "duplicate_ticket_guard": ("on", "services.create_ticket"),
+    "ejr_gate": ("off", "eng_justification.ejr_gate_check"),
 }
 
 RULE_KEYS = ("std", "crit")
@@ -451,6 +457,9 @@ LABEL_I18N = {
                             "Otomatik yeniden sipariş PR'ı"),
         "duplicate_ticket_guard": ("Duplicate-ticket guard", "منع التذاكر المكرّرة",
                                    "Mükerrer talep engeli"),
+        "ejr_gate": ("Engineering justification gate (DOAM §6)",
+                     "بوابة التبرير الهندسي (DOAM §6)",
+                     "Mühendislik gerekçe kontrolü (DOAM §6)"),
     },
     "role": {
         "maintenance_manager": (None, "مدير الصيانة", "Bakım Müdürü"),

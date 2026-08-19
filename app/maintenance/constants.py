@@ -33,6 +33,19 @@ TICKET_TRANSITIONS = {
     "reopened": {"under_review", "assigned", "diagnosis"},
 }
 
+# Kanban board columns: (i18n key, English title, statuses shown in the column).
+# The FIRST status of a column is its PRIMARY one -- the status a card dropped
+# into that column moves to. Lives here (not in the template) so the drag-drop
+# endpoint and the board render from the same list.
+TICKET_BOARD = [
+    ("m.col_new", "New", ["submitted", "under_review", "reopened"]),
+    ("m.col_assigned", "Assigned / Diagnosis", ["assigned", "diagnosis"]),
+    ("m.col_spare", "Spare & Approval",
+     ["spare_required", "waiting_stock", "waiting_approval", "approved_issue"]),
+    ("m.col_repair", "Repair / Testing", ["parts_issued", "repair", "testing"]),
+    ("m.col_done", "Resolved / Closed", ["resolved", "closed", "rejected", "cancelled"]),
+]
+
 PRIORITIES = ["critical", "high", "medium", "low"]
 SEVERITIES = ["critical", "major", "moderate", "minor"]
 

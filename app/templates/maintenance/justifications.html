@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Engineering Justifications{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
+    <h1 data-i18n="m.ejr_h">Engineering Justification</h1>
+    <div class="sub" data-i18n="m.ejr_sub">Form T&amp;C-PUF-09. Spares, maintenance, repair, operating supplies and workshop requests need an Engineering Head signature before Procurement will accept the requisition — at any value. Automatic min/max replenishment is exempt.</div></div>
+  <a class="btn btn-primary" href="{{ url_for('maintenance.justification_new') }}"
+     data-i18n="m.ejr_new">Raise a report</a>
+</div>
+
+{# Whether the gate is actually enforcing is the first thing an engineer needs to
+   know: the same screen means "you must do this" or "you may do this" depending
+   on it, and guessing wrong wastes a shift. #}
+<div class="panel">
+  <div class="panel-pad">
+    {% if gate_on %}
+      <div class="flex gap" style="align-items:center">
+        <span class="badge b-critical" data-i18n="m.ejr_gate_on">Gate active</span>
+        <span class="muted" data-i18n="m.ejr_gate_on_note">Procurement cannot sign off a spares or MRO requisition without an approved report.</span>
+      </div>
+    {% else %}
+      <div class="flex gap" style="align-items:center">
+        <span class="badge b-unknown" data-i18n="m.ejr_gate_off">Gate not active</span>
+        <span class="muted" data-i18n="m.ejr_gate_off_note">Reports can be raised and signed, but Procurement is not yet blocked without one. Switch on in Maintenance Workflow → Configurable rules once the Delegation of Authority Matrix is signed.</span>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel mt-3">
+  <div class="panel-pad">
+    <div class="flex gap wrap">
+      <a class="btn {{ 'btn-primary' if not status else 'btn-ghost' }}"
+         href="{{ url_for('maintenance.justifications') }}" data-i18n="m.ejr_all">All</a>
+      {% for s, lbl in [('draft','Draft'), ('submitted','Awaiting signature'),
+                        ('approved','Approved'), ('rejected','Rejected')] %}
+      <a class="btn {{ 'btn-primary' if status == s else 'btn-ghost' }}"
+         href="{{ url_for('maintenance.justifications', status=s) }}"
+         data-i18n="m.ejr_st_{{ s }}">{{ lbl }} ({{ counts.get(s, 0) }})</a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="m.ejr_list">Reports on file</h3>
+    <span class="muted" style="font-size:12px">{{ rows|length }}</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr>
+        <th data-i18n="m.ejr_no">Report</th>
+        <th data-i18n="m.ejr_machine">Asset</th>
+        <th data-i18n="m.ejr_type">Type</th>
+        <th data-i18n="m.ejr_crit">Criticality</th>
+        <th data-i18n="m.ejr_status">Status</th>
+        <th data-i18n="m.ejr_raised">Raised</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><b>{{ r.ejr_no }}</b>
+            {% if r.is_emergency %}<br><span class="badge b-critical" data-i18n="m.ejr_emergency">Emergency</span>{% endif %}</td>
+          <td>{{ r.mcode or '—' }}<br><span class="muted" style="font-size:12px">{{ r.mname or '' }}</span></td>
+          <td data-i18n="m.ejr_rt_{{ r.request_type }}">{{ (r.request_type or '—')|replace('_',' ')|title }}</td>
+          <td data-i18n="m.ejr_cr_{{ r.criticality }}">{{ (r.criticality or '—')|replace('_',' ')|title }}</td>
+          <td><span class="badge {{ {'approved':'b-live','rejected':'b-critical',
+                                     'submitted':'b-warning'}.get(r.status,'b-unknown') }}"
+                    data-i18n="m.ejr_st_{{ r.status }}">{{ r.status|title }}</span></td>
+          <td>{{ (r.created_at or '')[:16] }}<br><span class="muted" style="font-size:12px">{{ r.created_by or '' }}</span></td>
+          <td><a class="btn btn-ghost" href="{{ url_for('maintenance.justification', jid=r.id) }}"
+                 data-i18n="m.ejr_open">Open</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="muted" style="text-align:center;padding:28px"
+                data-i18n="m.ejr_none">No reports yet. Raise one when a machine needs a part or a repair.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -10,9 +10,14 @@ import base64
 import io
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
-                   abort, flash, jsonify, send_file)
+                   abort, flash, jsonify, send_file, current_app)
 
 from app.auth import login_required, permission_required, current_user, user_can
+# Module scope on purpose. This module used to import get_db inside each
+# function that needed it, and twice a helper called it without that line: the
+# NameError went into a bare `except` and the feature silently reported
+# "nothing to show". One import here is the fix that a third caller cannot undo.
+from app.db import get_db
 from app.approvals import services as svc
 from app.approvals import pdf as pdfgen
 from app.approvals import constants as C
@@ -74,7 +79,7 @@ def index():
 @login_required
 @permission_required("proc_view")
 def analytics():
-    return render_template("approvals/analytics.html", active="procurement",
+    return render_template("approvals/analytics.html", active="proc_analytics",
                            a=svc.analytics_summary())
 
 
@@ -105,7 +110,7 @@ def listing():
     mine = request.args.get("mine") == "1"
     user = _u()
     prs = svc.list_prs(status=status, requester=(user["username"] if mine else None))
-    return render_template("approvals/list.html", active="procurement",
+    return render_template("approvals/list.html", active="proc_list",
                            prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES)
 
 
@@ -143,11 +148,13 @@ def new():
     ticket_id = request.args.get("from_ticket")
     if ticket_id and ticket_id.isdigit():
         prefill = svc.ticket_prefill(int(ticket_id)) or {}
-    return render_template("approvals/new.html", active="procurement",
+    return render_template("approvals/new.html", active="proc_new",
                            vendors=svc.list_vendors(), units=C.UNITS,
+                           sales_orders=svc.list_sales_orders(),
+                           forecasts=svc.list_forecasts(active_only=True),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            deliveries=C.DELIVERY_CONDITIONS, departments=svc.list_departments(),
-                           matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
+                           matrix=C.ACTIVE_MATRIX, ladder=C.LADDER,
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
                            item_categories=svc.item_categories(),
@@ -179,6 +186,15 @@ def _parse_header(f, can_price=False):
         "asset_code": f.get("asset_code", "").strip(),
         "notes": f.get("notes", "").strip(),
         "tax_rate": f.get("tax_rate", "").strip() or 0,
+        # DOAM §4.2 — capital expenditure follows a different ladder. Anything
+        # not explicitly marked capital is operating expenditure.
+        "expenditure_kind": f.get("expenditure_kind", "").strip().lower(),
+        # DOAM §5 — the cost object this spend belongs to.
+        "so_no": f.get("so_no", "").strip(),
+        "cost_center": f.get("cost_center", "").strip(),
+        # DOAM §3.4 — "...OR AGREED FORECAST": the other reference the clause
+        # accepts, for material bought ahead of a confirmed client order.
+        "forecast_ref": f.get("forecast_ref", "").strip(),
     }
     if not can_price:
         # Server-side commercial lockout (defence-in-depth — independent of the UI):
@@ -284,7 +300,7 @@ def api_items():
 def item_request_new():
     from app.approvals import item_requests as ir
     u = _u() or {}
-    return render_template("approvals/item_request_new.html", active="procurement",
+    return render_template("approvals/item_request_new.html", active="proc_item_requests",
                            units=C.UNITS, item_categories=svc.item_categories(),
                            prefill={"name": (request.args.get("name") or "")[:200],
                                     "unit": (request.args.get("unit") or "")[:40],
@@ -319,7 +335,7 @@ def item_request_create():
 def item_requests():
     from app.approvals import item_requests as ir
     status = request.args.get("status", "pending")
-    return render_template("approvals/item_requests.html", active="procurement",
+    return render_template("approvals/item_requests.html", active="proc_item_requests",
                            status=status, requests=ir.list_requests(status),
                            counts=ir.counts(), refused=None)
 
@@ -327,7 +343,7 @@ def item_requests():
 def _queue(refused=None, code=200):
     from app.approvals import item_requests as ir
     status = request.args.get("status", "pending")
-    return render_template("approvals/item_requests.html", active="procurement",
+    return render_template("approvals/item_requests.html", active="proc_item_requests",
                            status=status, requests=ir.list_requests(status),
                            counts=ir.counts(), refused=refused), code
 
@@ -490,8 +506,12 @@ def create():
 def _submit_error(msg):
     """Human-readable reason a submit was refused, in the reader's language for the
     one case the reader has to act on (no superior above their own role)."""
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
     if msg == "no_eligible_approver":
-        return svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]["esc_blocked_flash"]
+        return ui["esc_blocked_flash"]
+    if msg in ("cost_object_required", "so_unknown", "so_closed",
+               "fc_unknown", "fc_expired", "fc_unapproved"):
+        return ui[msg + "_flash"]
     return f"Could not submit ({msg})."
 
 
@@ -513,12 +533,17 @@ def edit(pr_id):
                "vendor": pr.get("vendor"), "payment_condition": pr.get("payment_condition"),
                "delivery_condition": pr.get("delivery_condition"), "currency": pr.get("currency"),
                "req_del_date": pr.get("req_del_date"), "asset_code": pr.get("asset_code"),
-               "tax_rate": pr.get("tax_rate")}
-    return render_template("approvals/new.html", active="procurement",
+               "tax_rate": pr.get("tax_rate"),
+               "expenditure_kind": pr.get("expenditure_kind"),
+               "so_no": pr.get("so_no"), "cost_center": pr.get("cost_center"),
+               "forecast_ref": pr.get("forecast_ref")}
+    return render_template("approvals/new.html", active="proc_list",
                            vendors=svc.list_vendors(), units=C.UNITS,
+                           sales_orders=svc.list_sales_orders(),
+                           forecasts=svc.list_forecasts(active_only=True),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            deliveries=C.DELIVERY_CONDITIONS, departments=svc.list_departments(),
-                           matrix=C.APPROVAL_MATRIX, ladder=C.LADDER,
+                           matrix=C.ACTIVE_MATRIX, ladder=C.LADDER,
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
                            editing=pr, edit_items=bundle["items"],
@@ -596,6 +621,33 @@ def detail(pr_id):
                 queued = True
                 break
     has_sig = bool((user or {}).get("sig_png"))
+    # DOAM Table 5 — the English source wording behind the proc.act.* i18n keys,
+    # so the action box says what THIS signature is before the client swaps in
+    # the reader's language (and still says it if the key is ever missing).
+    _act = (actionable or {}).get("action") or "approve"
+    act_why = C.STEP_ACTION_WHY[_act]
+    act_sign = "%s & sign" % C.STEP_ACTION_LABELS[_act]
+    # DOAM Table 4 L2 — PD owns production/maintenance, SC-D owns operational and
+    # inventory replenishment. Only shown when one of them was actually left off.
+    # The sentence names the director who is actually ON the ladder, not the
+    # classifier's verdict: dept_ladder applies the split to the DOAM floor and
+    # then merges the department responsibility matrix back on top, which can
+    # leave the OTHER director on. The verdict is only consulted to confirm the
+    # split is WHY one of them is missing (rather than a short ladder), and it
+    # rides along on the bundle get_pr already built — no second connection.
+    _on = {s["stage"] for s in bundle["steps"]}
+    l2_dom = ("plant" if "factory_manager" in _on and "scd" not in _on else
+              "supply_chain" if "scd" in _on and "factory_manager" not in _on else None)
+    if not bundle.get("l2_domain"):
+        l2_dom = None
+    # Same wording as the proc.l2.* i18n keys, so the pre-swap render and the
+    # English dictionary do not drift apart.
+    l2_note = ("DOAM Table 4: the Plant Director owns production and maintenance "
+               "commitments, so he is the only L2 signature on this request. The "
+               "Supply Chain Director does not sign it." if l2_dom == "plant" else
+               "DOAM Table 4: the Supply Chain Director owns operational and "
+               "inventory replenishment, so he is the only L2 signature on this "
+               "request. The Plant Director does not sign it." if l2_dom else "")
     cur_label = " + ".join(C.stage_label(s) for s in current_stages) if current_stages else None
     can_purchasing = user_can("proc_purchasing")
     is_priced = (pr.get("pricing_status") or "priced") == "priced"
@@ -639,20 +691,51 @@ def detail(pr_id):
                      and pr["status"] in ("draft", "rejected", "pending"))
     # Requesters don't see commercial figures until Purchasing has priced the PR.
     show_commercial = is_priced or can_purchasing
-    return render_template("approvals/detail.html", active="procurement",
+    return render_template("approvals/detail.html", active="proc_list",
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
+                           act_why=act_why, act_sign=act_sign,
+                           l2_domain=l2_dom, l2_note=l2_note,
                            stage_label=C.stage_label, queued=queued,
                            current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
                            match=svc.three_way_match(pr_id),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
                            budget=svc.budget_status(pr.get("department")),
                            can_purchasing=can_purchasing, is_priced=is_priced,
+                           # Offering a form the viewer cannot submit is worse
+                           # than hiding it: Purchasing no longer releases payment.
+                           can_pay=user_can("proc_pay"),
+                           # DOAM §4.3: only someone who could sign Finance/CFO/MD
+                           # is offered the advance-authorisation control.
+                           can_advance=any(svc.can_act(user, s)
+                                           for s in ("finance", "cfo", "ceo")),
                            needs_pricing=needs_pricing, show_commercial=show_commercial,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            rfq_min=C.RFQ_QUOTE_MIN, rfq_threshold=C.RFQ_VALUE_THRESHOLD,
                            rfq_required=(is_priced and float(pr.get("total") or 0) >= C.RFQ_VALUE_THRESHOLD),
                            rfq_locked=(pr["status"] in ("approved", "po_issued", "partially_received",
                                                         "received", "closed", "cancelled")),
+                           # DOAM §6: whether this request needs an engineering
+                           # justification, which one it cites, and the approved
+                           # reports Purchasing can choose from. Computed here so
+                           # the page only shows the control when it applies —
+                           # a picker on an IT stationery order is noise.
+                           **_ejr_context(pr_id, pr),
+                           # DOAM §4.4: how far each line departs from its target
+                           # price / stock ceiling. Fails soft — a grading error
+                           # must never take the request page down with it.
+                           deviation=_deviation_context(pr_id, pr),
+                           # Audit 3.4-b9b: the record's own retention date, and
+                           # whether it has passed. Shown on every request, not
+                           # only the eligible ones — "kept until 2031" is the
+                           # fact an auditor asks for.
+                           retention=svc.retention_state(pr),
+                           # DOAM §4.1 t7 / §4.2 t4 — the business-case panel is
+                           # rendered only for a request that has actually
+                           # reached the tier, on the SAME committed EGP figure
+                           # the gate refuses on.
+                           business_case_required=(
+                               is_priced and svc.egp_commitment(pr) > C.BUSINESS_CASE_OVER),
+                           can_dispose=user_can("proc_admin"),
                            spare_live=spare_live, source_link=source_link,
                            item_costs=item_costs,
                            # Escalation stamps are DB-stored role keys: their names
@@ -705,6 +788,90 @@ def choose_quote(pr_id, quote_id):
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
+def _deviation_context(pr_id, pr):
+    """DOAM §4.4 grading for one request, or None when there is nothing to show
+    (an unpriced request, or every line on plan)."""
+    if (pr.get("pricing_status") or "priced") != "priced":
+        return None
+    try:
+        conn = get_db()
+        try:
+            dev = svc.deviation_findings(conn, pr_id)
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — fail soft, but never in silence
+        current_app.logger.warning("deviation panel unavailable for PR %s: %s",
+                                   pr_id, exc)
+        return None
+    off = [l for l in dev["lines"] if l["grade"] != "on_plan"]
+    # DOAM §3.4 — the coverage check is shown whether or not it found anything:
+    # "we netted this and it is clean" is a result, and the lines that could not
+    # be netted at all have to be visible or the reader assumes they were.
+    cov = [l for l in dev["lines"] if l.get("coverage")]
+    if not off and not dev["unassessable"] and not cov and not dev["coverage_blind"]:
+        return None
+    dev["off_plan"] = off
+    dev["coverage"] = cov
+    return dev
+
+
+def _ejr_context(pr_id, pr):
+    """DOAM §6 state for one request: is a report required, which is cited, and
+    what approved reports are available. Fails soft — a maintenance-module error
+    must not take down the procurement page."""
+    out = {"ejr_required": False, "ejr_reason": "", "ejr_row": None,
+           "ejr_choices": [], "ejr_gate_on": False}
+    try:
+        from app.maintenance import eng_justification as ejr
+        conn = get_db()
+        try:
+            items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+            required, why = ejr.ejr_required(pr, items)
+            out["ejr_required"] = required
+            out["ejr_reason"] = why
+            out["ejr_gate_on"] = ejr.gate_enabled(conn)
+            cited = pr.get("ejr_id") if isinstance(pr, dict) else None
+            if cited:
+                out["ejr_row"] = ejr.get(conn, cited)
+            if required:
+                out["ejr_choices"] = ejr.approved_for_picker(conn)
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — fail soft, but never in silence
+        current_app.logger.warning("EJR panel unavailable for PR %s: %s", pr_id, exc)
+    return out
+
+
+@bp.route("/pr/<int:pr_id>/engineering-justification", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def attach_ejr(pr_id):
+    """Cite an approved Engineering Justification Report (DOAM §6, T&C-PUF-09).
+
+    Purchasing does this, not the requester: the DOAM makes Procurement the party
+    that refuses a requisition without a report, so Procurement is the party that
+    records which report satisfies it.
+    """
+    if not svc.get_pr(pr_id):
+        abort(404)
+    try:
+        ejr_id = int(request.form.get("ejr_id") or 0)
+    except (TypeError, ValueError):
+        ejr_id = 0
+    if not ejr_id:
+        flash("Choose an approved engineering justification.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    ok, msg = svc.attach_ejr(pr_id, ejr_id, _u(), ip=_ip())
+    if ok:
+        flash(f"Engineering justification {msg} cited on this request.", "success")
+    else:
+        flash({"ejr_not_found": "That engineering justification no longer exists.",
+               "ejr_not_approved": "That report is not signed yet. Engineering must "
+                                   "approve it before Procurement can accept the request."
+               }.get(msg, f"Could not attach the report ({msg})."), "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
 @bp.route("/pr/<int:pr_id>/single-source", methods=["POST"])
 @login_required
 @permission_required("proc_purchasing")
@@ -750,7 +917,7 @@ def budgets():
         b["spent"] = st["spent"] if st else 0
         b["remaining"] = st["remaining"] if st else None
         b["pct"] = st["pct"] if st else 0
-    return render_template("approvals/budgets.html", active="procurement",
+    return render_template("approvals/budgets.html", active="proc_budgets",
                            budgets=rows, can_manage=user_can("proc_admin"))
 
 
@@ -770,6 +937,56 @@ def save_budget():
 
 
 # --------------------------------------------------------------------------
+# Agreed production forecasts — DOAM §3.4, the second half of the sales-order
+# gate. Anyone who may raise a request may DRAFT one; only the DOAM planning
+# authority (Table 4 L2, SC-D) may AGREE it, and only an agreed forecast that is
+# inside its validity dates lets direct material be requisitioned against it.
+# --------------------------------------------------------------------------
+@bp.route("/forecasts", methods=["GET"])
+@login_required
+@permission_required("proc_view")
+def forecasts():
+    return render_template("approvals/forecasts.html", active="proc_forecasts",
+                           forecasts=svc.list_forecasts(),
+                           can_add=user_can("proc_create"),
+                           can_agree=svc.can_act(_u(), "scd"))
+
+
+@bp.route("/forecasts", methods=["POST"])
+@login_required
+@permission_required("proc_create")
+def add_forecast():
+    ok, msg = svc.create_forecast(request.form, _u())
+    flash(f"Forecast {msg} recorded as a draft — it buys nothing until the "
+          f"Supply Chain Director agrees it." if ok
+          else f"Could not record the forecast ({msg}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.forecasts"))
+
+
+@bp.route("/forecasts/<int:fc_id>/agree", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def agree_forecast(fc_id):
+    ok, msg = svc.agree_forecast(fc_id, _u())
+    if ok:
+        text = (f"Forecast {msg} agreed — direct material may now be "
+                f"requisitioned against it while it is in date.")
+    elif msg == "not_authorised":
+        text = ("Only the Supply Chain Director (or a Procurement admin) may "
+                "agree a forecast.")
+    elif msg in ("own_forecast", "fc_expired"):
+        # Translated, because these are the refusals the reader has to act on:
+        # find a second signatory, or register a forecast for this period.
+        text = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"][
+            "own_forecast_flash" if msg == "own_forecast" else "fc_lapsed_flash"]
+    else:
+        text = f"Could not agree the forecast ({msg})."
+    flash(text, "success" if ok else "error")
+    return redirect(url_for("approvals.forecasts"))
+
+
+# --------------------------------------------------------------------------
 # Delegations
 # --------------------------------------------------------------------------
 @bp.route("/delegations", methods=["GET"])
@@ -779,11 +996,13 @@ def delegations():
     from app.db import get_db
     conn = get_db()
     try:
+        # Fallback page only — both pickers search /api/lookup/users.
         users = [dict(r) for r in conn.execute(
-            "SELECT username, full_name, role FROM users WHERE is_active=1 ORDER BY username").fetchall()]
+            "SELECT username, full_name, role FROM users WHERE is_active=1 "
+            "ORDER BY username LIMIT 25").fetchall()]
     finally:
         conn.close()
-    return render_template("approvals/delegations.html", active="procurement",
+    return render_template("approvals/delegations.html", active="proc_delegations",
                            delegations=svc.list_delegations(), users=users,
                            can_manage=user_can("proc_admin"))
 
@@ -838,6 +1057,15 @@ def approve(pr_id):
                                 "your signature.",
                "dual_role": "You already signed another stage of this request — a "
                             "different approver must take this one.",
+               "deviation_memo_required": "This order is off plan (over target price, over "
+                                          "the stock ceiling, or above the net requirement "
+                                          "after inventory netting — §3.4). DOAM §4.4 "
+                                          "requires a written justification memo before it "
+                                          "is signed — record it in the Coverage check / "
+                                          "Deviation from plan panel.",
+               "business_case_required": "Above 10,000,000 EGP the DOAM requires a written "
+                                         "business case alongside Board approval. Record it "
+                                         "before signing.",
                "no_active_step": "No active approval step."}.get(msg, f"Could not approve ({msg})."),
               "error")
     else:
@@ -910,7 +1138,13 @@ def submit(pr_id):
 @login_required
 @permission_required("proc_purchasing")
 def issue_po(pr_id):
-    ok, res = svc.issue_po(pr_id, _u(), ip=_ip(), force=user_can("proc_admin"))
+    # An override must be ASKED FOR, not inherited from a role. Passing
+    # force=user_can("proc_admin") meant the three-way match, the payment cap,
+    # the budget check and the DOAM §4.3 advance authorisation were all silently
+    # off for every admin on every request — a bypass nobody chose and nobody
+    # could see. Now the caller has to tick "override" and the reason is audited.
+    _override = user_can("proc_admin") and request.form.get("override") == "1"
+    ok, res = svc.issue_po(pr_id, _u(), ip=_ip(), force=_override)
     flash(f"Purchase Order {res} issued." if ok else
           {"over_budget": "The department budget for this period is exceeded — "
                           "an administrator must issue this PO (or raise the budget).",
@@ -966,28 +1200,49 @@ def email_po(pr_id):
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
+_RECEIVE_ERR = {
+    "not_receivable": "This request is not open for receiving — a receipt can only "
+                      "be booked on an approved, issued or received purchase order.",
+    "nothing_received": "Enter an accepted or a rejected quantity on at least one line.",
+    "not_found": "That purchase request no longer exists.",
+}
+
+
 @bp.route("/pr/<int:pr_id>/receive", methods=["POST"])
 @login_required
 @permission_required("proc_purchasing")
 def receive(pr_id):
     f = request.form
     ids = f.getlist("recv_item_id[]")
-    qtys = f.getlist("recv_qty[]")
-    receipts = {}
-    for i, iid in enumerate(ids):
-        try:
-            q = float(qtys[i]) if i < len(qtys) and qtys[i] else 0
-        except ValueError:
-            q = 0
-        if q > 0:
-            receipts[iid] = q
-    if not receipts:
-        flash("Enter a received quantity on at least one line.", "error")
+
+    def _col(name):
+        """{item_id: qty} from one parallel column of the receipt form."""
+        vals = f.getlist(name)
+        out = {}
+        for i, iid in enumerate(ids):
+            try:
+                q = float(vals[i]) if i < len(vals) and vals[i] else 0
+            except ValueError:
+                q = 0
+            if q > 0:
+                out[iid] = q
+        return out
+
+    receipts, rejects = _col("recv_qty[]"), _col("rej_qty[]")
+    if not receipts and not rejects:
+        flash("Enter an accepted or a rejected quantity on at least one line.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    reason = f.get("reject_reason", "").strip()
+    if rejects and not reason:
+        flash("A rejected quantity needs a reason.", "error")
         return redirect(url_for("approvals.detail", pr_id=pr_id))
     ok, msg = svc.receive_items(pr_id, receipts, _u(),
-                                notes=f.get("notes", "").strip() or None, ip=_ip())
+                                notes=f.get("notes", "").strip() or None, ip=_ip(),
+                                rejects=rejects, reject_reason=reason or None)
     flash({"received": "Delivery fully confirmed.", "partial": "Partial receipt recorded."}.get(msg, "Receipt recorded.")
-          if ok else f"Could not record receipt ({msg}).", "success" if ok else "error")
+          + (" Rejected goods returned to the supplier under a debit note." if rejects else "")
+          if ok else _RECEIVE_ERR.get(msg, f"Could not record receipt ({msg})."),
+          "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -1042,7 +1297,12 @@ def invoice_file(inv_id):
 
 @bp.route("/pr/<int:pr_id>/payment", methods=["POST"])
 @login_required
-@permission_required("proc_purchasing")
+# DOAM §7.3.4 "FIND owns payment", Table 4 L2 "FIN-D owns payment control".
+# This was proc_purchasing, so the buyer who committed the spend also released
+# the money and Finance could not — the separation the clause exists to create,
+# exactly inverted. proc_pay is held by the Financial Director, Finance Manager
+# and CFO; super_admin keeps it as the break-glass path.
+@permission_required("proc_pay")
 def add_payment(pr_id):
     if not svc.get_pr(pr_id):
         abort(404)
@@ -1051,15 +1311,40 @@ def add_payment(pr_id):
         "amount": f.get("amount"), "method": f.get("method", "").strip(),
         "reference": f.get("reference", "").strip(), "paid_at": f.get("paid_at", "").strip(),
         "invoice_id": f.get("invoice_id"), "notes": f.get("notes", "").strip(),
-    }, _u(), ip=_ip(), force=user_can("proc_admin"))
+    }, _u(), ip=_ip(), force=(user_can("proc_admin") and f.get("override") == "1"))
+    # Refusals in the reader's language, the way _submit_error does it: these
+    # gates are described in AR and TR on /procurement/workflow, so the sentence
+    # that fires must not arrive in English only. labels() already falls back to
+    # the English wording for any key a language has not translated.
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
     flash(f"Payment recorded ({res})." if ok else
-          {"not_payable": "Payments start once the Purchase Order is issued.",
-           "match_blocked": "Payment blocked: the 3-way match shows over-billing "
-                            "(invoice exceeds the PO or the received value). Resolve "
-                            "the mismatch first — an administrator can override.",
-           "over_payment": "This payment would exceed the PO total. Check the amount — "
-                           "an administrator can override if intentional.",
-           }.get(res, f"Could not record payment ({res})."),
+          ui.get(str(res) + "_flash") or f"Could not record payment ({res}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/advance", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def authorize_advance(pr_id):
+    """DOAM §4.3 — Finance / CFO / MD authorises an advance before it is paid."""
+    if not svc.get_pr(pr_id):
+        abort(404)
+    f = request.form
+    ok, msg = svc.authorize_advance(pr_id, f.get("advance_pct"),
+                                    f.get("bank_guarantee_ref", "").strip(),
+                                    _u(), ip=_ip())
+    flash("Advance authorised." if ok else
+          {"bad_pct": "Enter the advance as a percentage of the PO value (1–100).",
+           "no_po": "There is no Purchase Order yet to advance against.",
+           "vendor_not_approved": "This supplier is not on the approved vendor list, "
+                                  "so no advance may be authorised (DOAM §4.3).",
+           "guarantee_required": "An advance above 25% on an order over 500,000 EGP "
+                                 "needs a bank guarantee reference.",
+           "not_authorised": "An advance of this size needs a higher authority: up to "
+                             "25% the Financial Director, above that the CFO or the "
+                             "Managing Director.",
+           }.get(msg, f"Could not authorise the advance ({msg})."),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
@@ -1087,6 +1372,47 @@ def cancel(pr_id):
            "already_received": "Goods were already received against this order — close it instead of cancelling.",
            }.get(msg, f"Could not cancel ({msg})."),
           "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/doam-doc", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def doam_doc(pr_id):
+    """Record the §4.1/§4.2 business case or the §4.4 justification memo.
+
+    Purchasing owns both, for the same reason it owns the pricing gate: both are
+    conditions attached to the COMMERCIAL value, which only exists once
+    Purchasing has priced the request."""
+    field = request.form.get("field", "")
+    ok, msg = svc.set_doam_document(pr_id, field, request.form.get("text", ""),
+                                    _u(), ip=_ip())
+    flash(("Business case recorded." if field == "business_case"
+           else "Justification memo recorded.") if ok
+          else {"too_short": "Write the actual reasoning — a few words cannot "
+                             "satisfy a DOAM document requirement.",
+                "bad_field": "Unknown document.",
+                "locked": "This request is closed."}.get(msg, f"Could not save ({msg})."),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/dispose", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def dispose(pr_id):
+    """Retire ONE record whose retention period has expired. There is no bulk
+    action and no scheduled job on purpose: the report says what is eligible,
+    a person decides, and the guard refuses anything still inside its window."""
+    ok, msg = svc.dispose_pr(pr_id, _u(), ip=_ip())
+    if ok:
+        flash(f"Record retired from the register (retention expired {msg}).", "success")
+    elif msg.startswith("retained_until:"):
+        flash("This record is still inside its retention period — it must be kept "
+              f"until {msg.split(':', 1)[1]}.", "error")
+    else:
+        flash({"already_disposed": "This record has already been retired."}
+              .get(msg, f"Could not retire this record ({msg})."), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -1131,18 +1457,72 @@ def po_pdf(pr_id):
 @login_required
 @permission_required("proc_view")
 def grn_pdf(pr_id):
+    """?grn=<id> prints THAT goods-received note; without it, the latest one.
+    Each receipt event has its own pre-allocated number, so partial deliveries no
+    longer reprint one document under one number."""
     bundle = svc.get_pr(pr_id)
     if not bundle:
         abort(404)
     if bundle["pr"]["status"] not in ("partially_received", "received", "closed"):
         abort(400, "The Goods Received Note is available once a delivery is recorded.")
+    grns = bundle.get("grns") or []
+    want = request.args.get("grn", type=int)
+    grn = next((g for g in grns if g["id"] == want), None) if want else (grns[-1] if grns else None)
+    if want and not grn:
+        abort(404)
     try:
-        data = pdfgen.grn_pdf(bundle)
+        data = pdfgen.grn_pdf(bundle, grn)
+    except Exception:
+        return jsonify(error="PDF support unavailable."), 500
+    name = (grn or {}).get("grn_no") or pdfgen.grn_doc_no(bundle["pr"].get("pr_no"))
+    return send_file(io.BytesIO(data), mimetype="application/pdf",
+                     as_attachment=False, download_name=f"{name}.pdf")
+
+
+@bp.route("/return/<int:ret_id>/debit-note.pdf")
+@login_required
+@permission_required("proc_view")
+def debit_note_pdf(ret_id):
+    """The debit note raised when goods were rejected on receipt and returned."""
+    ret = svc.get_return(ret_id)
+    if not ret:
+        abort(404)
+    bundle = svc.get_pr(ret["pr_id"])
+    if not bundle:
+        abort(404)
+    try:
+        data = pdfgen.debit_note_pdf(bundle, ret)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
     return send_file(io.BytesIO(data), mimetype="application/pdf",
                      as_attachment=False,
-                     download_name=f"{pdfgen.grn_doc_no(bundle['pr'].get('pr_no'))}.pdf")
+                     download_name=f"{ret.get('dn_no') or 'DN'}.pdf")
+
+
+@bp.route("/return/<int:ret_id>/settle", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def settle_return(ret_id):
+    ok, msg = svc.settle_return(ret_id, _u(), ip=_ip())
+    flash(f"Debit note {msg} settled — the supplier's dues are cleared." if ok
+          else {"already_settled": "That debit note is already settled.",
+                "not_found": "Debit note not found."}.get(msg, f"Could not settle ({msg})."),
+          "success" if ok else "error")
+    return redirect(request.referrer or url_for("approvals.index"))
+
+
+@bp.route("/quarantine/<int:q_id>/<decision>", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def resolve_quarantine(q_id, decision):
+    ok, msg = svc.resolve_quarantine(q_id, decision, _u(), ip=_ip())
+    flash({"return": "Over-delivery marked for return to the supplier.",
+           "accept": "Over-delivery accepted as a free issue (stock unchanged).",
+           }.get(msg, f"Could not resolve the quarantine ({msg}).")
+          if ok else {"already_resolved": "That quarantine record is already decided.",
+                      }.get(msg, f"Could not resolve the quarantine ({msg})."),
+          "success" if ok else "error")
+    return redirect(request.referrer or url_for("approvals.index"))
 
 
 # --------------------------------------------------------------------------
@@ -1195,7 +1575,7 @@ def download_attachment(att_id):
 @login_required
 @permission_required("proc_view")
 def vendors():
-    return render_template("approvals/vendors.html", active="procurement",
+    return render_template("approvals/vendors.html", active="proc_vendors",
                            vendors=svc.list_vendors(active_only=False),
                            can_manage=user_can("proc_purchasing"))
 
@@ -1225,7 +1605,7 @@ def settings():
     depts = svc.list_departments()
     dept = request.args.get("department") or (depts[0] if depts else "")
     lang = (_u() or {}).get("lang_pref") or "en"
-    return render_template("approvals/settings.html", active="procurement",
+    return render_template("approvals/settings.html", active="proc_settings",
                            departments=depts, department=dept,
                            matrix=svc.get_dept_matrix(dept), ladder=C.LADDER,
                            stage_labels=C.STAGE_LABELS, default_matrix=C.APPROVAL_MATRIX,
@@ -1257,7 +1637,7 @@ def save_settings():
     # A brand-new department (Add form, no stages ticked) seeds with the default
     # ladder so it persists and is immediately usable; admins tune it afterwards.
     if not rows and f.get("new_department"):
-        rows = [{"stage": s, "threshold": C.APPROVAL_MATRIX.get(s, 0)} for s in C.LADDER]
+        rows = [{"stage": s, "threshold": C.ACTIVE_MATRIX.get(s, 0)} for s in C.LADDER]
     ok, msg = svc.set_dept_matrix(dept, rows, _u())
     flash(f"Responsibility matrix saved for {dept}." if ok else f"Could not save ({msg}).",
           "success" if ok else "error")
@@ -1337,7 +1717,7 @@ def workflow():
     # The explanation prose lives in the database, so it cannot be swapped by the
     # client-side data-i18n pass — the reader's own language picks the column here.
     lang = (_u() or {}).get("lang_pref") or "en"
-    return render_template("approvals/workflow.html", active="procurement",
+    return render_template("approvals/workflow.html", active="proc_workflow",
                            v=svc.workflow_view(request.args.get("department"), lang),
                            can_edit=user_can("proc_admin"))
 

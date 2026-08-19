@@ -157,6 +157,7 @@ def create_app():
     from app.routes.trace import bp as trace_bp
     from app.routes.shipping import bp as shipping_bp
     from app.routes.people import bp as people_bp
+    from app.routes.lookup import bp as lookup_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -185,6 +186,8 @@ def create_app():
     app.register_blueprint(trace_bp)
     app.register_blueprint(shipping_bp)
     app.register_blueprint(people_bp)
+    # /api/lookup — type-ahead sources behind the searchable dropdowns.
+    app.register_blueprint(lookup_bp)
 
     # Cross-cutting surfaces: the shared reporting hub (every module's reports are
     # served by these six generic routes) and the governance matrix. Both import

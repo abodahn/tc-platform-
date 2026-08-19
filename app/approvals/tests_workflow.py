@@ -132,7 +132,9 @@ with app.app_context():
                     (pr_id,)).fetchone()["status"] == "approved")
     okk, po = svc.issue_po(pr_id, admin)
     ok("PO issues (Production has no budget row -> never blocked): %s" % po, okk)
-    svc.receive_goods(pr_id, admin)
+    # receive the whole order through the ONE receiving entry point the app has
+    svc.receive_items(pr_id, {r["id"]: r["qty"] for r in conn.execute(
+        "SELECT id, qty FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()}, admin)
     svc.add_invoice(pr_id, {"invoice_no": "INV-1", "amount": 30000, "tax": 0}, admin)
     okk, msg = svc.add_payment(pr_id, {"amount": 30600.0}, admin)   # +2%
     ok("PAYMENT CAP refuses 30 600 on a 30 000 PO (1%% tolerance): %s" % msg,

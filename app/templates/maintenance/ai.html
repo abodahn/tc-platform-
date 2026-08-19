@@ -18,13 +18,22 @@
   <div class="kpi warn"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-refresh"></use></svg></div></div>
     <div class="kval" data-count="{{ repeated|length }}">0</div><div class="klabel" data-i18n="m.ai_repeated">Repeated-failure machines</div></div>
   <div class="kpi good"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-sparkles"></use></svg></div></div>
-    <div class="kval" data-count="{{ risks|length }}">0</div><div class="klabel" data-i18n="m.ai_analyzed">Machines analyzed</div></div>
+    <div class="kval" data-count="{{ analyzed if analyzed is defined else risks|length }}">0</div><div class="klabel" data-i18n="m.ai_analyzed">Machines analyzed</div></div>
 </div>
 
 {# At-risk machines ranking #}
 <div class="panel accent mt-6">
   <div class="panel-head"><h3 data-i18n="m.ai_risk_rank">Failure-risk ranking</h3>
     <span class="muted" data-i18n="m.ai_confidence_note">Confidence grows with history</span></div>
+  {# Say what is on screen. A table silently showing 150 of 5,108 rows reads as
+     "these are all the machines at risk", which is a different and wrong claim. #}
+  {% if analyzed is defined and analyzed > shown %}
+  <div class="panel-pad muted" style="padding-top:0">
+    <span data-i18n="m.ai_showing">Showing the highest-risk</span>
+    <b>{{ shown }}</b> <span data-i18n="m.ai_of">of</span> <b>{{ analyzed }}</b>
+    <span data-i18n="m.ai_machines_ranked">machines ranked. Use the machine registry to search the rest.</span>
+  </div>
+  {% endif %}
   <div class="tbl-wrap"><table class="tbl">
     <thead><tr><th data-i18n="m.machine">Machine</th><th data-i18n="m.ai_risk">Risk</th>
       <th data-i18n="m.ai_predicted">Predicted next failure</th><th>MTBF</th>

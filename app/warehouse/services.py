@@ -50,6 +50,9 @@ def _f(v, default=0.0):
     return f if isfinite(f) else default
 
 
+qty_of = _f      # public alias: the receive route needs the same hardened parse
+
+
 def _price(v):
     """Coerce a submitted unit price. A blank / None / non-numeric / non-finite
     entry means 'no price update' and must NOT drag the weighted average to zero
@@ -654,6 +657,44 @@ def _avg(conn, material_id):
     return _f(r["avg_cost"]) if r else 0.0
 
 
+def po_line_for(grn_ref, material_id):
+    """The open PO line a warehouse stock-in belongs to, or None.
+
+    /warehouse/receive is the SECOND door goods enter through. When the operator
+    types the PR/PO number on the form, the receipt must obey the same rule as the
+    procurement receiving tab — capped at the outstanding quantity, over-delivery
+    quarantined, one numbered GRN per delivery — instead of booking free stock the
+    order never hears about (which is what broke the three-way match).
+    Returns {pr_id, item_id, outstanding}. Never raises: no procurement tables, no
+    match, no reference -> plain unreferenced stock-in, exactly as before."""
+    ref = (grn_ref or "").strip()
+    if not ref or not material_id:
+        return None
+    conn = get_db()
+    try:
+        pr = conn.execute(
+            "SELECT id, status FROM pr_requests WHERE UPPER(pr_no)=UPPER(?) "
+            "OR UPPER(po_no)=UPPER(?)", (ref, ref)).fetchone()
+        # 'received' is IN the list on purpose: the commonest over-delivery is a
+        # further shipment arriving after the PO is closed out. Excluding it sent
+        # that delivery straight into stock as uncontrolled free stock. With
+        # outstanding == 0 the caller quarantines the whole lot and stocks none.
+        if not pr or pr["status"] not in ("approved", "po_issued",
+                                          "partially_received", "received"):
+            return None
+        for it in conn.execute("SELECT id, item, qty, received_qty FROM pr_items "
+                               "WHERE pr_id=? ORDER BY seq, id", (pr["id"],)).fetchall():
+            mat = _resolve_material(conn, it["item"])
+            if mat and mat["id"] == material_id:
+                return {"pr_id": pr["id"], "item_id": it["id"],
+                        "outstanding": max(0.0, _f(it["qty"]) - _f(it["received_qty"]))}
+        return None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
 def receive_qty(material_id, qty, price, user, grn_ref=None, notes=None):
     """Receive a quantity-tracked material (trims, thread, labels). Returns (ok, msg)."""
     qty = _f(qty, -1)
@@ -988,31 +1029,47 @@ def _resolve_material(conn, text):
     """Map a PR line's item text back to a material. Procurement's pr_items has no
     warehouse link column (spare_id is hard-typed to maintenance), and that file is not
     ours to change — so the material CODE at the head of the line is the join key, the
-    same convention the maintenance bridge writes ('<code> — <name>')."""
+    same convention the maintenance bridge writes ('<code> — <name>').
+
+    Code alone is not enough: NOTHING on the PR form searches wh_materials (both
+    type-aheads read other tables and free text is invited), so a buyer types the
+    material's NAME. Matching on code only meant the over-delivery cap at
+    /warehouse/receive never engaged on a line a real user could write. Full-name
+    equality is tried after every code candidate has failed."""
     s = str(text or "").strip()
     if not s:
         return None
-    cands, seen = [], set()
-    for c in (s, s.split("—")[0].strip(), s.split(" - ")[0].strip(), s.split(" ")[0].strip()):
+    heads, seen = [], set()
+    for c in (s, s.split("—")[0].strip(), s.split(" - ")[0].strip()):
         if c and c not in seen:
             seen.add(c)
-            cands.append(c)
-    for c in cands:
+            heads.append(c)
+    first = s.split(" ")[0].strip()
+    for c in heads + ([first] if first and first not in seen else []):
         r = conn.execute("SELECT id, roll_tracked, code FROM wh_materials "
                          "WHERE UPPER(code)=UPPER(?) AND is_active=1", (c,)).fetchone()
+        if r:
+            return dict(r)
+    for c in heads:            # name match: whole head only, never the first word
+        r = conn.execute("SELECT id, roll_tracked, code FROM wh_materials "
+                         "WHERE UPPER(name)=UPPER(?) AND is_active=1", (c,)).fetchone()
         if r:
             return dict(r)
     return None
 
 
-def post_receipt_to_material(pr_id, receipts, user=None):
+def post_receipt_to_material(pr_id, receipts, user=None, free=False):
     """Reverse leg of the procurement bridge: push a goods receipt into material stock.
 
     `receipts` = {pr_items.id: qty_received_NOW} — the EFFECTIVE, already-capped delta
     procurement computes, not the raw form input. Roll-tracked materials get one roll
     per receipt line (the shade lot is labelled by the warehouse on arrival); quantity
     materials are added to the header. Returns total qty posted. NEVER raises — a
-    bridge failure must not break a goods receipt."""
+    bridge failure must not break a goods receipt.
+
+    free=True books the quantity at zero unit cost (an accepted over-delivery: the
+    goods are in the building but nobody is invoicing for them, and both stores
+    read a zero price as 'no cost update', so the moving average stays put)."""
     conn = get_db()
     try:
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
@@ -1041,7 +1098,7 @@ def post_receipt_to_material(pr_id, receipts, user=None):
             mat = _resolve_material(conn, _col(it, "item"))
             if not mat:
                 continue                      # not a warehouse material — silently skip
-            price = _f(_col(it, "unit_price"))
+            price = 0.0 if free else _f(_col(it, "unit_price"))
             if mat["roll_tracked"]:
                 ok, msg = receive_roll(mat["id"], {
                     "length_m": add, "unit_cost": price, "grn_ref": pr_no,

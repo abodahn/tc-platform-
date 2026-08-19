@@ -225,19 +225,23 @@ DOC_AR = {
     "three_way_match": (
         "قبل الدفع، يُقارَن «المطلوب» (إجمالي أمر الشراء وكمياته) مع «المستلم» "
         "(كميات إذون الاستلام وقيمتها بسعر أمر الشراء) ومع «المفوتَر» (فواتير "
-        "المورّد المسجَّلة، بالإجمالي شاملًا الضريبة). ويُنبَّه على نقص التوريد "
-        "لكنه لا يمنع الدفع — فالدفع مقابل ما تم توريده فعلًا في استلام جزئي أمر "
-        "مشروع. أما الفوترة الزائدة فتمنع الدفع: فاتورة تتجاوز إجمالي أمر الشراء، "
-        "أو فاتورة قبل الضريبة تتجاوز قيمة ما تم استلامه. وتسمح المقارنة بهامش "
-        "تفاوت 1% من إجمالي أمر الشراء أو وحدة عملة واحدة، أيهما أكبر."),
+        "المورّد المسجَّلة، بالإجمالي شاملًا الضريبة). أما الفوترة الزائدة فتمنع "
+        "الدفع: فاتورة تتجاوز إجمالي أمر الشراء، أو فاتورة قبل الضريبة تتجاوز "
+        "قيمة ما تم استلامه. ونقص التوريد لا يمنع الدفع بل يحدّه: يُذكر النقص "
+        "بالكمية وبالقيمة، ولا يجوز أن تتجاوز المدفوعات المتراكمة قيمة ما تم "
+        "استلامه فعلًا — فالدفع مقابل ما تم توريده أمر مشروع، أما دفع قيمة أمر "
+        "الشراء كاملة مقابل توريد جزئي فلا. وتسمح المقارنة بسماحيات الدليل: 2% "
+        "من إجمالي أمر الشراء أو 500 جنيه على القيمة، أيهما أكبر، و5% على "
+        "الكمية."),
     "payment_cap": (
         "لا يمكن إثبات الدفع إلا بعد وجود أمر شراء — ولا يجوز أبدًا مقابل طلب "
         "مسوَّدة أو قيد الموافقة أو ملغى. ولا يجوز أن تتجاوز المدفوعات المتراكمة "
         "إجمالي أمر الشراء، وإذا وُجدت فواتير فلا يجوز أن تتجاوز إجمالي الفواتير "
-        "شاملًا الضريبة كذلك — أي أن الحد الفعلي هو الأقل من الاثنين، مع تطبيق "
-        "هامش تفاوت الدفع على كل منهما. ويُرفض الدفع أيضًا ما دامت المطابقة "
-        "الثلاثية تُظهر فوترة زائدة. ويمكن للمسؤول تجاوز أي من هذه القيود، "
-        "ويُسجَّل التجاوز في سجل التدقيق."),
+        "شاملًا الضريبة كذلك، وفي حالة نقص التوريد لا يجوز أن تتجاوز قيمة ما تم "
+        "استلامه فعلًا شاملة الضريبة — أي أن الحد الفعلي هو الأقل من الثلاثة "
+        "المنطبقة، مع تطبيق هامش تفاوت الدفع على كل منها. ويُرفض الدفع أيضًا ما "
+        "دامت المطابقة الثلاثية تُظهر فوترة زائدة. ويمكن للمسؤول تجاوز أي من هذه "
+        "القيود، ويُسجَّل التجاوز في سجل التدقيق."),
 }
 
 DOC_TR = {
@@ -319,21 +323,24 @@ DOC_TR = {
         "Ödemeden önce SİPARİŞ EDİLEN (PO genel toplamı ve miktarları), TESLİM "
         "ALINAN (mal kabul miktarları ve bunların sipariş fiyatıyla değeri) ve "
         "FATURALANAN (kayıtlı tedarikçi faturaları, vergi dahil brüt) "
-        "karşılaştırılır. Eksik teslim işaretlenir ancak ödemeyi ENGELLEMEZ — "
-        "kısmi bir teslimde fiilen teslim alınan için ödeme yapmak meşrudur. "
-        "Fazla faturalama ise engeller: PO toplamının üzerinde faturalanmış "
-        "olması, ya da vergi öncesi faturanın teslim alınanın değerini aşması. "
-        "Karşılaştırma, PO toplamının %1'i veya 1 para birimi (hangisi büyükse) "
-        "kadar tolerans tanır."),
+        "karşılaştırılır. Fazla faturalama ödemeyi engeller: PO toplamının "
+        "üzerinde faturalanmış olması, ya da vergi öncesi faturanın teslim "
+        "alınanın değerini aşması. Eksik teslim ödemeyi ENGELLEMEZ, SINIRLAR: "
+        "eksiklik hem miktar hem tutar olarak belirtilir ve birikimli ödeme "
+        "fiilen teslim alınanın değerini aşamaz — kısmi bir teslimde teslim "
+        "alınan için ödeme yapmak meşrudur, parçası için PO'nun tamamını ödemek "
+        "değil. Karşılaştırma DOAM toleranslarını tanır: değerde PO toplamının "
+        "%2'si veya 500 EGP (hangisi büyükse), miktarda %5."),
     "payment_cap": (
         "Bir ödeme yalnızca Satın alma emri var olduktan sonra kaydedilebilir — "
         "taslak, onay bekleyen veya iptal edilmiş bir talebe karşı asla. "
-        "Birikimli ödemeler PO genel toplamını aşamaz ve fatura mevcutsa "
-        "faturalanan brüt toplamı da aşamaz; yani pratikte üst sınır, her birine "
-        "ödeme toleransı uygulanmış hâlleriyle bu ikisinin DAHA KÜÇÜĞÜdür. 3'lü "
-        "mutabakat fazla faturalama gösterirken de ödeme reddedilir. Bir yönetici "
-        "bunların herhangi birini geçersiz kılabilir ve bu istisna denetim "
-        "kaydına girer."),
+        "Birikimli ödemeler PO genel toplamını aşamaz; fatura mevcutsa "
+        "faturalanan brüt toplamı da aşamaz; eksik teslimde ise fiilen teslim "
+        "alınanın brüt değerini aşamaz. Yani pratikte üst sınır, her birine "
+        "ödeme toleransı uygulanmış hâlleriyle geçerli olanların EN KÜÇÜĞÜdür. "
+        "3'lü mutabakat fazla faturalama gösterirken de ödeme reddedilir. Bir "
+        "yönetici bunların herhangi birini geçersiz kılabilir ve bu istisna "
+        "denetim kaydına girer."),
 }
 
 # --- PR status meanings (proc_doc sections 'status.<key>') -----------------
@@ -395,14 +402,17 @@ DOC = {
 STAGE_LABEL = {
     "en": {"requester": "Requester", "warehouse": "Warehouse",
            "factory_manager": "Factory Manager", "purchasing": "Purchasing",
-           "finance": "Finance", "cfo": "CFO", "ceo": "CEO"},
+           "finance": "Finance", "cfo": "CFO", "ceo": "CEO",
+           "scd": "Supply Chain Director", "bod": "Board of Directors"},
     "ar": {"requester": "مقدّم الطلب", "warehouse": "المخزن",
            "factory_manager": "مدير المصنع", "purchasing": "المشتريات",
            "finance": "الإدارة المالية", "cfo": "المدير المالي (CFO)",
-           "ceo": "الرئيس التنفيذي (CEO)"},
+           "ceo": "الرئيس التنفيذي (CEO)",
+           "scd": "مدير سلسلة الإمداد", "bod": "مجلس الإدارة"},
     "tr": {"requester": "Talep eden", "warehouse": "Depo",
            "factory_manager": "Fabrika Müdürü", "purchasing": "Satın Alma",
-           "finance": "Finans", "cfo": "CFO", "ceo": "CEO"},
+           "finance": "Finans", "cfo": "CFO", "ceo": "CEO",
+           "scd": "Tedarik Zinciri Direktörü", "bod": "Yönetim Kurulu"},
 }
 
 GATE_LABEL = {
@@ -483,6 +493,11 @@ ROLE_LABEL = {
         "warehouse_manager": "مدير المخازن",
         "cfo": "المدير المالي (CFO)",
         "ceo": "الرئيس التنفيذي (CEO)",
+        "supply_chain_director": "مدير سلسلة الإمداد",
+        "plant_director": "مدير عام المصنع",
+        "financial_director": "المدير المالي",
+        "managing_director": "العضو المنتدب",
+        "board": "مجلس الإدارة",
         "hr_officer": "مسؤول الموارد البشرية",
         "hr_probation_admin": "مسؤول فترة الاختبار (الموارد البشرية)",
     },
@@ -514,6 +529,11 @@ ROLE_LABEL = {
         "warehouse_manager": "Depo Müdürü",
         "cfo": "Mali İşler Direktörü (CFO)",
         "ceo": "Genel Müdür (CEO)",
+        "supply_chain_director": "Tedarik Zinciri Direktörü",
+        "plant_director": "Fabrika Direktörü",
+        "financial_director": "Mali İşler Direktörü",
+        "managing_director": "Murahhas Aza",
+        "board": "Yönetim Kurulu",
         "hr_officer": "İK Sorumlusu",
         "hr_probation_admin": "İK Deneme Süresi Yöneticisi",
     },
@@ -552,6 +572,82 @@ UI = {
                              "that role is free to sign it instead. Procurement admins "
                              "have been notified — a delegation, a second holder of the "
                              "role, or an admin override is needed.",
+        # --- DOAM §5 golden thread: the sales-order gate ---
+        "cost_object_required_flash":
+            "This request buys direct materials — fabric, yarn, trims, thread, "
+            "labels, packaging, wash or print work — so it must name what it is "
+            "costed against (DOAM §3.4): either the client sales order, or an "
+            "agreed production forecast. Pick one from the lists on the request "
+            "and submit again.",
+        "so_unknown_flash":
+            "The sales order on this request is not an order on file, so it is not "
+            "a cost object (DOAM §5). Pick a real, open sales order from the list "
+            "on the request and submit again — or, if this material is being bought "
+            "ahead of a confirmed client order, clear the sales order and cite an "
+            "agreed production forecast instead.",
+        "so_closed_flash":
+            "The sales order on this request is closed or cancelled, so nothing can "
+            "be costed to it (DOAM §5). Name an open sales order and submit again, "
+            "or clear it and cite an agreed production forecast if the material is "
+            "being bought ahead of a confirmed order. If this purchase is not a "
+            "direct material for a client order at all, remove the sales order and "
+            "use the cost centre instead.",
+        # --- DOAM §3.4, the clause's other half: "...or agreed forecast" ---
+        "fc_unknown_flash":
+            "The forecast reference on this request is not in the forecast "
+            "register, so it is not a cost object (DOAM §3.4). Record it under "
+            "Procurement → Agreed Forecasts and have the Supply Chain Director "
+            "agree it, or name an open client sales order instead.",
+        "fc_unapproved_flash":
+            "The forecast on this request is still a draft. A forecast becomes a "
+            "cost object only when it is AGREED — the DOAM puts operational and "
+            "inventory replenishment with the Supply Chain Director (Table 4 L2), "
+            "so ask for it to be agreed, or name an open client sales order.",
+        "fc_expired_flash":
+            "The forecast on this request is outside its validity dates, so nothing "
+            "can be bought against it (DOAM §3.4). Have a current forecast agreed "
+            "for this period, or name an open client sales order instead.",
+        "fc_lapsed_flash":
+            "This forecast's validity dates have already passed, so agreeing "
+            "it would buy nothing: the gate would refuse every request that "
+            "cited it. Record a forecast covering the current period instead.",
+        "own_forecast_flash":
+            "You drafted this forecast, so you may not also agree it. A forecast "
+            "is the alternative to a client sales order, so one signature on both "
+            "ends of it would let the same person invent a cost object and then "
+            "spend against it. Ask another Supply Chain Director or Procurement "
+            "admin to agree it.",
+        # --- DOAM §4.3 / §7.3.3 / §7.3.4: why a payment was refused ---
+        # Same gates the governance page describes in this reader's language;
+        # the refusal itself used to arrive in English only.
+        "not_payable_flash": "Payments start once the Purchase Order is issued.",
+        "match_blocked_flash":
+            "Payment blocked: the 3-way match shows over-billing (invoice exceeds "
+            "the PO or the received value). Resolve the mismatch first — an "
+            "administrator can override.",
+        "over_payment_flash":
+            "This payment would exceed the PO total. Check the amount — an "
+            "administrator can override if intentional.",
+        "exceeds_invoiced_flash":
+            "This payment would exceed what the supplier has invoiced. Book the "
+            "invoice first, or reduce the amount — an administrator can override.",
+        "exceeds_received_flash":
+            "Short delivery: this payment would exceed the value of the goods "
+            "actually received. Pay for what was received, book the rest once it "
+            "arrives — or ask an administrator to override.",
+        "advance_not_authorised_flash":
+            "This is an advance payment (nothing invoiced yet). DOAM §4.3 requires "
+            "it to be authorised first — record the advance authorisation on this "
+            "request.",
+        "advance_exceeds_authorised_flash":
+            "This payment is larger than the advance that was authorised. "
+            "Re-authorise for the higher percentage, or reduce the amount.",
+        "advance_guarantee_required_flash":
+            "An advance above 25% on an order over 500,000 EGP needs a bank "
+            "guarantee reference.",
+        "advance_vendor_not_approved_flash":
+            "No advance may be paid to a supplier off the approved vendor list "
+            "(DOAM §4.3). Add the supplier to the vendor master first.",
     },
     "ar": {
         "text_en": "النص (بالإنجليزية)", "text_ar": "النص (بالعربية)",
@@ -584,6 +680,75 @@ UI = {
                              "الدور متفرّغ للتوقيع بدلًا منك. وقد أُبلِغ مسؤولو المشتريات "
                              "— المطلوب تفويض أو إضافة شخص ثانٍ لهذا الدور أو تدخّل من "
                              "مسؤول.",
+        "cost_object_required_flash":
+            "هذا الطلب يشتري خامات إنتاج مباشرة — أقمشة أو خيوط أو إكسسوارات أو "
+            "ليبل أو مواد تغليف أو غسيل أو طباعة — لذلك يجب أن يذكر ما تُحمّل "
+            "عليه تكلفته (البند 3-4 من دليل الصلاحيات): إما أمر بيع العميل وإما "
+            "توقعات إنتاج معتمدة. اختر أحدهما من القوائم الموجودة في الطلب ثم "
+            "أعد الإرسال.",
+        "so_unknown_flash":
+            "أمر البيع المكتوب في هذا الطلب غير مسجّل في النظام، وبالتالي فهو ليس "
+            "مركز تكلفة صالحًا (البند 5 من دليل الصلاحيات). اختر أمر بيع حقيقيًا "
+            "ومفتوحًا من القائمة ثم أعد الإرسال — أو امسح أمر البيع واذكر "
+            "توقعات إنتاج معتمدة إذا كنت تشتري قبل تأكيد أمر العميل.",
+        "so_closed_flash":
+            "أمر البيع المذكور في هذا الطلب مقفل أو ملغى، فلا يمكن تحميل أي "
+            "تكلفة عليه (البند 5 من دليل الصلاحيات). اذكر أمر بيع مفتوحًا ثم "
+            "أعد الإرسال، أو امسحه واذكر توقعات إنتاج معتمدة إذا كان "
+            "الشراء قبل تأكيد أمر العميل، أو احذف أمر البيع واستخدم مركز "
+            "التكلفة إذا لم يكن هذا الشراء خامة إنتاج مباشرة لأمر عميل.",
+        "fc_unknown_flash":
+            "مرجع التوقعات المذكور في هذا الطلب غير موجود في سجل التوقعات، "
+            "فليس مركز تكلفة (البند 3-4 من دليل الصلاحيات). سجّله في صفحة "
+            "التوقعات المعتمدة واطلب اعتماد مدير سلسلة الإمداد له، أو اذكر "
+            "أمر بيع عميل مفتوحًا بدلًا منه.",
+        "fc_unapproved_flash":
+            "التوقعات المذكورة في هذا الطلب ما زالت مسودة. ولا تصبح التوقعات "
+            "مركز تكلفة إلا بعد اعتمادها — ويضع الدليل مسؤولية التشغيل "
+            "وإعادة تدبير المخزون لدى مدير سلسلة الإمداد (الجدول 4 المستوى "
+            "الثاني)، فاطلب اعتمادها أو اذكر أمر بيع عميل مفتوحًا.",
+        "fc_expired_flash":
+            "التوقعات المذكورة في هذا الطلب خارج مدة سريانها، فلا يمكن الشراء "
+            "مقابلها (البند 3-4 من دليل الصلاحيات). اعتمد توقعات سارية لهذه "
+            "الفترة، أو اذكر أمر بيع عميل مفتوحًا بدلًا منها.",
+        "fc_lapsed_flash":
+            "انتهت مدة سريان هذه التوقعات، فاعتمادها لن يتيح أي شراء: سيرفض "
+            "النظام كل طلب يستند إليها. سجّل توقعات تغطي الفترة الحالية بدلًا منها.",
+        "own_forecast_flash":
+            "أنت من سجّل هذه التوقعات، فلا يجوز أن تعتمدها بنفسك. التوقعات بديل "
+            "عن أمر بيع العميل، ولو وقّع الشخص نفسه على طرفيها لأصبح بإمكانه أن "
+            "ينشئ مركز تكلفة ثم ينفق عليه. اطلب من مدير سلسلة إمداد آخر أو من "
+            "مسؤول مشتريات آخر اعتمادها.",
+        # --- DOAM §4.3 / §7.3.3 / §7.3.4: why a payment was refused ---
+        # Same gates the governance page describes in this reader's language;
+        # the refusal itself used to arrive in English only.
+        "not_payable_flash": "لا يبدأ السداد إلا بعد إصدار أمر الشراء.",
+        "match_blocked_flash":
+            "السداد موقوف: المطابقة الثلاثية تُظهر زيادة في الفوترة (الفاتورة تتجاوز "
+            "أمر الشراء أو قيمة المستلم). عالج الفرق أولًا — ويمكن لمسؤول النظام "
+            "التجاوز.",
+        "over_payment_flash":
+            "هذا السداد يتجاوز إجمالي أمر الشراء. راجع المبلغ — ويمكن لمسؤول النظام "
+            "التجاوز إذا كان مقصودًا.",
+        "exceeds_invoiced_flash":
+            "هذا السداد يتجاوز ما فوتره المورد. سجّل الفاتورة أولًا أو خفّض المبلغ — "
+            "ويمكن لمسؤول النظام التجاوز.",
+        "exceeds_received_flash":
+            "نقص في التوريد: هذا السداد يتجاوز قيمة البضاعة المستلمة فعلًا. ادفع "
+            "مقابل ما تم استلامه وسجّل الباقي عند وصوله — أو اطلب من مسؤول النظام "
+            "التجاوز.",
+        "advance_not_authorised_flash":
+            "هذه دفعة مقدّمة (لا توجد فواتير بعد). يشترط البند 4-3 من دليل الصلاحيات "
+            "اعتمادها أولًا — سجّل اعتماد الدفعة المقدّمة على هذا الطلب.",
+        "advance_exceeds_authorised_flash":
+            "هذا السداد أكبر من الدفعة المقدّمة المعتمدة. اعتمد نسبة أعلى أو خفّض "
+            "المبلغ.",
+        "advance_guarantee_required_flash":
+            "الدفعة المقدّمة التي تتجاوز 25% على طلب تزيد قيمته عن 500,000 جنيه تحتاج "
+            "إلى مرجع خطاب ضمان بنكي.",
+        "advance_vendor_not_approved_flash":
+            "لا يجوز دفع أي دفعة مقدّمة لمورد خارج قائمة الموردين المعتمدين (البند "
+            "4-3). أضف المورد إلى سجل الموردين أولًا.",
     },
     "tr": {
         "text_en": "Metin (İngilizce)", "text_ar": "Metin (Arapça)",
@@ -617,5 +782,79 @@ UI = {
                              "yerine imzalayabilecek uygun kimse yok. Satın Alma "
                              "yöneticileri bilgilendirildi — bir vekâlet, rolü taşıyan "
                              "ikinci bir kişi ya da yönetici müdahalesi gerekiyor.",
+        "cost_object_required_flash":
+            "Bu talep doğrudan üretim malzemesi satın alıyor — kumaş, iplik, "
+            "aksesuar, dikiş ipliği, etiket, ambalaj, yıkama veya baskı — bu yüzden "
+            "neye maliyetlendirildiğini belirtmesi gerekir (DOAM §3.4): ya müşteri "
+            "satış siparişi ya da onaylı bir üretim tahmini. Talepteki listelerden "
+            "birini seçip yeniden gönderin.",
+        "so_unknown_flash":
+            "Bu talepteki satış siparişi sistemde kayıtlı bir sipariş değil, "
+            "dolayısıyla geçerli bir maliyet nesnesi sayılmaz (DOAM §5). Talepteki "
+            "listeden gerçek ve açık bir satış siparişi seçip yeniden gönderin — ya "
+            "da malzeme kesinleşmiş bir müşteri siparişinden önce alınıyorsa satış "
+            "siparişini boşaltıp onaylı bir üretim tahmini belirtin.",
+        "so_closed_flash":
+            "Bu talepteki satış siparişi kapatılmış ya da iptal edilmiş; ona hiçbir "
+            "maliyet yüklenemez (DOAM §5). Açık bir satış siparişi belirtip yeniden "
+            "gönderin, ya da alım kesinleşmiş bir siparişten önce yapılıyorsa onaylı "
+            "bir üretim tahmini belirtin. Bu alım bir müşteri siparişine ait "
+            "doğrudan üretim malzemesi değilse satış siparişini kaldırıp masraf "
+            "merkezini kullanın.",
+        "fc_unknown_flash":
+            "Bu talepteki tahmin referansı tahmin kaydında yok, dolayısıyla bir "
+            "maliyet nesnesi değil (DOAM §3.4). Onu Onaylı Tahminler sayfasında "
+            "kaydedip Tedarik Zinciri Direktörüne onaylatın ya da açık bir müşteri "
+            "satış siparişi belirtin.",
+        "fc_unapproved_flash":
+            "Bu talepteki tahmin hâlâ taslak. Bir tahmin ancak ONAYLANDIĞINDA maliyet "
+            "nesnesi olur — DOAM, operasyonel ve stok ikmal sorumluluğunu Tedarik "
+            "Zinciri Direktörüne verir (Tablo 4 L2). Onaylanmasını isteyin ya da "
+            "açık bir müşteri satış siparişi belirtin.",
+        "fc_expired_flash":
+            "Bu talepteki tahmin geçerlilik tarihlerinin dışında; ona dayanılarak "
+            "hiçbir şey satın alınamaz (DOAM §3.4). Bu dönem için güncel bir tahmin "
+            "onaylatın ya da açık bir müşteri satış siparişi belirtin.",
+        "fc_lapsed_flash":
+            "Bu tahminin geçerlilik tarihleri geçmiş; onaylamak hiçbir şey satın "
+            "aldırmaz: ona dayanan her talep reddedilir. Bunun yerine mevcut dönemi "
+            "kapsayan bir tahmin kaydedin.",
+        "own_forecast_flash":
+            "Bu tahmini siz taslak olarak girdiniz, bu yüzden onu kendiniz "
+            "onaylayamazsınız. Tahmin, müşteri satış siparişinin alternatifidir; "
+            "iki ucunda da aynı imza olursa aynı kişi hem maliyet nesnesini "
+            "yaratmış hem de ona harcama yapmış olur. Onayı başka bir Tedarik "
+            "Zinciri Direktöründen ya da Satın Alma yöneticisinden isteyin.",
+        # --- DOAM §4.3 / §7.3.3 / §7.3.4: why a payment was refused ---
+        # Same gates the governance page describes in this reader's language;
+        # the refusal itself used to arrive in English only.
+        "not_payable_flash":
+            "Ödemeler ancak Satın Alma Siparişi düzenlendikten sonra başlar.",
+        "match_blocked_flash":
+            "Ödeme engellendi: 3'lü mutabakat fazla faturalama gösteriyor (fatura, "
+            "siparişi veya teslim alınan değeri aşıyor). Önce farkı giderin — bir "
+            "yönetici geçersiz kılabilir.",
+        "over_payment_flash":
+            "Bu ödeme sipariş toplamını aşıyor. Tutarı kontrol edin — kasıtlıysa bir "
+            "yönetici geçersiz kılabilir.",
+        "exceeds_invoiced_flash":
+            "Bu ödeme, tedarikçinin faturaladığı tutarı aşıyor. Önce faturayı "
+            "kaydedin ya da tutarı düşürün — bir yönetici geçersiz kılabilir.",
+        "exceeds_received_flash":
+            "Eksik teslimat: bu ödeme fiilen teslim alınan malın değerini aşıyor. "
+            "Teslim alınan kadarını ödeyin, kalanı geldiğinde kaydedin — ya da bir "
+            "yöneticiden geçersiz kılmasını isteyin.",
+        "advance_not_authorised_flash":
+            "Bu bir avans ödemesidir (henüz fatura yok). DOAM §4.3 önce "
+            "yetkilendirilmesini şart koşar — avans yetkisini bu talebe kaydedin.",
+        "advance_exceeds_authorised_flash":
+            "Bu ödeme, yetkilendirilen avanstan büyük. Daha yüksek yüzde için "
+            "yeniden yetki alın ya da tutarı düşürün.",
+        "advance_guarantee_required_flash":
+            "500.000 EGP üzerindeki bir siparişte %25'i aşan avans için banka "
+            "teminat mektubu referansı gerekir.",
+        "advance_vendor_not_approved_flash":
+            "Onaylı tedarikçi listesi dışındaki bir tedarikçiye avans ödenemez "
+            "(DOAM §4.3). Önce tedarikçiyi tedarikçi ana kaydına ekleyin.",
     },
 }

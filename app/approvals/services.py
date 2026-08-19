@@ -10,7 +10,7 @@ platform-bell notification.
 import hashlib
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.db import get_db
 from app.security import has_permission, effective_roles
@@ -214,6 +214,43 @@ def role_holders(conn, roles):
     for r in conn.execute(sql, tuple(roles) + (today, today)).fetchall():
         out.add(r["u"])
     return out
+
+
+def ladder_signer_health(conn=None):
+    """Every ladder rung with the roles that sign it and whether anyone can.
+
+    A rung whose roles have no active holder is a SILENT deadlock, not an error:
+    resolve_escalation() treats "nobody eligible at all" as unchanged, so the
+    request simply sits there until a platform admin notices and signs it. This
+    reports the condition before a request lands on it.
+
+    Covers the DOAM ladder and any legacy rung not in it, so the answer stays
+    right whichever ladder DOAM_IN_FORCE selects. Per rung:
+      roles         the role keys that may sign it (admin override applied)
+      unregistered  those roles that are in no role registry at all
+      holders       count of active users (incl. delegates) who hold one
+      ok            False = nobody can sign this rung
+    """
+    own = conn is None
+    if own:
+        conn = get_db()
+    try:
+        rmap = stage_roles_map(conn)
+        registry = set(effective_roles())
+        stages = list(C.DOAM_LADDER) + [s for s in C.LADDER if s not in C.DOAM_LADDER]
+        out = []
+        for stage in stages:
+            roles = sorted(rmap.get(stage, ()))
+            holders = role_holders(conn, roles)
+            out.append({"stage": stage, "label": C.stage_label(stage),
+                        "roles": roles,
+                        "unregistered": [r for r in roles if r not in registry],
+                        "holders": len(holders),
+                        "ok": bool(holders)})
+        return out
+    finally:
+        if own:
+            conn.close()
 
 
 def eligible_approvers(conn, stage, roles=None):
@@ -505,6 +542,24 @@ def get_pr(pr_id):
                 (pr_id,)).fetchall()
         except Exception:
             sig_evs = []
+        try:
+            grns = [dict(r) for r in conn.execute(
+                "SELECT * FROM pr_grn WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()]
+            quarantine = [dict(r) for r in conn.execute(
+                "SELECT * FROM pr_grn_quarantine WHERE pr_id=? ORDER BY id",
+                (pr_id,)).fetchall()]
+        except Exception:
+            grns, quarantine = [], []    # database predating the GRN tables
+        returns_ok = True
+        try:
+            returns = [dict(r) for r in conn.execute(
+                "SELECT * FROM pr_returns WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()]
+        except Exception as exc:
+            # Empty is NOT the same answer as unreadable: the payable ceiling is
+            # derived from this list, so swallowing the failure quietly removed
+            # the cap instead of reporting it. three_way_match reads the flag.
+            log.warning("pr_returns unavailable for PR %s: %s", pr_id, exc)
+            returns, returns_ok = [], False
     finally:
         conn.close()
     pr_d = dict(pr)
@@ -514,6 +569,12 @@ def get_pr(pr_id):
     for r in steps:
         s = dict(r)
         s["verify_code"] = codes.get((s.get("seq"), s.get("stage")))
+        # DOAM Table 5 letter for this rung, normalised so the page and the PDF
+        # never have to cope with a NULL from a row written pre-migration.
+        s["action"] = step_action_of(s)
+        s["action_code"] = C.STEP_ACTION_CODE[s["action"]]
+        s["action_label"] = "%s (%s)" % (C.STEP_ACTION_LABELS[s["action"]],
+                                         s["action_code"])
         # aging only meaningful for the current pending step
         if s.get("status") == "pending" and s.get("seq") == pr_d.get("current_seq") \
            and pr_d.get("status") == "pending":
@@ -523,10 +584,18 @@ def get_pr(pr_id):
                 s["overdue"] = hrs > C.SLA_HOURS_PER_STAGE
                 s["due_soon"] = (not s["overdue"]) and hrs > C.SLA_WARN_HOURS
         step_ds.append(s)
+    # DOAM Table 4 L2 — the verdict, from the rows already in hand. The request
+    # page needs it to decide whether the split is WHY a director is missing;
+    # computing it here costs nothing, where l2_domain_of() would open a second
+    # connection and re-query the same two tables on every view.
     return {"pr": pr_d, "items": [dict(r) for r in items], "steps": step_ds,
+            "l2_domain": C.l2_domain(pr_d.get("department"), pr_d.get("source_module"),
+                                     any(_pr_field(r, "spare_id") for r in items)),
             "events": [dict(r) for r in events], "attachments": [dict(r) for r in atts],
             "quotes": [dict(r) for r in quotes],
-            "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments]}
+            "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments],
+            "grns": grns, "quarantine": quarantine, "returns": returns,
+            "returns_ok": returns_ok}
 
 
 def list_prs(status=None, requester=None, limit=500):
@@ -611,20 +680,121 @@ def counts(user=None):
 # --------------------------------------------------------------------------
 # Responsibility (approval) matrix — per department
 # --------------------------------------------------------------------------
-def dept_ladder(conn, department, total):
+def pr_l2_domain(conn, pr_id):
+    """DOAM Table 4 L2 — which director owns THIS request: ("plant" |
+    "supply_chain" | None, reason).
+
+    Reads only master data the request already carries: the department, the
+    source module it was raised from, and whether any line is a stocked spare.
+    None = it cannot be told apart, and the caller must keep both directors.
+
+    Never raises: a missing column on an old database, or a table the deploy has
+    not reached, means "cannot be told apart", which is the today behaviour.
+    """
+    try:
+        pr = conn.execute(
+            "SELECT department, source_module FROM pr_requests WHERE id=?",
+            (pr_id,)).fetchone()
+        if not pr:
+            return None, "no_request"
+        spare = conn.execute(
+            "SELECT 1 FROM pr_items WHERE pr_id=? AND spare_id IS NOT NULL LIMIT 1",
+            (pr_id,)).fetchone() is not None
+    except Exception:                     # noqa: BLE001 — see docstring
+        return None, "unreadable"
+    dom = C.l2_domain(_pr_field(pr, "department"), _pr_field(pr, "source_module"),
+                      spare)
+    if not dom:
+        return None, "ambiguous"
+    src = str(_pr_field(pr, "source_module") or "").strip().lower()
+    # Every branch below is reachable and the last one is total: with item text
+    # out of the signal set, a non-None domain can only have come from the
+    # source module, a spare line or the department.
+    why = ("maintenance_origin" if src in C.PD_SOURCE_MODULES else
+           "spare_part_line" if spare and dom == "plant" else
+           "costing_origin" if src in C.SCD_SOURCE_MODULES else "department")
+    return dom, why
+
+
+def l2_domain_of(pr_id):
+    """pr_l2_domain() on its own connection, for the request page."""
+    conn = get_db()
+    try:
+        return pr_l2_domain(conn, pr_id)
+    finally:
+        conn.close()
+
+
+def dept_ladder(conn, department, total, kind="opex", pr_id=None):
     """Ordered stage list required for a PR of `total` in `department`. Uses the
-    department's custom responsibility matrix if one exists, else the global
-    default (constants.APPROVAL_MATRIX)."""
+    department's custom responsibility matrix if one exists, else the DOAM ladder
+    selected by `kind` ("opex" §4.1 / "capex" §4.2).
+
+    `pr_id`, when given, also applies the DOAM Table 4 L2 domain split: PD owns
+    production and maintenance, SC-D owns operational and inventory
+    replenishment, so only one of them signs a request whose domain is clear.
+    Called WITHOUT it (the governance screens, "what would a 120,000 request
+    look like") the ladder is the amount-only one it has always been.
+
+    A department override still wins, because a department that has set its own
+    matrix has deliberately said so — but it is only consulted for OPEX. Capital
+    expenditure is a company-level authority in the DOAM, not a departmental one,
+    so a department cannot quietly give itself a shorter ladder for machinery.
+
+    DOAM Table 4's unbudgeted escalation is NOT here: like §4.3 single-source it
+    is a control rung appended after the value ladder (apply_budget_state), so
+    the L1 signature is the last one collected rather than landing mid-ladder
+    ahead of the directors."""
     try:
         t = float(total or 0)
     except (TypeError, ValueError):
         t = 0.0
+    kind = (kind or "opex").strip().lower()
+    floor = build_ladder(t, kind)
+    if kind == "capex":
+        return floor
+    # Table 4 L2 split, applied to the FLOOR only: a department that has put the
+    # dropped director in its own matrix below gets them back, because that
+    # department configured the signature deliberately.
+    if pr_id:
+        _dom, _why = pr_l2_domain(conn, pr_id)
+        _split = C.apply_l2_domain(floor, _dom)
+        if _split != floor:
+            _dropped = [s for s in floor if s not in _split]
+            _note = (
+                "DOAM Table 4 L2: %s signs and %s does not — %s owns %s, and this "
+                "request is %s (%s). Both directors used to join on amount alone."
+                % (stage_label(C.L2_DOMAIN_STAGE[_dom]), stage_label(_dropped[0]),
+                   stage_label(C.L2_DOMAIN_STAGE[_dom]),
+                   "production and maintenance commitments" if _dom == "plant"
+                   else "operational and inventory replenishment",
+                   "a maintenance/production commitment" if _dom == "plant"
+                   else "an inventory replenishment", _why))
+            # Same ladder rebuilt twice (re-pricing) must not stack duplicates.
+            if not conn.execute(
+                    "SELECT 1 FROM pr_events WHERE pr_id=? AND action='l2_domain' "
+                    "AND detail=? LIMIT 1", (pr_id, _note)).fetchone():
+                audit(conn, pr_id, "system", "l2_domain", _note)
+        floor = _split
     rows = conn.execute(
         "SELECT stage, threshold FROM proc_resp_matrix "
         "WHERE department=? AND active=1 ORDER BY seq, id", (department or "",)).fetchall()
-    if rows:
-        return [r["stage"] for r in rows if t >= float(r["threshold"] or 0)]
-    return build_ladder(t)
+    if not rows:
+        return floor
+    dept = [r["stage"] for r in rows if t >= float(r["threshold"] or 0)]
+    if not C.DOAM_IN_FORCE:
+        return dept              # pre-DOAM behaviour: the matrix fully replaces
+    # DOAM in force: the ladder is a FLOOR, not a default. A department matrix may
+    # ADD signatures, never remove one the DOAM requires.
+    #
+    # This is defence in depth, and it is needed: a single row (department,
+    # 'warehouse', threshold 0) used to collapse a whole department to ONE
+    # signature — which also dropped 'purchasing', the pricing-gate stage, so the
+    # pricing, RFQ and engineering gates were skipped along with it. Enforcing the
+    # floor HERE means an existing bad row in the database cannot do that either.
+    merged = list(floor) + [s for s in dept if s not in floor]
+    order = {s: i for i, s in enumerate(C.DOAM_LADDER)}
+    return sorted(merged, key=lambda s: order.get(s, len(order)))
 
 
 def list_departments():
@@ -690,21 +860,46 @@ def set_dept_matrix(department, stage_rows, user=None):
     department = (department or "").strip()
     if not department:
         return False, "no_department"
+    rows = [r for r in stage_rows if r.get("stage") in LADDER]
+    if C.DOAM_IN_FORCE and rows:
+        # The DOAM ladder is a floor. A department may add signatures or demand
+        # them earlier (a LOWER threshold), never drop a stage the matrix
+        # requires or push its threshold higher. Refused at the write, and
+        # enforced again at read time in dept_ladder() — a matrix saved before
+        # this rule existed must not keep working either.
+        given = {r["stage"]: float(r.get("threshold") or 0) for r in rows}
+        weakened = []
+        for stage, floor_at in C.OPEX_MATRIX.items():
+            if stage not in given:
+                weakened.append("%s is required by the DOAM and is not in the matrix"
+                                % stage_label(stage))
+            elif given[stage] > floor_at:
+                weakened.append("{} starts at {:,.0f} in the DOAM but {:,.0f} here".format(
+                    stage_label(stage), floor_at, given[stage]))
+        if weakened:
+            return False, "below_doam_floor: " + "; ".join(weakened)
     conn = get_db()
     try:
         conn.execute("DELETE FROM proc_resp_matrix WHERE department=?", (department,))
         now = _now()
-        for i, r in enumerate(stage_rows):
-            stage = r.get("stage")
-            if stage not in LADDER:
-                continue
+        for i, r in enumerate(rows):
             conn.execute(
                 "INSERT INTO proc_resp_matrix (department, stage, threshold, seq, active, updated_at) "
-                "VALUES (?,?,?,?,1,?)", (department, stage, float(r.get("threshold") or 0), i, now))
+                "VALUES (?,?,?,?,1,?)",
+                (department, r["stage"], float(r.get("threshold") or 0), i, now))
         conn.commit()
-        return True, ""
     finally:
         conn.close()
+    # Who changed a department's approval routing is exactly the kind of thing an
+    # auditor asks about, and it was not being recorded at all.
+    try:
+        from app.db import log_audit
+        log_audit((user or {}).get("username") or "system", "proc_resp_matrix",
+                  "%s: %s" % (department, ", ".join(
+                      "%s@%g" % (r["stage"], float(r.get("threshold") or 0)) for r in rows) or "cleared"))
+    except Exception:
+        pass
+    return True, ""
 
 
 def delete_dept_matrix(department):
@@ -750,6 +945,38 @@ def rename_dept(old, new):
         conn.close()
 
 
+def _real_spares(ids):
+    """{id: [every text the MASTER holds for it]} for those of `ids` that are
+    rows which actually exist in the maintenance spares master.
+
+    `pr_items.spare_id` is a hidden form field with no foreign key behind it, so
+    every control that treats "linked to a spare" as master data has to resolve
+    the link first — an unchecked integer is requester-supplied text, not master
+    data. The master's own wording comes back with it because knowing which
+    words came from the master and which the requester typed is the whole
+    difference (see cost_object_check): the maintenance bridge copies the
+    spare's name into the PR title and its spec into the line description, and
+    a sewing-machine spare is legitimately called "thread guide bracket, for the
+    washing line feeder".
+
+    Own connection on purpose: the maintenance module may not be installed, and
+    on PostgreSQL a failed statement aborts the CALLER's transaction."""
+    want = {int(i) for i in ids if str(i or "").strip().lstrip("-").isdigit()}
+    if not want:
+        return {}
+    conn = get_db()
+    try:
+        return {int(r["id"]): [r["code"], r["name"], r["spec"], r["description"]]
+                for r in conn.execute(
+                    "SELECT id, code, name, spec, description FROM mnt_spare_parts "
+                    "WHERE id IN (%s)" % ",".join("?" * len(want)),
+                    tuple(sorted(want))).fetchall()}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
 def create_pr(header, items, user, ip=None, submit=True, priced=None):
     """Create a PR (+items). When submit=True, build the ladder and route it.
 
@@ -757,6 +984,11 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
     when None it is inferred (a request with a positive total is 'priced', a
     zero-value requester-raised request is 'unpriced' and must be priced by
     Purchasing at the pricing gate). Returns (pr_id, pr_no)."""
+    # Resolved BEFORE the first write: spare_id arrives as a hidden form field
+    # and is stored with no foreign key, so a fabricated id used to persist and
+    # then switch the DOAM cost-object gate off. A link that does not resolve to
+    # a real spare is dropped, not kept.
+    real_spares = _real_spares([it.get("spare_id") for it in items])
     conn = get_db()
     try:
         total = round(sum(_amount(it) for it in items), 2)
@@ -792,14 +1024,33 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
                  float(it.get("qty") or 0), float(it.get("current_stock") or 0),
                  it.get("vendor") or header.get("vendor"),
                  float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes"),
-                 int(it["spare_id"]) if str(it.get("spare_id") or "").strip().isdigit() else None,
+                 (int(it["spare_id"])
+                  if str(it.get("spare_id") or "").strip().isdigit()
+                  and int(it["spare_id"]) in real_spares else None),
                  int(it["item_id"]) if str(it.get("item_id") or "").strip().isdigit() else None))
+        kind = "capex" if str(header.get("expenditure_kind") or "").strip().lower() \
+            in ("capex", "capital") else "opex"
         try:
-            conn.execute("UPDATE pr_requests SET tax_rate=?, pricing_status=? WHERE id=?",
+            # retention_until is stamped HERE, at creation, from the same two
+            # numbers the controlled-forms register prints as prose: 10 years for
+            # capital expenditure, 5 for everything else. A record that carries
+            # its own disposal date is a control; a page that says "5 years" is
+            # a claim.
+            conn.execute("UPDATE pr_requests SET tax_rate=?, pricing_status=?, "
+                         "expenditure_kind=?, so_no=?, cost_center=?, "
+                         "forecast_ref=?, retention_until=? WHERE id=?",
                          (float(header.get("tax_rate") or 0),
-                          "priced" if priced else "unpriced", pr_id))
-        except Exception:
-            pass
+                          "priced" if priced else "unpriced", kind,
+                          header.get("so_no") or None,
+                          header.get("cost_center") or None,
+                          header.get("forecast_ref") or None,
+                          C.retention_until(now, kind), pr_id))
+        except Exception as exc:  # noqa: BLE001
+            # Fails safe (an unstamped row reads as retained) but not silently:
+            # this one statement also carries tax_rate, expenditure_kind, so_no
+            # and cost_center, and the only other signal was a report KPI.
+            logging.getLogger(__name__).warning(
+                "PR %s header update failed: %s", pr_id, exc)
         audit(conn, pr_id, uname, "created",
               f"PR {pr_no} created" + (f" (total {total})" if priced else " (pricing pending)"), ip)
         conn.commit()
@@ -838,11 +1089,12 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
     drop back to 'unpriced' and pass the pricing gate again. Without this, an
     edit-after-reject kept pricing_status='priced' on a now-zero total, which
     skipped the pricing gate AND the value-based Finance/CFO/CEO rungs."""
+    real_spares = _real_spares([it.get("spare_id") for it in items])  # see create_pr
     conn = get_db()
     try:
         pr = conn.execute(
-            "SELECT status, requester, tax_rate, payment_condition, pricing_status "
-            "FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+            "SELECT status, requester, tax_rate, payment_condition, pricing_status, "
+            "created_at FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
         if pr["status"] not in ("draft", "rejected"):
@@ -853,15 +1105,30 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
             else float(pr["tax_rate"] or 0)
         pay_cond = header.get("payment_condition") if can_price \
             else pr["payment_condition"]
+        kind = "capex" if str(header.get("expenditure_kind") or "").strip().lower() in (
+            "capex", "capital") else "opex"
         conn.execute(
             """UPDATE pr_requests SET title=?, request_for=?, department=?, currency=?,
                vendor=?, payment_condition=?, delivery_condition=?, req_del_date=?,
-               asset_code=?, notes=?, tax_rate=?, total=? WHERE id=?""",
+               asset_code=?, notes=?, tax_rate=?, expenditure_kind=?, so_no=?,
+               cost_center=?, forecast_ref=?, total=? WHERE id=?""",
             (header.get("title"), header.get("request_for"), header.get("department"),
              header.get("currency") or "EGP", header.get("vendor"),
              pay_cond, header.get("delivery_condition"),
              header.get("req_del_date"), header.get("asset_code"), header.get("notes"),
-             tax_rate, total, pr_id))
+             tax_rate, kind, header.get("so_no") or None,
+             header.get("cost_center") or None,
+             header.get("forecast_ref") or None, total, pr_id))
+        # An edit can flip OPEX -> CAPEX, which lengthens retention from 5 years
+        # to 10. Extend it, NEVER shorten it: a record whose kind changes the
+        # other way has already been kept under the longer promise, and quietly
+        # bringing a disposal date forward is exactly the move a retention rule
+        # exists to prevent.
+        _ru = C.retention_until(pr["created_at"] if "created_at" in pr.keys()
+                                else None, kind)
+        conn.execute("UPDATE pr_requests SET retention_until=? WHERE id=? AND "
+                     "(retention_until IS NULL OR retention_until < ?)",
+                     (_ru, pr_id, _ru))
         if not can_price and (pr["pricing_status"] or "priced") == "priced":
             # the lines were replaced unpriced -> back through the pricing gate
             conn.execute("UPDATE pr_requests SET pricing_status='unpriced', "
@@ -876,7 +1143,9 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
                  float(it.get("qty") or 0), float(it.get("current_stock") or 0),
                  it.get("vendor") or header.get("vendor"),
                  float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes"),
-                 int(it["spare_id"]) if str(it.get("spare_id") or "").strip().isdigit() else None,
+                 (int(it["spare_id"])
+                  if str(it.get("spare_id") or "").strip().isdigit()
+                  and int(it["spare_id"]) in real_spares else None),
                  int(it["item_id"]) if str(it.get("item_id") or "").strip().isdigit() else None))
         audit(conn, pr_id, user.get("username") if user else "system", "edited",
               f"Draft updated (total {total})", ip)
@@ -895,6 +1164,82 @@ def pr_amounts(pr):
             "grand": round(subtotal + tax, 2)}
 
 
+def egp_commitment(pr):
+    """EGP-equivalent TOTAL COMMITTED VALUE — tax included.
+
+    DOAM §3.4: "All limits ... represent the total value of a commitment." The
+    purchase order the company signs is gross (pdf.py prints Grand Total =
+    subtotal + VAT), so routing on the ex-VAT subtotal left a live gap under
+    EVERY threshold: at 14% VAT a net 9,900 order commits 11,286 but routed in
+    the "up to 10,000" tier. The same gap sat under 200,000, 500,000, 2,000,000
+    and 5,000,000 — and the tax rate is entered by Purchasing at the very gate
+    that sets the price, so it was the buyer's to exploit.
+
+    egp_total() (net) is deliberately kept for everything that reports or
+    reconciles a subtotal; only APPROVAL ROUTING moves to this one.
+    """
+    if pr is None:
+        return 0.0
+    def _g(key):
+        try:
+            return pr.get(key) if isinstance(pr, dict) else pr[key]
+        except (KeyError, IndexError):
+            return None
+    # Built from _g, not pr_amounts(pr): a row selected before this change
+    # exists without a tax_rate column, and routing must degrade to the net
+    # figure rather than raise on the way to deciding who signs.
+    try:
+        subtotal = float(_g("total") or 0)
+    except (TypeError, ValueError):
+        subtotal = 0.0
+    try:
+        rate_pct = float(_g("tax_rate") or 0)
+    except (TypeError, ValueError):
+        rate_pct = 0.0
+    grand = round(subtotal + subtotal * rate_pct / 100.0, 2)
+    cur = str(_g("currency") or "EGP").strip().upper()
+    if cur == "EGP":
+        return round(grand, 2)
+    try:
+        rate = float(_g("fx_rate") or 1)
+    except (TypeError, ValueError):
+        rate = 1.0
+    return round(grand * (rate if rate > 0 else 1.0), 2)
+
+
+def stamp_step_actions(conn, pr_id):
+    """DOAM Table 5 — stamp WHAT each pending rung's signature is (R/A/E).
+    Caller commits.
+
+    Must run after EVERY change to the ladder's shape, because the letters are
+    positional: an unpriced request submits with Purchasing on top, so Purchasing
+    is the Approve; pricing pulls a director in above it and Purchasing becomes
+    the Review. The pricing gate guarantees that reshuffle happens before the
+    purchasing rung can be signed, so no rung is ever signed under a letter the
+    ladder later contradicts.
+
+    Only PENDING rows are restamped. A signature already given said what it said,
+    and rewriting it afterwards is exactly the thing an audit trail exists to
+    prevent.
+    """
+    rows = conn.execute(
+        "SELECT id, status, COALESCE(origin,'ladder') AS origin FROM pr_steps "
+        "WHERE pr_id=? ORDER BY seq, id", (pr_id,)).fetchall()
+    ladder = [r for r in rows if r["origin"] not in C.CONTROL_ORIGINS]
+    top = ladder[-1]["id"] if ladder else None
+    for r in rows:
+        if r["status"] != "pending":
+            continue
+        conn.execute("UPDATE pr_steps SET action_type=? WHERE id=?",
+                     (C.step_action(r["origin"], r["id"] == top), r["id"]))
+
+
+def step_action_of(step):
+    """The Table 5 action a step carries, tolerant of a pre-migration row."""
+    act = str(_pr_field(step, "action_type") or "").strip().lower()
+    return act if act in C.STEP_ACTIONS else C.STEP_ACTION_DEFAULT
+
+
 def submit_pr(pr_id, user, ip=None):
     """Build the approval ladder and move the PR into 'pending'. Idempotent-ish:
     only acts on draft/rejected PRs. Returns (ok, msg)."""
@@ -905,11 +1250,60 @@ def submit_pr(pr_id, user, ip=None):
             return False, "not_found"
         if pr["status"] not in ("draft", "rejected"):
             return False, "not_submittable"
+        # DOAM §5 — direct materials must name the sales order they are for,
+        # before they enter the ladder. Without it the spend has no cost object
+        # and the order's margin can never be closed out.
+        # A sales order that is closed, cancelled or simply not a real order is
+        # refused here too — a free-text "n/a" is not a cost object.
+        _co_ok, _co_need = cost_object_check(conn, pr_id, pr)
+        if not _co_ok:
+            return False, _co_need
         # Department-aware ladder: use the department's responsibility matrix if
         # it has one, else the global default. Each rung = parallel stages.
         # Thresholds are EGP-based, so a foreign-currency PR routes on its
         # EGP-equivalent total (total * fx_rate), never the raw foreign figure.
-        rungs = rungs_from_stages(dept_ladder(conn, pr["department"], egp_total(pr)))
+        # DOAM §3.4 — route on the 30-day aggregate when related purchases exist,
+        # so three 9,000 requests cannot each duck a 10,000 threshold. The
+        # aggregate can only ever LENGTHEN the ladder (max of the two).
+        _own = egp_commitment(pr)          # DOAM §3.4: tax-inclusive
+        _agg, _sibs = aggregated_total(conn, pr_id, pr, _own)
+        _route_on = max(_own, _agg)
+        # DOAM Table 4 — budgeted or not, decided HERE, while the ladder is being
+        # built, not afterwards on the request page. Measured on this request's
+        # own committed value: the aggregate is a §3.4 ROUTING figure, and the
+        # siblings already sitting in 'spent' would otherwise be counted twice.
+        #
+        # An UNPRICED request is skipped, exactly as §3.4's aggregate effectively
+        # is: it carries no commitment value yet, so there is nothing to weigh
+        # against the budget, and apply_budget_state asks again the moment
+        # Purchasing prices it. Not a hole — the purchasing rung cannot be signed
+        # while a request is unpriced, so nothing reaches a decision unasked.
+        _bud = (budget_check(conn, pr["department"], _own, pr_id=pr_id)
+                if (_pr_field(pr, "pricing_status") or "priced") == "priced"
+                else {"unbudgeted": False, "state": None, "over_by": None, "status": None})
+        _stages = dept_ladder(conn, pr["department"], _route_on,
+                              _pr_field(pr, "expenditure_kind"), pr_id=pr_id)
+        # DOAM §4.3 — a single-source award is signed one level above the value
+        # tier. Applied here as well as in set_single_source(), because the
+        # justification can be recorded on the draft before it is ever submitted.
+        # `_origin` carries WHICH control put a stage on the ladder through to the
+        # INSERT below. Defaulting them all to 'ladder' stamped the Table 5 letter
+        # of a value rung onto a control rung, and put them outside the scope the
+        # controls use to take their own rungs back off again.
+        _origin = {}
+        if str(_pr_field(pr, "single_source_reason") or "").strip():
+            _extra = C.single_source_stage(_stages, _pr_field(pr, "expenditure_kind"))
+            if _extra:
+                _stages = _stages + [_extra]
+                _origin[_extra] = "single_source"
+        # DOAM Table 4 — §4.1 is the BUDGETED ladder, so spend with no approved
+        # plan behind it takes the L1 signature on top, whatever its value.
+        if _bud["unbudgeted"]:
+            _ux = C.unbudgeted_stage(_stages, _pr_field(pr, "expenditure_kind"))
+            if _ux:
+                _stages = _stages + [_ux]
+                _origin[_ux] = "unbudgeted"
+        rungs = rungs_from_stages(_stages)
         # SoD escalation, resolved BEFORE anything is written: a rung whose only
         # eligible signer is the requester climbs one level up the org chart. A
         # rung with nobody above it can never be signed, so the request is refused
@@ -971,20 +1365,38 @@ def submit_pr(pr_id, user, ip=None):
                 e_role, e_from = esc.get(stage, (None, None))
                 conn.execute(
                     """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role,
-                       activated_at, created_at, esc_role, esc_from)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                       activated_at, created_at, esc_role, esc_from, origin)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (pr_id, i, stage, "pending", stage_label(stage),
-                     now if i == 1 else None, now, e_role, e_from))
+                     now if i == 1 else None, now, e_role, e_from,
+                     _origin.get(stage, "ladder")))
                 if e_role:
                     audit(conn, pr_id, user.get("username") if user else "system",
                           "escalated_stage",
                           f"{stage_label(stage)}: signing escalated from "
                           f"{e_from or '—'} to {e_role} — the requester holds the "
                           f"normal signing role.", ip)
+        stamp_step_actions(conn, pr_id)          # DOAM Table 5 (R / A / E)
         conn.execute(
             "UPDATE pr_requests SET status='pending', current_seq=1, submitted_at=?, "
-            "rejection_reason=NULL WHERE id=?", (now, pr_id))
+            "rejection_reason=NULL, agg_total=?, budget_state=?, budget_over_by=? WHERE id=?",
+            (now, _agg if _sibs else None, _bud["state"], _bud["over_by"], pr_id))
+        if _sibs and _agg > _own:
+            # Record it on the request, not just in a log: the approver about to
+            # sign needs to see WHY this rung is on their desk for a small value.
+            refs = ", ".join(s["pr_no"] or ("#%s" % s["id"]) for s in _sibs)
+            audit(conn, pr_id, user.get("username") if user else "system",
+                  "aggregated",
+                  f"DOAM §3.4: routed on the {C.AGGREGATION_WINDOW_DAYS}-day "
+                  f"aggregate of {_agg:,.2f} EGP (this request {_own:,.2f}) — "
+                  f"related open requests for the same items: {refs}.", ip)
         uname = user.get("username") if user else "system"
+        if _bud["unbudgeted"]:
+            # On the request, not only in a log: the approver about to sign is
+            # owed the reason the DOAM pulled their signature in.
+            audit(conn, pr_id, uname, "unbudgeted",
+                  unbudgeted_note(_bud, pr["department"],
+                                  _pr_field(pr, "expenditure_kind")), ip)
         flat = [s for rung in rungs for s in rung]
         audit(conn, pr_id, uname, "submitted",
               f"Routed through {len(flat)} approvals: "
@@ -1010,6 +1422,66 @@ def submit_pr(pr_id, user, ip=None):
 # --------------------------------------------------------------------------
 # Pricing gate (Purchasing enters the commercial value)
 # --------------------------------------------------------------------------
+def _item_keys(rows):
+    """Normalised identity for a set of PR lines: the catalogue id when the line
+    came from the catalogue, else the item name folded to lowercase. Two lines
+    for "Bearing 6204" and "bearing 6204 " are the same purchase being split."""
+    keys = set()
+    for r in rows:
+        cat = _pr_field(r, "item_id") or _pr_field(r, "spare_id")
+        if cat:
+            keys.add("cat:%s" % cat)
+        name = str(_pr_field(r, "item") or "").strip().lower()
+        if name:
+            keys.add("name:%s" % " ".join(name.split()))
+    return keys
+
+
+def aggregated_total(conn, pr_id, pr, own_egp=None):
+    """DOAM §3.4 — related purchases inside a 30-day window are aggregated, so
+    splitting an order cannot buy a lower approval level.
+
+    "Related" is read narrowly and defensibly: the SAME DEPARTMENT buying at
+    least one of the SAME ITEMS. A broader rule (everything a department buys in
+    a month) would drag genuinely unrelated purchases up to the Board and the
+    control would be switched off within a week, which protects nothing.
+
+    Returns (aggregate_egp, [siblings]) where each sibling is
+    {"pr_no", "id", "egp"}. The PR's own value is included in the aggregate."""
+    own = egp_commitment(pr) if own_egp is None else own_egp
+    mine = _item_keys(conn.execute(
+        "SELECT item, item_id, spare_id FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall())
+    if not mine:
+        return own, []
+    since = (datetime.now(timezone.utc)
+             - timedelta(days=C.AGGREGATION_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = conn.execute(
+        "SELECT id, pr_no, total, currency, fx_rate, tax_rate FROM pr_requests "
+        "WHERE department=? AND id<>? AND created_at>=? "
+        "AND COALESCE(expenditure_kind,'opex')=? "
+        "AND status NOT IN ('draft','cancelled','rejected')",
+        (_pr_field(pr, "department") or "", pr_id, since,
+         # Capital and operating spend are not the same purchase being split —
+         # a machine and a box of consumables share nothing but a department.
+         (_pr_field(pr, "expenditure_kind") or "opex"))).fetchall()
+    if not rows:
+        return own, []
+    by_id = {r["id"]: r for r in rows}
+    lines = conn.execute(
+        "SELECT pr_id, item, item_id, spare_id FROM pr_items WHERE pr_id IN (%s)"
+        % ",".join("?" * len(by_id)), tuple(by_id)).fetchall()
+    related = {}
+    for ln in lines:
+        pid = ln["pr_id"]
+        if pid in related or not (_item_keys([ln]) & mine):
+            continue
+        related[pid] = egp_commitment(by_id[pid])
+    total = round(own + sum(related.values()), 2)
+    sibs = [{"id": pid, "pr_no": by_id[pid]["pr_no"], "egp": amt}
+            for pid, amt in related.items()]
+    return total, sibs
+
+
 def _reconcile_value_ladder(conn, pr_id, department, total):
     """After a pending PR is priced, bring its value-based rungs (Finance / CFO /
     CEO) in line with the new total: append the ones now required that aren't in
@@ -1017,22 +1489,55 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     qualify. Never touches steps that are approved, rejected, or currently active,
     so an in-flight approval is never disturbed."""
     row = conn.execute(
-        "SELECT current_seq, currency, fx_rate, requester, pr_no FROM pr_requests WHERE id=?",
-        (pr_id,)).fetchone()
+        "SELECT id, current_seq, currency, fx_rate, requester, pr_no, department, "
+        "expenditure_kind, tax_rate FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
     cur_seq = (row["current_seq"] or 0) if row else 0
+    # Read the OPEX/CAPEX flag here rather than making both callers pass it —
+    # it lives on the row we are already fetching.
+    kind = _pr_field(row, "expenditure_kind") or "opex"
     # Thresholds are EGP-based: convert `total` (PR currency) to its EGP
     # equivalent using the row's currency/fx_rate. Reading them HERE (instead of
     # making each caller convert) keeps the call sites unchanged — price_pr and
     # set_fx pass the raw total, and any currency/fx_rate they just UPDATEd in
     # this same transaction is already visible to this SELECT.
-    total_egp = egp_total({"total": total,
-                           "currency": row["currency"] if row else "EGP",
-                           "fx_rate": row["fx_rate"] if row else 1})
-    # Reuse the tested department-aware ladder, keep only the value stages.
-    target = [s for s in dept_ladder(conn, department, total_egp) if s in VALUE_STAGES]
+    total_egp = egp_commitment({"total": total,
+                                "tax_rate": row["tax_rate"] if row else 0,
+                                "currency": row["currency"] if row else "EGP",
+                                "fx_rate": row["fx_rate"] if row else 1})
+    # DOAM §3.4, and this is where it actually bites: every request the UI
+    # creates is submitted at zero (the requester price lockout), so the
+    # aggregate computed at submit carried nothing. Pricing is the first moment
+    # a real value exists, so the 30-day aggregate must be recomputed HERE or
+    # the anti-split control never fires on a real request.
+    _agg, _sibs = aggregated_total(conn, pr_id, row, total_egp)
+    _route_on = max(total_egp, _agg)
+    if _sibs and _agg > total_egp:
+        conn.execute("UPDATE pr_requests SET agg_total=? WHERE id=?", (_agg, pr_id))
+        audit(conn, pr_id, "system", "aggregated",
+              f"DOAM §3.4: repriced and routed on the {C.AGGREGATION_WINDOW_DAYS}-day "
+              f"aggregate of {_agg:,.2f} EGP (this request {total_egp:,.2f}) — related: "
+              + ", ".join(x["pr_no"] or ("#%s" % x["id"]) for x in _sibs) + ".")
+    target = [s for s in dept_ladder(conn, department, _route_on, kind, pr_id=pr_id)
+              if s in VALUE_STAGES]
+    # DOAM Table 4's rung is re-decided from scratch on every re-price, so drop
+    # the not-yet-reached one HERE and let apply_budget_state (which both callers
+    # run immediately after this) put it back on top of the freshly reconciled
+    # value rungs. Without this the control rung keeps the low seq it was first
+    # written at, so the CFO is asked to sign before the directors below it and
+    # the ladder becomes a function of pricing HISTORY rather than of (value,
+    # budget state). Signed / active rungs are never touched (seq > cur_seq).
+    conn.execute("DELETE FROM pr_steps WHERE pr_id=? AND origin='unbudgeted' "
+                 "AND status='pending' AND seq>?", (pr_id, cur_seq))
     existing = conn.execute(
-        "SELECT id, seq, stage, status, esc_role, approver_user FROM pr_steps "
+        "SELECT id, seq, stage, status, esc_role, approver_user, "
+        "COALESCE(origin,'ladder') AS origin FROM pr_steps "
         "WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()
+    # Every rung still here is one the value ladder may count on: §4.3 and §4.4
+    # rungs are only ever ADDED and never removed, and the one control rung that
+    # IS removable (Table 4's) was just dropped above if it is still ahead of the
+    # request. What survives that DELETE has been signed or is being signed, so
+    # the signature it stands for genuinely exists. Filtering by origin here
+    # instead would append a SECOND cfo rung behind a deviation one.
     have = {r["stage"] for r in existing}
     max_seq = max([r["seq"] for r in existing] or [0])
     now = _now()
@@ -1040,7 +1545,16 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     for r in existing:
         if r["stage"] in VALUE_STAGES and r["stage"] not in target \
            and r["status"] == "pending" and r["seq"] > cur_seq:
+            # A rung placed by a CONTROL (§4.3 single source, §4.4 deviation)
+            # is not a value rung and must survive a re-price. Without this,
+            # anyone able to price a request could strip its escalations by
+            # saving the same price again, and nothing was written down.
+            if r["origin"] != "ladder":
+                continue
             conn.execute("DELETE FROM pr_steps WHERE id=?", (r["id"],))
+            audit(conn, pr_id, "system", "ladder_rung_removed",
+                  f"{stage_label(r['stage'])} dropped: the repriced value "
+                  f"{_route_on:,.2f} EGP no longer requires it.")
     # 2) append any newly-required value rungs (in ladder order) after the last seq
     #    — with the same SoD escalation the submit-time ladder gets, because a
     #    value rung that only the requester could sign would deadlock identically.
@@ -1070,9 +1584,9 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                                                _holders=_holders, _busy=_busy)
             conn.execute(
                 "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, "
-                "created_at, esc_role, esc_from) VALUES (?,?,?,?,?,?,?,?)",
+                "created_at, esc_role, esc_from, origin) VALUES (?,?,?,?,?,?,?,?,?)",
                 (pr_id, nxt, s, "pending", stage_label(s), now,
-                 "" if why == "no_superior" else e_role, e_from))
+                 "" if why == "no_superior" else e_role, e_from, "ladder"))
             if why == "escalated":
                 audit(conn, pr_id, "system", "escalated_stage",
                       f"{stage_label(s)}: signing escalated from {e_from or '—'} to "
@@ -1091,6 +1605,10 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                              f"this request ({requester} raised it, or the signer already "
                              f"signed another rung) and no superior above that role has "
                              f"anyone free to sign it.", link=_pr_link(pr_id))
+    # The ladder's shape just changed, so the Table 5 letters move with it: the
+    # rung that WAS the top (and so the Approve) is now a Review below the
+    # director pricing pulled in.
+    stamp_step_actions(conn, pr_id)
 
 
 def price_pr(pr_id, prices, meta, user, ip=None):
@@ -1169,6 +1687,16 @@ def price_pr(pr_id, prices, meta, user, ip=None):
 
         if pr["status"] == "pending":
             _reconcile_value_ladder(conn, pr_id, pr["department"], total)
+            # DOAM §4.4 — deviation grading runs HERE, immediately after the
+            # value ladder is reconciled: the prices being graded are the ones
+            # just entered, and the extra rungs sit on top of the value rungs
+            # rather than being reshuffled by the reconcile that follows.
+            apply_deviation_stages(conn, pr_id, pr)
+            # DOAM Table 4 — budgeted or unbudgeted, decided on the value that
+            # was just entered. LAST, so the L1 signature this may add is the
+            # senior one at the top of the ladder rather than a rung the
+            # directors sign after.
+            apply_budget_state(conn, pr_id, ip=ip)
 
         cur = meta.get("currency") or pr["currency"]
         audit(conn, pr_id, (user or {}).get("username"), "priced",
@@ -1231,6 +1759,23 @@ def verify_sign_code(code):
         conn.close()
 
 
+def _at_or_past_pricing_gate(conn, pr_id, step):
+    """True on Purchasing's rung and on every rung ABOVE it.
+
+    The document gates (quotes, §4.4 memo) run from here up, not from the
+    bottom: Purchasing owns both documents, so a rung below theirs could only
+    block on something its signer cannot supply. Running them only ON the
+    Purchasing rung was the other half of the mistake — price_pr stays open
+    while a request circulates, so a request priced on plan, signed, then
+    re-priced 40% over reached 'approved' with no memo and no third quote.
+    """
+    if step["stage"] == PRICING_GATE_STAGE:
+        return True
+    return bool(conn.execute(
+        "SELECT 1 FROM pr_steps WHERE pr_id=? AND stage=? AND status='approved' "
+        "LIMIT 1", (pr_id, PRICING_GATE_STAGE)).fetchone())
+
+
 def act_on_step(pr_id, user, decision, comment=None, ip=None):
     """Approve or reject the PR's current pending step.
     decision in {'approve','reject'}. Returns (ok, msg)."""
@@ -1241,6 +1786,12 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             return False, "not_found"
         if pr["status"] != "pending":
             return False, "not_pending"
+        # A record retired from the register (dispose_pr) is out of the register
+        # for every purpose, signing included — it was still signable all the
+        # way to 'approved'. Only an explicit 0 blocks: a NULL is a pre-migration
+        # row, not a retirement.
+        if _pr_field(pr, "is_active", 1) == 0:
+            return False, "retired"
         # current rung may hold several parallel steps; pick the one this user
         # is eligible for (a co-approver only acts on their own stage).
         cur_steps = conn.execute(
@@ -1273,9 +1824,18 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         # handful of admin signatures — same result, one fewer query for everyone.
         role = user.get("role")
         _is_admin = role == "super_admin" or has_permission(role, "proc_admin")
+        # DOAM §3.4: "No person may approve a transaction that also names that
+        # person as requestor or beneficiary." That one is absolute — it is the
+        # single control standing between one account and a self-authorised
+        # purchase, so NO setting and no admin role waives it. Only the
+        # dual-role rule below stays waivable, because a genuinely small team
+        # can have one person legitimately holding two ladder roles.
+        # ...but only for an APPROVAL. The clause governs approving; rejecting
+        # your own request is withdrawing it, which is legitimate and harmless.
+        # Blocking that too stranded the request with nobody able to close it.
+        if decision == "approve" and pr["requester"] == uname:
+            return False, "self_approval"
         if not (_is_admin and bool_setting(conn, "sod_admin_exempt")):
-            if pr["requester"] == uname:
-                return False, "self_approval"
             other = conn.execute(
                 "SELECT 1 FROM pr_steps WHERE pr_id=? AND id!=? AND approver_user=? "
                 "AND status IN ('approved','rejected') LIMIT 1",
@@ -1292,10 +1852,68 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
 
         # RFQ gate: high-value orders need competitive quotes (or a recorded
         # single-source justification) before Purchasing signs off.
-        if decision == "approve" and step["stage"] == PRICING_GATE_STAGE:
+        if decision == "approve" and _at_or_past_pricing_gate(conn, pr_id, step):
             ok_rfq, rfq_msg = rfq_gate_check(conn, pr)
             if not ok_rfq:
                 return False, rfq_msg
+
+        # Engineering gate (DOAM §6): a spares / MRO / workshop requisition needs
+        # an Engineering-Head-signed justification before Procurement accepts it,
+        # AT ANY VALUE. Enforced here because the Purchasing stage IS Procurement's
+        # acceptance point. Automatic min/max replenishment is exempt — the DOAM
+        # says so, and gating it would break the auto-reorder bridge.
+        #
+        # An EVALUATION that raises fails CLOSED: a control that stops working
+        # silently because a query raised is worse than one that blocks.
+        # A missing maintenance module is a different fact — no maintenance
+        # module means no maintenance requisitions to gate, and freezing every
+        # department's purchasing over an ImportError is not a safer failure,
+        # it is a bigger one.
+        if decision == "approve" and step["stage"] == PRICING_GATE_STAGE:
+            try:
+                from app.maintenance.eng_justification import ejr_gate_check
+                items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+                ok_ejr, ejr_msg = ejr_gate_check(conn, pr, items)
+            except ImportError:
+                ok_ejr, ejr_msg = True, "maintenance_module_absent"
+            except Exception as exc:  # noqa: BLE001
+                return False, f"ejr_check_failed:{type(exc).__name__}"
+            if not ok_ejr:
+                return False, ejr_msg
+
+        # DOAM §4.4 — the justification memo (T&C-PUF-12). An order graded
+        # off-plan collects extra signatures AND has to carry the memo those
+        # signers are meant to read. Checked at Procurement's acceptance point,
+        # beside the other document gates.
+        if decision == "approve" and _at_or_past_pricing_gate(conn, pr_id, step):
+            # …and the SAME reading of stock has to buy the SIGNATURES, not only
+            # the memo. Grading ran once, at pricing, while this gate recomputes
+            # from stock as it is now — so a delivery landing after pricing left
+            # the buyer blocked for a memo, deviation_findings asking for a
+            # Plant Director, and no rung and no audit row ever created. Re-run
+            # the escalation here so both halves of §4.4 read the same numbers
+            # at the same moment. Add-only and idempotent; committed straight
+            # away because the escalation is a fact whether or not this
+            # signature then goes through — the blocked case is precisely the
+            # one where the rung must survive.
+            if (pr["pricing_status"] or "priced") == "priced":
+                apply_deviation_stages(conn, pr_id, pr)
+                conn.commit()
+            ok_memo, memo_msg = deviation_memo_gate(conn, pr_id, pr)
+            if not ok_memo:
+                return False, memo_msg
+
+        # DOAM §4.1 tier 7 / §4.2 tier 4 — above BUSINESS_CASE_OVER the Board
+        # signs "with a business case". Checked TWICE, and both are load-bearing:
+        # at the Purchasing rung so an oversized request never even circulates
+        # without one, and again at the Board rung because a request can be
+        # RE-PRICED upward after Purchasing has already signed (price_pr stays
+        # open while the request is pending) — the second check is the one that
+        # catches the 5M order that became 12M on its way up the ladder.
+        if decision == "approve" and step["stage"] in (PRICING_GATE_STAGE, "bod"):
+            ok_bc, bc_msg = business_case_gate(pr)
+            if not ok_bc:
+                return False, bc_msg
 
         sig_png, sig_name = _user_sig(uname)
         now = _now()
@@ -1319,16 +1937,22 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             conn.commit()
             return True, "rejected"
 
-        # approve
+        # approve — DOAM Table 5: WHICH of R / A / E this signature is was decided
+        # when the rung was written, and the trail records it as its own event
+        # ('reviewed' / 'approved' / 'endorsed'), so a Review can be told from an
+        # Approve by a query and not only by reading the sentence.
+        act = step_action_of(step)
         conn.execute(
             "UPDATE pr_steps SET status='approved', approver_user=?, approver_name=?, "
             "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=?",
             (uname, sig_name or user.get("full_name") or uname, user.get("role"),
              comment, sig_png, now, step["id"]))
-        _record_sign_event(conn, pr, step, "approve", uname,
+        _record_sign_event(conn, pr, step, act, uname,
                            sig_name or user.get("full_name") or uname, now, ip)
-        audit(conn, pr_id, uname, "approved",
-              f"{stage_label(step['stage'])} approved" + (f": {comment}" if comment else ""), ip)
+        audit(conn, pr_id, uname, C.STEP_ACTION_PAST[act],
+              f"{stage_label(step['stage'])} {C.STEP_ACTION_PAST[act]} "
+              f"({C.STEP_ACTION_CODE[act]}) — {C.STEP_ACTION_WHY[act]}"
+              + (f" {comment}" if comment else ""), ip)
 
         # Parallel rung: if co-approvers at this seq are still pending, wait.
         remaining = conn.execute(
@@ -1378,6 +2002,28 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         conn.close()
 
 
+def _unbudgeted_authority_given(pr_id, pr):
+    """True when this request was ROUTED as unbudgeted and the L1 rung Table 4
+    added for it has actually been signed.
+
+    The note the L1 approver read says the spend "is not refused — it needs
+    higher authority, not refusal". Refusing the PO afterwards contradicts the
+    signature the control itself asked for. A request that reached 'approved'
+    without ever being routed as unbudgeted (budget_state NULL or 'budgeted' —
+    e.g. the budget was cut after approval) never got that signature, so the
+    original block still applies to it.
+    """
+    if (_pr_field(pr, "budget_state") or "") not in ("no_budget", "over_budget"):
+        return False
+    conn = get_db()
+    try:
+        return conn.execute(
+            "SELECT 1 FROM pr_steps WHERE pr_id=? AND origin='unbudgeted' "
+            "AND status='approved' LIMIT 1", (pr_id,)).fetchone() is not None
+    finally:
+        conn.close()
+
+
 def issue_po(pr_id, user, ip=None, force=False):
     """Mark an approved PR's PO as issued (purchasing action). When an explicit
     department budget exists and this PO would leave it exceeded, issuing is
@@ -1392,7 +2038,7 @@ def issue_po(pr_id, user, ip=None, force=False):
             return False, "not_approved"
     finally:
         conn.close()
-    if not force:
+    if not force and not _unbudgeted_authority_given(pr_id, pr):
         b = budget_status(pr["department"])   # PR already counted in 'spent' (approved)
         if b and b.get("amount") is not None and b.get("over"):
             return False, "over_budget"
@@ -1470,6 +2116,8 @@ def set_fx(pr_id, rate, user, ip=None):
               f"FX rate set to {rate:g} ({pr['currency'] or 'EGP'} -> EGP)", ip)
         if pr["status"] == "pending":
             _reconcile_value_ladder(conn, pr_id, pr["department"], pr["total"])
+            # The EGP figure just moved, so the budget verdict can have moved too.
+            apply_budget_state(conn, pr_id, ip=ip)
         conn.commit()
         return True, "fx_set"
     finally:
@@ -1516,50 +2164,249 @@ def revise_po(pr_id, reason, user, ip=None):
         conn.close()
 
 
-def receive_goods(pr_id, user, notes=None, ip=None):
-    """Confirm delivery/goods-receipt for an issued PO. po_issued -> received."""
+def _record_grn(conn, pr_id, pr, lines, user, notes=None, reject_reason=None):
+    """Allocate and persist ONE Goods Received Note for ONE receipt event.
+
+    `lines` = [{item_id, item, ordered, accepted, quarantined}] for the lines that
+    moved on THIS delivery. The number comes from the row id, so two partial
+    receipts on the same PR get two different numbers — the old behaviour derived
+    it from the PR number at print time and reprinted GRN-YYYY-NNNNNN forever.
+    Returns (grn_id, grn_no)."""
+    seq = (conn.execute("SELECT COUNT(*) c FROM pr_grn WHERE pr_id=?",
+                        (pr_id,)).fetchone()["c"] or 0) + 1
+    uname = (user or {}).get("username") or "system"
+    # A rejected quantity rides in lines_json, not in a rollup column: the GRN PDF
+    # and the detail page both read the lines anyway, and the money side of a
+    # rejection lives on the debit note, which is its own document.
+    cur = conn.execute(
+        """INSERT INTO pr_grn (pr_id, seq, lines_json, accepted_qty, quarantined_qty,
+           notes, received_by, created_at) VALUES (?,?,?,?,?,?,?,?)""",
+        (pr_id, seq, _json_dumps(lines),
+         round(sum(l["accepted"] for l in lines), 6),
+         round(sum(l["quarantined"] for l in lines), 6),
+         notes, uname, _now()))
+    grn_id = cur.lastrowid
+    grn_no = doc_no("GRN", grn_id)
+    conn.execute("UPDATE pr_grn SET grn_no=? WHERE id=?", (grn_no, grn_id))
+
+    excess = [l for l in lines if l["quarantined"] > 0]
+    for l in excess:
+        conn.execute(
+            """INSERT INTO pr_grn_quarantine (pr_id, grn_id, item_id, item, ordered_qty,
+               accepted_qty, qty, status, created_by, created_at)
+               VALUES (?,?,?,?,?,?,?,'quarantined',?,?)""",
+            (pr_id, grn_id, l["item_id"], l["item"], l["ordered"], l["accepted"],
+             l["quarantined"], uname, _now()))
+    if excess:
+        detail = ", ".join(f"{l['item']} +{l['quarantined']:g}" for l in excess)
+        audit(conn, pr_id, uname, "over_delivery_quarantined",
+              f"{grn_no}: over-delivery held in quarantine — {detail}")
+        bell(conn, "warning", "Over-delivery quarantined",
+             f"{grn_no} ({pr['pr_no']}): {detail}. Not added to stock — accept or "
+             f"return it.", link=_pr_link(pr_id))
+        notify_users(conn, [pr["requester"], uname],
+                     "warning", "Over-delivery quarantined",
+                     f"{pr['pr_no']}: the supplier delivered more than ordered "
+                     f"({detail}). Held in quarantine on {grn_no}.", link=_pr_link(pr_id))
+
+    # Rejected AND surplus: goods the order never covered, refused at the door and
+    # sent straight back. Recorded here rather than on a debit note because there
+    # is nothing to debit — the supplier was never owed for them — and recorded
+    # 'resolved' because the decision was taken on the spot: they left with the
+    # driver, so offering "accept as free issue" would post stock that is gone.
+    surplus = [l for l in lines if float(l.get("rejected_surplus") or 0) > 0]
+    for l in surplus:
+        conn.execute(
+            """INSERT INTO pr_grn_quarantine (pr_id, grn_id, item_id, item, ordered_qty,
+               accepted_qty, qty, status, resolution, resolved_by, resolved_at,
+               created_by, created_at)
+               VALUES (?,?,?,?,?,?,?,'resolved','rejected_surplus',?,?,?,?)""",
+            (pr_id, grn_id, l["item_id"], l["item"], l["ordered"], l["accepted"],
+             l["rejected_surplus"], uname, _now(), uname, _now()))
+    if surplus:
+        detail = ", ".join(f"{l['item']} {float(l['rejected_surplus']):g}"
+                           for l in surplus)
+        audit(conn, pr_id, uname, "surplus_rejected",
+              f"{grn_no}: rejected over-delivery returned with the driver — {detail}"
+              + (f" ({reject_reason})" if reject_reason else "")
+              + ". No debit note: the order did not cover it.")
+        bell(conn, "warning", "Surplus delivery rejected",
+             f"{grn_no} ({pr['pr_no']}): {detail} was above the ordered quantity and "
+             f"was refused. Not stocked, not payable, no debit note.",
+             link=_pr_link(pr_id))
+    return grn_id, grn_no
+
+
+def _record_return(conn, pr_id, pr, lines, reason, user, grn_id=None):
+    """Return-to-vendor + debit note for the lines REJECTED on one receipt.
+
+    `lines` = [{item_id, item, qty, unit_price}] — the rejected quantities only.
+    One row is both documents because they are one event: the goods go back and
+    the supplier is debited for them. The debit-note number is allocated from the
+    row id, exactly like a GRN number, so every return carries a distinct one.
+    Returns (return_id, dn_no)."""
+    uname = (user or {}).get("username") or "system"
+    qty = round(sum(float(l["qty"]) for l in lines), 6)
+    net = round(sum(float(l["qty"]) * float(l["unit_price"] or 0) for l in lines), 2)
+    try:
+        rate = float(pr["tax_rate"] or 0)
+    except (KeyError, IndexError, TypeError, ValueError):
+        rate = 0.0
+    tax = round(net * rate / 100.0, 2)
+    cur = conn.execute(
+        """INSERT INTO pr_returns (pr_id, grn_id, vendor, vendor_id, lines_json, qty,
+           net, tax, total, currency, reason, status, created_by, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,'open',?,?)""",
+        (pr_id, grn_id, pr["vendor"], pr["vendor_id"], _json_dumps(lines), qty,
+         net, tax, round(net + tax, 2), pr["currency"] or "EGP", reason, uname, _now()))
+    ret_id = cur.lastrowid
+    dn_no = doc_no("DN", ret_id)
+    conn.execute("UPDATE pr_returns SET dn_no=? WHERE id=?", (dn_no, ret_id))
+    detail = ", ".join(f"{l['item']} {float(l['qty']):g}" for l in lines)
+    audit(conn, pr_id, uname, "goods_rejected",
+          f"{dn_no}: returned to {pr['vendor'] or 'the supplier'} — {detail}"
+          + (f" ({reason})" if reason else ""))
+    bell(conn, "warning", "Goods rejected — debit note raised",
+         f"{dn_no} ({pr['pr_no']}): {detail} returned to "
+         f"{pr['vendor'] or 'the supplier'}. Payable value reduced by "
+         f"{round(net + tax, 2):,.2f}.", link=_pr_link(pr_id))
+    notify_users(conn, [pr["requester"], uname], "warning", "Goods rejected on receipt",
+                 f"{pr['pr_no']}: {detail} rejected and returned. Debit note {dn_no}"
+                 + (f" — {reason}" if reason else "") + ".", link=_pr_link(pr_id))
+    return ret_id, dn_no
+
+
+def get_return(ret_id):
     conn = get_db()
     try:
-        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
-        if not pr:
-            return False, "not_found"
-        if pr["status"] not in ("po_issued", "approved"):
-            return False, "not_receivable"
-        now = _now()
-        conn.execute(
-            "UPDATE pr_requests SET status='received', received_at=?, received_by=?, "
-            "receipt_notes=? WHERE id=?",
-            (now, user.get("username") if user else "system", notes, pr_id))
-        audit(conn, pr_id, user.get("username") if user else "system", "received",
-              "Goods/services received" + (f": {notes}" if notes else ""), ip)
-        notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
-                     f"{pr['pr_no']} was received.", link=_pr_link(pr_id))
-        # Whole-PR receive: mark every line fully received so the maintenance
-        # bridge (and line reports) see the delivered quantities.
-        items = conn.execute("SELECT id, qty, received_qty FROM pr_items WHERE pr_id=?",
-                             (pr_id,)).fetchall()
-        remaining = {it["id"]: max(0.0, float(it["qty"] or 0) - float(it["received_qty"] or 0))
-                     for it in items}
-        for iid, qty in remaining.items():
-            if qty > 0:
-                conn.execute("UPDATE pr_items SET received_qty=qty WHERE id=?", (iid,))
-        conn.commit()
-        _post_bridge_receipt(pr_id, remaining, user)
-        return True, ""
+        r = conn.execute("SELECT * FROM pr_returns WHERE id=?", (ret_id,)).fetchone()
+        return dict(r) if r else None
+    except Exception:
+        return None          # pre-migration database: no returns table yet
     finally:
         conn.close()
 
 
-def receive_items(pr_id, receipts, user, notes=None, ip=None):
-    """Record a line-level goods receipt. `receipts` = {item_id: qty_received_now}.
-    Adds to each line's received_qty (capped at ordered), then sets the PR status to
-    'received' (all lines fulfilled) or 'partially_received'."""
+def settle_return(ret_id, user, ip=None):
+    """Mark a debit note settled — the supplier has credited it (or replaced the
+    goods). Procurement's half of the story ends here: the dues drop off the
+    vendor's outstanding balance and the payable ceiling rises back.
+
+    Deliberately NOT a payment or a journal entry: what the credit was actually
+    applied against is a finance-system question."""
+    conn = get_db()
+    try:
+        r = conn.execute("SELECT * FROM pr_returns WHERE id=?", (ret_id,)).fetchone()
+        if not r:
+            return False, "not_found"
+        if r["status"] != "open":
+            return False, "already_settled"
+        uname = (user or {}).get("username") or "system"
+        conn.execute("UPDATE pr_returns SET status='settled', settled_by=?, "
+                     "settled_at=? WHERE id=?", (uname, _now(), ret_id))
+        audit(conn, r["pr_id"], uname, "debit_note_settled",
+              f"{r['dn_no']} settled by the supplier ({float(r['total'] or 0):,.2f})", ip)
+        conn.commit()
+        return True, r["dn_no"]
+    finally:
+        conn.close()
+
+
+def vendor_dues(conn=None):
+    """Open debit-note value per vendor NAME — what each supplier owes back for
+    goods returned. Keyed by name because that is how a PR names its supplier.
+
+    Pass a live `conn` to borrow it: list_vendors does, so rendering the Vendors
+    screen stays one connection rather than two round trips on PostgreSQL."""
+    own = conn is None
+    conn = conn or get_db()
+    try:
+        rows = conn.execute(
+            "SELECT vendor, COUNT(*) n, SUM(total) t FROM pr_returns "
+            "WHERE status='open' GROUP BY vendor").fetchall()
+    except Exception:
+        return {}                # database predating the returns table
+    finally:
+        if own:
+            conn.close()
+    return {r["vendor"]: {"count": r["n"], "amount": round(float(r["t"] or 0), 2)}
+            for r in rows if r["vendor"]}
+
+
+def resolve_quarantine(q_id, decision, user, ip=None):
+    """Decide a quarantined over-delivery: 'return' it to the supplier or 'accept'
+    it as a free issue.
+
+    The two decisions EXECUTE differently, they are not one UPDATE with different
+    text. 'accept' keeps the goods, so they must land on the shelf — at zero unit
+    cost, since the PO is not re-opened and nobody is invoicing for them. Recording
+    'accept' and posting nothing left the quantity physically in the building and in
+    no stock record, permanently."""
+    if decision not in ("return", "accept"):
+        return False, "bad_decision"
+    conn = get_db()
+    try:
+        q = conn.execute("SELECT * FROM pr_grn_quarantine WHERE id=?", (q_id,)).fetchone()
+        if not q:
+            return False, "not_found"
+        if q["status"] != "quarantined":
+            return False, "already_resolved"
+        uname = (user or {}).get("username") or "system"
+        conn.execute(
+            "UPDATE pr_grn_quarantine SET status='resolved', resolution=?, "
+            "resolved_by=?, resolved_at=? WHERE id=?", (decision, uname, _now(), q_id))
+        audit(conn, q["pr_id"], uname, "quarantine_resolved",
+              f"Over-delivery of {q['item']} ({q['qty']:g}) — {decision}"
+              + (" (free issue, posted to stock at zero cost)" if decision == "accept" else ""),
+              ip)
+        conn.commit()
+        pr_id, item_id, qty = q["pr_id"], q["item_id"], float(q["qty"] or 0)
+    finally:
+        conn.close()
+    # Post-commit and best-effort, exactly like _post_bridge_receipt: a store that
+    # will not take the free issue must not undo the decision.
+    if decision == "accept" and qty > 0:
+        _post_bridge_receipt(pr_id, {item_id: qty}, user, free=True)
+    return True, decision
+
+
+def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
+                  rejects=None, reject_reason=None):
+    """Record a line-level goods receipt. `receipts` = {item_id: qty_ACCEPTED_now},
+    `rejects` = {item_id: qty_REJECTED_now}. Adds the accepted quantity to each
+    line's received_qty (capped at ordered), then sets the PR status to 'received'
+    (all lines fulfilled) or 'partially_received'.
+
+    A REJECTED quantity is the other half of the same delivery and is deliberately
+    the mirror image of an accepted one: it never touches received_qty, so it never
+    counts as received, never reaches `effective` (the only thing that posts to
+    stock), and leaves the line outstanding. It goes back to the supplier as a
+    return with its own debit note (_record_return), and that debit note is what
+    reduces the payable ceiling in three_way_match/add_payment — but only for the
+    part of it the ORDER covers. A rejection beyond the ordered quantity is
+    surplus the supplier sent uninvited: it is refused and quarantined, never
+    debited, because there is nothing on this PO to debit it against.
+
+    Anything delivered ABOVE the ordered quantity is NOT added to stock and NOT
+    thrown away: it is written to pr_grn_quarantine with an explicit state and a
+    notification. Every call allocates its own GRN number.
+
+    post_stock=False when the CALLER books the stock itself (the warehouse door
+    keeps roll/lot data the bridge cannot carry) — the PR bookkeeping, the GRN and
+    the quarantine still happen here so both doors obey one rule."""
+    rejects = rejects or {}
     conn = get_db()
     try:
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] not in ("po_issued", "approved", "partially_received"):
+        # 'received' belongs here: a supplier sending MORE after the order is
+        # closed out is the commonest over-delivery there is, and refusing it left
+        # the operator with no door at all — the goods reached the shelf through
+        # /warehouse/receive with no GRN and no quarantine. Outstanding is 0, so
+        # the arithmetic below yields accepted=0 / over=everything and the whole
+        # excess routes into quarantine without touching stock.
+        if pr["status"] not in ("po_issued", "approved", "partially_received", "received"):
             return False, "not_receivable"
         items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
         now = _now()
@@ -1569,22 +2416,50 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
         # posted onward into warehouse stock, otherwise typing "6" twice on a
         # 10-piece order books 10 but would inflate the spare stock by 12.
         effective = {}
-        for it in items:
-            add = receipts.get(str(it["id"])) or receipts.get(it["id"]) or 0
+        grn_lines = []
+        reject_lines = []
+
+        def _qty(src, iid):
+            v = src.get(str(iid)) or src.get(iid) or 0
             try:
-                add = float(add)
+                return max(0.0, float(v))
             except (TypeError, ValueError):
-                add = 0
-            if add <= 0:
+                return 0.0
+
+        for it in items:
+            add = _qty(receipts, it["id"])
+            rej = _qty(rejects, it["id"])
+            if add <= 0 and rej <= 0:
                 continue
             ordered = float(it["qty"] or 0)
             if ordered <= 0:
                 continue    # never book receipts against a zero-quantity line
             already = float(it["received_qty"] or 0)
             new_total = min(ordered, already + add)
-            if new_total > already:
-                effective[it["id"]] = round(new_total - already, 6)
+            accepted = round(max(0.0, new_total - already), 6)
+            # The excess is what the truncation used to swallow. It is recorded,
+            # never stocked: `effective` (what goes to the store) stays capped.
+            over = round(max(0.0, (already + add) - ordered), 6)
+            if accepted > 0:
+                effective[it["id"]] = accepted
+            # A rejection is split at the SAME ordered ceiling the acceptance is.
+            # A debit note is money taken off THIS order, so only the part of the
+            # rejection the order actually covers can be debited: 10 ordered, 13
+            # delivered, 3 faulty means the supplier still delivered the 10 that
+            # were bought and owes nothing back. Debiting the surplus withheld
+            # payment for goods that WERE accepted, and made the same physical
+            # delivery pay two different amounts depending on which box the clerk
+            # typed in. The surplus goes where "they sent what we did not order"
+            # already goes — quarantine, deliberately outside the payable sums.
+            within = round(min(rej, max(0.0, ordered - already - accepted)), 6)
+            surplus = round(rej - within, 6)
             conn.execute("UPDATE pr_items SET received_qty=? WHERE id=?", (new_total, it["id"]))
+            grn_lines.append({"item_id": it["id"], "item": it["item"], "ordered": ordered,
+                              "accepted": accepted, "quarantined": over, "rejected": rej,
+                              "rejected_surplus": surplus})
+            if within > 0:
+                reject_lines.append({"item_id": it["id"], "item": it["item"], "qty": within,
+                                     "unit": it["unit"], "unit_price": float(it["unit_price"] or 0)})
             any_recv = True
         if not any_recv:
             return False, "nothing_received"
@@ -1597,20 +2472,25 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None):
             "receipt_notes=COALESCE(?, receipt_notes) WHERE id=?",
             (new_status, now if fully else pr["received_at"],
              user.get("username") if user else "system", notes, pr_id))
+        grn_id, grn_no = _record_grn(conn, pr_id, pr, grn_lines, user, notes,
+                                     reject_reason)
+        if reject_lines:
+            _record_return(conn, pr_id, pr, reject_lines, reject_reason, user, grn_id)
         audit(conn, pr_id, user.get("username") if user else "system", "goods_received",
-              ("Fully received" if fully else "Partial receipt")
+              ("Fully received" if fully else "Partial receipt") + f" — {grn_no}"
               + (f": {notes}" if notes else ""), ip)
-        if fully:
+        if fully and effective:      # nothing accepted = a pure over-delivery, not a confirmation
             notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
-                         f"{pr['pr_no']} fully received.", link=_pr_link(pr_id))
+                         f"{pr['pr_no']} fully received ({grn_no}).", link=_pr_link(pr_id))
         conn.commit()
-        _post_bridge_receipt(pr_id, effective, user)
+        if post_stock:
+            _post_bridge_receipt(pr_id, effective, user)
         return True, ("received" if fully else "partial")
     finally:
         conn.close()
 
 
-def _post_bridge_receipt(pr_id, receipts, user):
+def _post_bridge_receipt(pr_id, receipts, user, free=False):
     """Post a goods receipt back into whichever store owns the goods. Post-commit,
     best-effort: never blocks receiving.
 
@@ -1621,15 +2501,18 @@ def _post_bridge_receipt(pr_id, receipts, user):
         fabric and trim receipt booked in procurement was invisible to /warehouse —
         procurement said 'received' while material stock never moved.
     Each callee already swallows its own errors, so anything reaching us here is
-    unexpected and is logged rather than silently dropped."""
+    unexpected and is logged rather than silently dropped.
+
+    free=True books the quantity at zero unit cost — an accepted over-delivery is a
+    free issue: it goes on the shelf, it does not move the weighted-average cost."""
     try:
         from app.maintenance.procure_bridge import post_receipt_to_stock
-        post_receipt_to_stock(pr_id, receipts, user)
+        post_receipt_to_stock(pr_id, receipts, user, free=free)
     except Exception:
         log.warning("maintenance receipt bridge failed for PR %s", pr_id, exc_info=True)
     try:
         from app.warehouse.services import post_receipt_to_material
-        post_receipt_to_material(pr_id, receipts, user)
+        post_receipt_to_material(pr_id, receipts, user, free=free)
     except Exception:
         log.warning("material receipt bridge failed for PR %s", pr_id, exc_info=True)
 
@@ -1709,11 +2592,62 @@ def three_way_match(pr_id):
                          for iv in bundle["invoices"]), 2)          # gross (with tax)
     invoiced_net = round(sum(float(iv["amount"] or 0) for iv in bundle["invoices"]), 2)  # pre-tax
 
-    tol = max(1.0, ordered_grand * 0.01)      # 1% (or 1 unit) tolerance
+    # DOAM §7.3.3: "within tolerance of 2% of value or 500 EGP ... whichever is
+    # greater". The floor is the binding half on a small invoice — on 1,000 EGP,
+    # 2% is 20 and the DOAM allows 500. The old flat 1% with a 1-unit floor was
+    # therefore both too tight on small invoices and too loose on large ones.
+    # MATCH_TOLERANCE_ABS is 500 EGP, but every figure here is in the PR's own
+    # currency, so applying it raw gave a USD order a 500 USD tolerance — on a
+    # 1,000 USD PO at fx 50 that is 25,000 EGP, fifty times the rule, and a
+    # 1,450 USD invoice on a 1,000 USD PO came back "matched" with no flags.
+    # Convert the EGP floor into the PR's currency instead of converting every
+    # amount: one division, and the percentage half needs no conversion because
+    # a ratio is currency-agnostic.
+    _fx = _pr_fx(pr)
+    tol = C.match_tolerance_value(ordered_grand, fx_rate=_fx) if C.DOAM_IN_FORCE \
+        else max(1.0, ordered_grand * 0.01)
+    # ...and the QUANTITY half of the same clause ("or 5% of quantity"), which
+    # until now was a constant with no reader at all: the match compared value
+    # only, so 4 units short of 100 and 40 units short of 100 were both simply
+    # "short", and neither had a number the payment side could act on.
+    qty_pct = C.MATCH_QTY_TOLERANCE_PCT if C.DOAM_IN_FORCE else 0.0
+    qty_tol = ordered_qty * qty_pct / 100.0    # display only — see qty_ok below
     flags = []
-    qty_ok = received_qty >= ordered_qty - 1e-6
-    if not qty_ok:
-        flags.append(f"Short delivery: received {received_qty:g} of {ordered_qty:g} ordered")
+    # The shortfall is stated in BOTH units and money: the units are what the
+    # tolerance is measured in, the money is what add_payment caps against.
+    short_qty = round(max(0.0, ordered_qty - received_qty), 6)
+    received_grand = round(received_value * (1 + amt["tax_rate"] / 100.0), 2)
+    short_value = round(max(0.0, ordered_grand - received_grand), 2)
+    # Goods rejected on receipt and sent back: an open debit note is value the
+    # supplier owes us, so it comes off what this PO can still be paid.
+    #
+    # min(), NOT a subtraction from received_grand: a rejection on receipt shows
+    # up TWICE — the quantity is missing from received_qty AND it carries a debit
+    # note — and they are two views of the same units, so subtracting both would
+    # deduct the rejection twice. The ceiling is the tighter of "what actually
+    # arrived and stayed" and "the order less what the supplier owes back"; a
+    # return raised AFTER a line was fully received is caught by the second half.
+    debit_open = round(sum(float(r.get("total") or 0) for r in (bundle.get("returns") or [])
+                           if (r.get("status") or "open") == "open"), 2)
+    payable = round(max(0.0, min(received_grand, ordered_grand - debit_open)), 2)
+    # PER LINE, never on the sum of quantities. "5% of quantity" is a per-line
+    # notion, and summing across lines makes it meaningless: 1,000 metres of
+    # thread arriving in full swamps two 5,000 EGP machines that never did, and
+    # the order reads "matched" with 10/11ths of its value missing.
+    qty_ok = all(float(i["received_qty"] or 0)
+                 >= float(i["qty"] or 0) * (1 - qty_pct / 100.0) - 1e-9
+                 for i in items)
+    if short_qty > 0:
+        flags.append(
+            f"Short delivery: received {received_qty:g} of {ordered_qty:g} ordered "
+            f"- short {short_qty:g} ({short_value:,.2f}); "
+            + (f"every line within the {qty_pct:g}% quantity tolerance"
+               if qty_ok else
+               f"a line is beyond the {qty_pct:g}% quantity tolerance")
+            # `payable`, not received_grand: an open debit note lowers the
+            # ceiling below the received value, and this is the number
+            # add_payment actually enforces (plus the payment tolerance).
+            + f"; payment is capped at {payable:,.2f}")
     price_ok = invoiced <= ordered_grand + tol
     if invoiced > ordered_grand + tol:
         flags.append(f"Over-billing: invoiced {invoiced:,.2f} vs PO {ordered_grand:,.2f}")
@@ -1722,10 +2656,25 @@ def three_way_match(pr_id):
     if bundle["invoices"] and invoiced_net > received_value + tol:
         flags.append(f"Invoiced more than received ({invoiced_net:,.2f} vs received value {received_value:,.2f})")
 
-    matched = bool(bundle["invoices"]) and qty_ok and price_ok and receipt_inv_ok
+    if debit_open > 0:
+        flags.append(
+            f"Goods returned to the supplier: open debit notes {debit_open:,.2f}; "
+            f"payment is capped at {payable:,.2f}")
+    # A control that could not evaluate itself must say so rather than pass. The
+    # returns register is the only input to the payable ceiling, so if get_pr
+    # could not read it, debit_open above is 0 by ignorance, not by fact.
+    returns_ok = bundle.get("returns_ok", True)
+    if not returns_ok:
+        flags.append("The return-to-vendor register could not be read: the payable "
+                     "ceiling is NOT evaluated on this order.")
+    matched = (bool(bundle["invoices"]) and qty_ok and price_ok and receipt_inv_ok
+               and returns_ok)
     result = {
         "ordered_grand": ordered_grand, "ordered_qty": ordered_qty,
         "received_qty": received_qty, "received_value": received_value,
+        "received_grand": received_grand, "short_qty": short_qty,
+        "debit_open": debit_open, "payable": payable, "returns_ok": returns_ok,
+        "short_value": short_value, "qty_tol": qty_tol, "tol": tol,
         "invoiced": invoiced, "qty_ok": qty_ok, "price_ok": price_ok,
         "receipt_inv_ok": receipt_inv_ok, "flags": flags,
         "status": "matched" if matched else ("mismatch" if bundle["invoices"] else "pending"),
@@ -1760,6 +2709,749 @@ def get_invoice(inv_id):
         conn.close()
 
 
+def list_sales_orders(limit=300):
+    """Live sales-order numbers for the PR form's picker (DOAM §5). Reads the
+    orders module directly; returns [] if it is not installed, because a missing
+    picker must not stop anyone raising a request."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT order_no FROM ord_orders WHERE order_no IS NOT NULL "
+            "AND order_no<>'' AND status NOT IN (%s) ORDER BY id DESC LIMIT ?"
+            % ",".join("?" * len(C.SO_CLOSED_STATUSES)),
+            tuple(C.SO_CLOSED_STATUSES) + (limit,)).fetchall()
+        return [r["order_no"] for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def sales_order_state(so_no):
+    """Is `so_no` a real, open sales order? "open" / "closed" / "unknown", or
+    None when there is nothing to check it against.
+
+    The PR form's sales-order field is a free-text datalist: the picker offers
+    real orders, but "x", "-" or "n/a" typed over it used to satisfy the DOAM's
+    "valid client sales order reference" just as well. It is validated here.
+
+    None (skip the check) covers exactly ONE case: the orders module is not
+    installed, so the query raises. An EMPTY register is not that case — it is
+    the state of a freshly deployed production database, which is precisely
+    when the golden thread most needs protecting, and since the forecast
+    register landed there IS something a requester can cite instead. With
+    neither an order nor a forecast on file, a direct-material purchase has no
+    cost object and is refused.
+
+    Reads on its OWN connection, never the caller's: submit_pr is mid
+    transaction when this runs, and on PostgreSQL a failed statement aborts the
+    whole transaction — the bare except would then hide the cause and every
+    later write in submit_pr would fail with "transaction is aborted".
+    """
+    ref = str(so_no or "").strip().lower()
+    if not ref:
+        return None
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT status FROM ord_orders WHERE LOWER(TRIM(order_no))=?",
+            (ref,)).fetchall()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    if not rows:
+        return "unknown"
+    closed = set(C.SO_CLOSED_STATUSES)
+    # Any live row wins: the same order number can legitimately appear more than
+    # once (split shipments), and one open line is an open order.
+    return "open" if any(str(r["status"] or "").strip().lower() not in closed
+                         for r in rows) else "closed"
+
+
+# --------------------------------------------------------------------------
+# DOAM §3.4 — the OTHER half of the sales-order gate: "...OR AGREED FORECAST".
+# A forecast is a REGISTER entry, not a free-text box. It satisfies the gate
+# only while it is BOTH agreed (signed off by the DOAM planning authority) and
+# inside its validity dates — an expired or still-draft forecast is no cost
+# object at all, which is the whole point of the word "agreed".
+# --------------------------------------------------------------------------
+FORECAST_DEFAULT_DAYS = 90       # one production quarter — see agree_forecast()
+
+
+def forecast_state(ref):
+    """Is `ref` an agreed production forecast that is in force today?
+    Returns "active" | "expired" | "unapproved" | "unknown".
+
+    Unlike sales_order_state() there is no "skip the check" answer: the register
+    lives in THIS module, so if the query fails there is no register, and with no
+    register there is no reference a requester could legitimately give.
+
+    Own connection, for the same reason as sales_order_state()."""
+    r = str(ref or "").strip().lower()
+    if not r:
+        return "unknown"
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT status, valid_from, valid_to FROM proc_forecasts "
+            "WHERE LOWER(TRIM(ref))=?", (r,)).fetchone()
+    except Exception:
+        return "unknown"
+    finally:
+        conn.close()
+    if not row:
+        return "unknown"
+    if str(row["status"] or "").strip().lower() != "agreed":
+        return "unapproved"
+    today = _now()[:10]
+    if not (str(row["valid_from"] or "0000-01-01") <= today
+            <= str(row["valid_to"] or "9999-12-31")):
+        return "expired"
+    return "active"
+
+
+def list_forecasts(active_only=False):
+    """The forecast register. `active_only` returns just the refs that would
+    satisfy the gate today — that is what the request form's picker offers."""
+    conn = get_db()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM proc_forecasts ORDER BY id DESC").fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    today = _now()[:10]
+    for f in rows:
+        f["active"] = (str(f.get("status") or "").lower() == "agreed"
+                       and str(f.get("valid_from") or "0000-01-01") <= today
+                       and str(f.get("valid_to") or "9999-12-31") >= today)
+    return [f for f in rows if f["active"]] if active_only else rows
+
+
+def create_forecast(data, user):
+    """Record a forecast as a DRAFT. Anyone who may raise a request may draft
+    one; it buys nothing until it is agreed. Returns (ok, ref_or_error)."""
+    # Stored UPPER because every lookup is LOWER(TRIM(ref)): without it the
+    # UNIQUE constraint (case-sensitive) would accept 'FC-Q1' and 'fc-q1' as two
+    # rows and a citation would resolve to whichever the scan reached first —
+    # the document could then say "agreed" while the register says "draft".
+    ref = str(data.get("ref") or "").strip().upper()[:80]
+    if not ref:
+        return False, "ref_required"
+    # The dates decide when this stops being a cost object, so they are parsed,
+    # not trusted: the form posts <input type="date">, a hand-rolled POST can
+    # post anything, and a date the gate cannot compare is a hole.
+    vf = str(data.get("valid_from") or "").strip() or _now()[:10]
+    vt = str(data.get("valid_to") or "").strip()
+    try:
+        start = datetime.strptime(vf, "%Y-%m-%d")
+        # Written back NORMALISED, never as posted: strptime accepts '2026-8-1'
+        # but the gate compares these as TEXT, and '2026-8-1' sorts above
+        # '2026-08-18' — an expired window would read "active".
+        vf = start.strftime("%Y-%m-%d")
+        # Default validity: FORECAST_DEFAULT_DAYS from the start date. A forecast
+        # with no end date would never expire, and "agreed forever" is not agreed.
+        vt = vt or (start + timedelta(days=FORECAST_DEFAULT_DAYS)).strftime("%Y-%m-%d")
+        end = datetime.strptime(vt, "%Y-%m-%d")
+        if end < start:
+            return False, "bad_dates"
+        vt = end.strftime("%Y-%m-%d")
+    except ValueError:
+        return False, "bad_dates"
+    conn = get_db()
+    try:
+        # Checked explicitly so a real write failure is not mislabelled as a
+        # duplicate. LOWER(TRIM(...)) = the lookup the gate uses.
+        if conn.execute("SELECT 1 FROM proc_forecasts WHERE LOWER(TRIM(ref))=?",
+                        (ref.lower(),)).fetchone():
+            return False, "duplicate_ref"
+        conn.execute(
+            "INSERT INTO proc_forecasts (ref, description, period, valid_from, "
+            "valid_to, status, created_by, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (ref, str(data.get("description") or "").strip()[:500],
+             str(data.get("period") or "").strip()[:80], vf, vt, "draft",
+             (user or {}).get("username"), _now()))
+        conn.commit()
+        return True, ref
+    except Exception:
+        conn.rollback()
+        return False, "write_failed"
+    finally:
+        conn.close()
+
+
+def agree_forecast(fc_id, user):
+    """Sign a forecast off so it can carry direct-material spend.
+
+    WHO: the DOAM planning authority. Table 4 L2 — "SC-D owns operational and
+    inventory replenishment" — so this is exactly the authority that signs the
+    'scd' rung of the approval ladder, and it is checked with the SAME can_act()
+    the ladder uses rather than a new permission: supply_chain_director, plus
+    the standing super_admin / proc_admin override that can_act() already grants.
+
+    Separation of duties: the drafter may not be the agreer. Anyone who may
+    raise a request may draft a forecast, and can_act("scd") carries the
+    standing super_admin / proc_admin override — without this guard one holder
+    of proc_admin could draft a forecast, agree it themselves and then raise
+    unlimited direct-material spend against it with no client order and no
+    second signature. Same shape as the SoD escalation in submit_pr.
+    Returns (ok, msg)."""
+    if not can_act(user, "scd"):
+        return False, "not_authorised"
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT ref, status, created_by, valid_to FROM "
+                           "proc_forecasts WHERE id=?", (fc_id,)).fetchone()
+        if not row:
+            return False, "not_found"
+        if str(row["status"] or "").lower() == "agreed":
+            return False, "already_agreed"
+        # Signing a window that has already closed produces a row marked
+        # 'agreed' that can never satisfy the gate — a signature meaning nothing.
+        if str(row["valid_to"] or "9999-12-31") < _now()[:10]:
+            return False, "fc_expired"
+        if str(row["created_by"] or "") == (user or {}).get("username"):
+            return False, "own_forecast"
+        conn.execute(
+            "UPDATE proc_forecasts SET status='agreed', agreed_by=?, "
+            "agreed_by_name=?, agreed_role=?, agreed_at=? WHERE id=?",
+            ((user or {}).get("username"),
+             (user or {}).get("full_name") or (user or {}).get("username"),
+             (user or {}).get("role"), _now(), fc_id))
+        conn.commit()
+        return True, row["ref"]
+    finally:
+        conn.close()
+
+
+def cost_object_check(conn, pr_id, pr):
+    """DOAM §5 / Table 12 — does this request carry the cost object it must?
+    Returns (ok, reason) where `reason` is the refusal code — "so_unknown",
+    "so_closed", "fc_unknown", "fc_expired", "fc_unapproved" or
+    "cost_object_required" — and None when the request is fine.
+
+    DOAM §3.4 allows EITHER a valid client sales order OR an agreed forecast.
+    BOTH cited references are validated, whichever else is present: either one
+    is persisted, shown on the request and printed on the PO, the GRN and the
+    debit note, so junk in one field is refused even when the other is fine.
+    The sales order stays decisive when both are valid. Cite one or the other."""
+    fc = str(_pr_field(pr, "forecast_ref") or "").strip()
+    if fc:
+        fc_state = forecast_state(fc)
+        if fc_state != "active":
+            return False, "fc_" + fc_state
+    so = str(_pr_field(pr, "so_no") or "").strip()
+    if so:
+        state = sales_order_state(so)
+        if state in ("open", None):
+            return True, None
+        return False, "so_closed" if state == "closed" else "so_unknown"
+    if fc:
+        return True, None        # already checked above
+    texts = [_pr_field(pr, "title"), _pr_field(pr, "request_for")]
+    rows = conn.execute(
+        "SELECT i.item, i.description, i.spare_id, c.category_name FROM pr_items i "
+        "LEFT JOIN proc_items c ON c.id = i.item_id WHERE i.pr_id=?",
+        (pr_id,)).fetchall()
+    # Master data beats free text. Every line linked to a MAINTENANCE SPARE is
+    # MRO under Table 12 (asset / cost centre), whatever the wording says — and
+    # sewing-machine spares are called things like "thread guide" and "elastic
+    # feeder". Without this the maintenance auto-reorder would raise a request
+    # and then be told to find a sales order it must not carry.
+    #
+    # But spare_id is a HIDDEN FORM FIELD the requester posts, with no foreign
+    # key behind it, so "linked to a spare" has to mean a row that really exists
+    # in the spares master — otherwise spare_id[]=999999 is a client-side off
+    # switch for the whole gate. And the free text must not ride along with the
+    # link: the type-ahead only clears spare_id when item[] is retyped, so
+    # picking any spare and putting "cotton twill for style 4471" in
+    # description[] turned the exemption on from the browser with no devtools.
+    #
+    # ponytail: only when EVERY line resolves to a real spare; a mixed request is
+    # judged on its text, which is the safe way round.
+    real = _real_spares([r["spare_id"] for r in rows])
+    if rows and all(r["spare_id"] in real for r in rows):
+        # Judge an all-spare request on the requester's OWN words, with the
+        # master-data names struck out of them. "Thread guide bracket" is the
+        # spare's name, so the bridge's own title and line survive; "Cotton
+        # twill fabric for style 4471" typed into item[] or description[] beside
+        # a picked spare does not. This also closes the title, which an earlier
+        # version of this branch never read at all.
+        free = [_pr_field(pr, "title"), _pr_field(pr, "request_for")]
+        for r in rows:
+            free += [r["item"], r["description"]]
+        blob = " ".join(str(t or "") for t in free).lower()
+        # Longest first, so striking "thread guide bracket" is not pre-empted by
+        # a shorter master string that overlaps it.
+        for master in sorted((str(t or "").strip().lower()
+                              for texts in real.values() for t in texts),
+                             key=len, reverse=True):
+            if master:
+                blob = blob.replace(master, " ")
+        if not C.cost_object_required([blob]):
+            return True, None
+    for r in rows:
+        texts += [r["item"], r["description"], r["category_name"]]
+    # An EMPTY order register still refuses, deliberately — see tests_so_gate.
+    # I nearly relaxed this on the theory that a register with nothing in it
+    # cannot validate anything and so blocks all purchasing for no benefit. That
+    # reasoning is out of date: since the forecast register landed, a requester
+    # with no sales order has a legitimate alternative to cite, so an empty
+    # register is not a dead end and the refusal is not a trap. The only escape
+    # is the orders module being ABSENT altogether, which sales_order_state
+    # already handles by returning None.
+    need = C.cost_object_required(texts)
+    return (need is None), ("cost_object_required" if need else None)
+
+
+def _pr_fx(pr):
+    """EGP per unit of the PR's currency, as a positive float.
+
+    One place, because getting it wrong is silent and one-directional: every
+    currency in CURRENCIES trades above the pound, so a missing conversion always
+    makes a foreign figure look SMALLER than it is — under-collecting approvals
+    and over-granting tolerance, never the reverse. An EGP request, a missing
+    rate and a nonsense rate all return 1.0, which is the identity and therefore
+    the safe default."""
+    if pr is None:
+        return 1.0
+    def _g(key):
+        try:
+            return pr.get(key) if isinstance(pr, dict) else pr[key]
+        except (KeyError, IndexError):
+            return None
+    if str(_g("currency") or "EGP").strip().upper() == "EGP":
+        return 1.0
+    try:
+        fx = float(_g("fx_rate") or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return fx if fx > 0 else 1.0
+
+
+def deviation_findings(conn, pr_id):
+    """DOAM §4.4 — grade every line of a PR against its target price, its
+    maximum stock ceiling and its NET REQUIREMENT. Returns
+    {"lines": [...], "stages": [...], "memo": bool, "quotes": bool,
+     "unassessable": int, "coverage_blind": int} where `stages` are the EXTRA
+    approvals the deviations require, de-duplicated across lines.
+
+    Three facts per line, all read from the masters the buyer cannot edit: the
+    target price (proc_items.cost_price, the ERP cost), the ceiling
+    (mnt_spare_parts.max_level) and the coverage (stock on hand + quantity
+    already on order). A line with none of them is reported, not graded — the
+    control must not pretend to have checked something it could not see.
+
+    DOAM §3.4 / Table 11 (T&C-PUF-10 "Coverage Check") — "procurement quantity
+    is capped at the net requirement after inventory netting". Per line:
+
+        nettable  = max(0, on_hand - reserved - reorder_level) + on_order
+        net_need  = max(0, requested - nettable)
+        excess    = requested - net_need          -> "a quantity above plan"
+
+    Three deliberate choices in that formula, each of which changes the answer:
+
+      * pr_items.current_stock is NOT the source. It is a snapshot the requester
+        types and can edit, and a control whose input the controlled party owns
+        is not a control. mnt_spare_parts is.
+      * pr_items.spare_id is not trusted to be PRESENT either. It is a hidden
+        field the requester's own form posts, set only when the type-ahead is
+        used, so skipping the type-ahead would buy the free pass of being
+        "unassessable" — the same objection, one keystroke away. A line with no
+        link is therefore matched to the spares master by EXACT code or name,
+        and only when exactly one active spare matches; the panel says the line
+        was matched by name rather than netted from a link.
+      * RESERVED stock and the REORDER LEVEL are not free to net against.
+        Reserved quantity is already committed to a work order, and the reorder
+        level is the buffer the stocking policy says to hold — netting against
+        either would flag every legitimate replenishment. The maintenance
+        auto-reorder raises its PR precisely when available <= reorder_level, so
+        without this term the control would escalate 100% of MRO replenishment
+        and jam the lane it is supposed to police.
+      * A line with no stock record is UNASSESSABLE, never zero-stock and never
+        fully covered. Assuming zero stock would rubber-stamp every free-text
+        line; assuming coverage would block them all."""
+    rows = conn.execute(
+        "SELECT i.id, i.item, i.description, i.qty, i.unit_price, i.item_id, "
+        "i.spare_id FROM pr_items i WHERE i.pr_id=? ORDER BY i.seq",
+        (pr_id,)).fetchall()
+    if not rows:
+        return {"lines": [], "stages": [], "memo": False, "quotes": False,
+                "unassessable": 0, "coverage_blind": 0}
+    # The item-master targets below are EGP; pr_items.unit_price is in the PR's
+    # own currency. Read the rate once here so the comparison is like for like.
+    _fx_rate = _pr_fx(conn.execute(
+        "SELECT currency, fx_rate FROM pr_requests WHERE id=?", (pr_id,)).fetchone())
+    cat = {}
+    iids = [r["item_id"] for r in rows if r["item_id"]]
+    if iids:
+        cat = {r["id"]: r for r in conn.execute(
+            "SELECT id, cost_price, has_cost FROM proc_items WHERE id IN (%s)"
+            % ",".join("?" * len(iids)), tuple(iids)).fetchall()}
+    spares = {}
+    sids = [r["spare_id"] for r in rows if r["spare_id"]]
+    if sids:
+        # mnt_spare_parts, not "mnt_spares", and the cost column is avg_cost.
+        # The wrong names inside a bare `except Exception: spares = {}` meant the
+        # quantity-over-ceiling half of §4.4 silently never ran — no error, no
+        # log, just a control that always found nothing. The except is narrowed
+        # so a genuinely absent maintenance module still degrades to price-only
+        # grading, but a query mistake is logged instead of swallowed.
+        try:
+            spares = {r["id"]: r for r in conn.execute(
+                "SELECT id, stock_qty, reserved_qty, reorder_level, max_level, "
+                "avg_cost FROM mnt_spare_parts WHERE id IN (%s)"
+                % ",".join("?" * len(sids)), tuple(sids)).fetchall()}
+        except Exception as exc:
+            spares = {}
+            logging.getLogger(__name__).warning(
+                "DOAM 4.4: spare-part ceilings unavailable, grading on price only (%s)", exc)
+
+    # Lines that carry no spare_id: match them to the master by exact code or
+    # name. Omitting the hidden field is completely unguarded otherwise, and
+    # "not assessable" must never be cheaper than "assessed". Exact match only,
+    # and only when ONE active spare matches — an ambiguous name stays
+    # unassessed rather than netted against the wrong part.
+    line_sid = {r["id"]: r["spare_id"] for r in rows}
+    named_lines = set()
+    free = {}
+    for r in rows:
+        if r["spare_id"]:
+            continue
+        for t in (r["item"], r["description"]):
+            t = str(t or "").strip().lower()
+            if t:
+                free.setdefault(t, []).append(r["id"])
+    if free:
+        keys = list(free)
+        ph = ",".join("?" * len(keys))
+        hits = {}
+        try:
+            for s in conn.execute(
+                    "SELECT id, code, name, stock_qty, reserved_qty, reorder_level, "
+                    "max_level, avg_cost FROM mnt_spare_parts WHERE is_active=1 "
+                    "AND (LOWER(TRIM(code)) IN (%s) OR LOWER(TRIM(name)) IN (%s))"
+                    % (ph, ph), tuple(keys) * 2).fetchall():
+                for t in (str(s["code"] or "").strip().lower(),
+                          str(s["name"] or "").strip().lower()):
+                    if t in free:
+                        hits.setdefault(t, []).append(s)
+        except Exception as exc:
+            hits = {}
+            logging.getLogger(__name__).warning(
+                "DOAM 3.4: name matching against the spares master unavailable (%s)", exc)
+        for r in rows:
+            if r["spare_id"]:
+                continue
+            for t in (r["item"], r["description"]):
+                cands = hits.get(str(t or "").strip().lower()) or []
+                if len(cands) == 1:
+                    spares[cands[0]["id"]] = cands[0]
+                    line_sid[r["id"]] = cands[0]["id"]
+                    named_lines.add(r["id"])
+                    break
+
+    # Quantity already on order and not yet received, per spare. An issued PO is
+    # a commitment that has not landed yet, so it covers the requirement just as
+    # shelf stock does — this is the half of netting that catches the duplicate
+    # order raised while the first one is still in transit. A PR that is still
+    # in the ladder counts too: it is a planned order (an MRP scheduled receipt),
+    # and it is the commonest duplicate of all — the definition matches
+    # procure_bridge's "open PR", which already dedups the auto-reorder on it.
+    # Only requests raised BEFORE this one are netted against it, so two
+    # simultaneous requests do not each declare the other a duplicate; the later
+    # one is. The current request is excluded so a re-price never nets a line
+    # against itself.
+    on_order = {}
+    sids_all = sorted({v for v in line_sid.values() if v})
+    if sids_all and spares:
+        try:
+            for r in conn.execute(
+                    "SELECT i.spare_id AS sid, "
+                    "SUM(COALESCE(i.qty,0) - COALESCE(i.received_qty,0)) AS q "
+                    "FROM pr_items i JOIN pr_requests p ON p.id = i.pr_id "
+                    "WHERE i.spare_id IN (%s) AND i.pr_id <> ? AND p.is_active=1 "
+                    "AND (p.status IN ('po_issued','partially_received') "
+                    "     OR (p.status IN ('pending','approved') AND i.pr_id < ?)) "
+                    "GROUP BY i.spare_id" % ",".join("?" * len(sids_all)),
+                    tuple(sids_all) + (pr_id, pr_id)).fetchall():
+                on_order[r["sid"]] = max(float(r["q"] or 0), 0.0)
+        except Exception as exc:
+            on_order = {}
+            logging.getLogger(__name__).warning(
+                "DOAM 3.4: open-order netting unavailable (%s)", exc)
+
+    lines, stages, memo, quotes, blind, cov_blind = [], [], False, False, 0, 0
+    for r in rows:
+        c = cat.get(r["item_id"])
+        s = spares.get(line_sid.get(r["id"]))
+        target = None
+        if c is not None and c["has_cost"]:
+            target = float(c["cost_price"] or 0)
+        elif s is not None and (s["avg_cost"] or 0) > 0:
+            target = float(s["avg_cost"])
+        ceiling = float(s["max_level"]) if s is not None and (s["max_level"] or 0) > 0 else None
+        over_ceiling = bool(
+            ceiling is not None
+            and float(s["stock_qty"] or 0) + float(r["qty"] or 0) > ceiling)
+        qty = float(r["qty"] or 0)
+        cov = None
+        if s is None:
+            cov_blind += 1                      # no stock record: not nettable
+        else:
+            oo = on_order.get(line_sid.get(r["id"]), 0.0)
+            nettable = max(float(s["stock_qty"] or 0)
+                           - float(s["reserved_qty"] or 0)
+                           - float(s["reorder_level"] or 0), 0.0) + oo
+            need = max(qty - nettable, 0.0)
+            cov = {"qty": qty, "on_hand": float(s["stock_qty"] or 0),
+                   "reserved": float(s["reserved_qty"] or 0), "on_order": oo,
+                   "net_need": round(need, 3), "excess": round(qty - need, 3),
+                   "by_name": r["id"] in named_lines}
+        over_plan = bool(cov and cov["excess"] > 1e-9)
+        # The target is an EGP figure off the item master; the unit price is in
+        # the PR's currency. Comparing them raw made the grader FX-blind and it
+        # failed in one direction only — every currency here has fx > 1, so a
+        # foreign price always looked smaller than it is and never graded over
+        # target. Proved: 1,200 EGP x 200 grades price_over_15 and pulls in the
+        # Managing Director, while USD 24 at fx 50 — the identical 240,000 EGP —
+        # graded on_plan and added nothing.
+        pct = C.price_deviation_pct(float(r["unit_price"] or 0) * _fx_rate, target)
+        g = C.deviation_grade(pct, over_ceiling, over_plan)
+        if target is None and ceiling is None:
+            blind += 1
+        lines.append({"item": r["item"], "qty": qty,
+                      "unit_price": float(r["unit_price"] or 0), "target": target,
+                      "pct_over": round(pct, 1) if pct is not None else None,
+                      "ceiling": ceiling, "over_ceiling": over_ceiling,
+                      "coverage": cov, "over_plan": over_plan,
+                      "spare_id": line_sid.get(r["id"]),
+                      "grade": g["grade"]})
+        for st in g["stages"]:
+            if st not in stages:
+                stages.append(st)
+        memo = memo or g["memo"]
+        quotes = quotes or g["quotes"]
+    # Keep ladder order, not discovery order: an extra rung must still be
+    # collected after the ones below it.
+    stages = [s for s in C.DOAM_LADDER if s in stages]
+    return {"lines": lines, "stages": stages, "memo": memo, "quotes": quotes,
+            "unassessable": blind, "coverage_blind": cov_blind}
+
+
+def _master_moved_by_requester(conn, pr_id, pr, dev):
+    """§3.4 nets against the spares master, and on this platform the storekeeper
+    who raises a maintenance request is the same person who may adjust the
+    stock on that part (`maint_store` and `proc_create` sit together in the
+    seeded storekeeper role). So the input to the cap is movable by the party
+    the cap controls — the same objection §4.4 raises against
+    pr_items.current_stock, one table over.
+
+    The formula stays as it is; the FACT goes on the request, where the signers
+    read it: a manual stock adjustment made by this PR's own requester, on a
+    part this PR is buying, inside the last 30 days. Written whether or not the
+    cap fired — the interesting case is precisely the one where it did not.
+
+    Ceiling: only stock movements are attributable. `reorder_level` has no edit
+    route at all (it is set when the part is created) and mnt_spare_parts
+    records no creator, so a part CREATED with a generous buffer by the
+    requester cannot be named here without a created_by column in the
+    maintenance schema — a change in that module, not this one."""
+    sids = sorted({l["spare_id"] for l in dev["lines"] if l.get("spare_id")})
+    who = _pr_field(pr, "requester")
+    if not (sids and who):
+        return
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        # 'adjustment' only: receipts and issues are documented by the flow that
+        # made them, while a manual adjustment is the discretionary write. Flag
+        # every maintenance movement and the note fires on every request, which
+        # is the same as not firing at all.
+        rows = conn.execute(
+            "SELECT s.code, m.before_qty, m.after_qty, m.created_at "
+            "FROM mnt_stock_movements m JOIN mnt_spare_parts s ON s.id = m.spare_id "
+            "WHERE m.spare_id IN (%s) AND m.type='adjustment' AND m.performed_by=? "
+            "AND m.created_at >= ? ORDER BY m.created_at"
+            % ",".join("?" * len(sids)), tuple(sids) + (who, since)).fetchall()
+    except Exception as exc:                            # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "DOAM 3.4: spare movement history unavailable, self-edit not checked (%s)", exc)
+        return
+    if not rows:
+        return
+    detail = ("DOAM §3.4 segregation — the requester (%s) adjusted the stock this "
+              "coverage check nets against, inside the last 30 days: %s. The netted "
+              "figures below come from a master this requester can move." % (
+                  who, "; ".join(
+                      "%s %g -> %g on %s" % (r["code"], float(r["before_qty"] or 0),
+                                             float(r["after_qty"] or 0), str(r["created_at"])[:10])
+                      for r in rows)))
+    if not conn.execute(
+            "SELECT 1 FROM pr_events WHERE pr_id=? AND action='coverage_self_edit' "
+            "AND detail=?", (pr_id, detail)).fetchone():
+        audit(conn, pr_id, "system", "coverage_self_edit", detail)
+
+
+def apply_deviation_stages(conn, pr_id, pr):
+    """Append the §4.4 extra rungs a priced request has earned. Caller commits.
+    Only ever ADDS, and only rungs not already on the ladder — a deviation can
+    make an order need more signatures, never fewer."""
+    dev = deviation_findings(conn, pr_id)
+    _master_moved_by_requester(conn, pr_id, pr, dev)
+    if not dev["stages"]:
+        return dev
+    rows = conn.execute("SELECT seq, stage FROM pr_steps WHERE pr_id=? ORDER BY seq",
+                        (pr_id,)).fetchall()
+    have = {r["stage"] for r in rows}
+    seq = max([r["seq"] for r in rows] or [0])
+    _roles = stage_roles_map(conn)
+    _chain = escalation_map(conn)
+    added = []
+    for st in dev["stages"]:
+        if st in have:
+            continue
+        seq += 1
+        e_role, e_from, why = _esc_columns(conn, st, pr["requester"], _roles, _chain)
+        conn.execute(
+            "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at, "
+            "esc_role, esc_from, origin) VALUES (?,?,?,?,?,?,?,?,?)",
+            (pr_id, seq, st, "pending", stage_label(st), _now(),
+             "" if why == "no_superior" else e_role, e_from, "deviation"))
+        added.append(st)
+    grades = ", ".join(sorted({l["grade"] for l in dev["lines"]
+                               if l["grade"] != "on_plan"}))
+    # T&C-PUF-10 is a form retained for a year, and the coverage numbers are
+    # computed from stock as it is TODAY — read the panel next year and it will
+    # say something different. So the netting that actually triggered the
+    # escalation is written into the audit trail, where it stays with the
+    # request. This is the retained form, and it is retained whether or not a
+    # rung was ADDED: when the stage §4.4 asks for is already on the ladder
+    # nothing is appended, and logging only on `added` meant the deviation that
+    # blocked a sign-off left no record of itself at all.
+    cov = "".join(
+        " Coverage check — %s: requested %g, on hand %g, on order %g, "
+        "net need %g, excess %g." % (
+            l["item"], l["coverage"]["qty"], l["coverage"]["on_hand"],
+            l["coverage"]["on_order"], l["coverage"]["net_need"],
+            l["coverage"]["excess"])
+        for l in dev["lines"] if l.get("over_plan"))
+    detail = "DOAM §4.4 deviation (%s): %s%s" % (
+        grades,
+        ("added %s on top of the value ladder."
+         % ", ".join(stage_label(s) for s in added)) if added else
+        ("%s already on the ladder — no rung added."
+         % ", ".join(stage_label(s) for s in dev["stages"])),
+        cov)
+    # This runs again at every rung from Purchasing up, so an unchanged reading
+    # must not file the same form twice.
+    if not conn.execute(
+            "SELECT 1 FROM pr_events WHERE pr_id=? AND action='deviation_approval' "
+            "AND detail=?", (pr_id, detail)).fetchone():
+        audit(conn, pr_id, "system", "deviation_approval", detail)
+    if added:
+        stamp_step_actions(conn, pr_id)     # the new rungs are Table 5 endorsements
+    return dev
+
+
+def vendor_approved(conn, name):
+    """DOAM §4.3 — "No advance to a supplier off the approved vendor list."
+    The approved list IS the active vendor master; an inactive or unknown
+    supplier is off it."""
+    if not str(name or "").strip():
+        return False
+    row = conn.execute("SELECT is_active FROM proc_vendors WHERE name=?",
+                       (name,)).fetchone()
+    return bool(row and row["is_active"])
+
+
+def advance_required_authority(pr, pct):
+    """The DOAM §4.3 rule for this request: which stages may authorise an advance
+    of `pct`, and whether a bank guarantee is required. Split out so the gate,
+    the authorising call and the UI all read the SAME rule.
+
+    The 500,000 guarantee threshold is an EGP figure, so the PO value must be
+    converted first. Passing the raw PR total let a USD 20,000 order (about
+    1,000,000 EGP) read as 20,000 and walk past the guarantee rule entirely."""
+    return C.advance_rule(egp_commitment(pr), pct)
+
+
+def authorize_advance(pr_id, pct, guarantee_ref, user, ip=None):
+    """Record the DOAM §4.3 authorisation for an advance payment. Returns
+    (ok, msg). Refuses when the signer does not hold the required authority, the
+    supplier is off the approved list, or a required bank guarantee is missing."""
+    try:
+        pct = float(pct or 0)
+    except (TypeError, ValueError):
+        return False, "bad_pct"
+    if not 0 < pct <= 100:
+        return False, "bad_pct"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] not in ("po_issued", "partially_received", "received"):
+            return False, "no_po"        # there is no PO value to advance against
+        if not vendor_approved(conn, pr["vendor"]):
+            return False, "vendor_not_approved"
+        rule = advance_required_authority(pr, pct)
+        guarantee_ref = str(guarantee_ref or "").strip()[:120]
+        if rule["guarantee"] and not guarantee_ref:
+            return False, "guarantee_required"
+        # Who is signing. can_act() already encodes delegation, proc_admin and
+        # the permission check — a second role test here would drift from it.
+        _roles = stage_roles_map(conn)
+        stage = next((s for s in rule["stages"] if can_act(user, s, _roles=_roles)), None)
+        if not stage:
+            return False, "not_authorised"
+        conn.execute(
+            "UPDATE pr_requests SET advance_pct=?, advance_auth_by=?, "
+            "advance_auth_stage=?, advance_auth_at=?, bank_guarantee_ref=? WHERE id=?",
+            (pct, (user or {}).get("username") or "system", stage or "proc_admin",
+             _now(), guarantee_ref or None, pr_id))
+        audit(conn, pr_id, (user or {}).get("username") or "system", "advance_authorised",
+              f"DOAM §4.3: advance of {pct:.1f}% authorised by "
+              f"{stage_label(stage) if stage else 'Procurement admin'}"
+              + (f", bank guarantee {guarantee_ref}" if guarantee_ref else ""), ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def advance_gate_check(conn, pr, amount):
+    """Is this payment an advance, and if so is it authorised? Returns
+    (ok, msg). An advance is a payment made before the supplier has invoiced —
+    that is the money genuinely at risk, and the only money §4.3 governs."""
+    invoiced = conn.execute(
+        # GROSS (amount + tax): it is compared against paid_amount, which is
+        # gross. Netting the tax out made every VAT-bearing payment look like an
+        # unauthorised advance and refused it with the wrong reason.
+        "SELECT COALESCE(SUM(COALESCE(amount,0)+COALESCE(tax,0)),0) AS t "
+        "FROM pr_invoices WHERE pr_id=?",
+        (pr["id"],)).fetchone()["t"]
+    already = float(_pr_field(pr, "paid_amount") or 0)
+    if float(invoiced or 0) >= already + amount - 0.01:
+        return True, ""                  # covered by invoices — not an advance
+    # The PERCENTAGE is currency-agnostic (paid / total, same units), so it uses
+    # the PR's own grand total; the RULE below needs EGP for its 500,000 test.
+    grand = pr_amounts(pr)["grand"]
+    pct = ((already + amount) / grand * 100.0) if grand > 0 else 100.0
+    if not vendor_approved(conn, _pr_field(pr, "vendor")):
+        return False, "advance_vendor_not_approved"
+    authorised = float(_pr_field(pr, "advance_pct") or 0)
+    if authorised <= 0:
+        return False, "advance_not_authorised"
+    if pct > authorised + 0.01:
+        return False, "advance_exceeds_authorised"
+    rule = C.advance_rule(egp_commitment(pr), pct)
+    if rule["guarantee"] and not str(_pr_field(pr, "bank_guarantee_ref") or "").strip():
+        return False, "advance_guarantee_required"
+    return True, ""
+
+
 def add_payment(pr_id, data, user, ip=None, force=False):
     """Record a payment against the PR/invoice and roll up the payment status.
 
@@ -1769,7 +3461,10 @@ def add_payment(pr_id, data, user, ip=None, force=False):
       * the 3-way match must not show over-billing (invoice > PO, or invoice >
         received value) — "payment block on mismatch";
       * total paid may not exceed the PO grand total (+ the payment tolerance,
-        setting 'payment_tolerance_pct' -> C.PAYMENT_TOLERANCE_PCT, default 1%)."""
+        setting 'payment_tolerance_pct' -> C.PAYMENT_TOLERANCE_PCT, default 1%);
+      * on a SHORT DELIVERY the cap drops to the value actually received. Paying
+        for what arrived is legitimate; paying the whole PO for part of it is
+        not, and the DOAM asks for the shortfall to be stated, not waved past."""
     # run the match first (own connections) — before opening ours
     match = three_way_match(pr_id)
     conn = get_db()
@@ -1782,11 +3477,21 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         amount = float(data.get("amount") or 0)
         if amount <= 0:
             return False, "bad_amount"
-        # over-billing block (short delivery alone does NOT block: paying for
-        # what WAS received on a partial delivery is legitimate)
+        # over-billing block (short delivery alone does not block the payment,
+        # it caps it — see the received-value cap further down)
         if match and match["has_invoice"] and not force \
            and (not match["price_ok"] or not match["receipt_inv_ok"]):
             return False, "match_blocked"
+        # DOAM §4.3 — money leaving before the supplier has invoiced is an
+        # advance, and needs its own authority, an approved vendor, and a bank
+        # guarantee on large orders. Checked here rather than in the UI so it
+        # holds for the API and for anything else that posts a payment.
+        adv_ok, adv_msg = advance_gate_check(conn, pr, amount)
+        # "No advance to a supplier off the approved vendor list" is written
+        # without exception, so that one holds even for an admin override — the
+        # others stay overridable like every other gate here.
+        if not adv_ok and (not force or adv_msg == "advance_vendor_not_approved"):
+            return False, adv_msg
         grand = pr_amounts(pr)["grand"]
         # Configurable slack on the caps. Written as x * (pct/100.0), NOT
         # x * pct / 100.0: with the default 1.0 the first form is bit-for-bit the
@@ -1803,6 +3508,24 @@ def add_payment(pr_id, data, user, ip=None, force=False):
             billed = float(match.get("invoiced") or 0)
             if billed > 0 and already + amount > billed + max(1.0, billed * _tol_pct):
                 return False, "exceeds_invoiced"
+        # DOAM 7.3.3 short delivery — the third cap, and the one that was missing:
+        # goods short, invoice for the full order, every other gate green, and the
+        # company paid the whole PO for part of a delivery. Cumulative payment is
+        # capped at the GROSS value of what was actually received. Only bites when
+        # something is genuinely short, so a fully received order and an advance
+        # (no invoice yet, governed above) are untouched. Same payment tolerance
+        # as its two siblings above, for rounding and bank charges.
+        #
+        # Goods REJECTED on receipt ride the same cap: they never entered
+        # received_qty, so they are already short here, and their debit note
+        # tightens the ceiling further whenever the return was raised after the
+        # line had been received in full (match["payable"] does that arithmetic).
+        if match and match["has_invoice"] and not force \
+           and (float(match.get("short_qty") or 0) > 0
+                or float(match.get("debit_open") or 0) > 0):
+            rcv = float(match.get("payable", match.get("received_grand")) or 0)
+            if already + amount > rcv + max(1.0, rcv * _tol_pct):
+                return False, "exceeds_received"
         now = _now()
         if force:
             audit(conn, pr_id, (user or {}).get("username"), "payment_override",
@@ -1816,7 +3539,12 @@ def add_payment(pr_id, data, user, ip=None, force=False):
              data.get("notes"), user.get("username") if user else "system", now))
         paid = float(pr["paid_amount"] or 0) + amount
         grand = pr_amounts(pr)["grand"]
-        pstatus = "paid" if paid >= grand - 0.01 else ("partial" if paid > 0 else "unpaid")
+        # A PO with goods returned against it can never reach its own grand total,
+        # so "fully paid" is measured against the payable value once a debit note
+        # exists. Without a debit note this is bit-for-bit the old comparison.
+        target = float(match.get("payable") or 0) if (
+            match and float(match.get("debit_open") or 0) > 0) else grand
+        pstatus = "paid" if paid >= target - 0.01 else ("partial" if paid > 0 else "unpaid")
         conn.execute("UPDATE pr_requests SET paid_amount=?, payment_status=? WHERE id=?",
                      (round(paid, 2), pstatus, pr_id))
         audit(conn, pr_id, user.get("username") if user else "system", "payment",
@@ -1924,6 +3652,157 @@ def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
 
 
 # --------------------------------------------------------------------------
+# Records retention (audit 3.4-b9b)
+# --------------------------------------------------------------------------
+# The DOAM's retention rule used to exist only as the strings "5 yrs" / "10 yrs"
+# printed in the controlled-forms register. Three things make it a control:
+#   1. every request is stamped with retention_until at creation (create_pr);
+#   2. NOTHING may remove a record while that date is in the future — the guard
+#      below is the single chokepoint, and it fails CLOSED on a missing date;
+#   3. a REPORT (reports.proc_retention) lists what has passed its date, and a
+#      human disposes of records one at a time through dispose_pr.
+# There is deliberately NO unattended purge job. An automated process that
+# destroys financial records is a far larger risk than keeping them too long:
+# over-retention is a storage cost, an erroneous purge is unrecoverable.
+
+
+def retention_state(pr):
+    """{'until', 'years', 'expired'} for one pr_requests row or dict.
+
+    `expired` means "past its retention date and therefore ELIGIBLE for
+    disposal" — never "should be deleted". A row with no date reads as NOT
+    expired: an unknown retention date is a reason to keep a record, not to
+    remove it.
+    """
+    kind = _pr_field(pr, "expenditure_kind") or "opex"
+    until = str(_pr_field(pr, "retention_until") or "").strip()
+    if not until:
+        # Never stamped (created before the column existed and not yet
+        # backfilled): derive it for DISPLAY so the page is not blank, and treat
+        # the record as retained.
+        until = C.retention_until(_pr_field(pr, "created_at")
+                                  or _pr_field(pr, "request_date"), kind)
+        return {"until": until, "years": C.retention_years(kind), "expired": False}
+    return {"until": until, "years": C.retention_years(kind),
+            # `until` is the last day KEPT, as the page words it, so the record
+            # only becomes disposable the day AFTER. ISO dates compare as text.
+            "expired": until < _now()[:10]}
+
+
+def retention_guard(conn, pr_id):
+    """(ok, msg) — may this record be removed from the register?
+
+    THE chokepoint. Any future delete/purge/archive path must call this rather
+    than writing its own comparison; a rule copied into two callers is a rule
+    that will disagree with itself.
+    """
+    pr = conn.execute("SELECT id, created_at, request_date, expenditure_kind, "
+                      "retention_until FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+    if not pr:
+        return False, "not_found"
+    st = retention_state(pr)
+    if not st["expired"]:
+        return False, "retained_until:" + st["until"]
+    return True, st["until"]
+
+
+def dispose_pr(pr_id, user, ip=None):
+    """Retire a record that has passed its retention date. Returns (ok, msg).
+
+    Deliberately a SOFT retirement: is_active=0, which every listing and report
+    in this module already filters on, so the record leaves the register while
+    the row, its lines, its signatures and its audit trail stay on disk. That is
+    what "a human acts" should mean for a financial record — reversible, logged,
+    and one record at a time.
+    """
+    conn = get_db()
+    try:
+        ok, msg = retention_guard(conn, pr_id)
+        if not ok:
+            return False, msg
+        row = conn.execute("SELECT pr_no, is_active FROM pr_requests WHERE id=?",
+                           (pr_id,)).fetchone()
+        if not row["is_active"]:
+            return False, "already_disposed"
+        conn.execute("UPDATE pr_requests SET is_active=0 WHERE id=?", (pr_id,))
+        audit(conn, pr_id, (user or {}).get("username") or "system", "disposed",
+              f"Record retired from the register — retention expired {msg}", ip)
+        conn.commit()
+        return True, msg
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------
+# DOAM documents that are CONDITIONS, not attachments
+# --------------------------------------------------------------------------
+def set_doam_document(pr_id, field, text, user, ip=None):
+    """Record the business case (§4.1 t7 / §4.2 t4) or the §4.4 justification
+    memo (T&C-PUF-12) on a request. Returns (ok, msg).
+
+    One writer for both because they are the same shape: a piece of written
+    reasoning the DOAM makes a PRECONDITION of a signature. `field` is checked
+    against a fixed allow-list — it is interpolated into the SQL, so it may
+    never come from a request unvalidated.
+    """
+    if field not in ("business_case", "deviation_memo"):
+        return False, "bad_field"
+    body = str(text or "").strip()
+    if len(body) < 20:
+        # A memo is a justification, not a checkbox. Twenty characters is the
+        # smallest thing that cannot be typed by accident; it does not pretend
+        # to judge quality, only to stop "ok" from clearing a Board-level rule.
+        return False, "too_short"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT pr_no, status FROM pr_requests WHERE id=?",
+                          (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] in ("closed", "cancelled"):
+            return False, "locked"
+        conn.execute(f"UPDATE pr_requests SET {field}=? WHERE id=?", (body, pr_id))
+        audit(conn, pr_id, (user or {}).get("username") or "system", field,
+              ("Business case recorded" if field == "business_case"
+               else "DOAM §4.4 justification memo recorded"), ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def business_case_gate(pr):
+    """DOAM §4.1 tier 7 / §4.2 tier 4 — "above 10,000,000: Board approval, WITH a
+    business case". Returns (ok, msg).
+
+    Compared on egp_commitment(), the same tax-inclusive EGP figure the ladder
+    routes on: the business case is a condition of the tier, so it must be
+    triggered by the number that decides the tier. Using the raw net total would
+    let a 9.9M + VAT order (10.9M committed) past a 10M rule.
+    """
+    if egp_commitment(pr) <= C.BUSINESS_CASE_OVER:
+        return True, ""
+    if str(_pr_field(pr, "business_case") or "").strip():
+        return True, ""
+    return False, "business_case_required"
+
+
+def deviation_memo_gate(conn, pr_id, pr):
+    """DOAM §4.4 — every off-plan grade in the table requires a JUSTIFICATION
+    MEMO (T&C-PUF-12) as well as the extra signatures. deviation_grade() has
+    always returned that "memo" flag and nothing has ever read it, so the extra
+    approvers were being collected while the document they are supposed to be
+    reading was never asked for. Returns (ok, msg)."""
+    if (_pr_field(pr, "pricing_status") or "priced") != "priced":
+        return True, ""              # unpriced: the pricing gate rules first
+    if str(_pr_field(pr, "deviation_memo") or "").strip():
+        return True, ""
+    if not deviation_findings(conn, pr_id)["memo"]:
+        return True, ""
+    return False, "deviation_memo_required"
+
+
+# --------------------------------------------------------------------------
 # vendors
 # --------------------------------------------------------------------------
 # --------------------------------------------------------------------------
@@ -2006,13 +3885,22 @@ def item_costs(item_ids):
 
 
 def list_vendors(active_only=True):
+    """Every vendor, each carrying its OUTSTANDING DUES — the open debit-note value
+    the supplier owes back for rejected goods. Attached here, on one grouped query,
+    so the figure appears wherever vendor information is already rendered instead
+    of only on the one PR that raised it."""
     conn = get_db()
     try:
         sql = "SELECT * FROM proc_vendors"
         if active_only:
             sql += " WHERE is_active=1"
         sql += " ORDER BY name"
-        return [dict(r) for r in conn.execute(sql).fetchall()]
+        rows = [dict(r) for r in conn.execute(sql).fetchall()]
+        dues = vendor_dues(conn)
+        for v in rows:
+            d = dues.get(v.get("name")) or {}
+            v["dues_count"], v["dues"] = d.get("count", 0), d.get("amount", 0.0)
+        return rows
     finally:
         conn.close()
 
@@ -2153,11 +4041,38 @@ def rfq_gate_check(conn, pr):
     # not the raw foreign figure — a 60,000 TRY (~3,000 EGP) order must not
     # trigger the competitive-quote rule meant for 25,000+ EGP purchases.
     try:
-        total = float(egp_total(pr))
+        total = float(egp_commitment(pr))
     except (TypeError, ValueError):
         total = 0.0
-    if total < num_setting(conn, "rfq_value_threshold"):
-        return True, ""          # below the competitive-quote threshold
+    # DOAM §4.3 bands when the matrix is in force: 1 quote up to 50,000, three to
+    # 500,000, three plus negotiation to 2,000,000, formal tender above that. The
+    # flat "2 quotes at 25,000" setting was the pre-DOAM rule and stays as the
+    # fallback so a database with the matrix switched off behaves as it always did.
+    if C.DOAM_IN_FORCE:
+        band = C.sourcing_band(total)
+        required_quotes = band["quotes"]
+        # The lowest band is "One quotation — buyer records the price basis". It
+        # is ONE, not none: returning early here let a 48,000 EGP purchase be
+        # signed with no recorded price basis at all, which is the opposite of
+        # what the band says. A genuinely uncontested buy still has to carry a
+        # single-source justification, which is checked just below.
+        required_quotes = max(1, required_quotes)
+    else:
+        if total < num_setting(conn, "rfq_value_threshold"):
+            return True, ""      # below the competitive-quote threshold
+        required_quotes = num_setting(conn, "rfq_quote_min")
+    # DOAM §4.4 — an off-plan PRICE (anything over the target) requires three
+    # competitive quotes whatever the order is worth. deviation_grade() has
+    # always returned that flag and nothing read it, so a small order priced 40%
+    # over target satisfied the value band's single quote and nothing else. Only
+    # ever RAISES the requirement; a band that already demands three stays three.
+    # Fails soft: a grading error must not invent a quote requirement.
+    try:
+        if deviation_findings(conn, _pr_field(pr, "id"))["quotes"]:
+            required_quotes = max(required_quotes, 3)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "DOAM 4.4: deviation quote requirement unavailable (%s)", exc)
     if str(_pr_field(pr, "single_source_reason") or "").strip():
         return True, ""          # justified single/sole-source purchase
     # "Competitive" means distinct VENDORS, not just distinct quote rows — two quotes
@@ -2168,9 +4083,67 @@ def rfq_gate_check(conn, pr):
     except Exception:
         n = conn.execute("SELECT COUNT(*) c FROM pr_quotes WHERE pr_id=?",
                          (_pr_field(pr, "id"),)).fetchone()["c"]
-    if int(n or 0) < num_setting(conn, "rfq_quote_min"):
+    if int(n or 0) < required_quotes:
         return False, "needs_quotes"
     return True, ""
+
+
+def attach_ejr(pr_id, ejr_id, user, ip=None):
+    """Cite an APPROVED Engineering Justification Report on a requisition.
+
+    Without this the DOAM §6 gate is unsatisfiable: it refuses any spares/MRO
+    request that has no report, and nothing could put one there — so switching
+    the gate on blocked maintenance purchasing outright. The report must already
+    be approved, because the whole control is that Engineering signs BEFORE
+    Procurement accepts (Table 13 step 3); letting a draft be attached would let
+    the requester supply their own justification and move on.
+    """
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, ejr_no, status FROM mnt_eng_justifications "
+            "WHERE id=? AND is_active=1", (ejr_id,)).fetchone()
+        if not row:
+            return False, "ejr_not_found"
+        if row["status"] != "approved":
+            return False, "ejr_not_approved"
+        conn.execute("UPDATE pr_requests SET ejr_id=? WHERE id=?", (ejr_id, pr_id))
+        audit(conn, pr_id, (user or {}).get("username") or "system", "ejr_attached",
+              f"Engineering Justification {row['ejr_no']} cited", ip)
+        conn.commit()
+        return True, row["ejr_no"]
+    except Exception:
+        conn.rollback()
+        return False, "error"
+    finally:
+        conn.close()
+
+
+def _append_single_source_rung(conn, pr_id, pr):
+    """Add the DOAM §4.3 escalation rung to a PR already in flight. Caller
+    commits. Idempotent: a PR whose justification is edited twice does not
+    collect two extra signatures."""
+    rows = conn.execute("SELECT seq, stage FROM pr_steps WHERE pr_id=? ORDER BY seq",
+                        (pr_id,)).fetchall()
+    stages = [r["stage"] for r in rows]
+    kind = _pr_field(pr, "expenditure_kind")
+    extra = C.single_source_stage(stages, kind)
+    if not extra:
+        return None
+    seq = max([r["seq"] for r in rows] or [0]) + 1
+    _roles = stage_roles_map(conn)
+    e_role, e_from, why = _esc_columns(conn, extra, pr["requester"], _roles,
+                                       escalation_map(conn))
+    conn.execute(
+        "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at, "
+        "esc_role, esc_from, origin) VALUES (?,?,?,?,?,?,?,?,?)",
+        (pr_id, seq, extra, "pending", stage_label(extra), _now(),
+         "" if why == "no_superior" else e_role, e_from, "single_source"))
+    audit(conn, pr_id, "system", "single_source_escalation",
+          f"Competition waived — DOAM §4.3 adds {stage_label(extra)} as the "
+          f"approval one level above the value tier.")
+    stamp_step_actions(conn, pr_id)     # a level-above rung is a Table 5 endorsement
+    return extra
 
 
 def set_single_source(pr_id, reason, user, ip=None):
@@ -2183,8 +4156,7 @@ def set_single_source(pr_id, reason, user, ip=None):
     reason = reason[:1000]       # keep the justification a sane size
     conn = get_db()
     try:
-        pr = conn.execute("SELECT id, status FROM pr_requests WHERE id=?",
-                          (pr_id,)).fetchone()
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
         if pr["status"] in ("approved", "po_issued", "partially_received",
@@ -2194,6 +4166,15 @@ def set_single_source(pr_id, reason, user, ip=None):
                      (reason, pr_id))
         audit(conn, pr_id, (user or {}).get("username") or "system", "single_source",
               f"Single-source justification recorded: {reason}", ip)
+        # DOAM §4.3 — waiving competition costs one extra signature, one level
+        # above the value tier. A draft picks this up when it is submitted; a PR
+        # already in flight needs the rung appended now, or the waiver would be
+        # recorded with no consequence at all.
+        # Only on the FIRST waiver: the extra signature is owed for waiving
+        # competition, not for each time the wording is edited.
+        if pr["status"] == "pending" and not str(
+                _pr_field(pr, "single_source_reason") or "").strip():
+            _append_single_source_rung(conn, pr_id, pr)
         conn.commit()
         return True, ""
     finally:
@@ -2239,23 +4220,39 @@ def set_budget(department, amount, period=None, currency="EGP", user=None):
         conn.close()
 
 
-def budget_status(department, period=None, extra=0.0):
+# The SQL twin of egp_commitment(): tax-inclusive, fx-converted EGP. `spent` and
+# the request being weighed against it MUST be the same kind of number — summing
+# raw `total` counted a 100 USD @ 50 commitment as 100 EGP, i.e. a fiftieth of
+# itself, and compared an ex-VAT sum against a tax-inclusive request.
+_EGP_GROSS_SQL = ("COALESCE(total,0) * COALESCE(NULLIF(fx_rate,0),1) "
+                  "* (1 + COALESCE(tax_rate,0)/100.0)")
+
+
+def budget_status(department, period=None, extra=0.0, conn=None):
     """Return {amount, spent, remaining, pct, over} for a department+period.
     'spent' = committed spend (approved / po_issued / closed) this period; 'extra'
-    lets a not-yet-submitted PR test whether it would breach."""
+    lets a not-yet-submitted PR test whether it would breach.
+
+    `conn` reuses a caller's OPEN connection. Routing calls this in the middle of
+    the transaction that writes the ladder, and on SQLite a second connection
+    would read the pre-transaction snapshot (or block on the writer's lock), so
+    the answer has to come from the same connection the ladder is being built on.
+    """
     if not department:
         return None
     period = period or _period()
-    conn = get_db()
+    own_conn = conn is None
+    conn = conn or get_db()
     try:
         b = conn.execute("SELECT amount, currency FROM proc_budgets WHERE department=? AND period=?",
                          (department, period)).fetchone()
         spent = conn.execute(
-            "SELECT COALESCE(SUM(total),0) s FROM pr_requests WHERE department=? "
+            "SELECT COALESCE(SUM(" + _EGP_GROSS_SQL + "),0) s FROM pr_requests WHERE department=? "
             "AND status IN ('approved','po_issued','partially_received','received','closed') "
             "AND substr(COALESCE(request_date, created_at),1,4)=?", (department, period)).fetchone()["s"]
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
     if not b:
         return {"amount": None, "spent": spent, "remaining": None, "pct": None,
                 "over": False, "currency": "EGP", "period": period}
@@ -2265,6 +4262,144 @@ def budget_status(department, period=None, extra=0.0):
     pct = round(100 * projected / amount) if amount else 0
     return {"amount": amount, "spent": spent, "remaining": remaining, "pct": pct,
             "over": projected > amount, "currency": b["currency"] or "EGP", "period": period}
+
+
+# --- DOAM Table 4: budgeted vs unbudgeted, decided at ROUTING time -----------
+BUDGET_STATES = ("budgeted", "no_budget", "over_budget")
+
+
+def budget_check(conn, department, egp_total, period=None, pr_id=None):
+    """Is this commitment inside the department's approved budget for the period?
+
+    Answered with budget_status() — the same proc_budgets row and the same
+    'spent' sum the request page already shows — so there is exactly one piece
+    of budget arithmetic in this module. All this adds is the routing verdict:
+
+        budgeted      a budget exists and this request still fits inside it
+        no_budget     no budget row for this department + period at all
+        over_budget   a budget exists and this request pushes past it
+
+    Returns {"unbudgeted", "state", "over_by", "status"}. `over_by` is how far
+    past the budget the request takes the department (None when the department
+    simply has no budget — there is no line to be over).
+    """
+    if not department:
+        # No cost owner means no approved plan behind the spend, and a blank
+        # department must not be the cheap way past this gate.
+        return {"unbudgeted": True, "state": "no_budget", "over_by": None, "status": None}
+    # The other requests already circulating priced against this same budget are
+    # LIVE commitment too, and 'spent' cannot see them (they are not approved
+    # yet). Weighing only this request's own value made the control splittable:
+    # three concurrent 8,000 requests against a 10,000 budget each read
+    # "budgeted" and none picked up the L1 rung. Counted only for the ROUTING
+    # verdict — budget_status()'s displayed 'spent' still means settled spend.
+    live = 0.0
+    if pr_id:
+        live = conn.execute(
+            "SELECT COALESCE(SUM(" + _EGP_GROSS_SQL + "),0) s FROM pr_requests "
+            "WHERE department=? AND status='pending' AND pricing_status='priced' "
+            "AND id<>? AND substr(COALESCE(request_date, created_at),1,4)=?",
+            (department, pr_id, period or _period())).fetchone()["s"] or 0.0
+    st = budget_status(department, period, extra=(egp_total or 0) + live, conn=conn)
+    if not st or st.get("amount") is None:
+        return {"unbudgeted": True, "state": "no_budget", "over_by": None, "status": st}
+    if st.get("over"):
+        return {"unbudgeted": True, "state": "over_budget",
+                "over_by": round(-float(st["remaining"] or 0), 2), "status": st}
+    return {"unbudgeted": False, "state": "budgeted", "over_by": None, "status": st}
+
+
+def apply_budget_state(conn, pr_id, pr=None, ip=None):
+    """DOAM Table 4, applied to a request that now has a real value: record
+    whether it is budgeted, and if it is not, add the L1 rung. Caller commits.
+
+    Called from the PRICING gate (and from set_fx, which moves the EGP figure
+    the same way), because the requester price lockout means every request the
+    UI creates is submitted at zero — a budget test at submit would be weighing
+    nothing. Exactly why §3.4's aggregate is recomputed there too.
+
+    Idempotent, and never lengthens the ladder twice: unbudgeted_stage() returns
+    None once the ladder already reaches L1. Appended LAST, after the value and
+    §4.4 deviation rungs, because it is the senior signature.
+
+    Returns the budget_check verdict.
+    """
+    pr = pr or conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+    if not pr:
+        return {"unbudgeted": False, "state": None, "over_by": None, "status": None}
+    department = _pr_field(pr, "department")
+    kind = _pr_field(pr, "expenditure_kind") or "opex"
+    bud = budget_check(conn, department, egp_commitment(pr), pr_id=pr_id)
+    was = _pr_field(pr, "budget_state") or ""
+    conn.execute("UPDATE pr_requests SET budget_state=?, budget_over_by=? WHERE id=?",
+                 (bud["state"], bud["over_by"], pr_id))
+    if bud["unbudgeted"] and was != bud["state"]:
+        # On the request, not only in a log: the approver about to sign is owed
+        # the reason the DOAM put their signature on this ladder.
+        audit(conn, pr_id, "system", "unbudgeted",
+              unbudgeted_note(bud, department, kind), ip)
+    if _pr_field(pr, "status") != "pending":
+        return bud
+    if not bud["unbudgeted"]:
+        # It fits the budget now (the price was corrected down, or Finance
+        # loaded the budget) — so take the rung back off. Scoped to rows this
+        # control itself added and only while they are still ahead of the
+        # request: the §4.3 / §4.4 rungs, and anything already signed or being
+        # signed, are untouchable, which is the R3 invariant re-pricing must not
+        # break. A control that never lets go is a control nobody keeps.
+        gone = conn.execute(
+            "SELECT stage FROM pr_steps WHERE pr_id=? AND origin='unbudgeted' "
+            "AND status='pending' AND seq>?",
+            (pr_id, _pr_field(pr, "current_seq") or 0)).fetchall()
+        if gone:
+            conn.execute("DELETE FROM pr_steps WHERE pr_id=? AND origin='unbudgeted' "
+                         "AND status='pending' AND seq>?",
+                         (pr_id, _pr_field(pr, "current_seq") or 0))
+            audit(conn, pr_id, "system", "ladder_rung_removed",
+                  "DOAM Table 4: the request is inside the approved budget again, "
+                  "so " + ", ".join(stage_label(r["stage"]) for r in gone) +
+                  " is no longer required for it.", ip)
+            stamp_step_actions(conn, pr_id)   # the Approve moves back down a rung
+        return bud
+    rows = conn.execute("SELECT seq, stage FROM pr_steps WHERE pr_id=? ORDER BY seq",
+                        (pr_id,)).fetchall()
+    extra = C.unbudgeted_stage([r["stage"] for r in rows], kind)
+    if not extra:
+        return bud                     # the ladder already reaches L1
+    e_role, e_from, why = _esc_columns(conn, extra, _pr_field(pr, "requester"),
+                                       stage_roles_map(conn), escalation_map(conn))
+    conn.execute(
+        "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at, "
+        "esc_role, esc_from, origin) VALUES (?,?,?,?,?,?,?,?,?)",
+        (pr_id, max([r["seq"] for r in rows] or [0]) + 1, extra, "pending",
+         stage_label(extra), _now(),
+         "" if why == "no_superior" else e_role, e_from, "unbudgeted"))
+    audit(conn, pr_id, "system", "unbudgeted_escalation",
+          f"DOAM Table 4 adds {stage_label(extra)} ({C.UNBUDGETED_LEVEL}) — "
+          f"unbudgeted spend is an {C.UNBUDGETED_LEVEL} commitment.", ip)
+    stamp_step_actions(conn, pr_id)         # an L1 rung above the tier endorses
+    return bud
+
+
+def unbudgeted_note(bud, department, kind=None):
+    """The sentence written onto the request so the approver reads WHY an extra
+    signature is on their desk. English here; the request page renders its own
+    translated wording from budget_state / budget_over_by."""
+    st = bud.get("status") or {}
+    period = st.get("period") or _period()
+    cur = st.get("currency") or "EGP"
+    stage = C.unbudgeted_stage(C.build_ladder(0, kind), kind) or "cfo"
+    tail = (f"DOAM Table 4 puts unbudgeted spend at {C.UNBUDGETED_LEVEL} "
+            f"(up to the {C.UNBUDGETED_LEVEL} limit), so {stage_label(stage)} is "
+            f"added to the ladder. The spend is not refused — it needs higher "
+            f"authority, not refusal.")
+    if bud.get("state") == "over_budget":
+        return (f"UNBUDGETED: this request takes {department} "
+                f"{float(bud.get('over_by') or 0):,.2f} {cur} past its approved "
+                f"{period} budget of {float(st.get('amount') or 0):,.2f} {cur} "
+                f"(already committed {float(st.get('spent') or 0):,.2f}). " + tail)
+    return (f"UNBUDGETED: no approved {period} budget exists for "
+            f"{department or '—'}. §4.1 is the BUDGETED ladder. " + tail)
 
 
 # --------------------------------------------------------------------------
@@ -3026,7 +5161,9 @@ def _effective_matrix(department):
         rows = sorted(((s, v) for s, v in m.items() if v["included"]),
                       key=lambda kv: kv[1]["seq"])
         return [(s, v["threshold"]) for s, v in rows], "department"
-    return [(s, float(APPROVAL_MATRIX.get(s, 0))) for s in LADDER], "default"
+    # ACTIVE_MATRIX, not APPROVAL_MATRIX: the default thresholds shown to an
+    # admin must be the ones the request will actually route on.
+    return [(s, float(C.ACTIVE_MATRIX.get(s, 0))) for s in LADDER], "default"
 
 
 def _stage_gates(stage, is_last):
@@ -3152,7 +5289,11 @@ def workflow_view(department=None, lang="en"):
         # Every short label already resolved for this reader's language.
         "L": L,
         "sla_hours": C.SLA_HOURS_PER_STAGE, "sla_warn": C.SLA_WARN_HOURS,
-        "match_tolerance_pct": 1.0,      # three_way_match's own, deliberately fixed
+        # What three_way_match actually applies, so the governance page never
+        # states a tolerance the code does not use.
+        "match_tolerance_pct": C.MATCH_TOLERANCE_PCT if C.DOAM_IN_FORCE else 1.0,
+        "match_tolerance_abs": C.MATCH_TOLERANCE_ABS if C.DOAM_IN_FORCE else 1.0,
+        "match_qty_tolerance_pct": C.MATCH_QTY_TOLERANCE_PCT if C.DOAM_IN_FORCE else 0.0,
         "log": governance_log(),
     }
 

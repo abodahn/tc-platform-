@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}{{ r.ejr_no }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">{{ r.ejr_no }}</div>
+    <h1 data-i18n="m.ejr_h">Engineering Justification</h1>
+    <div class="sub">{{ r.mcode or '—' }}{% if r.mname %} — {{ r.mname }}{% endif %}</div></div>
+  <div class="flex gap">
+    <span class="badge {{ {'approved':'b-live','rejected':'b-critical',
+                           'submitted':'b-warning'}.get(r.status,'b-unknown') }}"
+          data-i18n="m.ejr_st_{{ r.status }}">{{ r.status|title }}</span>
+    <a class="btn btn-ghost" href="{{ url_for('maintenance.justifications') }}"
+       data-i18n="m.ejr_back">Back to reports</a>
+  </div>
+</div>
+
+{% if missing %}
+{# Named fields, not a generic refusal: the author needs to know what to go and
+   find, and "incomplete" on its own sends them back to guess. #}
+<div class="panel">
+  <div class="panel-pad">
+    <b data-i18n="m.ejr_incomplete">This report is not complete yet.</b>
+    <div class="muted mt-1"><span data-i18n="m.ejr_still_needed">Still needed:</span>
+      {{ missing|join(', ') }}</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="m.ejr_the_case">The case</h3></div>
+  <div class="panel-pad grid-2">
+    <div><div class="kv-k" data-i18n="m.ejr_f_type">Request type</div>
+      <div class="kv-v" data-i18n="m.ejr_rt_{{ r.request_type }}">{{ (r.request_type or '—')|replace('_',' ')|title }}</div></div>
+    <div><div class="kv-k" data-i18n="m.ejr_f_crit">Criticality</div>
+      <div class="kv-v" data-i18n="m.ejr_cr_{{ r.criticality }}">{{ (r.criticality or '—')|replace('_',' ')|title }}</div></div>
+    <div><div class="kv-k" data-i18n="m.ejr_f_location">Location</div>
+      <div class="kv-v">{{ r.location or r.mlocation or '—' }}</div></div>
+    <div><div class="kv-k" data-i18n="m.ejr_f_stock">Quantity on hand</div>
+      <div class="kv-v">{{ '%g'|format(r.stock_on_hand) if r.stock_on_hand is not none else '—' }}
+        {% if r.stock_checked_with %}<span class="muted">· {{ r.stock_checked_with }}</span>{% endif %}</div></div>
+    <div class="span-2"><div class="kv-k" data-i18n="m.ejr_f_desc">What is failing</div>
+      <div class="kv-v">{{ r.description or '—' }}</div></div>
+    <div class="span-2"><div class="kv-k" data-i18n="m.ejr_f_root">Root cause</div>
+      <div class="kv-v">{{ r.root_cause or '—' }}</div></div>
+    <div class="span-2"><div class="kv-k" data-i18n="m.ejr_f_risk">Downtime or risk if not actioned</div>
+      <div class="kv-v">{{ r.downtime_risk or '—' }}</div></div>
+    <div class="span-2"><div class="kv-k" data-i18n="m.ejr_f_alt">Alternatives considered</div>
+      <div class="kv-v">{{ r.alternatives or '—' }}</div></div>
+    {% if r.is_emergency %}
+    <div class="span-2">
+      <span class="badge b-critical" data-i18n="m.ejr_emergency">Emergency</span>
+      <span class="muted" data-i18n="m.ejr_emerg_due">Must be documented by</span>
+      <b>{{ (r.emergency_due_at or '')[:16] or '—' }}</b>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="m.ejr_signoff">Engineering sign-off</h3></div>
+  <div class="panel-pad">
+    {% if r.status in ('draft', 'rejected') %}
+      <p class="muted" data-i18n="m.ejr_not_sent">Not sent for signature yet.</p>
+      <form method="post" action="{{ url_for('maintenance.justification_submit', jid=r.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button class="btn btn-primary" type="submit" {{ 'disabled' if missing }}
+                data-i18n="m.ejr_send">Send for signature</button>
+        {% if missing %}<span class="muted" style="margin-left:10px"
+              data-i18n="m.ejr_fill_first">Complete the fields above first.</span>{% endif %}
+      </form>
+
+    {% elif r.status == 'submitted' %}
+      <p class="muted" data-i18n="m.ejr_awaiting">Waiting for the Engineering Head.</p>
+      {% if can_decide %}
+      <form method="post" action="{{ url_for('maintenance.justification_decide', jid=r.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field">
+          <label data-i18n="m.ejr_note">Note</label>
+          <textarea name="note" rows="2" data-i18n-ph="m.ejr_note_ph"
+                    placeholder="Technical reasoning, or what to do instead"></textarea>
+        </div>
+        <div class="flex gap">
+          <button class="btn btn-primary" type="submit" name="decision" value="approve"
+                  data-i18n="m.ejr_approve">Approve</button>
+          <button class="btn btn-ghost" type="submit" name="decision" value="reject"
+                  data-i18n="m.ejr_reject">Reject</button>
+        </div>
+        <div class="hint mt-2" data-i18n="m.ejr_sod">If you raised this report you cannot also sign it — segregation of duties applies.</div>
+      </form>
+      {% else %}
+      <p class="muted" data-i18n="m.ejr_no_perm">You do not have permission to sign reports.</p>
+      {% endif %}
+
+    {% else %}
+      <div class="flex gap wrap" style="align-items:center">
+        <div>
+          <div class="kv-k" data-i18n="m.ejr_decided_by">Signed by</div>
+          <div class="kv-v"><b>{{ r.decided_by or '—' }}</b>
+            <span class="muted">· {{ (r.decided_at or '')[:16] }}</span></div>
+        </div>
+        {% if r.decided_signature %}
+        <img src="{{ r.decided_signature }}" alt="signature" style="max-height:52px">
+        {% endif %}
+      </div>
+      {% if r.decision_note %}
+      <div class="mt-2"><div class="kv-k" data-i18n="m.ejr_note">Note</div>
+        <div class="kv-v">{{ r.decision_note }}</div></div>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel mt-3">
+  <div class="panel-head"><h3 data-i18n="m.ejr_prs">Requisitions citing this report</h3>
+    <span class="muted" style="font-size:12px">{{ prs|length }}</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr>
+        <th data-i18n="m.ejr_pr_no">Request</th>
+        <th data-i18n="m.ejr_pr_title">Title</th>
+        <th data-i18n="m.ejr_pr_total">Total</th>
+        <th data-i18n="m.ejr_status">Status</th>
+      </tr></thead>
+      <tbody>
+      {% for p in prs %}
+        <tr>
+          <td><a href="/procurement/pr/{{ p.id }}"><b>{{ p.pr_no }}</b></a></td>
+          <td>{{ p.title }}</td>
+          <td>{{ '%.2f'|format(p.total or 0) }} {{ p.currency or '' }}</td>
+          <td>{{ p.status }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted" style="text-align:center;padding:22px"
+                data-i18n="m.ejr_no_prs">No requisition cites this report yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

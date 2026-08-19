@@ -117,7 +117,10 @@ a { color: inherit; text-decoration: none; }
   font: 700 10px/1 var(--font); letter-spacing: 0; font-variant-numeric: tabular-nums;
   min-width: 16px; padding: 2px 0; border-radius: 6px; text-align: center;
   color: var(--sidebar-ink-soft); opacity: .65;
-  transition: background .15s, color .15s, opacity .15s, padding .15s;
+  /* padding removed from the transition: nothing animates it, and a layout
+     property in a transition list on an element that repaints per hover is a
+     reflow waiting to happen. */
+  transition: background .15s, color .15s, opacity .15s;
 }
 .nav-label:hover .nav-count { opacity: 1; color: var(--sidebar-ink); }
 .nav-label .chev { width: 13px; height: 13px; opacity: .3; transition: transform .22s cubic-bezier(.22,1,.36,1), opacity .15s; }
@@ -140,6 +143,14 @@ a { color: inherit; text-decoration: none; }
   transition: grid-template-rows .28s cubic-bezier(.22,1,.36,1), opacity .2s ease;
 }
 .nav-sub { min-height: 0; overflow: hidden; }
+/* First-paint guard. The server renders sections shut except the current one and
+   JS then opens the right one; animating that on every page load is the flicker
+   Ahmed reported. app.js drops .nav-booting after two frames, so the load is
+   instant and only real clicks animate. The rail marker is included because it
+   would otherwise scale in from nothing on each navigation too. */
+.nav.nav-booting > .nav-section > .nav-items,
+.nav.nav-booting .nav-item::before,
+.nav.nav-booting .nav-label .chev { transition: none !important; }
 .nav-section.sec-collapsed:not(.nav-pinned) > .nav-items { grid-template-rows: 0fr; opacity: 0; }
 
 /* ---- Nav item ---- */
@@ -169,6 +180,150 @@ a { color: inherit; text-decoration: none; }
 }
 .nav-item.active .ico { opacity: 1; color: var(--tc-red-2); }
 .nav-item.active::before { transform: scaleY(1); opacity: 1; }
+
+/* Sub-band inside a section (today / planned / parts / assets / setup ...).
+   Nineteen flat maintenance rows read as a wall; the same nineteen under six
+   whispered labels read as six short lists. So it is a whisper, not a heading:
+   9.5px, tracked, soft, with a hairline that fades out to group without
+   drawing a box. A 1px fading rule, deliberately not a stripe down the side. */
+.nav-band {
+  display: flex; align-items: center; gap: 8px;
+  padding: 13px 11px 4px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--sidebar-ink-soft); opacity: .66;
+  user-select: none;
+}
+.nav-band > span { flex: 0 0 auto; }
+.nav-band::after {
+  content: ""; flex: 1 1 auto; height: 1px; min-width: 8px;
+  background: linear-gradient(to right, var(--sidebar-line), transparent);
+}
+[dir="rtl"] .nav-band::after {
+  background: linear-gradient(to left, var(--sidebar-line), transparent);
+}
+/* The first band in a section sits right under the section header, so it does
+   not need the full gap that separates one band from the next. */
+.nav-band:first-child { padding-top: 5px; }
+/* In rail (collapsed) mode there is no room for words, and the icons carry the
+   grouping instead. */
+.app.collapsed .nav-band { display: none; }
+
+/* ---------- Order costing table ----------
+   A money table is read by column, so the digits must line up: tabular-nums
+   makes 1,111 and 9,999 the same width. Severity is a faint row wash plus a
+   coloured figure, not a stripe: on a variance table the NUMBER is what the
+   reader is looking at, so that is what should carry the colour. */
+.cst-orders .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cst-orders td, .cst-orders th { vertical-align: top; }
+.cst-orders .row-warn > td { background: color-mix(in srgb, var(--warn) 5%, transparent); }
+.cst-orders .row-loss > td { background: color-mix(in srgb, var(--crit) 7%, transparent); }
+@supports not (background: color-mix(in srgb, red 5%, transparent)) {
+  .cst-orders .row-warn > td { background: var(--warn-bg); }
+  .cst-orders .row-loss > td { background: var(--crit-bg); }
+}
+.cst-v { font-weight: 700; font-variant-numeric: tabular-nums; }
+.cst-v.is-over  { color: var(--crit); }
+.cst-v.is-under { color: var(--ok); }
+.cst-v.is-flat  { color: var(--muted); }
+.cst-m { font-weight: 650; font-variant-numeric: tabular-nums; }
+.cst-m.is-loss { color: var(--crit); }
+.cst-m.is-thin { color: var(--warn); }
+.cst-m.is-ok   { color: var(--ok); }
+/* quoted -> delivered reads as one movement, so the arrow is quiet and the two
+   figures sit close enough to compare without the eye travelling. */
+.cst-move { display: flex; gap: 6px; align-items: baseline; justify-content: flex-end; }
+.cst-arrow { color: var(--muted); font-size: 11px; }
+[dir="rtl"] .cst-arrow { transform: scaleX(-1); display: inline-block; }
+
+/* ---------- Production planning ----------
+   The load board is a heat grid, so the cell BACKGROUND carries the load and the
+   figure stays legible on top of it. Thresholds match the legend exactly (over
+   100 / 85-100 / under 85 / no capacity set) — a colour key that disagrees with
+   the code is worse than no key. */
+.pln-band {
+  display: flex; align-items: center; gap: 9px;
+  margin: 22px 0 9px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted);
+}
+.pln-band::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--line); }
+
+.pln-board .num, .pln-orders .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* The line name is the row's identity, so it stays put while you scroll through
+   fourteen day columns. Without this you end up reading a percentage with no
+   idea which line it belongs to, which is what made the board unusable. */
+.pln-board .pln-stick {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--panel); min-width: 168px;
+  box-shadow: 1px 0 0 var(--line);
+}
+[dir="rtl"] .pln-board .pln-stick { left: auto; right: 0; box-shadow: -1px 0 0 var(--line); }
+.pln-board thead .pln-stick { z-index: 3; }
+.pln-board thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+
+/* Weekday over date: a factory schedules by the working week, and "08-17" alone
+   does not say whether that is a Sunday. */
+.pln-day { line-height: 1.15; }
+.pln-day .pln-wd { display: block; font-size: 9.5px; letter-spacing: .04em;
+                   text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.pln-day .pln-dd { display: block; font-size: 11.5px; }
+.pln-day.is-weekend .pln-wd, .pln-day.is-weekend .pln-dd { color: var(--muted); opacity: .75; }
+.pln-day.is-today { box-shadow: inset 0 -2px 0 var(--tc-red); }
+.pln-day.is-today .pln-wd { color: var(--tc-red); }
+.pln-cell.is-weekend:not(.is-over):not(.is-tight) { background: color-mix(in srgb, var(--muted) 6%, transparent); }
+/* An empty day is noise as "0%"; a dot keeps the grid's shape readable so the
+   eye follows the load profile rather than a field of zeros. */
+.pln-zero { color: var(--muted); opacity: .45; }
+.pln-cell { font-weight: 600; }
+.pln-cell.is-over  { background: color-mix(in srgb, var(--crit) 16%, transparent); color: var(--crit); font-weight: 800; }
+.pln-cell.is-tight { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.pln-cell.is-free  { background: color-mix(in srgb, var(--ok) 10%, transparent); color: var(--ok); }
+.pln-cell.is-none  { background: transparent; }
+@supports not (background: color-mix(in srgb, red 10%, transparent)) {
+  .pln-cell.is-over  { background: var(--crit-bg); }
+  .pln-cell.is-tight { background: var(--warn-bg); }
+  .pln-cell.is-free  { background: var(--ok-bg, transparent); }
+}
+
+.pln-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+  font-size: 11.5px; color: var(--muted); padding-top: 0;
+}
+.pln-key { display: inline-flex; align-items: center; gap: 6px; }
+.pln-legend .sw { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; border: 1px solid var(--line); }
+.pln-legend .sw-over  { background: color-mix(in srgb, var(--crit) 45%, transparent); }
+.pln-legend .sw-tight { background: color-mix(in srgb, var(--warn) 45%, transparent); }
+.pln-legend .sw-free  { background: color-mix(in srgb, var(--ok) 35%, transparent); }
+.pln-legend .sw-none  { background: transparent; }
+
+/* Feasibility + plan-vs-actual, from the theme rather than inline hex. */
+.pln-st {
+  display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px;
+  border-radius: var(--r-pill); white-space: nowrap;
+}
+.pln-st.is-ok   { background: var(--ok-bg, var(--have-soft, transparent)); color: var(--ok); }
+.pln-st.is-risk { background: var(--warn-bg); color: var(--warn); }
+.pln-st.is-late { background: var(--crit-bg); color: var(--crit); }
+.pln-st.is-idle { background: var(--surface-2, transparent); color: var(--muted); }
+.pln-v { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pln-v.is-behind { color: var(--crit); }
+.pln-v.is-ahead  { color: var(--ok); }
+
+/* A KPI acting as an active filter says so, rather than leaving the planner to
+   wonder why the table below is short. */
+a.kpi-link.is-on { border-color: var(--tc-red); box-shadow: inset 0 0 0 1px var(--tc-red); }
+
+.pln-orders .row-warn > td { background: color-mix(in srgb, var(--warn) 5%, transparent); }
+.pln-orders .row-loss > td { background: color-mix(in srgb, var(--crit) 7%, transparent); }
+@supports not (background: color-mix(in srgb, red 5%, transparent)) {
+  .pln-orders .row-warn > td { background: var(--warn-bg); }
+  .pln-orders .row-loss > td { background: var(--crit-bg); }
+}
+
+/* Empty state that offers the next action instead of shrugging. */
+.empty { text-align: center; padding: 34px 20px; }
+.empty b { font-size: 15px; }
 
 /* "soon" tag on in-progress modules (admins only) */
 .nav-item .wip-tag {
@@ -426,10 +581,10 @@ a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
 
 /* rich slide-in notification popups (top-right) */
 .npops { position: fixed; top: 16px; inset-inline-end: 16px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 360px; width: calc(100vw - 32px); pointer-events: none; }
-.npop { pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; background: var(--panel); border: 1px solid var(--line); border-inline-start: 4px solid var(--info); border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 32px rgba(0,0,0,.20); cursor: pointer; transform: translateX(120%); opacity: 0; transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .35s; }
+.npop { pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; background: var(--panel); border: 1px solid var(--info); border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 32px rgba(0,0,0,.20); cursor: pointer; transform: translateX(120%); opacity: 0; transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .35s; }
 .npop.show { transform: translateX(0); opacity: 1; }
-.npop.sev-warning { border-inline-start-color: var(--warn); }
-.npop.sev-critical { border-inline-start-color: var(--crit); }
+.npop.sev-warning { border-color: var(--warn); }
+.npop.sev-critical { border-color: var(--crit); }
 .npop .nicon { width: 32px; height: 32px; border-radius: 9px; flex: 0 0 32px; display: grid; place-items: center; background: var(--info-bg); color: var(--info); }
 .npop.sev-warning .nicon { background: var(--warn-bg); color: var(--warn); }
 .npop.sev-critical .nicon { background: var(--crit-bg); color: var(--crit); }
@@ -510,6 +665,26 @@ a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
   padding: 18px 20px; box-shadow: var(--shadow-card); position: relative; overflow: hidden;
 }
+/* A KPI that links to the records it counts. Reusable: add .kpi-link to any
+   <a class="kpi">. The arrow is the affordance — a card that moves on hover but
+   shows no target reads as decoration, and a number nobody can open is a dead
+   end. Inherits colour so the card does not turn link-blue. */
+a.kpi-link {
+  display: block; color: inherit; text-decoration: none;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+a.kpi-link:hover, a.kpi-link:focus-visible {
+  border-color: var(--tc-red); box-shadow: var(--shadow-card-hover, var(--shadow-card));
+  transform: translateY(-2px);
+}
+a.kpi-link:focus-visible { outline: 2px solid var(--tc-red); outline-offset: 2px; }
+.kpi .kpi-go { width: 15px; height: 15px; color: var(--muted); opacity: 0; transition: opacity .16s ease; }
+a.kpi-link:hover .kpi-go, a.kpi-link:focus-visible .kpi-go { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  a.kpi-link, .kpi .kpi-go { transition: none; }
+  a.kpi-link:hover, a.kpi-link:focus-visible { transform: none; }
+}
+
 .kpi .ktop { display: flex; align-items: center; justify-content: space-between; }
 .kpi .kicon { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: var(--crit-bg); color: var(--tc-red); }
 .kpi .kval { font-size: 30px; font-weight: 800; letter-spacing: -1px; margin-top: 14px; }
@@ -664,10 +839,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 
 /* ---------- Toasts ---------- */
 .toasts { position: fixed; bottom: 24px; inset-inline-end: 24px; display: flex; flex-direction: column; gap: 10px; z-index: 9999; }
-.toast { background: var(--panel); border: 1px solid var(--line); border-inline-start: 4px solid var(--tc-red);
+.toast { background: var(--panel); border: 1px solid var(--tc-red);
   border-radius: var(--r-md); box-shadow: var(--shadow-strong); padding: 13px 18px; font-size: 13px; min-width: 260px; animation: slidein .25s ease; }
-.toast.success { border-inline-start-color: var(--ok); }
-.toast.error { border-inline-start-color: var(--crit); }
+.toast.success { border-color: var(--ok); }
+.toast.error { border-color: var(--crit); }
 @keyframes slidein { from { transform: translateY(12px); opacity: 0; } }
 
 /* ---------- Login ---------- */
@@ -714,8 +889,35 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .mkcol .mkbody { padding: 10px; display: flex; flex-direction: column; gap: 10px; max-height: 62vh; overflow-y: auto; }
 .mkcard { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px; box-shadow: var(--shadow-card); }
 .mkcard:hover { border-color: rgba(237,28,36,.35); }
-.mkcard .mk-no { font-weight: 700; font-size: 12.5px; }
+.mkcard .mk-no { font-weight: 700; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .mkcard .mk-meta { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+.mkcol h4 .tag { font-variant-numeric: tabular-nums; }
+
+/* ---- Kanban drag & drop (js/tc-kanban.js) ---- */
+.mk-hint { display: flex; align-items: center; gap: 8px; color: var(--muted);
+  font-size: 12.5px; margin: 0 0 12px; }
+.mkcard .mk-id { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mkcard .mk-grip { width: 14px; height: 14px; flex: 0 0 14px; color: var(--soft-ink); opacity: .5; }
+.mkcard[draggable="true"] { cursor: grab; }
+.mkcard[draggable="true"]:active { cursor: grabbing; }
+.mkcard[draggable="true"]:hover .mk-grip,
+.mkcard[draggable="true"]:focus-visible .mk-grip { opacity: 1; color: var(--tc-red); }
+.mkcard[draggable="true"] { transition: transform 160ms ease-out, box-shadow 160ms ease-out, opacity 160ms ease-out; }
+.mkcard.mk-dragging { transform: scale(1.02); box-shadow: var(--shadow-strong);
+  border-color: var(--tc-red); opacity: .92; }
+/* drop target / picked-up target column */
+.mkcol.mk-drop, .mkcol.mk-target { border-color: var(--tc-red); background: var(--crit-bg); }
+.mkcol.mk-target { box-shadow: inset 0 0 0 1px var(--tc-red); }
+/* columns this card cannot move to */
+.mkcol.mk-inert { opacity: .42; }
+.mkcol.mk-inert .mkbody { cursor: not-allowed; }
+/* live region for keyboard moves (screen readers only) */
+.mk-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .mkcard[draggable="true"] { transition: none; }
+  .mkcard.mk-dragging { transform: none; }
+}
 
 /* horizontal stat bars for charts */
 .hbar { display: grid; grid-template-columns: 130px 1fr 46px; align-items: center; gap: 10px; margin: 7px 0; font-size: 12.5px; }
@@ -745,11 +947,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .floor-card {
   display: flex; align-items: center; gap: 12px; padding: 16px;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
-  box-shadow: var(--shadow-card); border-inline-start: 5px solid var(--muted);
+  box-shadow: var(--shadow-card);
 }
-.floor-card.critical { border-inline-start-color: var(--crit); }
-.floor-card.high { border-inline-start-color: var(--warn); }
-.floor-card.medium { border-inline-start-color: var(--info); }
+.floor-card.critical { border-color: var(--crit); background: var(--crit-bg); }
+.floor-card.high { border-color: var(--warn); background: var(--warn-bg); }
+.floor-card.medium { border-color: var(--info); background: var(--info-bg); }
 .floor-card:hover { border-color: rgba(237,28,36,.35); }
 .floor-card .fc-main { flex: 1; min-width: 0; }
 .floor-card .fc-top { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 15px; }

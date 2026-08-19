@@ -38,6 +38,7 @@ from app.approvals import constants as C                  # noqa: E402
 from app.approvals import i18n_text as T                  # noqa: E402
 from app.approvals import schema as S                     # noqa: E402
 from app.approvals import services as svc                 # noqa: E402
+from app.navigation import NAV, band_of                   # noqa: E402
 
 LANGS = ("en", "ar", "tr")
 PASS, FAIL = [], []
@@ -233,6 +234,21 @@ def main():
         keys = sorted(set(I18N_KEY.findall(html)))
         missing = [k for k in keys if k not in dicts[lg]]
         ok("all %d data-i18n keys resolve in %s.json" % (len(keys), lg),
+           not missing, ", ".join(missing[:6]))
+
+    print("\n--- 10. every sidebar key declared in navigation.py resolves -----")
+    # Section 9 only sees data-i18n attributes in rendered HTML, so it is blind
+    # to keys emitted from Python. Walk NAV itself: section headers, item labels
+    # and band labels, including the WIP section the sidebar filters out (its
+    # keys are still one promotion away from being on screen).
+    nav_keys = sorted({k for sec in NAV
+                       for k in [sec["section"]]
+                       + [i[1] for i in sec["items"]]
+                       + [band_of(i) for i in sec["items"]]
+                       if k})
+    for lg in LANGS:
+        missing = [k for k in nav_keys if k not in dicts[lg]]
+        ok("all %d navigation.py keys resolve in %s.json" % (len(nav_keys), lg),
            not missing, ", ".join(missing[:6]))
 
     print("\n================ %d passed, %d failed ================"

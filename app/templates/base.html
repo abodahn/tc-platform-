@@ -14,6 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="TC Platform">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tc-combobox.css') }}">
   {% if cu %}<link rel="stylesheet" href="{{ url_for('static', filename='css/garamento.css') }}">{% endif %}
   {% block head %}{% endblock %}
   <script>
@@ -41,7 +42,8 @@
     'nav.procurement_cycle': 'cart', 'nav.services': 'server', 'nav.govern': 'shield',
     'nav.hr': 'users', 'nav.admin': 'settings', 'nav.in_progress': 'clock',
     'nav.product': 'book', 'nav.planning': 'target',
-    'nav.factory_floor': 'target', 'nav.supply_chain': 'boxes'
+    'nav.factory_floor': 'target', 'nav.supply_chain': 'boxes',
+    'nav.sec_materials': 'boxes', 'nav.sec_shipping': 'cart', 'nav.sec_system': 'pulse'
   } %}
   <aside class="sidebar">
     <a class="brand" href="{{ url_for('main.dashboard') }}">
@@ -56,7 +58,11 @@
       <input id="navFilter" autocomplete="off" data-i18n-ph="nav.filter" placeholder="Filter menu…">
       <kbd class="nav-kbd" aria-hidden="true">/</kbd>
     </div>
-    <nav class="nav">
+    {# .nav-booting disables the collapse transition for the first two frames.
+       The server renders sections shut except the current one, then JS opens the
+       right one; without this that opening ANIMATES on every single page load,
+       which is the flicker. app.js removes the class once the state is applied. #}
+    <nav class="nav nav-booting">
       <div class="nav-section nav-pinned" id="navPinned" style="display:none">
         <div class="nav-label static">
           <span class="nl-ico"><svg class="ico"><use href="#i-star"></use></svg></span>
@@ -76,7 +82,18 @@
           </span>
         </button>
         <div class="nav-items"><div class="nav-sub">
-        {% for key, i18n, icon, endpoint, perm in section['items'] %}
+        {% set ns = namespace(band='__start__') %}
+        {% for it in section['items'] %}
+          {# Items are 5- or 6-tuples (the 6th is the band label), so unpack by
+             index rather than by position — a fixed 5-way unpack raises on the
+             banded rows and takes out every page in the app. #}
+          {% set key = it[0] %}{% set i18n = it[1] %}{% set icon = it[2] %}
+          {% set endpoint = it[3] %}
+          {% set band = it[5] if it|length > 5 else None %}
+          {% if band != ns.band %}
+            {% if band %}<div class="nav-band"><span data-i18n="{{ band }}">{{ band }}</span></div>{% endif %}
+            {% set ns.band = band %}
+          {% endif %}
           {% if endpoint == 'main.module' %}
             {% set href = url_for('main.module', key=key) %}
           {% else %}
@@ -217,6 +234,9 @@
 {% if cu %}{% include "_garamento.html" %}{% endif %}
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{# Searchable dropdowns. Loaded after app.js so window.tcT / tcApplyI18n exist
+   when it enhances the selects on this page. #}
+<script src="{{ url_for('static', filename='js/tc-combobox.js') }}"></script>
 {% if cu %}<script src="{{ url_for('static', filename='js/garamento.js') }}"></script>
 <script src="{{ url_for('static', filename='js/autocorrect.js') }}"></script>{% endif %}
 <script>

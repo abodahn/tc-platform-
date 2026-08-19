@@ -14,6 +14,13 @@ class _Resp:
 def _reset():
     integ._CACHE["at"] = 0.0
     integ._CACHE["data"] = []
+    # _LAST_GOOD is a SECOND, per-system cache: when a system is unreachable the
+    # overview deliberately serves its last successful KPIs with online=False,
+    # so the panel degrades to stale-but-labelled instead of going blank. Good
+    # behaviour, but module-level state that outlives a test — and clearing only
+    # _CACHE left it populated by whatever ran earlier. This file passed alone
+    # and failed in the full suite purely on test order.
+    integ._LAST_GOOD.clear()
 
 
 def test_fetch_overview_pulls_and_shapes(monkeypatch):

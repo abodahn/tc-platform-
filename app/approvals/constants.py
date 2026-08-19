@@ -10,6 +10,8 @@ The requester is the originator (they "sign" by submitting). The stages after
 them are the approval ladder; which stages apply depends on the PR total via
 APPROVAL_MATRIX, so a small PR needs fewer signatures than a large one.
 """
+import re
+from datetime import date as _date, datetime as _dt, timezone as _tz
 
 # --- Request lifecycle ------------------------------------------------------
 PR_STATUSES = [
@@ -48,36 +50,263 @@ DEPARTMENTS = ["General Maintenance", "Production", "Cutting", "Sewing", "Finish
 
 # --- The approval ladder ----------------------------------------------------
 # Ordered stage keys (excluding the requester, who is the originator).
-LADDER = ["warehouse", "factory_manager", "purchasing", "finance", "cfo", "ceo"]
+#
+# ORDER IS THE SIGNING ORDER, AND THE LAST INCLUDED STAGE IS THE FINAL APPROVER.
+# That is why Purchasing sits BEFORE the directors: DOAM tier 1 (up to 10,000)
+# must end on the Procurement Manager's signature, while tier 2 must end on a
+# director's. Putting the buyer first satisfies both without special cases, and
+# it matches the real sequence — the buyer sources and prices, then management
+# commits. `scd` and `bod` are new; every pre-existing stage keeps its relative
+# position, so requests already in flight are unaffected (their steps are rows
+# already written to the database).
+# The ladder in use TODAY, derived from T&C's real paper form: at 48,000 EGP it
+# produces warehouse + factory_manager + purchasing + finance + cfo, which with
+# the requester is the six signatures on the paper. DOAM v1.1 disagrees with that
+# form — at 48,000 it wants five signatures and involves NEITHER Finance NOR the
+# CFO (§4.1 tier 2 approves at Plant / Supply Chain Director). Since the DOAM is
+# still "Draft v1.0" with a blank approval line, the paper form stays
+# authoritative and the DOAM ladder is opt-in. See build_ladder().
+LEGACY_LADDER = ["warehouse", "factory_manager", "purchasing", "finance", "cfo", "ceo"]
+
+# The DOAM ladder. Purchasing sits BEFORE the directors because the last included
+# stage is the final approver: tier 1 (up to 10,000) must end on the Procurement
+# Manager's signature and tier 2 on a director's, and this order satisfies both
+# without special cases. It also matches the real sequence — the buyer sources
+# and prices, then management commits.
+DOAM_LADDER = ["warehouse", "purchasing", "factory_manager", "scd",
+               "finance", "cfo", "ceo", "bod"]
+
+# What the rest of the codebase means by "the ladder". Unchanged on purpose:
+# nothing about who signs moves until someone signs the DOAM.
+LADDER = LEGACY_LADDER
 
 # Human labels for each stage (EN — AR/TR carried by i18n on the client).
+# Wording follows the DOAM's own role names so a signature block in the system
+# reads the same as the signature block on the paper form.
 STAGE_LABELS = {
     "requester": "Requester",
     "warehouse": "Warehouse",
-    "factory_manager": "Factory Manager",
-    "purchasing": "Purchasing",
-    "finance": "Finance",
+    "purchasing": "Procurement Manager",
+    "factory_manager": "Plant Director",
+    "scd": "Supply Chain Director",
+    "finance": "Financial Director",
     "cfo": "CFO",
-    "ceo": "CEO",
+    "ceo": "Managing Director",
+    "bod": "Board of Directors",
 }
+
+# DOAM §3.2 authority levels. Carried so the ladder can reason about LEVELS
+# rather than named individuals — which is what "approved one level above the
+# value tier" (single-source, §4.3) needs in order to mean anything.
+DOAM_LEVEL = {
+    "warehouse": "L4",
+    "purchasing": "L4",
+    "factory_manager": "L2",
+    "scd": "L2",
+    "finance": "L2",
+    "cfo": "L1",
+    "ceo": "L1",
+    "bod": "BOD",
+}
+LEVEL_ORDER = ["L4", "L3", "L2", "L1", "BOD"]
+
+# --- DOAM Table 5: WHAT a signature is, not just that one was collected ------
+# "P (Prepare) Initiates the activity ... R (Review) Verifies accuracy, budget,
+#  and policy compliance before approval. A (Approve) Final authority to commit
+#  ... E (Endorse) Senior support of a decision at another level formally
+#  approves."
+#
+# P is the requester: raising the request IS their signature, and they never
+# appear in pr_steps. The three that DO land on a ladder rung are below, and
+# which one a rung carries is decided by the rung's PLACE in the ladder, not by
+# who fills it — that is the only reading of Table 5 that survives a ladder
+# whose shape changes when the request is priced:
+#
+#   A  the top rung of the VALUE ladder — DOAM §4.1/§4.2 name it the authority
+#      that commits the money, whatever value tier the request lands in;
+#   R  every rung below it, which verifies and passes it up;
+#   E  a rung a CONTROL added ABOVE the value tier (§4.3 single source, Table 4
+#      unbudgeted, §4.4 deviation). That is Table 5's "senior support of a
+#      decision at another level" word for word: the decision was taken at the
+#      value tier, and a senior signs in support of it.
+#
+# Nothing here changes WHO signs or in what order — it only records what the
+# signature was, which is what makes the section-7 RACI evidenceable.
+STEP_ACTIONS = ["review", "approve", "endorse"]
+STEP_ACTION_DEFAULT = "approve"
+# RACI letter per action, for the signature block and the printed PDF.
+STEP_ACTION_CODE = {"review": "R", "approve": "A", "endorse": "E"}
+# English labels; AR/TR are client-side i18n keys (proc.act.*).
+STEP_ACTION_LABELS = {"review": "Review", "approve": "Approve", "endorse": "Endorse"}
+# Past tense, for the audit trail. The pr_events.action key differs per action
+# too ('reviewed' / 'approved' / 'endorsed'), so a Review is distinguishable
+# from an Approve by a query, not only by reading the sentence.
+STEP_ACTION_PAST = {"review": "reviewed", "approve": "approved", "endorse": "endorsed"}
+STEP_ACTION_WHY = {
+    "review": "DOAM Table 5 R — verified accuracy, budget and policy compliance "
+              "before approval.",
+    "approve": "DOAM Table 5 A — final authority to commit at this value tier.",
+    "endorse": "DOAM Table 5 E — senior support, one level above the tier that "
+               "took the decision.",
+}
+# Rung origins that are a CONTROL escalation rather than the value ladder. Kept
+# beside the actions because that is the only thing that reads it.
+CONTROL_ORIGINS = ("single_source", "unbudgeted", "deviation")
+
+
+def step_action(origin, is_top_of_value_ladder):
+    """Table 5 letter for one rung. `origin` is pr_steps.origin."""
+    if (origin or "ladder") in CONTROL_ORIGINS:
+        return "endorse"
+    return "approve" if is_top_of_value_ladder else "review"
+
+
+# --- DOAM Table 4 L2: the two directors own DIFFERENT things -----------------
+# "FIN-D owns payment control; SC-D owns operational and inventory
+#  replenishment; PD owns production and maintenance commitments."
+#
+# OPEX_MATRIX puts factory_manager (PD) and scd (SC-D) at the SAME threshold, so
+# above 10,000 both joined every ladder on amount alone. That is not unsafe — it
+# collects a signature nobody asked for, never one fewer — so this split is an
+# EFFICIENCY fix and is written to fail towards BOTH signatures:
+#
+#   * only ever drops ONE of the two, never both, and only for OPEX (the CAPEX
+#     ladder in §4.2 is a joint PD + CFO approval with SC-D reviewing — both are
+#     mandatory there by name, not by amount);
+#   * only when the signals point ONE way. A request carrying a maintenance
+#     signal AND a supply signal is genuinely both, and keeps both signers;
+#   * only on MASTER DATA the requester does not type: the source module, a
+#     stocked-spare line, the department. Item text is NOT a signal here;
+#   * a department that has explicitly configured the dropped stage in its own
+#     responsibility matrix keeps it — the department said so on purpose.
+#
+# Departments whose spend is a maintenance/production commitment by nature.
+# Same set the §6 engineering gate uses, kept here rather than imported so a
+# missing maintenance module cannot change who signs a purchase.
+PD_DEPARTMENTS = {"general maintenance", "maintenance", "engineering", "workshop",
+                  "utilities", "maintenance & engineering"}
+# Departments whose spend IS the inventory-replenishment function.
+SCD_DEPARTMENTS = {"warehouse", "stores", "store", "logistics", "supply chain",
+                   "planning", "materials"}
+# Source modules that name the domain outright.
+PD_SOURCE_MODULES = {"maintenance"}      # ticket-raised or spare auto-reorder
+SCD_SOURCE_MODULES = {"costing"}         # order material buy raised from costing
+
+
+def l2_domain(department, source_module, has_spare_line):
+    """Which L2 director owns this commitment: "plant", "supply_chain", or None.
+
+    None means "cannot be told apart" — the caller must then keep BOTH, which is
+    exactly today's behaviour. Never guesses.
+
+    Item TEXT is deliberately not a signal. The obvious candidate was the direct
+    materials list Table 12 drives (cost_object_required), on the reasoning that
+    a fabric/yarn/trims buy is the replenishment SC-D owns. It is a keyword
+    heuristic over free text the requester types, and it fires on any material
+    word — so Production, Cutting, Sewing or Finishing buying fabric, the
+    commonest purchase in the plant, scored supply-only and DROPPED the Plant
+    Director on wording. That heuristic is fine deciding "does this need a cost
+    object", where being wrong asks for more data; it must not decide "does this
+    director sign", where being wrong removes a signature.
+    """
+    dept = str(department or "").strip().lower()
+    src = str(source_module or "").strip().lower()
+    plant = src in PD_SOURCE_MODULES or bool(has_spare_line) or dept in PD_DEPARTMENTS
+    supply = src in SCD_SOURCE_MODULES or dept in SCD_DEPARTMENTS
+    if plant == supply:
+        return None                      # both signals, or neither -> both sign
+    return "plant" if plant else "supply_chain"
+
+
+# The stage each domain keeps, and therefore the other one it drops.
+L2_DOMAIN_STAGE = {"plant": "factory_manager", "supply_chain": "scd"}
+
+
+def apply_l2_domain(stages, domain):
+    """Drop the L2 director this request's domain does not belong to.
+
+    Safe by construction: it removes at most one stage, only when BOTH L2
+    directors are on the ladder, and only for a domain that was positively
+    identified."""
+    keep = L2_DOMAIN_STAGE.get(domain or "")
+    if not keep:
+        return list(stages)
+    drop = next((s for s in L2_DOMAIN_STAGE.values() if s != keep), None)
+    if keep not in stages or drop not in stages:
+        return list(stages)              # not the both-directors case: leave it
+    return [s for s in stages if s != drop]
+
 
 # Which platform roles may act on each stage. super_admin (and anyone with the
 # proc_admin permission) can act on ANY stage — handled in the service layer.
+#
+# If two DOAM roles are the same person at T&C (Managing Director and CEO, or
+# Financial Director and CFO), map both stages to that one role here rather than
+# editing any logic — that is the whole answer to "are they the same person".
 STAGE_ROLES = {
     "warehouse": {"storekeeper", "warehouse_manager"},
-    "factory_manager": {"factory_manager"},
     "purchasing": {"purchasing_manager"},
-    "finance": {"finance_manager", "finance_user"},
+    "factory_manager": {"factory_manager", "plant_director"},
+    "scd": {"supply_chain_director"},
+    "finance": {"finance_manager", "finance_user", "financial_director"},
     "cfo": {"cfo"},
-    "ceo": {"ceo"},
+    "ceo": {"ceo", "managing_director"},
+    "bod": {"board"},
 }
 
 # --- Amount-threshold routing (EGP-equivalent) ------------------------------
-# A stage is included in a PR's ladder only if the PR total is >= its threshold.
-# Warehouse / Factory / Purchasing are always required (threshold 0). Finance,
-# CFO and CEO join as the amount grows. Tunable here without touching logic.
-# Example: total 48,000 -> warehouse, factory_manager, purchasing, finance, cfo
-# = 5 approvers + the requester = 6 signatures, matching the real paper form.
+# A stage joins the ladder when the total EXCEEDS its threshold; a threshold of
+# 0 means always required. Exceeds, not "reaches", because the DOAM's bands are
+# written as "up to 10,000" then "10,001 to 200,000" — so 10,000 is tier 1 and
+# 10,000.01 is tier 2. Using >= here would put an exact 10,000 in the wrong tier.
+#
+# Only stages PRESENT in a matrix can ever be included, which is how CAPEX
+# leaves out Warehouse: a capital purchase is not a stores replenishment.
+
+# DOAM §4.1 — OPEX ladder (budgeted)
+#   up to 10,000          PRM                          (L4)
+#   10,001 -    200,000   Plant / Supply Chain Director (L2)
+#   200,001 -   500,000   Financial Director            (L2)
+#   500,001 - 2,000,000   MD *or* CFO                   (L1)  -> CFO carries it
+#   2,000,001 - 5,000,000 MD *and* CFO                  (L1)  -> both included
+#   5,000,001 - 10,000,000 Board
+#   above 10,000,000      Board, with a business case
+OPEX_MATRIX = {
+    "warehouse": 0,
+    "purchasing": 0,
+    "factory_manager": 10_000,
+    "scd": 10_000,
+    "finance": 200_000,
+    "cfo": 500_000,
+    "ceo": 2_000_000,
+    "bod": 5_000_000,
+}
+
+# DOAM §4.2 — CAPEX ladder. Every tier is a joint approval, which this engine
+# expresses by including both stages: each must sign before the request moves.
+#   up to 250,000          review SCD + FIND, approve PD + CFO
+#   250,001 - 2,000,000    + MD
+#   2,000,001 - 10,000,000 Board
+#   above 10,000,000       Board, with a business case
+CAPEX_MATRIX = {
+    "purchasing": 0,
+    "scd": 0,
+    "finance": 0,
+    "factory_manager": 0,
+    "cfo": 0,
+    "ceo": 250_000,
+    "bod": 2_000_000,
+}
+
+EXPENDITURE_KINDS = ["opex", "capex"]
+MATRICES = {"opex": OPEX_MATRIX, "capex": CAPEX_MATRIX}
+
+# The thresholds actually in force today, from the paper form. Read by the
+# per-department override table and by every existing call site. Note the
+# comparison for these is >= (a total of exactly 10,000 DOES pull in Finance),
+# which is the behaviour the form and the tests have always had; the DOAM's
+# bands are exclusive instead ("up to 10,000", then "10,001 to ..."), which is
+# why the two ladders cannot share one comparison.
 APPROVAL_MATRIX = {
     "warehouse": 0,
     "factory_manager": 0,
@@ -87,14 +316,130 @@ APPROVAL_MATRIX = {
     "ceo": 100_000,
 }
 
+# Above this, the DOAM requires a written business case in addition to Board
+# approval (§4.1 tier 7, §4.2 tier 4).
+BUSINESS_CASE_OVER = 10_000_000
 
-def build_ladder(total):
-    """Return the ordered list of stage keys required for a PR of `total`."""
+
+# THE DOAM IS THE POLICY IN FORCE. Ahmed confirmed it is mandatory, so the
+# ladders in §4.1 and §4.2 now govern every request; the paper form's thresholds
+# stay in APPROVAL_MATRIX / LEGACY_LADDER so reverting is this one flag rather
+# than an archaeology exercise through the history.
+#
+# What this changed, concretely: a 48,000 EGP request used to collect Warehouse,
+# Plant Director, Purchasing, Finance and the CFO. Under DOAM §4.1 tier 2 it
+# collects Warehouse, Purchasing, Plant Director and the Supply Chain Director —
+# Finance and the CFO are NOT involved at that value, and above 5,000,000 the
+# Board is.
+DOAM_IN_FORCE = True
+
+
+def build_ladder(total, kind=None):
+    """Return the ordered list of stage keys required for a request of `total`.
+
+    `kind` selects the DOAM ladder: "opex" (§4.1) or "capex" (§4.2). With no kind
+    the request is treated as OPEX, which is what an unmarked request is.
+
+    An unrecognised kind falls back to DOAM OPEX rather than to no approvals: a
+    blank or fat-fingered value must never be the cheap path through the gate.
+    """
     try:
         t = float(total or 0)
     except (TypeError, ValueError):
         t = 0.0
-    return [s for s in LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
+    if not DOAM_IN_FORCE and kind is None:
+        # The pre-DOAM paper form: inclusive thresholds, legacy stage order.
+        return [s for s in LEGACY_LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
+    matrix = MATRICES.get((kind or "opex").strip().lower(), OPEX_MATRIX)
+    return [s for s in DOAM_LADDER
+            if s in matrix and (matrix[s] <= 0 or t > matrix[s])]
+
+
+def final_approver_level(total, kind="opex"):
+    """The DOAM authority level that carries the final signature."""
+    ladder = build_ladder(total, kind)
+    return DOAM_LEVEL.get(ladder[-1], "L4") if ladder else "L4"
+
+
+def level_above(level):
+    """The next level up that SOMEBODY CAN ACTUALLY SIGN AT, for DOAM §4.3
+    single-source ("approved one level above the value tier").
+
+    The DOAM defines L3 (functional heads) but no ladder stage sits at L3 — the
+    Procurement Manager is L4 and the directors are L2. Returning a bare "one
+    higher" would hand back L3 for a tier-1 purchase, an escalation target with
+    no approver, and the request would wait forever with nothing to show for it.
+    So this walks up to the next level that a stage is mapped to. Caps at BOD;
+    there is nothing above the Board.
+    """
+    staffed = {DOAM_LEVEL[s] for s in _ACTIVE_LADDER if s in DOAM_LEVEL}
+    try:
+        start = LEVEL_ORDER.index(level)
+    except ValueError:
+        return "BOD"
+    for nxt in LEVEL_ORDER[start + 1:]:
+        if nxt in staffed:
+            return nxt
+    return "BOD"
+
+
+def single_source_stage(ladder, kind=None):
+    """DOAM §4.3 — a single-source award is "approved one level above the value
+    tier". Returns the ONE extra stage to append to `ladder`, or None when the
+    ladder already reaches that high (nothing to escalate to).
+
+    Appending at the end is correct because DOAM_LADDER is ordered by ascending
+    authority: the extra signature is the last one collected, and it belongs to
+    somebody senior to everyone already on the ladder."""
+    if not ladder:
+        return None
+    matrix = MATRICES.get((kind or "opex").strip().lower(), OPEX_MATRIX)
+    order = [s for s in DOAM_LADDER if s in matrix and s not in ladder]
+    if not order:
+        return None
+    want = level_above(DOAM_LEVEL.get(ladder[-1], "L4"))
+    for s in order:
+        if DOAM_LEVEL.get(s) == want:
+            return s
+    # Nobody sits at that exact level for this expenditure type (the CAPEX
+    # ladder has no L4 rung, for instance). Escalating to the lowest stage that
+    # is still ABOVE the ladder's top is the honest reading of "one level above";
+    # silently skipping the escalation would be the wrong way to fail.
+    top = LEVEL_ORDER.index(DOAM_LEVEL.get(ladder[-1], "L4"))
+    for s in order:
+        if LEVEL_ORDER.index(DOAM_LEVEL.get(s, "L4")) > top:
+            return s
+    return None
+
+
+# --- Budgeted vs unbudgeted spend (DOAM Table 4) ----------------------------
+# §4.1 is titled "OPEX Ladder (BUDGETED)", so every tier in OPEX_MATRIX above
+# describes PLANNED spend. Table 4 puts the other kind somewhere specific:
+#
+#   L1  GM / CFO — major commitments within board-approved budgets AND
+#                  UNBUDGETED ITEMS UP TO THE L1 LIMIT.
+#
+# So money spent against no approved plan is not a tier-1 purchase that happens
+# to be small — it is an L1 commitment whatever its size. It is NOT refused: the
+# DOAM permits unbudgeted spend up to the L1 limit, it just prices it in
+# signatures.
+UNBUDGETED_LEVEL = "L1"
+
+
+def unbudgeted_stage(ladder, kind=None):
+    """The ONE extra stage an unbudgeted request needs, or None when `ladder`
+    already reaches L1 (there is nothing left to escalate to).
+
+    Same shape as single_source_stage(): a request can be single-source AND
+    unbudgeted, and each control asks for at most one extra signature."""
+    want = LEVEL_ORDER.index(UNBUDGETED_LEVEL)
+    if any(LEVEL_ORDER.index(DOAM_LEVEL.get(s, "L4")) >= want for s in (ladder or [])):
+        return None
+    matrix = MATRICES.get((kind or "opex").strip().lower(), OPEX_MATRIX)
+    for s in DOAM_LADDER:
+        if s in matrix and DOAM_LEVEL.get(s) == UNBUDGETED_LEVEL:
+            return s
+    return None
 
 
 # --- Pricing gate (controlled Procure-to-Pay) -------------------------------
@@ -104,13 +449,33 @@ def build_ladder(total):
 # the value-based financial approvals (Finance / CFO / CEO) join the ladder.
 PRICING_STATUSES = ["unpriced", "priced"]
 
-# Stages that are always required regardless of value (threshold 0): these form
-# the "demand approval" part of the ladder that runs BEFORE pricing.
-DEMAND_STAGES = [s for s in LADDER if APPROVAL_MATRIX.get(s, 0) <= 0]
+# Stages always required regardless of value (threshold 0): the "demand
+# approval" part of the ladder, which runs BEFORE pricing.
+#
+# These MUST derive from whichever ladder is in force. Leaving them on the paper
+# form while build_ladder() followed the DOAM would put a stage in the demand
+# list that the DOAM makes value-gated, and the pricing gate would then wait for
+# a signature that the ladder never asks for — a request stuck with no error.
+_ACTIVE_LADDER = DOAM_LADDER if DOAM_IN_FORCE else LEGACY_LADDER
+_ACTIVE_MATRIX = OPEX_MATRIX if DOAM_IN_FORCE else APPROVAL_MATRIX
 
-# Value-gated stages (threshold > 0): they only join the ladder once Purchasing
-# has priced the request and the total clears their threshold.
-VALUE_STAGES = [s for s in LADDER if APPROVAL_MATRIX.get(s, 0) > 0]
+# "The ladder", for everything that is not routing: the governance screens, the
+# stage-role override admin, the workflow view. This is re-bound (it was defined
+# as LEGACY_LADDER above, before DOAM_IN_FORCE is known) rather than defined
+# once, so the DOAM stages are visible in one place instead of two.
+#
+# It matters: stage_roles_map() drops any override for a stage not in LADDER, so
+# while this pointed at the paper form nobody could assign a signing role to the
+# Supply Chain Director or the Board — two stages the live ladder actually uses.
+LADDER = _ACTIVE_LADDER
+ACTIVE_MATRIX = _ACTIVE_MATRIX
+
+DEMAND_STAGES = [s for s in _ACTIVE_LADDER if _ACTIVE_MATRIX.get(s, 1) <= 0]
+
+# Value-gated stages: they join only once Purchasing has priced the request and
+# the total clears their threshold.
+VALUE_STAGES = [s for s in _ACTIVE_LADDER
+                if s in _ACTIVE_MATRIX and _ACTIVE_MATRIX[s] > 0]
 
 # The stage at which Purchasing enters pricing (the gate). A request cannot pass
 # this stage until it has been priced.
@@ -181,7 +546,12 @@ SLA_WARN_HOURS = 24            # amber "due soon" threshold
 # proc_admin permission) bypass both rules so a small team can still walk a
 # request through the whole ladder. Set to False later for strict mode, where
 # admins are subject to SoD exactly like everyone else.
-SOD_ADMIN_EXEMPT = True
+# Ships OFF. On, one platform admin could sign two different rungs of the same
+# request — verified end to end: a single account carried a 300k CAPEX request
+# through purchasing, PD, SCD, FIND, CFO, MD and the Board. A site that really
+# is one or two people can switch it on deliberately; it must not be the
+# default, because the default is what an auditor finds in production.
+SOD_ADMIN_EXEMPT = False
 
 
 # --- SoD escalation chain (one level up the org chart) ----------------------
@@ -217,16 +587,33 @@ PROC_PERMISSIONS = [
     "proc_create",     # raise purchase requests
     "proc_approve",    # act on an approval stage the user is eligible for
     "proc_purchasing", # purchasing actions: issue PO, manage vendors
+    "proc_pay",        # release payments to suppliers (DOAM 7.3.4)
     "proc_admin",      # settings, approval matrix, act on any stage, vendors
 ]
 
 # New roles introduced by this module -> the procurement permissions they hold.
 PROC_ROLE_PERMS = {
     "purchasing_manager": ["proc_view", "proc_create", "proc_approve", "proc_purchasing"],
-    "finance_manager": ["proc_view", "proc_create", "proc_approve"],
-    "cfo": ["proc_view", "proc_approve"],
+    "finance_manager": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
+    "cfo": ["proc_view", "proc_approve", "proc_pay"],
     "ceo": ["proc_view", "proc_approve"],
     "warehouse_manager": ["proc_view", "proc_create", "proc_approve"],
+    # DOAM §3.2 authority roles that STAGE_ROLES routes to. Registered HERE, in
+    # code, and not only seeded into custom_roles at boot: can_act() resolves a
+    # role through effective_roles(), and stage_roles_map() drops any role that
+    # is not in it. A role that lives only as a database row is therefore absent
+    # from the registry in every environment where that one write did not land —
+    # which is how a 60,000 EGP request reached the 'scd' rung with no eligible
+    # signer and no error. Same grants as cfo/ceo: they approve, they do not buy.
+    "supply_chain_director": ["proc_view", "proc_approve"],
+    "plant_director": ["proc_view", "proc_approve"],
+    # DOAM §7.3.4 "FIND owns payment", and Table 4 L2 "FIN-D owns payment
+    # control". Releasing payment was gated on proc_purchasing, so the buyer who
+    # committed the spend could also pay it and Finance could not — the exact
+    # separation the clause exists to create, inverted. proc_pay moves it.
+    "financial_director": ["proc_view", "proc_approve", "proc_pay"],
+    "managing_director": ["proc_view", "proc_approve"],
+    "board": ["proc_view", "proc_approve"],
     # grants for roles that already exist on the platform:
     "storekeeper": ["proc_view", "proc_create", "proc_approve"],
     "factory_manager": ["proc_view", "proc_create", "proc_approve"],
@@ -247,6 +634,11 @@ PROC_ROLE_LABELS = {
     "cfo": "Chief Financial Officer",
     "ceo": "Chief Executive Officer",
     "warehouse_manager": "Warehouse Manager",
+    "supply_chain_director": "Supply Chain Director",
+    "plant_director": "Plant Director",
+    "financial_director": "Financial Director",
+    "managing_director": "Managing Director",
+    "board": "Board of Directors",
 }
 
 
@@ -262,13 +654,519 @@ def stage_label(stage):
 RFQ_QUOTE_MIN = 2            # competitive quotes required
 RFQ_VALUE_THRESHOLD = 25000  # EGP-equivalent total at/above which the rule applies
 
+# --- DOAM §4.3 sourcing bands ----------------------------------------------
+# The flat "2 quotes at 25,000" rule above is what the system enforced before
+# the DOAM; it is kept because the settings table and its tests read it, but
+# rfq_required_for() below is the rule that now applies. Each band gives the
+# minimum number of quotes and the governance step the DOAM attaches to it.
+#   up to 50,000          one quotation (spot buy), buyer records price basis
+#   50,001 -   500,000    three quotations, PD/SCD reviews the comparison
+#   500,001 - 2,000,000   three quotations plus negotiation, Procurement Committee
+#   above 2,000,000       formal tender, Tender Committee recommends
+# DOAM Annex, Table 20 — the register of controlled forms. Each entry says what
+# the form is FOR, how long it is kept, and — the part that matters for an audit
+# — WHERE in this system the form actually lives. `route` None means the form is
+# not produced by this system yet, and the register says so rather than leaving a
+# blank that reads as "covered".
+CONTROLLED_FORMS = [
+    ("T&C-PUF-01", "Purchase Requisition", "Initiate a need (SO or cost centre linked)",
+     "5 yrs", "/procurement/new"),
+    ("T&C-PUF-02", "Purchase Order", "Commit a supplier", "5 yrs", "/procurement/list"),
+    ("T&C-PUF-03", "Request for Quotation", "Solicit supplier prices", "5 yrs",
+     "/procurement/rfqs"),
+    ("T&C-PUF-04", "Quote Comparison", "Compare bids and justify award", "5 yrs",
+     "/procurement/rfqs"),
+    ("T&C-PUF-05", "Purchasing Register", "Sequential log of PRs and POs", "5 yrs",
+     "/procurement/list"),
+    ("T&C-PUF-06", "Goods Receipt Note", "Confirm receipt and condition", "5 yrs",
+     "/procurement/receiving"),
+    ("T&C-PUF-07", "Three-Way Match", "Reconcile PO, GRN and invoice", "5 yrs",
+     "/procurement/invoices"),
+    ("T&C-PUF-08", "CAPEX Request", "Capital request and business case", "10 yrs",
+     "/procurement/new"),
+    ("T&C-PUF-09", "Engineering Justification", "Justify spares and MRO", "3 yrs",
+     "/maintenance/justifications"),
+    # No longer a paper form with no digital equivalent: the netting runs on
+    # every priced request and prints on the request page (§3.4 coverage check).
+    # Scope is stated honestly — the netting reads mnt_spare_parts, so MRO
+    # spares are covered and direct materials (wh_materials, which carries its
+    # own stock_qty/reserved_qty/reorder_level) are NOT: there is no pr_items
+    # link to a material, so those lines report "not assessable". Claiming
+    # unqualified coverage here would read to an auditor as a produced form.
+    ("T&C-PUF-10", "Coverage Check", "Net requirement after netting (MRO spares)",
+     "1 yr", "/procurement/list"),
+    ("T&C-PUF-11", "Intercompany Reconciliation", "Taypa PO versus requirement",
+     "1 yr", None),
+    ("T&C-PUF-12", "Justification Memo", "Over-plan quantity or over-target price",
+     "3 yrs", "/procurement/list"),
+    ("T&C-PUF-13", "Return to Vendor", "Rejected-goods handling", "1 yr", None),
+    ("T&C-PUF-14", "Buyer Daily Work Program", "Daily buyer routine", "1 yr", None),
+    ("T&C-PUF-15", "Supplier Registration", "Onboard and pre-qualify a supplier",
+     "Active +3", "/procurement/vendors"),
+    ("T&C-PUF-16", "Conflict of Interest", "Declare a related-party interest",
+     "3 yrs", None),
+]
+
+# The form code a printed document carries, so a filed PDF can be traced back to
+# the register entry that governs its retention.
+FORM_CODES = {"pr": "T&C-PUF-01", "po": "T&C-PUF-02", "rfq": "T&C-PUF-03",
+              "grn": "T&C-PUF-06", "dn": "T&C-PUF-07", "capex": "T&C-PUF-08"}
+
+# DOAM Annex / audit 3.4-b9b — RETENTION, as a date on the record rather than a
+# sentence on a page. The register above says "5 yrs" and "10 yrs" in prose; a
+# prose retention period is not a control, it is a claim. Every requisition is
+# stamped with the day it may first be disposed of, computed from the SAME two
+# numbers the register prints: capital expenditure is kept ten years, everything
+# else five.
+RETENTION_YEARS = {"capex": 10, "opex": 5}
+
+
+def retention_years(kind):
+    """Years a request of this expenditure kind must be kept. An unrecognised or
+    blank kind reads as OPEX, exactly like build_ladder — and OPEX is the SHORTER
+    period, so the fallback is checked again wherever the kind can change: a
+    request that becomes CAPEX must have its retention EXTENDED, never left."""
+    return RETENTION_YEARS.get(str(kind or "").strip().lower(), RETENTION_YEARS["opex"])
+
+
+def retention_until(created_at, kind):
+    """The date (YYYY-MM-DD) this record leaves its retention window.
+
+    Date arithmetic by year number, not by adding 365*n days: five years from a
+    29 February lands on 28 February, which is what a records officer means.
+    """
+    day = str(created_at or "")[:10]
+    try:
+        d = _date.fromisoformat(day)
+    except ValueError:
+        d = _dt.now(_tz.utc).date()
+    y = d.year + retention_years(kind)
+    try:
+        return d.replace(year=y).isoformat()
+    except ValueError:                      # 29 Feb -> 28 Feb in a non-leap year
+        return d.replace(year=y, day=28).isoformat()
+
+
+# DOAM §5 — the golden thread. Every document from requisition to payment
+# carries the controlling cost object, so cost, margin and stock can be read per
+# order and per client. Table 12 says which cost object applies to what:
+#
+#   fabric, yarn, trims, chemicals, packaging   -> sales order   MANDATORY
+#   subcontract or wash for a specific order    -> sales order   MANDATORY
+#   spares, MRO, maintenance, workshop          -> asset / cost centre
+#   facility services, IT, utilities            -> cost centre
+#   capital assets                              -> asset / project
+# There is deliberately no COST_OBJECTS list here. It existed as
+#   COST_OBJECTS = ["sales_order", "asset", "cost_center"]
+# and NOTHING read it — `grep -rn COST_OBJECTS` returned only its own
+# definition. The rule it looked like it enforced is already enforced, by
+# name and by keyword, in cost_object_required() below and in
+# services.cost_object_check(): those two decide when a sales order is
+# mandatory and refuse the submission when one is missing. A bare list of
+# the three cost-object NAMES adds nothing a reader could execute, so it is
+# gone rather than left looking like a control.
+
+# Category keywords that make a sales-order reference mandatory. Matched against
+# the catalogue category and the line text, lowercased — the ERP's category
+# names are not under this system's control, so a keyword match is the only
+# thing that survives an import that renames "Trims" to "TRIM & ACCESSORIES".
+#
+# The original twelve were a substring match over six words of Table 12's prose,
+# and an audit walked fourteen of seventeen real apparel direct materials
+# straight past it with no sales order: zippers, sewing thread, buttons,
+# interlining, greige, denim, care labels, hangtags, cartons, polybags — even a
+# line literally reading "Direct materials". Trims, fasteners, labelling and
+# packaging are the bulk of what a garment factory buys against an order, so the
+# list now covers them by name.
+#
+# Matching is WHOLE-WORD (plus a plural), not substring. That is what keeps the
+# widening safe in the other direction: "wash" no longer fires on flat WASHERS
+# or the WASHROOM, "thread" no longer fires on THREADED rod, "print" no longer
+# fires on the PRINTER. Multi-word entries are matched as written.
+SO_MANDATORY_KEYWORDS = (
+    # base materials
+    "fabric", "greige", "griege", "grey goods", "denim", "twill", "poplin",
+    "jersey", "knit", "woven", "interlining", "fusible", "lining", "wadding",
+    "padding", "yarn", "thread", "sewing thread",
+    # trims, fasteners, closures
+    "trim", "accessory", "accessories", "zipper", "zip fastener", "button",
+    "snap fastener", "snap button", "buckle", "eyelet", "velcro", "elastic",
+    "drawcord", "drawstring", "webbing", "twill tape",
+    # labelling
+    "label", "care label", "size label", "hangtag", "hang tag", "swing tag",
+    # packaging
+    "packaging", "packing material", "carton", "polybag", "poly bag", "hanger",
+    # wet process / outsourced operations
+    "chemical", "dye", "dyestuff", "wash", "washing", "print", "printing",
+    "embroider", "embroidery", "embroidered", "subcontract", "sub-contract",
+    "cmt", "cut make trim",
+    # trims and materials a merchandiser types but the prose of Table 12 never
+    # spells out. Singular stems the (?:s|es)? rule cannot reach on its own, and
+    # multi-word forms chosen over the bare stem where the bare stem is also a
+    # maintenance word ("piping" is pipework, "packing" is gland packing).
+    "rib", "taffeta", "elastane", "spandex", "grosgrain", "bias binding",
+    "binding tape", "piping cord", "snap", "shoulder pad", "hook and eye",
+    "buckram", "sequin", "bra cup", "sliver", "roll goods", "tissue paper",
+    "silica gel", "neck board", "back board", "collar bone", "butterfly",
+    "gum tape",
+    # the requester saying it in so many words
+    "direct material", "raw material",
+)
+
+# Same list in the other two languages this system is written in. Every refusal
+# message below is translated into Arabic and Turkish, so AR/TR requesters are
+# expected by design — and an English-only trigger means the same purchase is
+# refused in English and waved through in Arabic.
+#
+# These are matched as PLAIN SUBSTRINGS, not whole words: Arabic prefixes the
+# article and conjunctions straight onto the noun (قماش -> القماش، وأقمشة) and
+# Turkish agglutinates its suffixes with consonant mutation (iplik -> ipliği),
+# so \b is both wrong and inert here. ASCII-folded spellings are listed beside
+# the diacritic ones because keyboards without Turkish layout are normal here.
+SO_MANDATORY_KEYWORDS_AR = (
+    "قماش", "أقمشة", "اقمشة", "خيط", "خيوط", "غزل", "بطانة", "حشو",
+    "سوستة", "سحاب", "زرار", "أزرار", "ازرار", "كبسون", "مطاط",
+    "تيكيت", "ليبل", "بطاقة تعليق", "إكسسوار", "اكسسوار",
+    "تغليف", "كرتون", "بوليباج", "شماعة",
+    "صباغة", "صبغة", "غسيل", "طباعة", "تطريز",
+    "خامات", "خامة", "دانتيل", "شريط لاصق",
+)
+SO_MANDATORY_KEYWORDS_TR = (
+    "kumaş", "kumas", "iplik", "ipliğ", "iplig", "dokuma", "örgü", "orgu",
+    "astar", "elyaf", "pamuklu",
+    "fermuar", "düğme", "dugme", "çıtçıt", "citcit", "toka", "lastik bant",
+    "etiket", "aksesuar", "askı kartı", "aski karti",
+    "ambalaj", "koli", "poşet", "poset", "askılık",
+    "boya", "boyama", "yıkama", "yikama", "baskı", "baski", "nakış", "nakis",
+    "dikiş ipliği", "dikis iplik", "hammadde",
+)
+
+# Phrases that LOOK like a trim but are maintenance / IT / facility stock. They
+# are struck out of the text before matching, so a workshop ordering BUTTON HEAD
+# screws or a stores desk ordering a LABEL PRINTER ribbon is not sent away to
+# find a sales order it has no business carrying. Anything else in the same line
+# still matches — this removes the phrase, not the check.
+#
+# Everything here is an unambiguous MRO noun: nobody sews a snap ring onto a
+# shirt. Genuinely ambiguous wording lives in SO_EXEMPT_IF_MRO below instead.
+SO_EXEMPT_PHRASES = (
+    "button head", "label printer", "labelling machine", "labeling machine",
+    "print head", "printhead", "thread tap", "threading tap", "thread gauge",
+    "snap ring", "snap gauge", "snap-on", "brake pad", "mouse pad",
+    "power cord", "extension cord", "cord grip", "butterfly valve",
+    "butterfly nut", "rib joint plier",
+)
+
+# ...and the wording that is a trim OR a control part depending on what else is
+# on the line. Struck out ONLY when the line also carries a maintenance /
+# electrical / IT context word, because "Push button 4-hole 18L for shirts" is a
+# garment button order in the auditor's own words with one word bolted on the
+# front, and an unconditional strike made the exemption list the way around the
+# very string it was tested on.
+SO_EXEMPT_IF_MRO = ("push button", "push-button", "pushbutton")
+
+_MRO_CONTEXT = re.compile(
+    r"\b(switch|panel|valve|screw|bolt|relay|contactor|electric|electrical|"
+    r"wiring|machine|motor|control|socket|plc|sensor|lamp|indicator|"
+    r"emergency|enclosure|cabinet|printer|maintenance|spare)\b")
+
+_SO_EXEMPT_RE = re.compile("|".join(re.escape(p) for p in SO_EXEMPT_PHRASES))
+_SO_EXEMPT_MRO_RE = re.compile("|".join(re.escape(p) for p in SO_EXEMPT_IF_MRO))
+_SO_RE = re.compile(r"\b(?:%s)(?:s|es)?\b"
+                    % "|".join(re.escape(k) for k in SO_MANDATORY_KEYWORDS))
+# Arabic and Turkish: substring match, for the reasons above.
+_SO_RE_INTL = re.compile("|".join(
+    re.escape(k) for k in SO_MANDATORY_KEYWORDS_AR + SO_MANDATORY_KEYWORDS_TR))
+# Shapes rather than words. A textile weight/count with its unit, and a style
+# number, are both loud garment signals that no keyword list can enumerate:
+# "150gsm" has no word boundary in front of "gsm", and "Style 4471 material buy"
+# says nothing a bare stem could safely catch ("material handling" is MRO).
+_SO_SHAPE_RE = re.compile(
+    r"\b\d+\s*(?:gsm|g/?m2|denier|dtex|tex)\b|\bstyle\s*#?\s*\d")
+
+# Sales-order statuses that are NOT a live cost object. A requisition may not be
+# raised against one: the order is finished or gone, so nothing can be costed to
+# it. Shipped orders stay acceptable — late trims and rework are real.
+SO_CLOSED_STATUSES = ("closed", "cancelled")
+
+
+# Machine-part nouns. Deliberately NOT the machinery words in _MRO_CONTEXT: a
+# part is a discrete component, so "guide" can qualify "thread", whereas
+# "machine" must not — "denim rolls for the cutting machine" is a real material
+# buy. "hook" is absent on purpose: "hook and loop" and "hook and eye" are
+# trims, and including it let Velcro through with no sales order.
+_MRO_PART_WORDS = (
+    "guide", "foot", "holder", "feeder", "roller", "blade", "spring", "head",
+    "plate", "case", "seal", "bearing", "needle", "stand", "tension", "cutter",
+    "applicator", "pump", "gear", "pulley", "bushing", "nozzle", "filter",
+    "looper", "bobbin", "presser", "gauge", "shaft", "clamp", "knife", "lever",
+    "cam", "reel", "bracket", "arm", "guard", "cover", "housing",
+)
+_MRO_PART_RE = re.compile(r"^(?:%s)s?$" % "|".join(_MRO_PART_WORDS))
+_MATERIAL_WORD_RE = re.compile(r"^(?:%s)(?:s|es)?$"
+                               % "|".join(re.escape(k) for k in SO_MANDATORY_KEYWORDS
+                                          if " " not in k))
+_WORD_RE = re.compile(r"[a-z0-9%/#.-]+")
+
+
+def _every_material_run_is_a_part(text):
+    """True when every maximal run of material words is immediately followed by
+    a machine-part noun — i.e. each one is a compound like "thread guide" rather
+    than a material being bought.
+
+    False when there are no material words at all, so the caller still falls
+    through to its normal check; this only ever EXEMPTS, never adds a gate."""
+    words = _WORD_RE.findall(text)
+    if not words:
+        return False
+    seen_material = False
+    i, n = 0, len(words)
+    while i < n:
+        if not _MATERIAL_WORD_RE.match(words[i]):
+            i += 1
+            continue
+        seen_material = True
+        j = i
+        while j < n and _MATERIAL_WORD_RE.match(words[j]):
+            j += 1
+        # The run is words[i:j]. A part noun must sit immediately after it, or
+        # one word later — "elastic tape roller" puts a noun between the two
+        # ("tape" is half of the multi-word keyword "twill tape", so it is not
+        # a material word on its own). ONE word of slack only: two is enough for
+        # "cotton twill fabric for the guide" to smuggle a material buy in
+        # behind a part noun.
+        if j < n and _MRO_PART_RE.match(words[j]):
+            i = j + 1
+        elif j + 1 < n and _MRO_PART_RE.match(words[j + 1]):
+            i = j + 2
+        else:
+            return False
+    return seen_material
+
+
+def cost_object_required(texts):
+    """Does this requisition need a sales-order reference? `texts` is every
+    category / item string on the request. Returns "sales_order" when Table 12
+    makes it mandatory, else None (asset or cost centre, requester's choice).
+
+    ponytail: a keyword heuristic, not an enforced control — it is only as good
+    as its vocabulary, in three languages. The structural fix is mandatory
+    server-validated catalogue linkage on PR lines; until that lands, describe
+    this leg as a heuristic in the DOAM compliance statement."""
+    blob = " ".join(str(t or "").lower() for t in texts)
+    if _SO_RE_INTL.search(blob) or _SO_SHAPE_RE.search(blob):
+        return "sales_order"
+    clean = _SO_EXEMPT_RE.sub(" ", blob)
+    if _MRO_CONTEXT.search(blob):
+        clean = _SO_EXEMPT_MRO_RE.sub(" ", clean)
+    # A machine PART whose name contains a material word is still a machine
+    # part: "thread guide", "zipper foot", "denim needle", "yarn tension
+    # spring" are sewing-machine components, and gating them demanded a sales
+    # order a technician has no business citing — measured, 11 of 15 realistic
+    # spare names, and a cost centre did not clear it either. They could not be
+    # bought at all.
+    #
+    # The rule is COMPOUND-NOUN adjacency, not "a part noun appears somewhere".
+    # A maximal run of material words is exempt only when a part noun follows it
+    # immediately, which is what makes it a compound. That distinction is the
+    # whole control: "elastic tape roller" is a part (the run ends in a part
+    # noun), while "guide for the feeder plus cotton twill fabric" is a material
+    # buy smuggled onto a spare line (the run "cotton twill fabric" is followed
+    # by nothing). Exempting on a bare part noun anywhere let exactly that
+    # through, and the sales-order gate's own test caught it.
+    if _every_material_run_is_a_part(clean):
+        return None
+    return "sales_order" if _SO_RE.search(clean) else None
+
+
+# DOAM §4.4 — Purchase Order Approval by Deviation. Beyond the value ladder, an
+# order is graded by how far it departs from the approved plan, and each grade
+# adds signatures ON TOP of the value ladder:
+#
+#   on plan                     qty within ceiling, price <= target   nothing
+#   over the stock ceiling      qty pushes stock past max_level       PD + SCD, memo
+#   price up to  5% over target                                       3 quotes, memo
+#   price  5-15% over target                                          FIN-D, memo, quotes
+#   price   >15% over target                                          FIN-D + MD, memo
+#
+# The document's middle quantity row ("over plan, within the stock ceiling") is
+# graded by the §3.4 COVERAGE CHECK: "procurement quantity is capped at the net
+# requirement after inventory netting". The plan quantity is not invented — it is
+# computed per line from the stock master (see services.deviation_findings), and
+# a line with no stock record is still reported "not assessable" rather than
+# guessed either way.
+DEVIATION_PRICE_BANDS = [
+    (5.0,  [],                  "price_5"),      # standard approvers + 3 quotes
+    (15.0, ["finance"],         "price_15"),
+    (None, ["finance", "ceo"],  "price_over_15"),
+]
+
+
+def price_deviation_pct(unit_price, target):
+    """How far above target this price sits, in percent. None when there is no
+    target on file — an unpriced catalogue line cannot be graded, and guessing a
+    target of zero would grade every purchase as infinitely over."""
+    try:
+        target = float(target or 0)
+        unit_price = float(unit_price or 0)
+    except (TypeError, ValueError):
+        return None
+    if target <= 0:
+        return None
+    return (unit_price - target) / target * 100.0
+
+
+# DOAM §3.4 — "A quantity above plan ... requires a justification memo and a
+# higher approval per Section 4.4." One authority above the value tier is the
+# Plant Director: one rung lighter than pushing stock past its ceiling outright,
+# which the row below it already costs PD + SCD.
+DEVIATION_OVER_PLAN_STAGES = ["factory_manager"]
+
+
+def deviation_grade(pct_over, over_ceiling=False, over_plan=False):
+    """The §4.4 grade for one line. Returns
+    {"grade", "stages", "memo", "quotes"} — `stages` are EXTRA approvals on top
+    of the value ladder.
+
+    A quantity finding names the GRADE, because that is the row the document
+    calls out as the trigger — but it no longer swallows the price stages. An
+    order that is both above the net requirement and 20% over target needs both
+    sets of eyes, and the old early return dropped the Financial Director from
+    exactly that case."""
+    grade = {"grade": "on_plan", "stages": [], "memo": False, "quotes": False}
+    if pct_over is not None and pct_over > 0:
+        for ceiling, stages, name in DEVIATION_PRICE_BANDS:
+            if ceiling is None or pct_over <= ceiling:
+                grade = {"grade": name, "stages": list(stages), "memo": True,
+                         "quotes": True}
+                break
+    if not (over_ceiling or over_plan):
+        return grade
+    qty_stages = (["factory_manager", "scd"] if over_ceiling
+                  else list(DEVIATION_OVER_PLAN_STAGES))
+    grade["grade"] = "over_ceiling" if over_ceiling else "over_plan"
+    grade["stages"] = qty_stages + [s for s in grade["stages"] if s not in qty_stages]
+    grade["memo"] = True
+    return grade
+
+
+# DOAM §4.3 — "Advance up to 25% of PO value: FIN-D. Above 30%: CFO or MD, with
+# a bank guarantee when the order exceeds 500,000 EGP. No advance to a supplier
+# off the approved vendor list."
+#
+# The document leaves 25–30% unnamed. Anything above the Financial Director's
+# stated ceiling is treated as needing the higher authority: reading the gap the
+# other way would let 30% of a large order out of the door on the lower
+# signature, which is plainly not what the clause is protecting against.
+ADVANCE_FIND_MAX_PCT = 25.0
+ADVANCE_GUARANTEE_OVER = 500_000.0
+
+
+def advance_rule(po_value, advance_pct):
+    """Who must authorise an advance of `advance_pct` on a PO of `po_value`, and
+    whether a bank guarantee is required. Returns
+    {"stages": [...], "level": "L2"|"L1", "guarantee": bool}."""
+    try:
+        pct = float(advance_pct or 0)
+    except (TypeError, ValueError):
+        pct = 0.0
+    try:
+        value = float(po_value or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if pct <= ADVANCE_FIND_MAX_PCT:
+        return {"stages": ["finance"], "level": DOAM_LEVEL.get("finance", "L2"),
+                "guarantee": False}
+    return {"stages": ["cfo", "ceo"], "level": DOAM_LEVEL.get("cfo", "L1"),
+            "guarantee": value > ADVANCE_GUARANTEE_OVER}
+
+
+# DOAM §3.4 — "Splitting a purchase to stay within a lower approval level is
+# prohibited. Related purchases within a 30-day window are aggregated."
+AGGREGATION_WINDOW_DAYS = 30
+
+# DOAM §4.3 sourcing bands. `quotes` is the ONLY field here, and that is the
+# point: the bands used to carry "mode" (spot / compare / negotiate / tender) and
+# "governance" (buyer_records_basis / director_reviews / procurement_committee /
+# tender_committee) and NOTHING read either one — `grep -rn` found the two keys
+# only in this literal and in one assertion in tests_doam_ladder.py. They named
+# procedures that happen OFF this system: a negotiation round and a tender
+# committee are meetings, not states a Flask app can hold or refuse. Keeping them
+# as dict keys made the band look like it enforced four rules when it enforced
+# one. The DOAM wording stays here, in the comment, where non-executing text
+# belongs:
+#     up to 50,000        one quotation, buyer records the price basis
+#     50,001 - 500,000    three quotations, director reviews
+#     500,001 - 2,000,000 three quotations + negotiation, procurement committee
+#     above 2,000,000     formal tender, tender committee
+# `quotes` is the half of that this system can and does enforce — see
+# services.rfq_gate_check, which blocks the Purchasing signature without them.
+SOURCING_BANDS = [
+    {"over": 0,          "quotes": 1},
+    {"over": 50_000,     "quotes": 3},
+    {"over": 500_000,    "quotes": 3},
+    {"over": 2_000_000,  "quotes": 3},
+]
+
+
+def sourcing_band(total):
+    """The DOAM §4.3 band for an EGP-equivalent total. Bands are keyed on
+    'exceeds', matching the document's 'up to 50,000' / '50,001 to ...' wording."""
+    try:
+        t = float(total or 0)
+    except (TypeError, ValueError):
+        t = 0.0
+    band = SOURCING_BANDS[0]
+    for b in SOURCING_BANDS:
+        if b["over"] <= 0 or t > b["over"]:
+            band = b
+    return band
+
+
+def quotes_required(total):
+    """Minimum competitive quotes for a total, per DOAM §4.3."""
+    return sourcing_band(total)["quotes"]
+
+
+# --- DOAM §7.3.3 three-way match tolerance ---------------------------------
+# "within tolerance of 2% of value or 500 EGP ... or 5% of quantity, whichever
+# is greater." The old code used a flat 1% on value only, hardcoded. "Whichever
+# is greater" is the important half: on a small invoice the 500 EGP floor is the
+# binding number, and on a large one the percentage is.
+MATCH_TOLERANCE_PCT = 2.0
+MATCH_TOLERANCE_ABS = 500.0      # EGP
+MATCH_QTY_TOLERANCE_PCT = 5.0
+
+
+def match_tolerance_value(amount, fx_rate=1.0):
+    """Slack allowed on a value comparison of `amount`, IN THE CURRENCY OF
+    `amount` — not always EGP.
+
+    The percentage half is a ratio and needs no conversion. The 500 floor is an
+    EGP figure from §7.3.3, so on a foreign-currency order it must be divided by
+    the rate: 500 EGP at fx 50 is 10 USD, not 500 USD. Passing it through raw
+    handed a USD order fifty times the tolerance the clause allows, and a 45%
+    over-invoice came back "matched"."""
+    try:
+        a = abs(float(amount or 0))
+    except (TypeError, ValueError):
+        a = 0.0
+    try:
+        fx = float(fx_rate or 1.0)
+    except (TypeError, ValueError):
+        fx = 1.0
+    if fx <= 0:
+        fx = 1.0
+    return max(a * MATCH_TOLERANCE_PCT / 100.0, MATCH_TOLERANCE_ABS / fx)
+
 
 # --- Payment cap tolerance --------------------------------------------------
 # Rounding/bank-charge slack allowed on the payment caps in services.add_payment
 # (cumulative paid vs the PO grand total, and vs the invoiced gross total). The
 # hard floor of 1 currency unit inside add_payment is separate and stays fixed.
-# NOTE: services.three_way_match uses its own 1% for the MATCH verdict; that one
-# is deliberately NOT configurable (see docs/still_hardcoded in the workflow page).
+# NOTE: the MATCH verdict uses match_tolerance_value() and
+# MATCH_QTY_TOLERANCE_PCT above, not this one, and those two are deliberately NOT
+# admin-configurable — they are the DOAM's numbers (see the workflow page).
 PAYMENT_TOLERANCE_PCT = 1.0
 
 
@@ -431,18 +1329,23 @@ DOC_SECTIONS = {
     "three_way_match": (
         "Before payment, ORDERED (the PO grand total and quantities) is compared with "
         "RECEIVED (goods-receipt quantities and their value at the order price) and "
-        "INVOICED (registered vendor invoices, gross of tax). Short delivery is flagged "
-        "but does NOT block payment — paying for what was actually delivered on a partial "
-        "receipt is legitimate. Over-billing does block: invoiced above the PO total, or "
-        "invoiced pre-tax above the value of what was received. The comparison allows a "
-        "tolerance of 1% of the PO total or 1 currency unit, whichever is larger."),
+        "INVOICED (registered vendor invoices, gross of tax). Over-billing blocks "
+        "payment: invoiced above the PO total, or invoiced pre-tax above the value of "
+        "what was received. Short delivery does NOT block the payment, it CAPS it — the "
+        "shortfall is stated in units and in money, and cumulative payment may not "
+        "exceed the value actually received, so paying for what was delivered on a "
+        "partial receipt stays legitimate while paying the whole PO for part of it does "
+        "not. The comparison allows the DOAM tolerances: 2% of the PO total or 500 EGP "
+        "on value, whichever is larger, and 5% on quantity."),
     "payment_cap": (
         "A payment can only be recorded once a Purchase Order exists — never against a "
         "draft, pending or cancelled request. Cumulative payments may not exceed the PO "
-        "grand total, and once invoices exist they may not exceed the invoiced gross "
-        "total either, so in practice the cap is the LOWER of the two, each with the "
-        "payment tolerance applied. A payment is also refused while the 3-way match shows "
-        "over-billing. An admin can override any of these and the override is audited."),
+        "grand total; once invoices exist they may not exceed the invoiced gross total "
+        "either; and on a short delivery they may not exceed the gross value of what was "
+        "actually received. In practice the cap is the LOWEST of the three that apply, "
+        "each with the payment tolerance applied. A payment is also refused while the "
+        "3-way match shows over-billing. An admin can override any of these and the "
+        "override is audited."),
 }
 
 # One-line meaning per PR status (stored as proc_doc sections 'status.<key>').

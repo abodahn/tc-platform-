@@ -1,13 +1,31 @@
 {% extends "base.html" %}
 {% block title %}Order Costing · Orders{% endblock %}
-{% macro vtag(v) %}{% set c={'unfavourable':'#be123c','favourable':'#0f7a4d','on_plan':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v.flag,'#6b7280') }}18;color:{{ c.get(v.flag,'#6b7280') }}">{% if v.pct is not none %}{{ '{:+.1f}'.format(v.pct) }}%{% else %}—{% endif %}</span>{% endmacro %}
-{% macro mtag(p) %}{% if p is none %}<span class="muted">—</span>{% else %}<span class="tag" style="background:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}18;color:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}">{{ '{:.1f}'.format(p) }}%</span>{% endif %}{% endmacro %}
+
+{#  Eleven columns of four-decimal numbers is a spreadsheet, not a screen. This
+    page answers ONE question — which orders are losing money — so the layout
+    puts that first: a summary line, worst-first ordering, and a margin column
+    that shows quoted -> delivered as a movement rather than two lookalike
+    numbers the reader has to subtract in their head.
+
+    Colours come from the theme's semantic tokens. The previous version had raw
+    hex (#be123c, #0f7a4d) baked into the markup, which ignored dark mode and
+    drifted from every other status colour in the app.  #}
+
+{% macro money(v, dp=2) %}{% if v is none %}<span class="muted">—</span>{% else %}{{ ('{:,.%df}' % dp).format(v) }}{% endif %}{% endmacro %}
+
+{% macro margin_pct(p) %}
+  {%- if p is none -%}<span class="muted">—</span>
+  {%- else -%}
+    <span class="cst-m {{ 'is-loss' if p < 0 else ('is-thin' if p < alert_pct else 'is-ok') }}">{{ '{:.1f}'.format(p) }}%</span>
+  {%- endif -%}
+{% endmacro %}
+
 {% block content %}
 <div class="page-head">
   <div>
     <div class="eyebrow" data-i18n="cst.eyebrow">Planning · BOM &amp; Order Costing</div>
     <h1 data-i18n="cst.nav.orders">All orders</h1>
-    <div class="sub" data-i18n="cst.orders.sub">Quoted margin against delivered margin, order by order.</div>
+    <div class="sub" data-i18n="cst.orders.sub2">What each order was quoted at, what it actually cost, and where the margin went. Worst first.</div>
   </div>
   <div class="flex gap center">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.export_csv', key='order-margin') }}"
@@ -18,44 +36,142 @@
   </div>
 </div>
 
-<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
-  <label class="flex gap center" style="margin:0">
-    <input type="checkbox" name="costed" value="1" {{ 'checked' if f_costed }} onchange="this.form.submit()">
-    <span data-i18n="cst.filter.costed_only">Only orders with a BOM or cost sheet</span>
-  </label>
-  {% if f_costed %}<a class="tag" href="{{ url_for('costing.orders') }}" data-i18n="cst.filter.clear">Clear</a>{% endif %}
-</div></form>
+{# The summary counts ONLY orders with an actual booked. Mixing quoted-only
+   orders into an overspend total would misstate it. Said on the page, not just
+   in the code, because a manager will otherwise reconcile it against the row
+   count and lose trust in the number. #}
+<div class="grid cols-4">
+  <div class="kpi{{ ' warn' if summary.overspend > 0 else '' }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-trend"></use></svg></div>
+      {% if summary.over_n %}<span class="ktrend b-warning">{{ summary.over_n }}</span>{% endif %}</div>
+    <div class="kval">{{ '{:,.0f}'.format(summary.overspend) }}</div>
+    <div class="klabel" data-i18n="cst.k.overspend">Over the quote (EGP)</div>
+  </div>
+  <a class="kpi kpi-link{{ ' warn' if summary.losing_n else '' }}"
+     href="{{ url_for('costing.orders', sort='margin', costed='1' if f_costed else None) }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-alert"></use></svg></div>
+      <svg class="ico kpi-go" aria-hidden="true"><use href="#i-external"></use></svg></div>
+    <div class="kval">{{ summary.losing_n }}</div>
+    <div class="klabel" data-i18n="cst.k.losing">Orders below zero margin</div>
+  </a>
+  <a class="kpi kpi-link" href="{{ url_for('costing.orders', sort='margin', costed='1' if f_costed else None) }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-target"></use></svg></div>
+      <svg class="ico kpi-go" aria-hidden="true"><use href="#i-external"></use></svg></div>
+    <div class="kval">{{ summary.thin_n }}</div>
+    <div class="klabel"><span data-i18n="cst.k.thin">Margin under</span> {{ '{:.0f}'.format(alert_pct) }}%</div>
+  </a>
+  <div class="kpi">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-boxes"></use></svg></div></div>
+    <div class="kval">{{ summary.booked }}<span class="muted" style="font-size:16px;font-weight:600">/{{ summary.orders }}</span></div>
+    <div class="klabel" data-i18n="cst.k.booked">Orders with actuals booked</div>
+  </div>
+</div>
 
-<div class="panel"><div class="panel-pad">
-  <table class="tbl">
-    <thead><tr><th data-i18n="cst.field.order">Order</th><th data-i18n="cst.field.buyer">Buyer</th>
-      <th data-i18n="cst.field.ship">Ship</th>
-      <th style="text-align:right" data-i18n="cst.field.qty">Qty</th>
-      <th style="text-align:right" data-i18n="cst.field.cost_unit">Cost/unit</th>
-      <th style="text-align:right" data-i18n="cst.field.price_unit">Price/unit</th>
-      <th style="text-align:right" data-i18n="cst.field.estimate">Estimate</th>
-      <th style="text-align:right" data-i18n="cst.field.actual">Actual</th>
-      <th style="text-align:right" data-i18n="cst.field.variance">Variance</th>
-      <th style="text-align:right" data-i18n="cst.field.margin_est">Margin (est)</th>
-      <th style="text-align:right" data-i18n="cst.field.margin_act">Margin (act)</th></tr></thead>
-    <tbody>
-    {% for o in rows %}
-      <tr>
-        <td><a href="{{ url_for('costing.sheet', order_id=o.id) }}">{{ o.order_no }}</a>
-          <div class="muted" style="font-size:11px">{{ o.style_name or o.style_ref or '—' }}</div></td>
-        <td>{{ o.buyer }}</td>
-        <td>{{ o.ship_date or '—' }}</td>
-        <td style="text-align:right">{{ '{:,.0f}'.format(o.qty or 0) }}</td>
-        <td style="text-align:right">{% if o.estimate.per_unit is not none %}{{ '{:,.4f}'.format(o.estimate.per_unit) }}{% else %}—{% endif %}</td>
-        <td style="text-align:right">{{ '{:,.4f}'.format(o.unit_price or 0) }}</td>
-        <td style="text-align:right">{{ '{:,.2f}'.format(o.estimate.total) }}</td>
-        <td style="text-align:right">{% if o.has_actual %}{{ '{:,.2f}'.format(o.actual.total) }}{% else %}<span class="muted" data-i18n="cst.badge.no_actual">not booked</span>{% endif %}</td>
-        <td style="text-align:right">{% if o.has_actual %}{{ vtag(o.variance.total) }}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td style="text-align:right">{{ mtag(o.margin.est_pct) }}</td>
-        <td style="text-align:right">{% if o.has_actual %}{{ mtag(o.margin.act_pct) }}{% else %}<span class="muted">—</span>{% endif %}</td>
-      </tr>
-    {% else %}<tr><td colspan="11" class="muted" style="text-align:center;padding:18px" data-i18n="cst.empty.orders">No orders to cost yet.</td></tr>{% endfor %}
-    </tbody>
-  </table>
-</div></div>
+<form class="panel mt-3" method="get">
+  <div class="panel-pad flex gap center wrap">
+    <div class="field" style="flex:1;min-width:220px;margin:0">
+      <label data-i18n="cst.filter.find">Find an order</label>
+      <input type="search" name="q" value="{{ q }}" data-i18n-ph="cst.filter.find_ph"
+             placeholder="Order number, buyer or style…">
+    </div>
+    <div class="field" style="margin:0;min-width:190px">
+      <label data-i18n="cst.filter.sort">Order by</label>
+      <select name="sort" onchange="this.form.submit()">
+        <option value="risk"   {{ 'selected' if sort == 'risk' }}   data-i18n="cst.sort.risk">Biggest overspend first</option>
+        <option value="margin" {{ 'selected' if sort == 'margin' }} data-i18n="cst.sort.margin">Thinnest margin first</option>
+        <option value="ship"   {{ 'selected' if sort == 'ship' }}   data-i18n="cst.sort.ship">Ship date</option>
+        <option value="order"  {{ 'selected' if sort == 'order' }}  data-i18n="cst.sort.order">Order number</option>
+      </select>
+    </div>
+    <label class="flex gap center" style="margin:0;padding-bottom:2px">
+      <input type="checkbox" name="costed" value="1" {{ 'checked' if f_costed }} onchange="this.form.submit()">
+      <span data-i18n="cst.filter.costed_only">Only orders with a BOM or cost sheet</span>
+    </label>
+    <button class="btn btn-primary" type="submit" data-i18n="cst.filter.apply">Apply</button>
+    {% if q or f_costed or sort != 'risk' %}
+      <a class="btn btn-ghost" href="{{ url_for('costing.orders') }}" data-i18n="cst.filter.clear">Clear</a>
+    {% endif %}
+  </div>
+</form>
+
+<div class="panel mt-3">
+  <div class="panel-head">
+    <h3 data-i18n="cst.orders.list">Orders</h3>
+    <span class="muted" style="font-size:12px">{{ rows|length }}</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table cst-orders">
+      <thead><tr>
+        <th data-i18n="cst.field.order">Order</th>
+        <th data-i18n="cst.field.buyer">Buyer</th>
+        <th data-i18n="cst.field.ship">Ship</th>
+        <th class="num" data-i18n="cst.field.qty">Qty</th>
+        <th class="num" data-i18n="cst.field.estimate">Quoted cost</th>
+        <th class="num" data-i18n="cst.field.actual">Actual cost</th>
+        <th class="num" data-i18n="cst.field.variance">Difference</th>
+        <th class="num" data-i18n="cst.field.margin_move">Margin, quoted → delivered</th>
+      </tr></thead>
+      <tbody>
+      {% for o in rows %}
+        {% set v = o.variance.total %}
+        <tr class="{{ 'row-loss' if o.has_actual and (o.margin.act_pct or 0) < 0
+                      else ('row-warn' if o.has_actual and v.flag == 'unfavourable' else '') }}">
+          <td>
+            <a href="{{ url_for('costing.sheet', order_id=o.id) }}"><b>{{ o.order_no }}</b></a>
+            <div class="muted" style="font-size:11px">{{ o.style_name or o.style_ref or '—' }}</div>
+          </td>
+          <td>{{ o.buyer or '—' }}</td>
+          <td>{{ o.ship_date or '—' }}</td>
+          <td class="num">{{ '{:,.0f}'.format(o.qty or 0) }}</td>
+          <td class="num">{{ money(o.estimate.total) }}
+            {% if o.estimate.per_unit is not none %}
+            <div class="muted" style="font-size:11px">{{ '{:,.2f}'.format(o.estimate.per_unit) }}<span data-i18n="cst.per_unit"> / unit</span></div>
+            {% endif %}
+          </td>
+          <td class="num">
+            {% if o.has_actual %}{{ money(o.actual.total) }}
+              {% if o.actual.per_unit is not none %}
+              <div class="muted" style="font-size:11px">{{ '{:,.2f}'.format(o.actual.per_unit) }}<span data-i18n="cst.per_unit"> / unit</span></div>
+              {% endif %}
+            {% else %}<span class="muted" data-i18n="cst.badge.no_actual">not booked</span>{% endif %}
+          </td>
+          <td class="num">
+            {% if o.has_actual %}
+              <span class="cst-v {{ 'is-over' if v.flag == 'unfavourable'
+                                    else ('is-under' if v.flag == 'favourable' else 'is-flat') }}">
+                {{ '{:+,.0f}'.format(v.value) }}</span>
+              {% if v.pct is not none %}
+              <div class="muted" style="font-size:11px">{{ '{:+.1f}'.format(v.pct) }}%</div>
+              {% endif %}
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          {# Quoted -> delivered as one movement. Two separate percentage columns
+             made the reader do the subtraction, which is the work the screen
+             should be doing. #}
+          <td class="num cst-move">
+            {{ margin_pct(o.margin.est_pct) }}
+            {% if o.has_actual %}<span class="cst-arrow" aria-hidden="true">→</span>{{ margin_pct(o.margin.act_pct) }}{% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8">
+          <div class="empty">
+            <b data-i18n="cst.empty.h">{% if q %}Nothing matches that search.{% else %}No orders costed yet.{% endif %}</b>
+            <div class="muted mt-1" data-i18n="cst.empty.sub">A cost sheet or a BOM on an order is what puts it here. Open an order to add one.</div>
+            {% if not q %}<a class="btn btn-primary mt-2" href="{{ url_for('orders.index') }}"
+                             data-i18n="cst.empty.cta">Go to orders</a>{% endif %}
+          </div>
+        </td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if summary.booked < summary.orders %}
+  <div class="panel-pad muted" style="border-top:1px solid var(--line);font-size:12px">
+    <span data-i18n="cst.note.booked">The figures above count only orders with actuals booked</span>
+    ({{ summary.booked }}<span data-i18n="cst.note.of"> of </span>{{ summary.orders }}).
+    <span data-i18n="cst.note.why">Including quoted-only orders would misstate the overspend.</span>
+  </div>
+  {% endif %}
+</div>
 {% endblock %}

@@ -67,7 +67,7 @@ def index():
 def registrations():
     status = request.args.get("status") or None
     q = request.args.get("q") or None
-    return render_template("admin_registrations.html", active="admin",
+    return render_template("admin_registrations.html", active="registrations",
                            rows=accsvc.list_registrations(status, q),
                            counts=accsvc.status_counts(), status=status or "", q=q or "",
                            AccountStatus=AccountStatus)
@@ -79,7 +79,7 @@ def registration_detail(uid):
     acc = accsvc.get_account(uid)
     if not acc:
         abort(404)
-    return render_template("admin_registration_detail.html", active="admin", acc=acc,
+    return render_template("admin_registration_detail.html", active="registrations", acc=acc,
                            history=accsvc.security_history(uid), roles=all_role_choices(),
                            org=accsvc.org_options(), AccountStatus=AccountStatus)
 
@@ -503,7 +503,7 @@ def garamento():
     ekey = (request.args.get("edit") or "").strip()
     if ekey:
         edit = kb.get_one(ekey)
-    return render_template("admin_garamento.html", topics=topics, edit=edit, active="admin")
+    return render_template("admin_garamento.html", topics=topics, edit=edit, active="garamento_kb")
 
 
 @bp.route("/garamento/save", methods=["POST"])

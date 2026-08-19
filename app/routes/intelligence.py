@@ -58,7 +58,7 @@ def alerts():
     severity = request.args.get("severity", "all")
     rows = isvc.list_alerts(status=status, domain=domain, severity=severity,
                             allow_sensitive=_sensitive_ok())
-    return render_template("intelligence/alerts.html", active="ai_center", alerts=rows,
+    return render_template("intelligence/alerts.html", active="ai_alerts", alerts=rows,
                            status=status, domain=domain, severity=severity,
                            statuses=isvc.ALERT_STATUSES, verdicts=isvc.FEEDBACK_VERDICTS,
                            domains=list(DOMAIN_LABELS.items()),
@@ -94,14 +94,14 @@ def alert_feedback(alert_id):
 @permission_required("view_dashboard")
 def breakdown():
     rows = isvc.breakdown(allow_sensitive=_sensitive_ok())
-    return render_template("intelligence/breakdown.html", active="ai_center",
+    return render_template("intelligence/breakdown.html", active="ai_breakdown",
                            domains=rows, sensitive_hidden=not _sensitive_ok())
 
 
 @bp.route("/assistant")
 @permission_required("view_dashboard")
 def assistant():
-    return render_template("intelligence/assistant.html", active="ai_center")
+    return render_template("intelligence/assistant.html", active="ai_assistant")
 
 
 @bp.route("/assistant/ask", methods=["POST"])
@@ -125,7 +125,7 @@ def assistant_ask():
 @bp.route("/reports")
 @permission_required("view_dashboard")
 def reports():
-    return render_template("intelligence/reports.html", active="ai_center",
+    return render_template("intelligence/reports.html", active="ai_reports",
                            runs=isvc.runs(), feedback=isvc.feedback_summary(),
                            can_export=user_can("export_reports") or user_can("view_reports"))
 
@@ -158,7 +158,7 @@ def settings():
         log_audit(_u(), "ai_settings", "updated", request.remote_addr or "")
         flash("AI settings saved.", "success")
         return redirect(url_for("intelligence.settings"))
-    return render_template("intelligence/settings.html", active="ai_center",
+    return render_template("intelligence/settings.html", active="ai_settings",
                            auto_run=isvc.get_setting("auto_run", "1") == "1",
                            horizon_days=isvc.get_setting("horizon_days", "30"),
                            runs=isvc.runs())

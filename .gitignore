@@ -23,3 +23,8 @@ preview.db
 
 # local tooling / editor state
 .claude/
+
+# agent working files — never part of the app
+scratchpad/
+_out.pdf
+_stress.pdf

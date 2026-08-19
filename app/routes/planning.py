@@ -39,8 +39,73 @@ def _referrer_or(default):
 @permission_required("pln_view")
 def index():
     days = request.args.get("days") or BOARD_DAYS
-    return render_template("planning/index.html", active="pln_board",
-                           d=svc.dashboard(days))
+    try:
+        days = max(3, min(60, int(days)))
+    except (TypeError, ValueError):
+        days = BOARD_DAYS
+    d = svc.dashboard(days)
+
+    # The KPI tiles counted "5 orders late" and then gave the planner no way to
+    # SEE those five. dashboard() already separates them, so each tile now filters
+    # the order book below it.
+    show = (request.args.get("show") or "all").strip()
+    BUCKETS = {
+        "late": lambda o: o["status"] == "late",
+        "at_risk": lambda o: o["status"] == "at_risk",
+        "unplanned": lambda o: o["status"] in ("unplanned", "no_capacity"),
+        "behind": lambda o: o["vs"]["status"] == "behind",
+        "smv": lambda o: o["smv_resolved"]["conflict"],
+    }
+    orders = d["orders"]
+    if show in BUCKETS:
+        orders = [o for o in orders if BUCKETS[show](o)]
+    else:
+        show = "all"
+
+    q = (request.args.get("q") or "").strip()
+    if q:
+        n = q.lower()
+        orders = [o for o in orders if n in " ".join(
+            str(o.get(k) or "").lower() for k in ("order_no", "buyer", "style_name", "style_ref"))]
+
+    # URGENCY FIRST, always. A planner opens this to find what will miss its ship
+    # date; the previous order was whatever the query returned. Late before
+    # at-risk before everything else, then the most days late, then the nearest
+    # ship date — so the order that needs a decision today is the top row.
+    RANK = {"late": 0, "no_capacity": 1, "at_risk": 2, "unplanned": 3,
+            "on_time": 4, "no_ship_date": 5}
+    sort = (request.args.get("sort") or "urgency").strip()
+    if sort == "ship":
+        orders = sorted(orders, key=lambda o: (o.get("ship_date") or "9999-99-99",))
+    elif sort == "order":
+        orders = sorted(orders, key=lambda o: (o.get("order_no") or ""))
+    else:
+        sort = "urgency"
+        orders = sorted(orders, key=lambda o: (
+            RANK.get(o["status"], 9),
+            -(o.get("days_late") or 0),
+            o.get("ship_date") or "9999-99-99"))
+
+    # The board hands back bare ISO strings, and a header reading "08-17" tells a
+    # planner nothing they schedule by. Factories plan around the working week, so
+    # enrich here (not in the service, whose `dates` the CSV export also reads)
+    # with the weekday, whether it is a weekend, and which column is today.
+    from datetime import date as _d
+    _today = _d.today().isoformat()
+    board_days = []
+    for iso in d["board"]["dates"]:
+        try:
+            dt = _d.fromisoformat(iso)
+            wd, weekend = dt.strftime("%a"), dt.weekday() >= 5
+        except (TypeError, ValueError):
+            wd, weekend = "", False
+        board_days.append({"iso": iso, "dd": iso[5:], "wd": wd,
+                           "weekend": weekend, "today": iso == _today})
+
+    return render_template("planning/index.html", active="planning", d=d,
+                           orders=orders, show=show, sort=sort, q=q, days=days,
+                           board_days=board_days,
+                           shown=len(orders), total=len(d["orders"]))
 
 
 @bp.route("/lines")
@@ -81,7 +146,7 @@ def order_detail(order_id):
     f = svc.feasibility(_pk(order_id))
     if not f:
         abort(404)
-    return render_template("planning/order.html", active="pln_board", f=f,
+    return render_template("planning/order.html", active="planning", f=f,
                            lines=svc.list_lines(active_only=True))
 
 
@@ -102,7 +167,7 @@ def smv_set(order_id):
 @login_required
 @permission_required("pln_plan")
 def allocate():
-    return render_template("planning/allocate.html", active="pln_board",
+    return render_template("planning/allocate.html", active="planning",
                            orders=svc.list_orders(), lines=svc.list_lines(active_only=True),
                            wi=None)
 
@@ -115,7 +180,7 @@ def whatif():
     wi = svc.what_if(request.form.get("order_id"), request.form.get("pline_id"),
                      request.form.get("start_date"), request.form.get("qty"),
                      request.form.get("smv"))
-    return render_template("planning/allocate.html", active="pln_board",
+    return render_template("planning/allocate.html", active="planning",
                            orders=svc.list_orders(), lines=svc.list_lines(active_only=True),
                            wi=wi, form=request.form)
 
@@ -181,7 +246,7 @@ def balance(order_id):
     b = svc.balance(_pk(order_id))
     if not b:
         abort(404)
-    return render_template("planning/balance.html", active="pln_board", b=b)
+    return render_template("planning/balance.html", active="planning", b=b)
 
 
 @bp.route("/balance/<int:order_id>/op", methods=["POST"])

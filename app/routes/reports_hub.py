@@ -41,7 +41,7 @@ def _lang():
 def hub():
     groups = reporting.catalog(
         lambda p: user_has_permission(current_user(), p))
-    return render_template("reports/hub.html", groups=groups, active="reports")
+    return render_template("reports/hub.html", groups=groups, active="reporting")
 
 
 @bp.route("/<key>")
@@ -51,7 +51,7 @@ def view(key):
     result = reporting.run(spec, request.args)
     views = reporting.saved_views((current_user() or {}).get("id"), key)
     return render_template("reports/report.html", spec=spec, result=result,
-                           views=views, args=request.args, active="reports")
+                           views=views, args=request.args, active="reporting")
 
 
 @bp.route("/<key>.<fmt>")

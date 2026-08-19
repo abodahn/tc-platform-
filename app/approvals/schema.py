@@ -301,6 +301,16 @@ _STEP_MIGRATIONS = [
     # esc_from = the role(s) it was escalated FROM. Both NULL = a normal rung.
     ("esc_role", "ALTER TABLE pr_steps ADD COLUMN esc_role TEXT"),
     ("esc_from", "ALTER TABLE pr_steps ADD COLUMN esc_from TEXT"),
+    # WHY this rung exists. Without it the post-pricing reconcile cannot tell a
+    # value-derived rung from a control rung, so re-saving pricing deleted the
+    # §4.3 single-source and §4.4 deviation escalations with no trace.
+    ("origin", "ALTER TABLE pr_steps ADD COLUMN origin TEXT DEFAULT 'ladder'"),
+    # DOAM Table 5 — WHAT the signature on this rung is: review | approve |
+    # endorse. Until this column existed a rung had two outcomes (approve /
+    # reject) and the RACI letters the DOAM assigns per activity could not be
+    # evidenced from system records at all. Defaults to 'approve', so every row
+    # written before this migration keeps exactly the meaning it was given.
+    ("action_type", "ALTER TABLE pr_steps ADD COLUMN action_type TEXT DEFAULT 'approve'"),
 ]
 
 # Columns added to pr_requests after first release (tax + goods receipt + PO email
@@ -328,11 +338,57 @@ _PR_MIGRATIONS = [
     # RFQ control (P3): Purchasing's recorded justification for waiving the
     # competitive-quote rule on a high-value PR (single/sole-source purchase).
     ("single_source_reason", "ALTER TABLE pr_requests ADD COLUMN single_source_reason TEXT"),
+    # DOAM §6 — the Engineering Justification Report (T&C-PUF-09) this requisition
+    # carries. NULL is normal: most requests are not spares/MRO and need none.
+    # app.maintenance.eng_justification.ejr_gate_check decides when it is required.
+    ("ejr_id", "ALTER TABLE pr_requests ADD COLUMN ejr_id INTEGER"),
+    # DOAM §4.2 — operating vs capital expenditure. NULL/blank reads as 'opex',
+    # which is what an unmarked request is; the CAPEX ladder is a different set
+    # of signatures for the same money, so this column decides which one applies.
+    ("expenditure_kind",
+     "ALTER TABLE pr_requests ADD COLUMN expenditure_kind TEXT DEFAULT 'opex'"),
+    # DOAM §3.4 — the 30-day aggregate this request was actually routed on, when
+    # related requests existed. NULL means it routed on its own value.
+    ("agg_total", "ALTER TABLE pr_requests ADD COLUMN agg_total REAL"),
+    # DOAM §4.3 — advance-payment authorisation, recorded on the request.
+    ("advance_pct", "ALTER TABLE pr_requests ADD COLUMN advance_pct REAL"),
+    ("advance_auth_by", "ALTER TABLE pr_requests ADD COLUMN advance_auth_by TEXT"),
+    ("advance_auth_stage", "ALTER TABLE pr_requests ADD COLUMN advance_auth_stage TEXT"),
+    ("advance_auth_at", "ALTER TABLE pr_requests ADD COLUMN advance_auth_at TEXT"),
+    ("bank_guarantee_ref", "ALTER TABLE pr_requests ADD COLUMN bank_guarantee_ref TEXT"),
+    # DOAM §5 — the golden thread: the controlling cost object. `asset_code`
+    # already carries the asset, so only the sales order and the cost centre are
+    # new. Every downstream document (PO, GRN, invoice) is keyed to the PR, so
+    # carrying it here carries it along the whole chain.
+    ("so_no", "ALTER TABLE pr_requests ADD COLUMN so_no TEXT"),
+    ("cost_center", "ALTER TABLE pr_requests ADD COLUMN cost_center TEXT"),
     # Foreign-currency support: fx_rate converts the PR total (in `currency`)
     # to EGP so the EGP-based approval thresholds route honestly. po_rev counts
     # PO revisions (0 = original order; history kept in pr_po_revisions).
     ("fx_rate", "ALTER TABLE pr_requests ADD COLUMN fx_rate REAL DEFAULT 1"),
     ("po_rev", "ALTER TABLE pr_requests ADD COLUMN po_rev INTEGER DEFAULT 0"),
+    # DOAM Table 4 — the budget verdict this request was ROUTED on, and how far
+    # past the budget it took the department. 'budgeted' | 'no_budget' |
+    # 'over_budget'; NULL on rows that predate the check (they routed on the
+    # §4.1 budgeted ladder regardless, which is what NULL should read as).
+    ("budget_state", "ALTER TABLE pr_requests ADD COLUMN budget_state TEXT"),
+    ("budget_over_by", "ALTER TABLE pr_requests ADD COLUMN budget_over_by REAL"),
+    # Records retention (audit 3.4-b9b). The date this record may FIRST be
+    # disposed of, stamped when it is created from constants.retention_until():
+    # ten years for capital expenditure, five for everything else. Existing rows
+    # are backfilled from created_at just below, so an already-deployed database
+    # is not left with a column of NULLs that no rule can act on.
+    ("retention_until", "ALTER TABLE pr_requests ADD COLUMN retention_until TEXT"),
+    # DOAM §4.1 tier 7 / §4.2 tier 4 — the written business case a request above
+    # BUSINESS_CASE_OVER must carry. NULL is normal; almost nothing is that big.
+    ("business_case", "ALTER TABLE pr_requests ADD COLUMN business_case TEXT"),
+    # DOAM §4.4 / T&C-PUF-12 — the justification memo an off-plan order must
+    # carry (over the stock ceiling, or priced over target). NULL is normal.
+    ("deviation_memo", "ALTER TABLE pr_requests ADD COLUMN deviation_memo TEXT"),
+    # DOAM 3.4 — the OTHER cost object the clause allows: an agreed production
+    # forecast, cited instead of a client sales order. Sits beside so_no and
+    # travels the same golden thread onto the PO, the GRN and the invoice.
+    ("forecast_ref", "ALTER TABLE pr_requests ADD COLUMN forecast_ref TEXT"),
 ]
 
 # Verifiable signature events: one immutable row per approve/reject signature.
@@ -370,6 +426,87 @@ CREATE TABLE IF NOT EXISTS pr_po_revisions (
     created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_po_rev_pr ON pr_po_revisions(pr_id);
+"""
+
+# Goods Received Notes. A GRN is a CONTROLLED, PRE-NUMBERED document: one row per
+# receipt EVENT, its number allocated when the goods are booked in — not derived at
+# print time, which reprinted the same number for every partial delivery.
+# pr_grn_quarantine holds what a supplier delivered OVER the ordered quantity: the
+# excess is never added to stock, it is parked here with an explicit state until
+# someone decides to accept or return it.
+_GRN_DDL = """
+CREATE TABLE IF NOT EXISTS pr_grn (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    grn_no TEXT UNIQUE,
+    pr_id INTEGER,
+    seq INTEGER,
+    lines_json TEXT,
+    accepted_qty REAL DEFAULT 0,
+    quarantined_qty REAL DEFAULT 0,
+    notes TEXT,
+    received_by TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_grn_pr ON pr_grn(pr_id);
+CREATE TABLE IF NOT EXISTS pr_grn_quarantine (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    grn_id INTEGER,
+    item_id INTEGER,
+    item TEXT,
+    ordered_qty REAL,
+    accepted_qty REAL,
+    qty REAL,
+    status TEXT DEFAULT 'quarantined',
+    resolution TEXT,
+    resolved_by TEXT,
+    resolved_at TEXT,
+    created_by TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_grn_quar_pr ON pr_grn_quarantine(pr_id);
+
+-- Return to vendor + its debit note. ONE row is both documents, because they are
+-- one event: goods rejected on receipt go back to the supplier, and the debit
+-- note is that return's financial face. `dn_no` is allocated from the row id the
+-- same way a GRN number is, so every return carries its own document number.
+-- status 'open' = the supplier still owes it back; that open value is what the
+-- vendor's outstanding dues are, and what the payable ceiling drops by.
+CREATE TABLE IF NOT EXISTS pr_returns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dn_no TEXT UNIQUE,
+    pr_id INTEGER,
+    grn_id INTEGER,
+    vendor TEXT, vendor_id INTEGER,
+    lines_json TEXT,
+    qty REAL DEFAULT 0,
+    net REAL DEFAULT 0, tax REAL DEFAULT 0, total REAL DEFAULT 0,
+    currency TEXT DEFAULT 'EGP',
+    reason TEXT,
+    status TEXT DEFAULT 'open',       -- open | settled
+    settled_by TEXT, settled_at TEXT,
+    created_by TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_pr_returns_pr ON pr_returns(pr_id);
+CREATE INDEX IF NOT EXISTS ix_pr_returns_vendor ON pr_returns(vendor, status);
+
+-- ===== Agreed production forecasts (DOAM 3.4 sales-order gate, second half) =====
+-- "No direct production material may be requisitioned without a valid client
+-- sales order reference OR AGREED FORECAST." The sales-order half is validated
+-- against ord_orders; this table is the other half, and it is a REGISTER, not a
+-- free-text box: a forecast only satisfies the gate once someone with the DOAM
+-- authority for planning (Table 4 L2, SC-D) has agreed it, and only while it is
+-- inside its validity dates. status: draft -> agreed.
+CREATE TABLE IF NOT EXISTS proc_forecasts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ref TEXT UNIQUE NOT NULL,
+    description TEXT,
+    period TEXT,                      -- the production period it covers, e.g. "2026 Q1"
+    valid_from TEXT, valid_to TEXT,   -- YYYY-MM-DD; the gate checks today between them
+    status TEXT DEFAULT 'draft',      -- draft | agreed
+    agreed_by TEXT, agreed_by_name TEXT, agreed_role TEXT, agreed_at TEXT,
+    created_by TEXT, created_at TEXT
+);
 """
 
 # Trilingual prose (added after first release). The English column stays exactly
@@ -478,11 +615,73 @@ def seed_translations(conn):
     return filled
 
 
+def backfill_retention(conn):
+    """Stamp retention_until on rows created before the column existed.
+
+    ADDITIVE and idempotent: it only ever fills NULLs, never rewrites a date that
+    is already there. Without it the retention control would be true for new
+    requests and silently absent for the whole existing register, which is the
+    half of a records rule that gets an audit finding written.
+
+    Returns the number of rows stamped.
+
+    ponytail: one UPDATE per legacy row, because "created_at + N years" has no
+    portable spelling across SQLite and PostgreSQL and the year-boundary maths
+    lives in Python. It runs ONCE — every later boot's SELECT matches nothing
+    and costs a single query. If a register ever grows large enough for that
+    first pass to matter, replace it with a dialect-branched single UPDATE.
+    """
+    from app.approvals.constants import retention_until
+    try:
+        rows = conn.execute(
+            "SELECT id, created_at, request_date, expenditure_kind FROM pr_requests "
+            "WHERE retention_until IS NULL OR TRIM(retention_until) = ''").fetchall()
+    except Exception:
+        conn.rollback()
+        return 0                     # column not there yet -> nothing to backfill
+    n = 0
+    for r in rows:
+        born = r["created_at"] or r["request_date"] or _now()
+        conn.execute("UPDATE pr_requests SET retention_until=? WHERE id=?",
+                     (retention_until(born, r["expenditure_kind"]), r["id"]))
+        n += 1
+    if n:
+        conn.commit()
+    return n
+
+
+def drop_legacy_doam_role_rows(conn):
+    """Delete the rows the removed seed_doam_roles() left behind.
+
+    The DOAM authority roles are registered in code now. security.load_db_roles()
+    lets a custom_roles row REPLACE the code definition, so those five leftover
+    rows SHADOW it: on any database the old seed reached, financial_director has
+    the seed's five permissions and never the proc_pay the code grants it — the
+    drift the seed was removed to stop, frozen into the environments that matter.
+
+    Only rows still carrying the seed's exact permission list are deleted; an
+    admin who has since edited one keeps their version. Idempotent: after the
+    first boot the DELETE matches nothing.
+    """
+    seeded = '["open_module", "proc_approve", "proc_view", "view_dashboard", "view_reports"]'
+    try:
+        cur = conn.execute(
+            "DELETE FROM custom_roles WHERE role_key IN "
+            "('supply_chain_director','plant_director','financial_director',"
+            "'managing_director','board') AND perms_json = ?", (seeded,))
+        conn.commit()
+    except Exception:
+        conn.rollback()    # custom_roles belongs to the admin module; not here yet
+        return 0
+    return cur.rowcount if (cur.rowcount or 0) > 0 else 0
+
+
 def create_and_seed(conn):
     """Create procurement tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
     conn.executescript(_SIGN_EVENTS_DDL)
     conn.executescript(_PO_REV_DDL)
+    conn.executescript(_GRN_DDL)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS
@@ -492,6 +691,13 @@ def create_and_seed(conn):
             conn.commit()
         except Exception:
             conn.rollback()
+    backfill_retention(conn)
+    # The DOAM authority roles used to be seeded into custom_roles here. They
+    # are now registered in code (constants.PROC_ROLE_PERMS -> security's RBAC
+    # merge), which is the registry can_act() reads: a role that exists only as
+    # a row this seed never committed is missing wherever the write did not land.
+    # The rows it already wrote shadow that code definition, so clear them once.
+    drop_legacy_doam_role_rows(conn)
     seed_governance(conn)
     if conn.execute("SELECT COUNT(*) c FROM proc_vendors").fetchone()["c"] > 0:
         return  # already seeded; never overwrite
@@ -540,9 +746,13 @@ def create_and_seed(conn):
     ladder = build_ladder(total)
     for i, stage in enumerate(ladder, start=1):
         conn.execute(
-            """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, activated_at, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
-            (pr_id, i, stage, "pending", stage_label(stage), now if i == 1 else None, now))
+            """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role,
+               activated_at, created_at, action_type)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            # DOAM Table 5: the top of the ladder commits (A), everyone below it
+            # verifies (R) — the same rule services.stamp_step_actions applies.
+            (pr_id, i, stage, "pending", stage_label(stage), now if i == 1 else None,
+             now, "approve" if i == len(ladder) else "review"))
     conn.execute(
         "INSERT INTO pr_events (pr_id, actor, action, detail, created_at) VALUES (?,?,?,?,?)",
         (pr_id, "store", "submitted", f"Submitted for {len(ladder)} approvals", now))
@@ -555,3 +765,6 @@ def create_and_seed(conn):
             "INSERT INTO proc_budgets (department, period, currency, amount, created_at) "
             "VALUES (?,?,?,?,?)", (dept, year, "EGP", amount, now))
     conn.commit()
+    # The demo PR above is a raw INSERT (not create_pr), so stamp it too rather
+    # than leaving a fresh database with one unguardable row until the next boot.
+    backfill_retention(conn)
