@@ -2994,6 +2994,14 @@ def cost_object_check(conn, pr_id, pr):
             return True, None
     for r in rows:
         texts += [r["item"], r["description"], r["category_name"]]
+    # An EMPTY order register still refuses, deliberately — see tests_so_gate.
+    # I nearly relaxed this on the theory that a register with nothing in it
+    # cannot validate anything and so blocks all purchasing for no benefit. That
+    # reasoning is out of date: since the forecast register landed, a requester
+    # with no sales order has a legitimate alternative to cite, so an empty
+    # register is not a dead end and the refusal is not a trap. The only escape
+    # is the orders module being ABSENT altogether, which sales_order_state
+    # already handles by returning None.
     need = C.cost_object_required(texts)
     return (need is None), ("cost_object_required" if need else None)
 
