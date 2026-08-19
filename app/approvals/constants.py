@@ -1138,13 +1138,26 @@ MATCH_TOLERANCE_ABS = 500.0      # EGP
 MATCH_QTY_TOLERANCE_PCT = 5.0
 
 
-def match_tolerance_value(amount):
-    """Absolute EGP slack allowed on a value comparison of `amount`."""
+def match_tolerance_value(amount, fx_rate=1.0):
+    """Slack allowed on a value comparison of `amount`, IN THE CURRENCY OF
+    `amount` — not always EGP.
+
+    The percentage half is a ratio and needs no conversion. The 500 floor is an
+    EGP figure from §7.3.3, so on a foreign-currency order it must be divided by
+    the rate: 500 EGP at fx 50 is 10 USD, not 500 USD. Passing it through raw
+    handed a USD order fifty times the tolerance the clause allows, and a 45%
+    over-invoice came back "matched"."""
     try:
         a = abs(float(amount or 0))
     except (TypeError, ValueError):
         a = 0.0
-    return max(a * MATCH_TOLERANCE_PCT / 100.0, MATCH_TOLERANCE_ABS)
+    try:
+        fx = float(fx_rate or 1.0)
+    except (TypeError, ValueError):
+        fx = 1.0
+    if fx <= 0:
+        fx = 1.0
+    return max(a * MATCH_TOLERANCE_PCT / 100.0, MATCH_TOLERANCE_ABS / fx)
 
 
 # --- Payment cap tolerance --------------------------------------------------

@@ -2596,7 +2596,15 @@ def three_way_match(pr_id):
     # greater". The floor is the binding half on a small invoice — on 1,000 EGP,
     # 2% is 20 and the DOAM allows 500. The old flat 1% with a 1-unit floor was
     # therefore both too tight on small invoices and too loose on large ones.
-    tol = C.match_tolerance_value(ordered_grand) if C.DOAM_IN_FORCE \
+    # MATCH_TOLERANCE_ABS is 500 EGP, but every figure here is in the PR's own
+    # currency, so applying it raw gave a USD order a 500 USD tolerance — on a
+    # 1,000 USD PO at fx 50 that is 25,000 EGP, fifty times the rule, and a
+    # 1,450 USD invoice on a 1,000 USD PO came back "matched" with no flags.
+    # Convert the EGP floor into the PR's currency instead of converting every
+    # amount: one division, and the percentage half needs no conversion because
+    # a ratio is currency-agnostic.
+    _fx = _pr_fx(pr)
+    tol = C.match_tolerance_value(ordered_grand, fx_rate=_fx) if C.DOAM_IN_FORCE \
         else max(1.0, ordered_grand * 0.01)
     # ...and the QUANTITY half of the same clause ("or 5% of quantity"), which
     # until now was a constant with no reader at all: the match compared value
@@ -2990,6 +2998,31 @@ def cost_object_check(conn, pr_id, pr):
     return (need is None), ("cost_object_required" if need else None)
 
 
+def _pr_fx(pr):
+    """EGP per unit of the PR's currency, as a positive float.
+
+    One place, because getting it wrong is silent and one-directional: every
+    currency in CURRENCIES trades above the pound, so a missing conversion always
+    makes a foreign figure look SMALLER than it is — under-collecting approvals
+    and over-granting tolerance, never the reverse. An EGP request, a missing
+    rate and a nonsense rate all return 1.0, which is the identity and therefore
+    the safe default."""
+    if pr is None:
+        return 1.0
+    def _g(key):
+        try:
+            return pr.get(key) if isinstance(pr, dict) else pr[key]
+        except (KeyError, IndexError):
+            return None
+    if str(_g("currency") or "EGP").strip().upper() == "EGP":
+        return 1.0
+    try:
+        fx = float(_g("fx_rate") or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return fx if fx > 0 else 1.0
+
+
 def deviation_findings(conn, pr_id):
     """DOAM §4.4 — grade every line of a PR against its target price, its
     maximum stock ceiling and its NET REQUIREMENT. Returns
@@ -3039,6 +3072,10 @@ def deviation_findings(conn, pr_id):
     if not rows:
         return {"lines": [], "stages": [], "memo": False, "quotes": False,
                 "unassessable": 0, "coverage_blind": 0}
+    # The item-master targets below are EGP; pr_items.unit_price is in the PR's
+    # own currency. Read the rate once here so the comparison is like for like.
+    _fx_rate = _pr_fx(conn.execute(
+        "SELECT currency, fx_rate FROM pr_requests WHERE id=?", (pr_id,)).fetchone())
     cat = {}
     iids = [r["item_id"] for r in rows if r["item_id"]]
     if iids:
@@ -3166,7 +3203,14 @@ def deviation_findings(conn, pr_id):
                    "net_need": round(need, 3), "excess": round(qty - need, 3),
                    "by_name": r["id"] in named_lines}
         over_plan = bool(cov and cov["excess"] > 1e-9)
-        pct = C.price_deviation_pct(r["unit_price"], target)
+        # The target is an EGP figure off the item master; the unit price is in
+        # the PR's currency. Comparing them raw made the grader FX-blind and it
+        # failed in one direction only — every currency here has fx > 1, so a
+        # foreign price always looked smaller than it is and never graded over
+        # target. Proved: 1,200 EGP x 200 grades price_over_15 and pulls in the
+        # Managing Director, while USD 24 at fx 50 — the identical 240,000 EGP —
+        # graded on_plan and added nothing.
+        pct = C.price_deviation_pct(float(r["unit_price"] or 0) * _fx_rate, target)
         g = C.deviation_grade(pct, over_ceiling, over_plan)
         if target is None and ceiling is None:
             blind += 1
