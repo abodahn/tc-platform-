@@ -26,7 +26,15 @@ def _new_pr(c, total_unit=48000, qty=1, title="Repair battery"):
     tok = get_csrf(c)
     return c.post("/procurement/new", data={
         "_csrf": tok, "action": "submit", "title": title,
-        "department": "General Maintenance", "currency": "EGP",
+        # "IT" is deliberately NOT a maintenance department. These tests are about
+        # the ladder, the gates and the PO — not about Table 4 L2 ownership. A
+        # maintenance department now resolves to the Plant Director and the
+        # domain split correctly drops the Supply Chain Director, which would
+        # quietly shorten the tier-2 ladder these assertions exist to check. A
+        # department owned by neither keeps both directors, so the full DOAM
+        # floor is exercised. The split itself is covered by
+        # app/approvals/tests_doam_raci_domain.py.
+        "department": "IT", "currency": "EGP",
         "vendor": "High Trak for Trading",
         "item[]": "Battery", "description[]": "48V 750A",
         "unit[]": "Pcs", "qty[]": str(qty), "current_stock[]": "0",
