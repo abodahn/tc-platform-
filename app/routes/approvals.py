@@ -188,7 +188,15 @@ def _parse_header(f, can_price=False):
         "tax_rate": f.get("tax_rate", "").strip() or 0,
         # DOAM §4.2 — capital expenditure follows a different ladder. Anything
         # not explicitly marked capital is operating expenditure.
-        "expenditure_kind": f.get("expenditure_kind", "").strip().lower(),
+        # Normalised, not lower-cased: "capitol", "1", a blank and a capex
+        # carrying an invisible character all used to store opex — the
+        # weaker §4.2 ladder — with nothing saying so. The helper reports
+        # whether it recognised the value; _submit_error refuses the
+        # submit when it did not, so a downgrade cannot happen silently.
+        "expenditure_kind": C.normalise_expenditure_kind(
+            f.get("expenditure_kind"))[0],
+        "_kind_recognised": C.normalise_expenditure_kind(
+            f.get("expenditure_kind"))[1],
         # DOAM §5 — the cost object this spend belongs to.
         "so_no": f.get("so_no", "").strip(),
         "cost_center": f.get("cost_center", "").strip(),
@@ -210,7 +218,7 @@ def _parse_items(f, can_price=False):
     units = f.getlist("unit[]"); qtys = f.getlist("qty[]")
     stocks = f.getlist("current_stock[]"); prices = f.getlist("unit_price[]")
     notes = f.getlist("item_notes[]"); spares = f.getlist("spare_id[]")
-    item_ids = f.getlist("item_id[]")
+    item_ids = f.getlist("item_id[]"); vendors = f.getlist("vendor[]")
     for i in range(len(names)):
         if not (names[i] or "").strip():
             continue
@@ -220,6 +228,10 @@ def _parse_items(f, can_price=False):
             "unit": units[i] if i < len(units) else "Pcs",
             "qty": qtys[i] if i < len(qtys) else 0,
             "current_stock": stocks[i] if i < len(stocks) else 0,
+            # One requisition, several suppliers: each line may name its own.
+            # Left blank it stays blank here and services.py falls back to the
+            # header vendor — the behaviour every existing request relies on.
+            "vendor": vendors[i].strip() if i < len(vendors) else "",
             # Commercial lockout: unit price is forced to 0 for requesters, no
             # matter what the form (or a hand-crafted request) sends.
             "unit_price": (prices[i] if i < len(prices) else 0) if can_price else 0,
@@ -1439,18 +1451,26 @@ def pr_pdf(pr_id):
 @login_required
 @permission_required("proc_view")
 def po_pdf(pr_id):
+    """?po=<id> prints THAT vendor's order; without it, the primary one. A
+    request buying from several suppliers issues one document each, and each
+    carries only its own vendor's lines and prices."""
     bundle = svc.get_pr(pr_id)
     if not bundle:
         abort(404)
     if bundle["pr"]["status"] not in ("approved", "po_issued", "closed"):
         abort(400, "The Purchase Order is available only after full approval.")
+    pos = bundle.get("pos") or []
+    want = request.args.get("po", type=int)
+    po = next((p for p in pos if p["id"] == want), None) if want else (pos[0] if pos else None)
+    if want and not po:
+        abort(404)
     try:
-        data = pdfgen.po_pdf(bundle)
+        data = pdfgen.po_pdf(bundle, po)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
     return send_file(io.BytesIO(data), mimetype="application/pdf",
                      as_attachment=False,
-                     download_name=f"{bundle['pr'].get('po_no', 'PO')}.pdf")
+                     download_name=f"{(po or {}).get('po_no') or bundle['pr'].get('po_no', 'PO')}.pdf")
 
 
 @bp.route("/pr/<int:pr_id>/grn.pdf")
@@ -1608,7 +1628,16 @@ def settings():
     return render_template("approvals/settings.html", active="proc_settings",
                            departments=depts, department=dept,
                            matrix=svc.get_dept_matrix(dept), ladder=C.LADDER,
-                           stage_labels=C.STAGE_LABELS, default_matrix=C.APPROVAL_MATRIX,
+                           # ACTIVE_MATRIX, not APPROVAL_MATRIX. The template
+                           # iterates C.LADDER, which rebinds to the 8-stage DOAM
+                           # ladder when the manual is in force, while
+                           # APPROVAL_MATRIX is the 6-stage paper form — so
+                           # 'scd' and 'bod' were missing keys and the {:,.0f}
+                           # format on an Undefined raised, taking the whole
+                           # screen to a 500 for every admin including
+                           # super_admin. The responsibility matrix could not be
+                           # opened at all.
+                           stage_labels=C.STAGE_LABELS, default_matrix=C.ACTIVE_MATRIX,
                            is_builtin=(dept in C.DEPARTMENTS),
                            has_custom=(dept in svc.all_dept_matrices()),
                            # Escalation chain: role names and the section's own

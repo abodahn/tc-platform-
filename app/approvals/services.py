@@ -550,6 +550,7 @@ def get_pr(pr_id):
                 (pr_id,)).fetchall()]
         except Exception:
             grns, quarantine = [], []    # database predating the GRN tables
+        pos = _pos_for(conn, pr)     # one per vendor; falls back to pr.po_no
         returns_ok = True
         try:
             returns = [dict(r) for r in conn.execute(
@@ -595,7 +596,7 @@ def get_pr(pr_id):
             "quotes": [dict(r) for r in quotes],
             "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments],
             "grns": grns, "quarantine": quarantine, "returns": returns,
-            "returns_ok": returns_ok}
+            "returns_ok": returns_ok, "pos": pos}
 
 
 def list_prs(status=None, requester=None, limit=500):
@@ -1028,8 +1029,8 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
                   if str(it.get("spare_id") or "").strip().isdigit()
                   and int(it["spare_id"]) in real_spares else None),
                  int(it["item_id"]) if str(it.get("item_id") or "").strip().isdigit() else None))
-        kind = "capex" if str(header.get("expenditure_kind") or "").strip().lower() \
-            in ("capex", "capital") else "opex"
+        # §4.2 — an unrecognised value must not quietly take the WEAKER ladder.
+        kind, _known = C.normalise_expenditure_kind(header.get("expenditure_kind"))
         try:
             # retention_until is stamped HERE, at creation, from the same two
             # numbers the controlled-forms register prints as prose: 10 years for
@@ -1094,7 +1095,8 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
     try:
         pr = conn.execute(
             "SELECT status, requester, tax_rate, payment_condition, pricing_status, "
-            "created_at FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+            "created_at, expenditure_kind FROM pr_requests WHERE id=?",
+            (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
         if pr["status"] not in ("draft", "rejected"):
@@ -1105,8 +1107,16 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
             else float(pr["tax_rate"] or 0)
         pay_cond = header.get("payment_condition") if can_price \
             else pr["payment_condition"]
-        kind = "capex" if str(header.get("expenditure_kind") or "").strip().lower() in (
-            "capex", "capital") else "opex"
+        kind, _known = C.normalise_expenditure_kind(header.get("expenditure_kind"))
+        # A re-file after rejection could change capex to opex and drop the
+        # Managing Director, and pr_events said only "edited". Which ladder a
+        # request routes on is exactly the kind of change an auditor asks about.
+        _was = (_pr_field(pr, "expenditure_kind") or "opex")
+        if _was != kind:
+            audit(conn, pr_id, (user or {}).get("username") or "system",
+                  "expenditure_kind_changed",
+                  f"Expenditure type changed from {_was.upper()} to {kind.upper()} — "
+                  f"this changes which DOAM ladder the request routes on.", ip)
         conn.execute(
             """UPDATE pr_requests SET title=?, request_for=?, department=?, currency=?,
                vendor=?, payment_condition=?, delivery_condition=?, req_del_date=?,
@@ -1528,6 +1538,16 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     # budget state). Signed / active rungs are never touched (seq > cur_seq).
     conn.execute("DELETE FROM pr_steps WHERE pr_id=? AND origin='unbudgeted' "
                  "AND status='pending' AND seq>?", (pr_id, cur_seq))
+    # §4.3's single-source rung has exactly the same problem, and it was left
+    # behind when Table 4's was fixed. "Approved one level above the value tier"
+    # is a function of the CURRENT value, and it was computed once at the waiver
+    # and never re-read. Measured through the screen: price 30,000, waive
+    # competition, re-price to 600,000 — the waiver rung was still the CFO, a
+    # signature 600,000 requires anyway, so waiving competition bought ZERO
+    # extra approval and the Board was never asked. Dropped here and re-derived
+    # by apply_single_source_state below, against the ladder as it now stands.
+    conn.execute("DELETE FROM pr_steps WHERE pr_id=? AND origin='single_source' "
+                 "AND status='pending' AND seq>?", (pr_id, cur_seq))
     existing = conn.execute(
         "SELECT id, seq, stage, status, esc_role, approver_user, "
         "COALESCE(origin,'ladder') AS origin FROM pr_steps "
@@ -1697,6 +1717,7 @@ def price_pr(pr_id, prices, meta, user, ip=None):
             # senior one at the top of the ladder rather than a rung the
             # directors sign after.
             apply_budget_state(conn, pr_id, ip=ip)
+            apply_single_source_state(conn, pr_id, ip=ip)
 
         cur = meta.get("currency") or pr["currency"]
         audit(conn, pr_id, (user or {}).get("username"), "priced",
@@ -2024,6 +2045,97 @@ def _unbudgeted_authority_given(pr_id, pr):
         conn.close()
 
 
+def po_groups(items, pr):
+    """Order lines grouped by the supplier whose document they belong on.
+
+    A line with no vendor of its own belongs to the request's header vendor —
+    which is every line of every request raised before per-line vendors existed.
+    Insertion-ordered, so the FIRST line's vendor owns the primary PO (the number
+    pr_requests.po_no keeps)."""
+    groups = {}
+    for it in items:
+        d = it if isinstance(it, dict) else dict(it)
+        v = (d.get("vendor") or _pr_field(pr, "vendor") or "").strip()
+        groups.setdefault(v, []).append(d)
+    return groups
+
+
+def _issue_po_rows(conn, pr_id, pr, base_no, user):
+    """Write one pr_purchase_orders row per distinct vendor on the request.
+
+    The first vendor keeps `base_no` — the number drafted at full approval and
+    already quoted in the bell, the audit trail and every link — so a
+    single-vendor request is numbered exactly as it is today. Later vendors hang
+    off the same number (-2, -3 …): unique by construction, where a second
+    id-based sequence through doc_no() would collide with the PO-YYYY-<pr id>
+    numbers already in the register.
+
+    Idempotent: rows already written are returned untouched."""
+    existing = conn.execute(
+        "SELECT * FROM pr_purchase_orders WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
+    if existing:
+        return [dict(r) for r in existing]
+    items = conn.execute("SELECT * FROM pr_items WHERE pr_id=? ORDER BY seq, id",
+                         (pr_id,)).fetchall()
+    groups = po_groups(items, pr) or {(_pr_field(pr, "vendor") or ""): []}
+    try:
+        rate = float(_pr_field(pr, "tax_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    cur_code, now = _pr_field(pr, "currency") or "EGP", _now()
+    uname = (user or {}).get("username")
+    rev = int(_pr_field(pr, "po_rev") or 0)
+    out = []
+    for n, (vendor, lines) in enumerate(groups.items(), start=1):
+        # Single vendor -> the header total itself, so the document is byte-for-byte
+        # what it prints today; only a split re-adds the lines per supplier.
+        sub = round(float(_pr_field(pr, "total") or 0), 2) if len(groups) == 1 \
+            else round(sum(_amount(l) for l in lines), 2)
+        tax = round(sub * rate / 100.0, 2)
+        po_no = base_no if n == 1 else f"{base_no}-{n}"
+        row = {"pr_id": pr_id, "po_no": po_no, "vendor": vendor or None,
+               "currency": cur_code, "subtotal": sub, "tax": tax,
+               "grand": round(sub + tax, 2), "rev": rev, "status": "issued",
+               "issued_at": now, "issued_by": uname}
+        c = conn.execute(
+            """INSERT INTO pr_purchase_orders
+               (pr_id, po_no, vendor, currency, subtotal, tax, grand, rev, status,
+                issued_at, issued_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (pr_id, po_no, row["vendor"], cur_code, sub, tax, row["grand"], rev,
+             "issued", now, uname))
+        row["id"] = c.lastrowid
+        out.append(row)
+    return out
+
+
+def _pos_for(conn, pr):
+    """Every purchase order issued for a request — the read-through helper.
+
+    FALLBACK, not a migration: a request issued before the per-vendor split has
+    no rows here and its one order lives in pr_requests.po_no, so it is
+    synthesised on read. Historic rows are never rewritten."""
+    pr_id = _pr_field(pr, "id")
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM pr_purchase_orders WHERE pr_id=? ORDER BY id",
+            (pr_id,)).fetchall()]
+    except Exception:
+        conn.rollback()          # database predating the table
+        rows = []
+    if rows:
+        return rows
+    po_no = (_pr_field(pr, "po_no") or "").strip()
+    if not po_no:
+        return []
+    amt = pr_amounts(dict(pr))
+    return [{"id": None, "pr_id": pr_id, "po_no": po_no,
+             "vendor": _pr_field(pr, "vendor"), "currency": _pr_field(pr, "currency"),
+             "subtotal": amt["subtotal"], "tax": amt["tax"], "grand": amt["grand"],
+             "rev": int(_pr_field(pr, "po_rev") or 0),
+             "status": "issued" if _pr_field(pr, "status") != "approved" else "drafted",
+             "issued_at": None, "issued_by": None}]
+
+
 def issue_po(pr_id, user, ip=None, force=False):
     """Mark an approved PR's PO as issued (purchasing action). When an explicit
     department budget exists and this PO would leave it exceeded, issuing is
@@ -2047,11 +2159,20 @@ def issue_po(pr_id, user, ip=None, force=False):
         if force:
             audit(conn, pr_id, (user or {}).get("username"), "po_override",
                   "PO issued with admin override (budget exceeded)", ip)
-        po_no = pr["po_no"] or doc_no("PO", pr_id)
+        pos = _issue_po_rows(conn, pr_id, pr, pr["po_no"] or doc_no("PO", pr_id), user)
+        # The PRIMARY order's number stays on pr_requests.po_no: it is what every
+        # screen, PDF link, report and the maintenance bridge resolve against.
+        po_no = pos[0]["po_no"]
         conn.execute("UPDATE pr_requests SET status='po_issued', po_no=? WHERE id=?",
                      (po_no, pr_id))
-        audit(conn, pr_id, user.get("username"), "po_issued", f"PO {po_no} issued", ip)
-        bell(conn, "info", "Purchase Order issued", f"{po_no} issued for {pr['pr_no']}.")
+        each = ", ".join(f"{p['po_no']} ({p['vendor'] or '—'})" for p in pos)
+        audit(conn, pr_id, user.get("username"), "po_issued",
+              f"PO {po_no} issued" if len(pos) == 1
+              else f"{len(pos)} purchase orders issued, one per vendor: {each}", ip)
+        bell(conn, "info", "Purchase Order issued",
+             f"{po_no} issued for {pr['pr_no']}." if len(pos) == 1
+             else f"{len(pos)} purchase orders issued for {pr['pr_no']}, "
+                  f"one per vendor: {each}.")
         conn.commit()
         return True, po_no
     finally:
@@ -2118,6 +2239,7 @@ def set_fx(pr_id, rate, user, ip=None):
             _reconcile_value_ladder(conn, pr_id, pr["department"], pr["total"])
             # The EGP figure just moved, so the budget verdict can have moved too.
             apply_budget_state(conn, pr_id, ip=ip)
+            apply_single_source_state(conn, pr_id, ip=ip)
         conn.commit()
         return True, "fx_set"
     finally:
@@ -3576,49 +3698,70 @@ def close_pr(pr_id, user, ip=None):
 
 
 def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
-    """Email the Purchase Order (PDF attached) to the vendor's address on file."""
+    """Email each Purchase Order (PDF attached) to ITS OWN vendor's address.
+
+    One send per order, never one broadcast: a request split across suppliers
+    has one document per supplier, and each supplier may only ever receive the
+    document carrying their own lines and prices. `pdf_bytes` (if supplied) is
+    the primary order's PDF, as before."""
     bundle = get_pr(pr_id)
     if not bundle:
         return False, "not_found"
     pr = bundle["pr"]
     if pr["status"] not in ("approved", "po_issued", "received", "closed"):
         return False, "not_approved"
-    # find the vendor's email
+    pos = bundle.get("pos") or []
+    if not pos:
+        return False, "no_vendor_email"
+    # find each vendor's email
     conn = get_db()
     try:
-        v = conn.execute("SELECT email FROM proc_vendors WHERE name=?", (pr.get("vendor"),)).fetchone()
+        emails = {}
+        for p in pos:
+            v = conn.execute("SELECT email FROM proc_vendors WHERE name=?",
+                             (p.get("vendor"),)).fetchone()
+            if v and v["email"]:
+                emails[p["po_no"]] = v["email"]
     finally:
         conn.close()
-    vendor_email = v["email"] if v else None
-    if not vendor_email:
+    if not emails:
         return False, "no_vendor_email"
-    if pdf_bytes is None:
-        try:
-            from app.approvals import pdf as _pdf
-            pdf_bytes = _pdf.po_pdf(bundle)
-        except Exception:
-            pdf_bytes = None
-    amt = pr_amounts(pr)
-    body = (f"Dear {pr.get('vendor')},\n\n"
-            f"Please find attached Purchase Order {pr.get('po_no')} "
-            f"(ref {pr.get('pr_no')}) from T&C Garments.\n\n"
-            f"Total: {amt['grand']:,.2f} {pr.get('currency') or ''}\n"
-            f"Payment: {pr.get('payment_condition') or '-'}\n"
-            f"Delivery: {pr.get('delivery_condition') or '-'}\n\n"
-            f"Regards,\nT&C Garments — Purchasing")
     from app.services.alerts import send_email_to
-    atts = [(f"{pr.get('po_no', 'PO')}.pdf", pdf_bytes, "application/pdf")] if pdf_bytes else None
-    ok = send_email_to([vendor_email], f"Purchase Order {pr.get('po_no')} — T&C Garments",
-                       body, attachments=atts)
+    from app.approvals import pdf as _pdf
+    sent, log_lines = False, []
+    for i, p in enumerate(pos):
+        vendor_email = emails.get(p["po_no"])
+        if not vendor_email:
+            log_lines.append(f"{p['po_no']}: no email on file for {p.get('vendor') or '—'}")
+            continue
+        blob = pdf_bytes if (i == 0 and pdf_bytes is not None) else None
+        if blob is None:
+            try:
+                blob = _pdf.po_pdf(bundle, p)
+            except Exception:
+                blob = None
+        body = (f"Dear {p.get('vendor') or pr.get('vendor')},\n\n"
+                f"Please find attached Purchase Order {p['po_no']} "
+                f"(ref {pr.get('pr_no')}) from T&C Garments.\n\n"
+                f"Total: {float(p.get('grand') or 0):,.2f} {p.get('currency') or pr.get('currency') or ''}\n"
+                f"Payment: {pr.get('payment_condition') or '-'}\n"
+                f"Delivery: {pr.get('delivery_condition') or '-'}\n\n"
+                f"Regards,\nT&C Garments — Purchasing")
+        atts = [(f"{p['po_no']}.pdf", blob, "application/pdf")] if blob else None
+        ok = send_email_to([vendor_email], f"Purchase Order {p['po_no']} — T&C Garments",
+                           body, attachments=atts)
+        sent = sent or ok
+        log_lines.append(f"{p['po_no']} -> {vendor_email}"
+                         + ("" if ok else " (SMTP not configured)"))
     conn = get_db()
     try:
         conn.execute("UPDATE pr_requests SET po_sent_at=? WHERE id=?", (_now(), pr_id))
         audit(conn, pr_id, user.get("username") if user else "system", "po_emailed",
-              f"PO emailed to {vendor_email}" + ("" if ok else " (SMTP not configured)"), ip)
+              "PO emailed — " + "; ".join(log_lines), ip)
         conn.commit()
     finally:
         conn.close()
-    return (True, "sent") if ok else (True, "logged")   # logged = SMTP not set yet
+    return (True, "sent") if sent else (True, "logged")   # logged = SMTP not set yet
 
 
 def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
@@ -4307,6 +4450,48 @@ def budget_check(conn, department, egp_total, period=None, pr_id=None):
         return {"unbudgeted": True, "state": "over_budget",
                 "over_by": round(-float(st["remaining"] or 0), 2), "status": st}
     return {"unbudgeted": False, "state": "budgeted", "over_by": None, "status": st}
+
+
+def apply_single_source_state(conn, pr_id, pr=None, ip=None):
+    """DOAM §4.3 — re-derive the single-source escalation against the value the
+    request now carries. Caller commits.
+
+    "Single source (any value): written justification, approved ONE LEVEL ABOVE
+    THE VALUE TIER." One level above WHAT depends on the value, so the rung has
+    to move when the value does. It was derived once when competition was waived
+    and never revisited, which made the escalation a function of pricing history
+    rather than of the money being committed — and re-pricing upward quietly
+    turned the waiver into no extra approval at all.
+
+    Runs at the pricing gate for the same reason apply_budget_state does: every
+    request the UI creates is submitted at zero, so the value that decides this
+    does not exist until Purchasing prices it.
+    """
+    pr = pr or conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+    if not pr or not str(_pr_field(pr, "single_source_reason") or "").strip():
+        return None
+    if (_pr_field(pr, "status") or "") != "pending":
+        return None
+    rows = conn.execute("SELECT seq, stage, COALESCE(origin,'ladder') AS origin "
+                        "FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()
+    stages = [r["stage"] for r in rows]
+    kind = _pr_field(pr, "expenditure_kind")
+    extra = C.single_source_stage(stages, kind)
+    if not extra:
+        return None                      # the ladder already reaches that high
+    seq = max([r["seq"] for r in rows] or [0]) + 1
+    _roles = stage_roles_map(conn)
+    e_role, e_from, why = _esc_columns(conn, extra, _pr_field(pr, "requester"),
+                                       _roles, escalation_map(conn))
+    conn.execute(
+        "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at, "
+        "esc_role, esc_from, origin) VALUES (?,?,?,?,?,?,?,?,?)",
+        (pr_id, seq, extra, "pending", stage_label(extra), _now(),
+         "" if why == "no_superior" else e_role, e_from, "single_source"))
+    audit(conn, pr_id, "system", "single_source_escalation",
+          f"Competition waived — DOAM §4.3 puts the approval one level above the "
+          f"value tier, which at this value is {stage_label(extra)}.", ip)
+    return extra
 
 
 def apply_budget_state(conn, pr_id, pr=None, ip=None):

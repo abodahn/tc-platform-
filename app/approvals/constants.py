@@ -334,6 +334,36 @@ BUSINESS_CASE_OVER = 10_000_000
 DOAM_IN_FORCE = True
 
 
+def normalise_expenditure_kind(raw):
+    """Read a declared expenditure type. Returns ("opex"|"capex", recognised).
+
+    §4.2 routes capital purchases up a different and LONGER ladder, so the safe
+    failure is not simply "default to opex" — opex is the WEAKER ladder, and an
+    unrecognised value silently taking it is a downgrade nobody sees. Measured:
+    "capitol", "1", "" and a capex with a zero-width space all stored opex, and
+    a 900,000 capital request re-filed after rejection lost the Managing
+    Director with nothing in the audit trail naming the change.
+
+    So the value is normalised generously — case, spaces, invisible characters,
+    and the words a person actually types — and the caller is TOLD when the
+    input was not recognised, so it can refuse or flag rather than quietly
+    choose the cheaper ladder.
+    """
+    txt = str(raw if raw is not None else "")
+    # strip zero-width and bidi marks before anything else: a pasted value
+    # carrying one looks identical on screen and matches nothing.
+    txt = re.sub(r"[​-‏‪-‮﻿]", "", txt)
+    txt = txt.strip().lower().replace("_", " ").replace("-", " ")
+    txt = re.sub(r"\s+", " ", txt).strip()
+    if txt in ("capex", "capital", "capital expenditure", "capex capital",
+               "cap ex", "capitalexpenditure", "asset", "fixed asset"):
+        return "capex", True
+    if txt in ("opex", "operating", "operational", "operating expenditure",
+               "op ex", "revenue", "expense"):
+        return "opex", True
+    return "opex", False        # unrecognised -> weaker ladder, but SAY SO
+
+
 def build_ladder(total, kind=None):
     """Return the ordered list of stage keys required for a request of `total`.
 
