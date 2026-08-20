@@ -8,7 +8,8 @@ import csv
 import io
 import sys
 import platform as pyplatform
-from datetime import date as _date, timedelta as _timedelta
+from datetime import date as _date, datetime as _datetime, timedelta as _timedelta, timezone as _timezone
+from zoneinfo import ZoneInfo
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
                    session, jsonify, abort, g, Response, flash, send_file)
@@ -24,9 +25,22 @@ from app.navigation import NAV
 from app.services import health as health_svc
 from app.services import seed_content as sc
 from app.services import reports as reports_svc
-from app.services.notify import sync_health_notifications, sync_system_notifications
+from app.services.notify import (health_sync_due, sync_health_notifications,
+                                 sync_system_notifications)
 
 bp = Blueprint("main", __name__)
+
+# The factory's clock, not the process's. Render runs UTC and the plant does not,
+# so between 21:00 local and midnight every "days ago" / "days late" figure on the
+# front page was a day short. Resolved once at import.
+try:
+    _TZ = ZoneInfo(Config.TC_TZ)
+except Exception:      # host with no IANA database (bare Windows) — Türkiye is UTC+3, no DST
+    _TZ = _timezone(_timedelta(hours=3))
+
+
+def _today():
+    return _datetime.now(_TZ).date()
 
 
 # --------------------------------------------------------------------------
@@ -152,6 +166,21 @@ def _loc(en, ar, tr):
     return {"en": en, "ar": ar, "tr": tr}
 
 
+def _ar_count(n, dual, plural, singular):
+    """Arabic counted-noun agreement, which has three forms where English has two:
+    the dual carries the count itself (يومين, not "2 يومًا"), 3–10 take the plural
+    (5 أيام) and 11+ take the accusative singular (13 يومًا). One form for all
+    of them reads as broken Arabic to the reader this work exists for."""
+    if n == 2:
+        return dual
+    return "%d %s" % (n, plural if 3 <= n <= 10 else singular)
+
+
+# Severity order for the strip. Tiles are emitted in code order (one block per
+# module) and sorted by this at the end, so "19 spare parts at zero stock" cannot
+# sit below "0 materials short" just because warehouse.py is read first.
+_PULSE_RANK = {"crit": 0, "warn": 1, "info": 2, "good": 3}
+
 # tone -> (kpi class, badge class, state label). Only classes that already exist
 # in app.css / the badge set are used.
 _PULSE_TONE = {
@@ -201,7 +230,67 @@ _PULSE_HEAD = {
                  "لم تُسجَّل بيانات المصنع بعد — تظهر هذه المؤشرات مع استخدام وحدات الإنتاج.",
                  "Henüz fabrika verisi kaydedilmedi — bu göstergeler üretim "
                  "modülleri kullanıldıkça görünür."),
+    # "Nothing measured" and "nothing you are allowed to see" are different
+    # sentences. Telling a user with no module permissions that the factory has
+    # no data is a lie while 3 orders and 10 spare parts sit in the same DB.
+    "locked": _loc("You do not have access to any production module yet — ask an "
+                   "administrator to grant it.",
+                   "لا تملك صلاحية الوصول إلى أي وحدة إنتاج بعد — اطلب من المسؤول منحها لك.",
+                   "Henüz hiçbir üretim modülüne erişiminiz yok — bir yöneticiden "
+                   "yetki isteyin."),
 }
+
+
+def _greeting(user):
+    """Server-computed, so it is emitted as data-loc-* — a Jinja-concatenated
+    greeting cannot be translated. Clock is the factory's, not the process's."""
+    h = _datetime.now(_TZ).hour
+    name = (user or {}).get("full_name") or (user or {}).get("username") or ""
+    en, ar, tr = (("Good morning", "صباح الخير", "Günaydın") if h < 12 else
+                  ("Good afternoon", "طاب مساؤك", "İyi günler") if h < 18 else
+                  ("Good evening", "مساء الخير", "İyi akşamlar"))
+    # No name -> "Good morning." and not "Good morning, ."
+    return _loc(en + (", %s." % name if name else "."),
+                ar + ("، %s." % name if name else "."),
+                tr + (", %s." % name if name else "."))
+
+
+def _verdict(tiles):
+    """'3 of 7 indicators need action' — no query, derived from the tiles in hand.
+    Whole sentences per language: number order differs in Turkish."""
+    total = len(tiles)
+    if not total:
+        return None
+    need = sum(1 for t in tiles if t["rank"] <= 1)      # crit + warn
+    if not need:
+        return _loc("All %d indicators are on track." % total,
+                    "جميع المؤشرات (%d) على المسار الصحيح." % total,
+                    "%d göstergenin tamamı yolunda." % total)
+    return _loc("%d of %d indicators need action." % (need, total),
+                "%d من %s تحتاج إلى إجراء." % (need, _ar_count(total, "مؤشرين", "مؤشرات", "مؤشرًا")),
+                "%d göstergeden %d tanesi aksiyon gerektiriyor." % (total, need))
+
+
+def _freshness(asof):
+    """'Production last reported 2026-08-06 · 13 days ago.' Reuses the MAX(work_date)
+    the lines aggregate already selected — zero extra queries."""
+    if not asof:
+        return None
+    try:
+        d = _date.fromisoformat(str(asof)[:10])
+    except ValueError:
+        return None
+    n = (_today() - d).days
+    if n <= 0:
+        ago = ("today", "اليوم", "bugün")
+    elif n == 1:
+        ago = ("yesterday", "أمس", "dün")
+    else:
+        ago = ("%d days ago" % n, "قبل %s" % _ar_count(n, "يومين", "أيام", "يومًا"),
+               "%d gün önce" % n)
+    return _loc("Production last reported %s · %s" % (d.isoformat(), ago[0]),
+                "آخر تقرير إنتاج %s · %s" % (d.isoformat(), ago[1]),
+                "Üretim son olarak %s tarihinde raporlandı · %s" % (d.isoformat(), ago[2]))
 
 
 def _factory_pulse(user):
@@ -226,10 +315,14 @@ def _factory_pulse(user):
     Query cost: 6 aggregate statements on one shared connection + up to 3 from the
     procurement signature queue = 9 max, constant in the number of orders.
     """
-    tiles = []
+    # "permitted" separates the two empty states the page must not confuse: no
+    # data recorded, versus no module this user is allowed to look at.
+    out = {"tiles": [], "asof": None, "orders": [], "orders_empty": False,
+           "permitted": False}
+    tiles = out["tiles"]
     if not user:
-        return tiles
-    today = _date.today()
+        return out
+    today = _today()
     d_today = today.isoformat()
     d_week = (today + _timedelta(days=7)).isoformat()
     d_month = (today + _timedelta(days=30)).isoformat()
@@ -238,19 +331,20 @@ def _factory_pulse(user):
     try:
         conn = get_db()
     except Exception:
-        return tiles
+        return out
 
     def tile(k, icon, label, n, url, tone, total=None, scope=None, suffix=""):
         klass, badge, state = _PULSE_TONE[tone]
         # label/scope/state are resolved to {en,ar,tr} here and rendered as
         # data-loc-* — never as data-i18n, which would ship a raw key.
         return {"k": k, "icon": icon, "label": _PULSE_TEXT[label], "n": n, "url": url,
-                "klass": klass, "badge": badge, "state": state,
+                "klass": klass, "badge": badge, "state": state, "rank": _PULSE_RANK[tone],
                 "total": total, "scope": _PULSE_TEXT.get(scope), "suffix": suffix}
 
     def block(perm, fn):
         if not user_has_permission(user, perm):
             return
+        out["permitted"] = True
         try:
             got = fn()
             if got:
@@ -331,10 +425,15 @@ def _factory_pulse(user):
     # the output gap, before it becomes a late shipment.
     def _lines():
         r = conn.execute(
-            "SELECT COUNT(*) AS lines_n, SUM(CASE WHEN a < t THEN 1 ELSE 0 END) AS below FROM ("
+            "SELECT COUNT(*) AS lines_n, SUM(CASE WHEN a < t THEN 1 ELSE 0 END) AS below, "
+            "(SELECT MAX(work_date) FROM mes_hourly) AS asof FROM ("
             "SELECT line_id, SUM(actual_qty) AS a, SUM(target_qty) AS t FROM mes_hourly "
             "WHERE work_date = (SELECT MAX(work_date) FROM mes_hourly) "
             "GROUP BY line_id HAVING SUM(target_qty) > 0) q").fetchone()
+        # Same statement, one more column: the day production last reported.
+        # A fresh-looking output number over two-week-old data is the same lie as
+        # an inert control, so the page states the date it is reading.
+        out["asof"] = r["asof"]
         n = int(r["lines_n"] or 0)
         if not n:
             return None
@@ -389,11 +488,67 @@ def _factory_pulse(user):
                      total, "exec.scope_certs")]
     block("cmp_view", _certs)
 
+    # The one place home lists records instead of counting them. An order IS an
+    # aggregate of milestones and only a handful are ever live, so the row grain
+    # here is the ORDER (3 rows), never the milestone (18) — that is My Work's
+    # job. Capped at 6: if this ever needs a scrollbar it has become My Work.
+    def _order_rows():
+        rows = conn.execute(
+            "SELECT o.id, o.order_no, o.buyer, o.style_ref, o.qty, o.ship_date, "
+            "COUNT(CASE WHEN m.actual_date IS NULL AND m.planned_date IS NOT NULL "
+            "           AND m.planned_date < ? THEN 1 END) AS late_ms, "
+            "COUNT(CASE WHEN m.actual_date IS NULL THEN 1 END) AS open_ms "
+            "FROM ord_orders o LEFT JOIN ord_milestones m ON m.order_id = o.id "
+            "WHERE o.status NOT IN ('shipped','closed','cancelled') "
+            "GROUP BY o.id, o.order_no, o.buyer, o.style_ref, o.qty, o.ship_date "
+            "ORDER BY late_ms DESC, o.ship_date ASC LIMIT 6", (d_today,)).fetchall()
+        # Permitted but nothing on file is a state worth naming, not a blank gap:
+        # the template says "no live orders on file yet" instead of printing 0.
+        out["orders_empty"] = not rows
+        for r in rows:
+            late_days = 0
+            if r["ship_date"] and r["ship_date"] < d_today:
+                try:
+                    late_days = (today - _date.fromisoformat(r["ship_date"][:10])).days
+                except ValueError:
+                    late_days = 0
+            late_ms, open_ms = int(r["late_ms"] or 0), int(r["open_ms"] or 0)
+            # An order with a missed milestone is NOT "on track" just because its
+            # ship date is still in the future — that is the slip, three weeks
+            # early. Saying "on track" here would contradict the orders_late tile
+            # sitting directly above it, on the same screen.
+            if late_days:
+                tone, state = "critical", _loc(
+                    "%d days late" % late_days,
+                    "متأخر %s" % _ar_count(late_days, "يومين", "أيام", "يومًا"),
+                    "%d gün gecikmeli" % late_days)
+            elif late_ms:
+                tone, state = "warning", _loc("Behind schedule", "متأخر عن الجدول",
+                                              "Programın gerisinde")
+            elif r["ship_date"]:
+                tone, state = "live", _loc("On track", "على المسار", "Yolunda")
+            else:
+                tone, state = "info", _loc("No ship date", "بدون تاريخ شحن",
+                                           "Sevk tarihi yok")
+            out["orders"].append({
+                "id": r["id"], "order_no": r["order_no"] or "—",
+                "buyer": r["buyer"] or "—", "style": r["style_ref"] or "—",
+                "qty": int(r["qty"] or 0), "ship_date": r["ship_date"] or "",
+                "tone": tone, "ship_state": state,
+                "ms": _loc("%d late" % late_ms, "%d متأخر" % late_ms, "%d geciken" % late_ms)
+                if late_ms else _loc("%d open" % open_ms, "%d مفتوح" % open_ms,
+                                     "%d açık" % open_ms),
+                "ms_late": bool(late_ms),
+            })
+        return None
+    block("view_dashboard", _order_rows)
+
     try:
         conn.close()
     except Exception:
         pass
-    return tiles
+    tiles.sort(key=lambda t: t["rank"])   # severity, not source-file order
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -409,63 +564,26 @@ def dashboard():
         if len(scope) == 1:
             return redirect(url_for("main.module", key=next(iter(scope))))
         return redirect(url_for("main.launcher"))
-    systems = _systems()
-    statuses = health_svc.check_all(systems)
-    sync_health_notifications(systems, statuses)
-    online = sum(1 for s in statuses.values() if s["status"] == "online")
-    total_int = sum(1 for s in systems if s["is_integrated"])
-
-    # Executive KPI tiles — pulled LIVE from each system's integration summary
-    # (the same source the Business Overview panel uses), so the Command Center
-    # matches what each system shows. A system that is offline contributes 0 and
-    # its outage is shown by the health tiles. Transformation-progress tiles have
-    # no integrated source yet and stay as curated roadmap placeholders.
-    from app.services.integration import fetch_overview
-    overview = fetch_overview(systems)
-
-    def _kpi(key, contains, default=0):
-        # reads live OR last-known-good ("stale") values — anything with kpis
-        for e in overview:
-            if e.get("key") == key and e.get("kpis"):
-                for k in e.get("kpis", []):
-                    if contains in str(k.get("label", "")).lower():
-                        v = k.get("value")
-                        if isinstance(v, (int, float)):
-                            return v
-        return default
-
-    itsm_total = _kpi("itsm", "total tickets")
-    itsm_breach = _kpi("itsm", "breached")
-    sla_health = round(100 * (itsm_total - itsm_breach) / itsm_total) if itsm_total else 100
-
-    kpis = {
-        # --- live operational (from the integrated systems) ---
-        "open_tickets": _kpi("itsm", "open ticket"),
-        "critical_tickets": itsm_breach,
-        "sla_health": sla_health,
-        "assets_total": _kpi("assets", "total asset"),
-        "assets_maintenance": _kpi("assets", "maintenance"),   # 0 until assets emits it
-        "low_stock": _kpi("assets", "low stock"),
-        "servers_online": online,
-        "servers_total": total_int,
-        "cpu_alerts": _kpi("monitoring", "alert"),
-        "active_projects": _kpi("commandtrack", "open task"),
-        "overdue_tasks": _kpi("commandtrack", "overdue"),
-        "pending_approvals": _kpi("commandtrack", "pending approval"),
-        # --- digital-transformation roadmap KPIs (no integrated source yet) ---
-        "finance_progress": 62,
-        "automation_progress": 48,
-        "ai_progress": 35,
-        "production_readiness": 40,
-        "cost_saving": "₺ 2.6M",
-    }
-    _, unread = _unread_notifications((current_user() or {}).get("username"))
-    from app.insights import executive_summary
-    briefing = executive_summary()
-    return render_template("dashboard.html",
-                           systems=systems, statuses=statuses, kpis=kpis, briefing=briefing,
-                           pulse=_factory_pulse(current_user()), pulse_head=_PULSE_HEAD,
-                           roadmap=sc.ROADMAP, active="command_center")
+    # Nothing on this page reaches the factory LAN any more. The four 127.0.0.1
+    # systems are unreachable from Render BY DESIGN, so every number scraped from
+    # them rendered 0 — and sla_health's `else 100` fallback rendered an
+    # unreachable service desk as "SLA 100%, green". System status lives on
+    # /health and the launcher, which both probe live; outage alerts reach the bell
+    # from the notifications feed poller, which already writes (a GET must not).
+    user = current_user()
+    pulse = _factory_pulse(user)
+    briefing = None
+    if user_has_permission(user, "maint_view"):
+        from app.insights import executive_summary
+        briefing = executive_summary()
+    return render_template(
+        "dashboard.html",
+        pulse=pulse["tiles"], orders=pulse["orders"],
+        orders_empty=pulse["orders_empty"], pulse_head=_PULSE_HEAD,
+        permitted=pulse["permitted"],
+        greeting=_greeting(user), verdict=_verdict(pulse["tiles"]),
+        freshness=_freshness(pulse["asof"]), briefing=briefing,
+        active="command_center")
 
 
 # --------------------------------------------------------------------------
@@ -649,7 +767,7 @@ def service_worker():
 def health():
     systems = _systems()
     statuses = health_svc.check_all(systems, use_cache=False)
-    sync_health_notifications(systems, statuses)
+    sync_health_notifications(systems, statuses, force=True)
     info = {
         "python": sys.version.split()[0],
         "platform": pyplatform.platform(),
@@ -890,7 +1008,23 @@ def notifications_feed():
     four systems' own notifications into the feed (throttled), so any alert from
     ITSM / Assets / Monitoring / CommandTrack shows up here too."""
     try:
-        sync_system_notifications(_systems())
+        systems = _systems()
+    except Exception:
+        systems = []
+    try:
+        sync_system_notifications(systems)
+    except Exception:
+        pass
+    try:
+        # Outage alerts (and their auto-resolve) used to ride on a Command Center
+        # GET, which must not write. They cannot ride on /health either: that page
+        # needs view_system_health, which only the IT roles hold, so nobody else
+        # could ever raise or clear one. This poller is the endpoint that already
+        # writes, runs for every signed-in browser, and is throttled the same way
+        # — checked before check_all(), because probing four hosts is the
+        # expensive half of this, not the four SELECTs.
+        if health_sync_due():
+            sync_health_notifications(systems, health_svc.check_all(systems))
     except Exception:
         pass
     try:
@@ -900,7 +1034,7 @@ def notifications_feed():
         pass
     try:
         from app.services.auto_ticket import auto_create_tickets
-        auto_create_tickets(_systems())   # open ITSM tickets for new critical alerts (if enabled)
+        auto_create_tickets(systems)   # open ITSM tickets for new critical alerts (if enabled)
     except Exception:
         pass
     notifs, unread = _unread_notifications((current_user() or {}).get("username"))

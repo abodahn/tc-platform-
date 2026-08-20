@@ -28,3 +28,11 @@ preview.db
 scratchpad/
 _out.pdf
 _stress.pdf
+
+# Database backups. '*.db' does not match a name that ENDS in something else,
+# which is how platform.db.pre-cleanup-bak (9.4 MB, 737 password hashes, 677
+# staff email addresses) got committed to a PUBLIC repository twice.
+platform.db.*
+*.db.*
+*-bak
+*.bak

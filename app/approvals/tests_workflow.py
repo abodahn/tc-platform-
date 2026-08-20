@@ -92,7 +92,20 @@ with app.app_context():
        svc.can_act(store, "warehouse") and not svc.can_act(store, "cfo"))
 
     # --- one real end-to-end flow, asserting the pre-change outcomes ---
-    print("\n   end-to-end: unpriced PR -> gates -> 5 signatures -> PO -> payment")
+    # ONE DISTINCT PERSON PER RUNG. SOD_ADMIN_EXEMPT is False, so the dual-role
+    # rule refuses any account — admin included — a second rung of the same
+    # request. The ladder is walked the way a real approval chain walks it, the
+    # pattern tests_three_way_match.py uses.
+    signer = {stage: mkuser(conn, "wf_sign_" + stage, sorted(roles)[0])
+              for stage, roles in C.STAGE_ROLES.items()}
+    buyer = signer["purchasing"]
+
+    # DOAM §4.1 tier 4 (500,001 - 2,000,000): the last signature is the CFO's, so
+    # this one request still exercises Finance AND the CFO as the final approver.
+    # Under the paper form that was 30,000; the DOAM does not involve either at
+    # that value (§4.1 tier 2 stops at the directors).
+    TOTAL = 600_000.0
+    print("\n   end-to-end: unpriced PR -> gates -> signatures -> PO -> payment")
     pr_id, pr_no = svc.create_pr(
         {"title": "WF flow", "department": "Production", "currency": "EGP"},
         [{"item": "Battery", "qty": 1, "unit_price": 0}], store, submit=True)
@@ -100,32 +113,39 @@ with app.app_context():
         "SELECT stage FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()]
     ok("unpriced PR routes the demand stages only %r" % (steps,), steps == C.DEMAND_STAGES)
 
-    okk, msg = svc.act_on_step(pr_id, admin, "approve")          # warehouse
-    ok("warehouse signs (admin, SoD-exempt): %s" % msg, okk)
-    okk, msg = svc.act_on_step(pr_id, admin, "approve")          # factory manager
-    ok("factory manager signs: %s" % msg, okk)
-    okk, msg = svc.act_on_step(pr_id, admin, "approve")          # purchasing, unpriced
+    okk, msg = svc.act_on_step(pr_id, signer["warehouse"], "approve")
+    ok("warehouse signs: %s" % msg, okk)
+    okk, msg = svc.act_on_step(pr_id, buyer, "approve")          # purchasing, unpriced
     ok("PRICING GATE blocks the purchasing stage while unpriced (%s)" % msg,
        not okk and msg == "needs_pricing")
 
-    svc.price_pr(pr_id, {}, {"tax_rate": 0}, admin)              # still 0 -> price the line
+    svc.price_pr(pr_id, {}, {"tax_rate": 0}, buyer)              # still 0 -> price the line
     it = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (pr_id,)).fetchone()["id"]
-    svc.price_pr(pr_id, {it: 30000.0}, {"tax_rate": 0}, admin)
+    svc.price_pr(pr_id, {it: TOTAL}, {"tax_rate": 0}, buyer)
     steps = [r["stage"] for r in conn.execute(
         "SELECT stage FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()]
-    ok("pricing reconciles the value ladder to build_ladder(30000) %r" % (steps,),
-       steps == C.build_ladder(30000))
+    ok("pricing reconciles the value ladder to build_ladder(%d) %r" % (TOTAL, steps),
+       steps == C.build_ladder(TOTAL))
 
-    okk, msg = svc.act_on_step(pr_id, admin, "approve")          # purchasing, priced, no quotes
-    ok("RFQ GATE blocks purchasing at 30 000 EGP with no quotes (%s)" % msg,
+    okk, msg = svc.act_on_step(pr_id, buyer, "approve")          # priced, no quotes
+    ok("RFQ GATE blocks purchasing at %d EGP with no quotes (%s)" % (TOTAL, msg),
        not okk and msg == "needs_quotes")
-    svc.add_quote(pr_id, {"vendor": "Vendor A", "amount": 30000}, admin)
-    svc.add_quote(pr_id, {"vendor": "Vendor B", "amount": 31000}, admin)
-    okk, msg = svc.act_on_step(pr_id, admin, "approve")
-    ok("two DISTINCT vendor quotes satisfy the RFQ gate: %s" % msg, okk)
-    okk, msg = svc.act_on_step(pr_id, admin, "approve")          # finance
+    need = int(C.quotes_required(TOTAL))
+    svc.add_quote(pr_id, {"vendor": "Vendor A", "amount": TOTAL}, buyer)
+    svc.add_quote(pr_id, {"vendor": "Vendor B", "amount": TOTAL * 1.03}, buyer)
+    okk, msg = svc.act_on_step(pr_id, buyer, "approve")
+    ok("two quotes are short of DOAM §4.3's %d in this band (%s)" % (need, msg),
+       not okk and msg == "needs_quotes")
+    svc.add_quote(pr_id, {"vendor": "Vendor C", "amount": TOTAL * 1.05}, buyer)
+    okk, msg = svc.act_on_step(pr_id, buyer, "approve")
+    ok("%d DISTINCT vendor quotes satisfy the RFQ gate: %s" % (need, msg), okk)
+    okk, msg = svc.act_on_step(pr_id, signer["factory_manager"], "approve")
+    ok("factory manager signs: %s" % msg, okk)
+    okk, msg = svc.act_on_step(pr_id, signer["scd"], "approve")
+    ok("supply chain director signs: %s" % msg, okk)
+    okk, msg = svc.act_on_step(pr_id, signer["finance"], "approve")
     ok("finance signs: %s" % msg, okk)
-    okk, msg = svc.act_on_step(pr_id, admin, "approve")          # cfo -> fully approved
+    okk, msg = svc.act_on_step(pr_id, signer["cfo"], "approve")  # -> fully approved
     ok("cfo signs and the PR is fully approved: %s" % msg, okk and msg == "approved")
     ok("PR status is 'approved' with a drafted PO",
        conn.execute("SELECT status, po_no FROM pr_requests WHERE id=?",
@@ -135,11 +155,17 @@ with app.app_context():
     # receive the whole order through the ONE receiving entry point the app has
     svc.receive_items(pr_id, {r["id"]: r["qty"] for r in conn.execute(
         "SELECT id, qty FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()}, admin)
-    svc.add_invoice(pr_id, {"invoice_no": "INV-1", "amount": 30000, "tax": 0}, admin)
-    okk, msg = svc.add_payment(pr_id, {"amount": 30600.0}, admin)   # +2%
-    ok("PAYMENT CAP refuses 30 600 on a 30 000 PO (1%% tolerance): %s" % msg,
+    # Billed at the top of the §7.3.3 match tolerance, so what is under test below
+    # is the PAYMENT CAP and not §4.3's advance gate: money leaving before the
+    # supplier has billed for it is an advance, which is a different control with
+    # its own refusal codes (tests_three_way_match covers that one).
+    INVOICED = TOTAL + C.match_tolerance_value(TOTAL)
+    svc.add_invoice(pr_id, {"invoice_no": "INV-1", "amount": INVOICED, "tax": 0}, admin)
+    okk, msg = svc.add_payment(pr_id, {"amount": TOTAL * 1.02}, admin)   # +2%
+    ok("PAYMENT CAP refuses %d on a %d PO (1%% tolerance): %s"
+       % (TOTAL * 1.02, TOTAL, msg),
        not okk and msg in ("over_payment", "exceeds_invoiced"))
-    okk, msg = svc.add_payment(pr_id, {"amount": 30200.0}, admin)   # +0.67%, inside 1%
+    okk, msg = svc.add_payment(pr_id, {"amount": TOTAL * 1.0067}, admin)  # inside 1%
     ok("payment inside the 1%% tolerance is accepted: %s" % msg, okk)
 
     # ----------------------------------------------------------------- (b)
@@ -149,17 +175,30 @@ with app.app_context():
     row2 = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr2,)).fetchone()
     ok("baseline: RFQ gate blocks this 30 000 PR (no quotes)",
        svc.rfq_gate_check(conn, row2) == (False, "needs_quotes"))
-    svc.set_setting("rfq_value_threshold", "100000", admin)
-    ok("override rfq_value_threshold=100000 -> the same PR now passes the gate",
-       svc.rfq_gate_check(conn, row2) == (True, ""))
-    svc.set_setting("rfq_value_threshold", "1000", admin)
-    svc.add_quote(pr2, {"vendor": "Vendor A", "amount": 30000}, admin)
-    svc.add_quote(pr2, {"vendor": "Vendor B", "amount": 31000}, admin)
-    ok("with 2 quotes and threshold 1000 the gate passes",
-       svc.rfq_gate_check(conn, row2) == (True, ""))
-    svc.set_setting("rfq_quote_min", "3", admin)
-    ok("override rfq_quote_min=3 -> 2 quotes are no longer enough",
-       svc.rfq_gate_check(conn, row2) == (False, "needs_quotes"))
+    # DOAM §4.3's sourcing bands — not these two knobs — decide the quote count
+    # while the matrix is in force: a settings row must never buy a purchase out
+    # of a policy minimum. The knobs are still the rule with the matrix off, so
+    # that is where they are asserted, exactly as before; the band that overrides
+    # them is asserted straight after.
+    _doam = C.DOAM_IN_FORCE
+    try:
+        C.DOAM_IN_FORCE = False
+        svc.set_setting("rfq_value_threshold", "100000", admin)
+        ok("override rfq_value_threshold=100000 -> the same PR now passes the gate",
+           svc.rfq_gate_check(conn, row2) == (True, ""))
+        svc.set_setting("rfq_value_threshold", "1000", admin)
+        svc.add_quote(pr2, {"vendor": "Vendor A", "amount": 30000}, admin)
+        svc.add_quote(pr2, {"vendor": "Vendor B", "amount": 31000}, admin)
+        ok("with 2 quotes and threshold 1000 the gate passes",
+           svc.rfq_gate_check(conn, row2) == (True, ""))
+        svc.set_setting("rfq_quote_min", "3", admin)
+        ok("override rfq_quote_min=3 -> 2 quotes are no longer enough",
+           svc.rfq_gate_check(conn, row2) == (False, "needs_quotes"))
+    finally:
+        C.DOAM_IN_FORCE = _doam
+    ok("...and with the DOAM in force the §4.3 band binds instead of the knob "
+       "(band=%d quotes at 30 000)" % C.quotes_required(30000),
+       C.quotes_required(30000) == 1 and svc.rfq_gate_check(conn, row2) == (True, ""))
 
     svc.set_stage_meta("warehouse", roles=["factory_manager"], user=admin)
     ok("override stage role: warehouse is now signed by factory_manager only",
@@ -178,7 +217,9 @@ with app.app_context():
        not okk and msg == "self_approval")
 
     svc.set_setting("payment_tolerance_pct", "10", admin)
-    okk, msg = svc.add_payment(pr_id, {"amount": 600.0}, admin)   # 30 800 total vs 30 000 PO
+    # 611,020 cumulative: past the 1% cap (606,000), inside the 10% one (660,000),
+    # and still inside what the supplier invoiced, so only the knob decides it.
+    okk, msg = svc.add_payment(pr_id, {"amount": 7_000.0}, admin)
     ok("override payment_tolerance_pct=10 -> a payment refused at 1%% now clears: %s" % msg, okk)
 
     # ----------------------------------------------------------------- (c)
@@ -285,9 +326,12 @@ with app.app_context():
        % len(v["statuses"]),
        len(v["stages"]) == len(C.LADDER) and len(v["gates"]) == 6
        and len(v["statuses"]) == len(C.PR_STATUSES) and len(v["knobs"]) == 4)
-    ok("every stage carries a non-empty explanation",
+    ok("every stage carries a non-empty explanation %r"
+       % [s["stage"] for s in v["stages"] if not s["explanation"]],
        all(s["explanation"] for s in v["stages"]))
-    ok("every status and role carries a meaning",
+    ok("every status and role carries a meaning %r"
+       % ([s["key"] for s in v["statuses"] if not s["body"]]
+          + [r["key"] for r in v["roles"] if not r["explanation"]]),
        all(s["body"] for s in v["statuses"]) and all(r["explanation"] for r in v["roles"]))
     ok("the pricing + RFQ gates are attached to the purchasing stage",
        "pricing_gate" in [s for s in v["stages"]

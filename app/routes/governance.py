@@ -241,9 +241,15 @@ def procurement_rules():
     out["stages"] = [{
         "stage": s,
         "label": C.stage_label(s),
-        "threshold": C.APPROVAL_MATRIX.get(s, 0),
+        # ACTIVE_MATRIX, not APPROVAL_MATRIX: this iterates C.LADDER, which is
+        # the 8-stage DOAM ladder when the manual is in force, while
+        # APPROVAL_MATRIX is the 6-stage paper form. Reading the wrong one
+        # published the Supply Chain Director and the Board with a threshold of
+        # 0 and typed them as "demand" stages — a governance page stating the
+        # opposite of the ladder the requests actually route on.
+        "threshold": C.ACTIVE_MATRIX.get(s, 0),
         "roles": sorted(C.STAGE_ROLES.get(s, ())),
-        "kind": "demand" if C.APPROVAL_MATRIX.get(s, 0) <= 0 else "value",
+        "kind": "demand" if C.ACTIVE_MATRIX.get(s, 0) <= 0 else "value",
     } for s in C.LADDER]
     out["examples"] = [(amount, C.build_ladder(amount))
                        for amount in (5_000, 12_000, 48_000, 250_000)]

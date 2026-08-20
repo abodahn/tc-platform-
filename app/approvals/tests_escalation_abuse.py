@@ -117,40 +117,51 @@ with app.app_context():
     # One person per role, so every rung has exactly one eligible human.
     U = {r: mk("ab_" + r, r) for r in ("factory_manager", "purchasing_manager",
                                        "finance_manager", "cfo", "ceo")}
-    fmgr = U["factory_manager"]
+    # DOAM §4.1 puts BOTH directors on a value threshold, so an unpriced request
+    # routes the demand ladder alone (warehouse -> purchasing). The rung a
+    # requester can therefore deadlock at SUBMIT is the warehouse one, and its
+    # sole holder is `wm`. Pricing then pulls the rung of the senior who signed
+    # it onto the same ladder — which is exactly the hole this section exists for.
     pr2, _ = svc.create_pr({"title": "unpriced", "department": "Production"},
                            [{"item": "loom part", "qty": 1, "unit_price": 0}],
-                           fmgr, submit=False)
-    okk, msg = svc.submit_pr(pr2, fmgr)
-    ok("the factory manager's UNPRICED request routes (%s)" % (msg or "ok"), okk)
-    fm_step = [s for s in steps(pr2) if s["stage"] == "factory_manager"][0]
-    ok("his own rung escalated (%s)" % fm_step["esc_role"], bool(fm_step["esc_role"]))
-    escalated_to = fm_step["esc_role"]
+                           wm, submit=False)
+    okk, msg = svc.submit_pr(pr2, wm)
+    ok("the warehouse manager's UNPRICED request routes (%s)" % (msg or "ok"), okk)
+    own_step = [s for s in steps(pr2) if s["stage"] == "warehouse"][0]
+    ok("his own rung escalated (%s)" % own_step["esc_role"], bool(own_step["esc_role"]))
+    escalated_to = own_step["esc_role"]
     signer = next((u for u in U.values() if u["role"] in escalated_to.split(",")), None)
     ok("the escalated-to human exists and can sign it",
-       signer is not None and svc.can_act_step(signer, fm_step))
+       signer is not None and svc.can_act_step(signer, own_step))
     for who in (wm["username"], signer["username"] if signer else ""):
         row = conn.execute("SELECT * FROM users WHERE username=?", (who,)).fetchone()
         if row:
             svc.act_on_step(pr2, dict(row), "approve")
     ok("the escalated rung is signed by that human, not the requester",
-       [s for s in steps(pr2) if s["stage"] == "factory_manager"][0]["approver_user"]
+       [s for s in steps(pr2) if s["stage"] == "warehouse"][0]["approver_user"]
        == (signer or {}).get("username"))
-    # Purchasing prices it into the 100k+ band: finance + cfo + ceo rungs join,
-    # and one of them is the human who just signed the escalated rung.
+    # Purchasing prices it above the director threshold: the value rungs join,
+    # and one of them is the human who just signed the escalated demand rung.
     item = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (pr2,)).fetchone()["id"]
     svc.price_pr(pr2, {str(item): 150000}, {}, U["purchasing_manager"])
+    # Matched on the stage's CONFIGURED roles, not on step_roles(): a rung that
+    # was correctly re-resolved reports the superior's role, so reading the live
+    # roles would make this list empty and the assertion below vacuous.
     trap = [s for s in steps(pr2)
-            if s["stage"] in ("finance", "cfo", "ceo")
-            and (signer or {}).get("role") in (svc.step_roles(s) or set())]
+            if s["stage"] not in _C.DEMAND_STAGES
+            and (signer or {}).get("role") in _C.STAGE_ROLES.get(s["stage"], set())]
     ok("the appended rung whose only signer already signed is NOT left silently "
-       "pending on him", all(s["esc_role"] is not None for s in trap))
+       "pending on him", trap and all(s["esc_role"] is not None for s in trap))
     ev = [e["action"] for e in svc.get_pr(pr2)["events"]]
     ok("the deviation is on the audit trail (%s)" % [a for a in ev if "escalat" in a],
        any(a in ("escalated_stage", "escalation_blocked") for a in ev))
+    _want = _C.build_ladder(150000)
+    _have = [r["stage"] for r in steps(pr2)]
     ok("no rung was dropped: the ladder still has every stage the value requires",
-       [s["stage"] for s in steps(pr2)]
-       == [s for s in svc.C.build_ladder(150000)] if hasattr(svc, "C") else True)
+       [s for s in _have if s in _want] == _want)
+    ok("...and every rung ON TOP of the value ladder is a named DOAM control rung",
+       all((r["origin"] or "ladder") in _C.CONTROL_ORIGINS
+           for r in steps(pr2) if r["stage"] not in _want))
 
     print("\n--- 3. the requester never signs, at any depth -------------------")
     pr3, _ = svc.create_pr({"title": "mine", "department": "Production"},

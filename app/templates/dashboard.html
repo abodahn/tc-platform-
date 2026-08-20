@@ -2,48 +2,43 @@
 {% block title %}Command Center{% endblock %}
 {% block content %}
 
+{# Everything computed server-side (greetings, verdicts, dates, per-order status)
+   is emitted as data-loc-en/ar/tr — the mechanism app.js already swaps. A
+   data-i18n key here would render as the literal key, because a key cannot
+   carry a live number. Only fixed labels below use data-i18n. #}
+{% macro loc(x) %}data-loc-en="{{ x.en }}" data-loc-ar="{{ x.ar }}" data-loc-tr="{{ x.tr }}"{% endmacro %}
+
+{# ---------------- 1. Status line — replaces the hero. 0 queries. ---------------- #}
 <div class="page-head">
   <div>
-    <div class="eyebrow" data-i18n="dash.eyebrow">Executive Command Center</div>
-    <h1 data-i18n="dash.title">Operations overview</h1>
-    <div class="sub">{{ cu.full_name or cu.username }} · {{ cu_role_label }}</div>
+    {# The greeting is the visible line, but a screen reader navigating by heading
+       needs the page's name, not "Good morning, Ahmed." #}
+    <h1 class="sr-only" data-i18n="dash.title">Operations overview</h1>
+    <div class="h1-like" {{ loc(greeting) }}>{{ greeting.en }}</div>
+    {% if verdict %}<div class="sub" {{ loc(verdict) }}>{{ verdict.en }}</div>{% endif %}
   </div>
-  <a class="btn btn-ghost" href="{{ url_for('main.launcher') }}">
-    <svg class="ico"><use href="#i-apps"></use></svg><span data-i18n="nav.launcher">App Launcher</span>
+  <a class="btn btn-primary" href="{{ url_for('main.my_work') }}">
+    <svg class="ico"><use href="#i-check"></use></svg><span data-i18n="nav.my_work">My Work</span>
   </a>
 </div>
 
-{# ---------------- Hero ---------------- #}
-<div class="hero">
-  <h2 data-i18n="dash.hero_title">T&amp;C Digital Operations — Live Control Tower</h2>
-  <p data-i18n="dash.hero_sub">A single, secure ecosystem unifying service desk, assets, monitoring, work management and the digital transformation roadmap.</p>
-  <div class="chips">
-    <span class="chip"><span data-count="{{ kpis.servers_online }}">0</span>/{{ kpis.servers_total }} <span data-i18n="dash.system_health">systems</span></span>
-    <span class="chip">SLA <span data-count="{{ kpis.sla_health }}" data-suffix="%">0</span></span>
-    <span class="chip"><span data-i18n="kpi.pending_approvals">Approvals</span>: {{ kpis.pending_approvals }}</span>
-    <span class="chip"><span data-i18n="kpi.cost_saving">Saving</span>: {{ kpis.cost_saving }}</span>
-  </div>
-</div>
-
-{# ---------------- Factory pulse — cross-module risk strip ----------------
-     Built by main._factory_pulse(): each tile is permission-gated server-side,
-     so a module the user cannot open contributes no markup at all. #}
-{# Every string here is COMPUTED server-side, so it is emitted as data-loc-en/ar/tr
-   (app.js swaps those) — NOT data-i18n, which renders the literal key unless it
-   also exists in app/static/i18n/*.json. #}
-{% macro loc(x) %}data-loc-en="{{ x.en }}" data-loc-ar="{{ x.ar }}" data-loc-tr="{{ x.tr }}"{% endmacro %}
-<div class="flex between center mt-6" style="margin-bottom:-6px">
+{# ---------------- 2. Factory pulse — severity-sorted, crit first ----------------
+     Built by main._factory_pulse(): each tile is permission-gated server-side, so
+     a module the user cannot open contributes no markup at all, and a block with
+     nothing to measure emits NO tile rather than a fabricated 0. #}
+<div class="flex between center" style="margin-bottom:-6px">
   <h3 style="margin:0;font-size:15px" {{ loc(pulse_head.title) }}>{{ pulse_head.title.en }}</h3>
-  <a class="tag" href="{{ url_for('main.my_work') }}" {{ loc(pulse_head.my_work) }}>{{ pulse_head.my_work.en }}</a>
 </div>
 {% if pulse %}
 <div class="grid cols-4 mt-4" id="factoryPulse">
   {% for t in pulse %}
-  <a class="kpi {{ t.klass }}" data-exec="{{ t.k }}" href="{{ t.url }}"
-     style="text-decoration:none;color:inherit">
+  <a class="kpi kpi-link {{ t.klass }}" data-exec="{{ t.k }}" href="{{ t.url }}">
     <div class="ktop">
       <div class="kicon"><svg class="ico"><use href="#i-{{ t.icon }}"></use></svg></div>
-      <span class="badge b-{{ t.badge }}"><span class="dot"></span><span {{ loc(t.state) }}>{{ t.state.en }}</span></span>
+      <span class="flex gap center">
+        <span class="badge b-{{ t.badge }}"><span class="dot"></span><span {{ loc(t.state) }}>{{ t.state.en }}</span></span>
+        <svg class="ico kpi-go" aria-hidden="true"><use href="#i-external"></use></svg>
+      </span>
     </div>
     <div class="kval">{{ t.n }}{{ t.suffix }}</div>
     <div class="klabel" {{ loc(t.label) }}>{{ t.label.en }}</div>
@@ -56,212 +51,85 @@
 </div>
 {% else %}
 <div class="panel mt-4" id="factoryPulseEmpty">
-  <div class="panel-pad muted" style="font-size:13px" {{ loc(pulse_head.none) }}>
-    {{ pulse_head.none.en }}
+  {% set empty_msg = pulse_head.none if permitted else pulse_head.locked %}
+  <div class="panel-pad muted" style="font-size:13px" {{ loc(empty_msg) }}>
+    {{ empty_msg.en }}
   </div>
 </div>
 {% endif %}
 
-{# ---------------- Consolidated Business Overview (all systems) ---------------- #}
+{# ---------------- 3. Freshness — the date behind the output numbers. 0 queries. #}
+{% if freshness %}
+<div class="muted mt-3" style="font-size:12.5px" {{ loc(freshness) }}>{{ freshness.en }}</div>
+{% endif %}
+
+{# ---------------- 4. Order commitments — the only list on this page ------------
+     Grain is the ORDER, never the milestone: milestones are My Work's job.
+     Capped at 6 rows server-side; if it ever needs a scrollbar it has become
+     My Work and should go back to being a count. #}
+{% if orders or orders_empty %}
 <div class="panel mt-6">
   <div class="panel-head">
-    <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-apps"></use></svg>
-      <span data-i18n="dash.overview">Business Overview — All Systems</span></h3>
-    <span class="badge b-info" id="bizOverviewMeta">…</span>
+    <h3 data-i18n="dash.commitments">Order commitments</h3>
+    <a class="tag" href="{{ url_for('orders.listing') }}" data-i18n="ord.dash.all">All active orders</a>
   </div>
-  <div class="panel-pad"><div id="bizOverview" class="ov-grid"></div></div>
-</div>
-
-{# ---------------- AI Daily Briefing (offline) ---------------- #}
-{% if briefing %}
-<div class="panel accent mt-6">
-  <div class="panel-head">
-    <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg>
-      <span data-i18n="sum_title">AI Daily Briefing</span></h3>
-    <span class="badge b-live"><span class="dot" style="background:var(--ok)"></span><span data-i18n="m.ai_offline">On-premise · offline</span></span>
+  {% if orders %}
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th data-i18n="ord.field.order">Order</th>
+          <th data-i18n="ord.field.buyer">Buyer</th>
+          <th data-i18n="ord.field.style">Style</th>
+          <th class="dash-num" data-i18n="ord.field.qty">Qty</th>
+          <th data-i18n="ord.field.ship">Ship date</th>
+          <th data-i18n="ord.field.status">Status</th>
+          <th data-i18n="dash.milestones">Milestones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in orders %}
+        <tr>
+          <td><a href="{{ url_for('orders.detail', order_id=o.id) }}"><b>{{ o.order_no }}</b></a></td>
+          <td>{{ o.buyer }}</td>
+          <td>{{ o.style }}</td>
+          {# Intl knows 12,000 / 12.000 / 12٬000; a Jinja '{:,}' knows only English.
+             The formatted value stays as the pre-script fallback. #}
+          <td class="dash-num" data-num="{{ o.qty }}">{{ '{:,}'.format(o.qty) }}</td>
+          <td>{{ o.ship_date or '—' }}</td>
+          <td>
+            <span class="badge b-{{ o.tone }}">
+              <span class="dot"></span><span {{ loc(o.ship_state) }}>{{ o.ship_state.en }}</span>
+            </span>
+          </td>
+          <td class="{{ 'dash-late' if o.ms_late else 'muted' }}" {{ loc(o.ms) }}>{{ o.ms.en }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
-  <div class="panel-pad">
-    <div style="font-weight:700;font-size:15px;margin-bottom:12px" data-i18n="{{ briefing.headline }}">Status</div>
-    <div class="flex gap wrap">
-      {% for i in briefing.insights %}
-      <span class="badge {{ 'b-critical' if i.sev=='crit' else ('b-warning' if i.sev=='warn' else ('b-live' if i.sev=='good' else 'b-info')) }}" style="padding:7px 12px;font-size:12.5px">
-        <svg class="ico" style="width:14px;height:14px"><use href="#i-{{ i.icon }}"></use></svg>
-        {% if i.n != '' %}<b style="margin-inline-end:3px">{{ i.n }}</b>{% endif %}<span data-i18n="{{ i.key }}">{{ i.key }}</span>
-      </span>
-      {% endfor %}
-    </div>
-    {% if briefing.focus %}
-    <div class="mt-3 flex gap center" style="font-size:13px">
-      <svg class="ico" style="width:16px;height:16px;color:var(--tc-red)"><use href="#i-target"></use></svg>
-      <span data-i18n="sum_focus">Focus</span>: <b>{{ briefing.focus.code }}</b> — <span data-i18n="{{ briefing.focus.rec_key }}">action</span>
-    </div>
-    {% endif %}
-  </div>
+  {% else %}
+  <div class="panel-pad muted" style="font-size:13px" data-i18n="dash.no_orders">
+    No live orders on file yet.</div>
+  {% endif %}
 </div>
 {% endif %}
 
-{# ---------------- KPI grid ---------------- #}
-<div class="flex between center mt-6" style="margin-bottom:-6px">
-  <h3 style="margin:0;font-size:15px" data-i18n="dash.kpis">Key indicators</h3>
-  <span class="tag" data-i18n="dash.kpis_demo">Sample figures — live adapters in Phase D · system status is live</span>
-</div>
-<div class="grid cols-4 mt-4">
-  {% macro kpi(klass, icon, val, label, suffix='', trend=None, tdir='up') %}
-  <div class="kpi {{ klass }}">
-    <div class="ktop">
-      <div class="kicon"><svg class="ico"><use href="#i-{{ icon }}"></use></svg></div>
-      {% if trend %}<span class="ktrend {{ tdir }}">{{ trend }}</span>{% endif %}
-    </div>
-    <div class="kval" data-count="{{ val }}" data-suffix="{{ suffix }}">0</div>
-    <div class="klabel" data-i18n="{{ label }}">{{ label }}</div>
-  </div>
-  {% endmacro %}
-
-  {{ kpi('', 'headset', kpis.open_tickets, 'kpi.open_tickets', trend='+4%', tdir='up') }}
-  {{ kpi('good', 'shield', kpis.sla_health, 'kpi.sla_health', suffix='%', trend='+2%') }}
-  {{ kpi('warn', 'alert', kpis.critical_tickets, 'kpi.critical_tickets') }}
-  {{ kpi('info', 'boxes', kpis.assets_total, 'kpi.assets_total') }}
-  {{ kpi('warn', 'settings', kpis.assets_maintenance, 'kpi.assets_maintenance') }}
-  {{ kpi('warn', 'cart', kpis.low_stock, 'kpi.low_stock') }}
-  {{ kpi('good', 'server', kpis.servers_online, 'kpi.servers_online') }}
-  {{ kpi('warn', 'cpu', kpis.cpu_alerts, 'kpi.cpu_alerts') }}
-  {{ kpi('', 'kanban', kpis.active_projects, 'kpi.active_projects') }}
-  {{ kpi('warn', 'clock', kpis.overdue_tasks, 'kpi.overdue_tasks') }}
-  {{ kpi('info', 'check', kpis.pending_approvals, 'kpi.pending_approvals') }}
-  {{ kpi('good', 'coins', 0, 'kpi.cost_saving') }}
-</div>
-<div class="grid cols-4" style="margin-top:-8px">
-  <div class="kpi good" style="grid-column:span 1"><div class="kval" style="font-size:22px;margin-top:8px">{{ kpis.cost_saving }}</div><div class="klabel" data-i18n="kpi.cost_saving">Projected Cost Saving</div></div>
-</div>
-
-{# ---------------- Transformation + System health ---------------- #}
-<div class="grid cols-3 mt-6">
-
-  {# Digital transformation progress #}
-  <div class="panel accent span-2">
-    <div class="panel-head"><h3 data-i18n="dash.transformation">Digital Transformation Progress</h3><span class="muted" data-i18n="nav.roadmap">Roadmap</span></div>
-    <div class="panel-pad">
-      {% macro prog(label, val) %}
-      <div class="flex between center" style="margin-bottom:6px"><span data-i18n="{{ label }}">{{ label }}</span><b>{{ val }}%</b></div>
-      <div class="bar" style="margin-bottom:18px"><i style="width:{{ val }}%"></i></div>
-      {% endmacro %}
-      {{ prog('kpi.finance_progress', kpis.finance_progress) }}
-      {{ prog('kpi.automation_progress', kpis.automation_progress) }}
-      {{ prog('kpi.ai_progress', kpis.ai_progress) }}
-      {{ prog('kpi.production_readiness', kpis.production_readiness) }}
-    </div>
-  </div>
-
-  {# SLA health ring #}
-  <div class="panel">
-    <div class="panel-head"><h3 data-i18n="kpi.sla_health">SLA Health</h3></div>
-    <div class="panel-pad" style="text-align:center">
-      <div class="ring-wrap">
-        <div class="ring" style="--val:{{ kpis.sla_health }}"><b>{{ kpis.sla_health }}%</b></div>
-      </div>
-      <div class="muted mt-3" data-i18n="dash.business_impact">Business Impact</div>
-      <div class="flex between mt-4" style="font-size:13px">
-        <div><b style="font-size:18px">{{ kpis.critical_tickets }}</b><br><span class="muted" data-i18n="kpi.critical_tickets">Critical</span></div>
-        <div><b style="font-size:18px">{{ kpis.overdue_tasks }}</b><br><span class="muted" data-i18n="kpi.overdue_tasks">Overdue</span></div>
-        <div><b style="font-size:18px">{{ kpis.pending_approvals }}</b><br><span class="muted" data-i18n="kpi.pending_approvals">Approvals</span></div>
-      </div>
-    </div>
+{# ---------------- 5. Maintenance briefing — one sentence, one query ------------
+     Only rendered for users who can open maintenance. The machine-risk ranking
+     that used to sit here scanned every active machine on every home load; it
+     lives on /maintenance/ai, which is where you act on it. #}
+{% if briefing %}
+<div class="panel mt-6">
+  <div class="panel-pad flex gap center wrap" style="font-size:13.5px">
+    <svg class="ico" aria-hidden="true"
+         style="width:18px;height:18px;flex:none;color:var({{ '--crit' if briefing.tone == 'crit' else ('--warn' if briefing.tone == 'warn' else '--ok') }})">
+      <use href="#i-{{ 'alert' if briefing.tone != 'good' else 'check' }}"></use></svg>
+    <span {{ loc(briefing.text) }}>{{ briefing.text.en }}</span>
+    <a class="tag" style="margin-inline-start:auto"
+       href="{{ url_for('maintenance.ai_insights') }}" data-i18n="nav.maint_ai">AI Insights</a>
   </div>
 </div>
-
-{# ---------------- System health cards ---------------- #}
-<div class="flex between center mt-6" style="margin-bottom:14px">
-  <h3 style="margin:0" data-i18n="dash.system_health">System Health</h3>
-  <a class="tag" href="{{ url_for('main.health') if can('view_system_health') else url_for('main.launcher') }}" data-i18n="dash.view_all">View all</a>
-</div>
-<div class="grid cols-4">
-  {% for s in systems if s.is_integrated %}
-  {% set st = statuses.get(s.key, {}) %}
-  <div class="panel" style="padding:18px">
-    <div class="flex between center">
-      <div class="ac-icon" style="width:40px;height:40px;border-radius:11px"><svg class="ico" style="width:20px;height:20px"><use href="#i-{{ s.icon }}"></use></svg></div>
-      <span class="badge b-{{ st.status or 'unknown' }}" data-status-key="{{ s.key }}">
-        <span class="dot"></span><span data-status-label data-i18n="status.{{ st.status or 'unknown' }}">{{ st.status or 'unknown' }}</span>
-      </span>
-    </div>
-    <div style="font-weight:700;margin-top:12px">{{ s.name_en }}</div>
-    <div class="muted" style="font-size:12px">{{ s.owner }}</div>
-    <div class="flex between mt-3" style="font-size:12px" class="muted">
-      <span class="muted">{{ st.response_ms ~ ' ms' if st.response_ms is not none else '—' }}</span>
-      <code class="tag">:{{ s.port }}</code>
-    </div>
-  </div>
-  {% endfor %}
-</div>
-
-{# ---------------- Today's focus / Critical ---------------- #}
-<div class="grid cols-2 mt-6">
-  <div class="panel">
-    <div class="panel-head"><h3 data-i18n="dash.today_focus">Today's Focus</h3><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-target"></use></svg></div>
-    <div class="panel-pad">
-      <div class="flex gap center" style="padding:8px 0"><svg class="ico" style="width:18px;height:18px;color:var(--warn)"><use href="#i-clock"></use></svg> Close {{ kpis.critical_tickets }} critical tickets before SLA breach</div>
-      <div class="divider"></div>
-      <div class="flex gap center" style="padding:8px 0"><svg class="ico" style="width:18px;height:18px;color:var(--info)"><use href="#i-check"></use></svg> Review {{ kpis.pending_approvals }} pending approvals in CommandTrack</div>
-      <div class="divider"></div>
-      <div class="flex gap center" style="padding:8px 0"><svg class="ico" style="width:18px;height:18px;color:var(--ok)"><use href="#i-coins"></use></svg> Advance finance digitalization ({{ kpis.finance_progress }}%)</div>
-    </div>
-  </div>
-
-  {% set crit_items = (notifications or []) | selectattr('severity','in',['critical','warning']) | list %}
-  <div class="panel crit-panel crit-collapsed" id="critPanel">
-    <button class="panel-head crit-toggle" id="critToggle" type="button" aria-expanded="false"
-            aria-controls="critBody"
-            style="display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:none;cursor:pointer;text-align:inherit;font:inherit;color:inherit">
-      <h3 class="flex gap center" style="margin:0">
-        <svg class="ico" style="width:18px;height:18px;color:var(--crit)"><use href="#i-alert"></use></svg>
-        <span data-i18n="dash.critical">Critical Attention Required</span>
-        <span class="badge {{ 'b-critical' if crit_items else 'b-info' }}" style="margin-inline-start:4px">{{ crit_items|length }}</span>
-      </h3>
-      <svg class="ico crit-chev" style="width:16px;height:16px;opacity:.6;transition:transform .2s"><use href="#i-chevron"></use></svg>
-    </button>
-    <div class="crit-body" id="critBody">
-      <div class="panel-pad" style="padding-top:0">
-        {% for n in crit_items %}
-        <div class="flex gap center" style="padding:8px 0">
-          <span class="badge b-{{ 'critical' if n.severity=='critical' else 'warning' }}"><span class="dot"></span>{{ n.severity }}</span>
-          <span style="font-size:13px">{{ n.title }}</span>
-        </div>
-        {% if not loop.last %}<div class="divider"></div>{% endif %}
-        {% else %}
-        <div class="muted" style="font-size:13px;padding:6px 0" data-i18n="dash.no_critical">Nothing critical right now.</div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-</div>
-
-<style>
-.crit-body{overflow:hidden;transition:max-height .25s ease;max-height:1200px}
-.crit-panel.crit-collapsed .crit-body{max-height:0}
-.crit-panel.crit-collapsed .crit-chev{transform:rotate(-90deg)}
-[dir="rtl"] .crit-panel.crit-collapsed .crit-chev{transform:rotate(90deg)}
-.crit-toggle:hover .crit-chev{opacity:1}
-</style>
-<script>
-(function () {
-  var KEY = "tc_crit_collapsed";
-  var panel = document.getElementById("critPanel");
-  var btn = document.getElementById("critToggle");
-  if (!panel || !btn) return;
-  // default collapsed; remember the user's choice
-  var collapsed = localStorage.getItem(KEY);
-  if (collapsed === null) collapsed = "1";
-  function apply(c) {
-    panel.classList.toggle("crit-collapsed", c === "1");
-    btn.setAttribute("aria-expanded", c === "1" ? "false" : "true");
-  }
-  apply(collapsed);
-  btn.addEventListener("click", function () {
-    var now = panel.classList.contains("crit-collapsed") ? "0" : "1";
-    localStorage.setItem(KEY, now);
-    apply(now);
-  });
-})();
-</script>
+{% endif %}
 
 {% endblock %}

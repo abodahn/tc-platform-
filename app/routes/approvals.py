@@ -188,7 +188,15 @@ def _parse_header(f, can_price=False):
         "tax_rate": f.get("tax_rate", "").strip() or 0,
         # DOAM §4.2 — capital expenditure follows a different ladder. Anything
         # not explicitly marked capital is operating expenditure.
-        "expenditure_kind": f.get("expenditure_kind", "").strip().lower(),
+        # Normalised, not lower-cased: "capitol", "1", a blank and a capex
+        # carrying an invisible character all used to store opex — the
+        # weaker §4.2 ladder — with nothing saying so. The helper reports
+        # whether it recognised the value; _submit_error refuses the
+        # submit when it did not, so a downgrade cannot happen silently.
+        "expenditure_kind": C.normalise_expenditure_kind(
+            f.get("expenditure_kind"))[0],
+        "_kind_recognised": C.normalise_expenditure_kind(
+            f.get("expenditure_kind"))[1],
         # DOAM §5 — the cost object this spend belongs to.
         "so_no": f.get("so_no", "").strip(),
         "cost_center": f.get("cost_center", "").strip(),
@@ -210,7 +218,7 @@ def _parse_items(f, can_price=False):
     units = f.getlist("unit[]"); qtys = f.getlist("qty[]")
     stocks = f.getlist("current_stock[]"); prices = f.getlist("unit_price[]")
     notes = f.getlist("item_notes[]"); spares = f.getlist("spare_id[]")
-    item_ids = f.getlist("item_id[]")
+    item_ids = f.getlist("item_id[]"); vendors = f.getlist("vendor[]")
     for i in range(len(names)):
         if not (names[i] or "").strip():
             continue
@@ -220,6 +228,10 @@ def _parse_items(f, can_price=False):
             "unit": units[i] if i < len(units) else "Pcs",
             "qty": qtys[i] if i < len(qtys) else 0,
             "current_stock": stocks[i] if i < len(stocks) else 0,
+            # One requisition, several suppliers: each line may name its own.
+            # Left blank it stays blank here and services.py falls back to the
+            # header vendor — the behaviour every existing request relies on.
+            "vendor": vendors[i].strip() if i < len(vendors) else "",
             # Commercial lockout: unit price is forced to 0 for requesters, no
             # matter what the form (or a hand-crafted request) sends.
             "unit_price": (prices[i] if i < len(prices) else 0) if can_price else 0,
@@ -711,6 +723,10 @@ def detail(pr_id):
                            needs_pricing=needs_pricing, show_commercial=show_commercial,
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            rfq_min=C.RFQ_QUOTE_MIN, rfq_threshold=C.RFQ_VALUE_THRESHOLD,
+                           # Who to ask for a price, defaulted to the vendors the
+                           # lines already name (the header vendor covers a line
+                           # that names none).
+                           rfq_vendors=[v for v in svc.po_groups(bundle["items"], pr) if v],
                            rfq_required=(is_priced and float(pr.get("total") or 0) >= C.RFQ_VALUE_THRESHOLD),
                            rfq_locked=(pr["status"] in ("approved", "po_issued", "partially_received",
                                                         "received", "closed", "cancelled")),
@@ -773,6 +789,8 @@ def add_quote(pr_id):
         "vendor": f.get("vendor", "").strip(), "amount": f.get("amount"),
         "currency": f.get("currency", "EGP"), "lead_time_days": f.get("lead_time_days"),
         "warranty": f.get("warranty", "").strip(), "notes": f.get("notes", "").strip(),
+        # The RFQ this quotation came back against, when it answers one.
+        "rfq_id": f.get("rfq_id", "").strip(),
     }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
     flash("Quote added.", "success")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
@@ -887,6 +905,53 @@ def single_source(pr_id):
                "locked": "Sourcing is locked — this request is already approved or closed."
                }.get(msg, f"Could not save the justification ({msg})."), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/rfq", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def issue_rfq(pr_id):
+    """Issue one Request for Quotation per chosen vendor. Asking for a price is
+    not a commitment: the request's status, total and ladder are untouched."""
+    if not svc.get_pr(pr_id):
+        abort(404)
+    f = request.form
+    vendors = f.getlist("vendors") + [f.get("vendor_other", "")]
+    ok, res = svc.issue_rfqs(pr_id, vendors, _u(), reply_by=f.get("reply_by", "").strip(),
+                             notes=f.get("notes", "").strip(), ip=_ip())
+    flash("%d request(s) for quotation issued." % len(res) if ok
+          else {"no_vendors": "Choose at least one vendor to send the RFQ to.",
+                "locked": "Sourcing is locked — this request is already approved, "
+                          "ordered, closed or cancelled.",
+                "unavailable": "Requests for quotation are not available on this "
+                               "database yet.",
+                "not_found": "Request not found."}.get(res, f"Could not issue the RFQ ({res})."),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/rfq.pdf")
+@login_required
+@permission_required("proc_view")
+def rfq_pdf(pr_id):
+    """?rfq=<id> prints THAT supplier's request for quotation; without it, the
+    first one. One document per supplier, each carrying its own lines and no
+    prices at all."""
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    rfqs = bundle.get("rfqs") or []
+    want = request.args.get("rfq", type=int)
+    rfq = next((r for r in rfqs if r["id"] == want), None) if want else (rfqs[0] if rfqs else None)
+    if not rfq:
+        abort(404)
+    try:
+        data = pdfgen.rfq_pdf(bundle, rfq)
+    except Exception:
+        return jsonify(error="PDF support unavailable."), 500
+    return send_file(io.BytesIO(data), mimetype="application/pdf",
+                     as_attachment=False,
+                     download_name=f"{rfq.get('rfq_no') or 'RFQ'}.pdf")
 
 
 @bp.route("/quote/<int:quote_id>/file")
@@ -1271,8 +1336,13 @@ def add_invoice(pr_id):
     ok, msg = svc.add_invoice(pr_id, {
         "invoice_no": f.get("invoice_no", "").strip(), "invoice_date": f.get("invoice_date", "").strip(),
         "amount": f.get("amount"), "tax": f.get("tax"), "notes": f.get("notes", "").strip(),
+        "po_id": f.get("po_id"),
     }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
+    # The two per-order refusals are described in AR and TR alongside the payment
+    # gates they belong with, so they must not arrive in English only.
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
     flash("Invoice recorded and matched." if ok else
+          ui.get(str(msg) + "_flash") or
           {"not_invoicable": "Invoices can be recorded once the request is approved / ordered.",
            "duplicate_invoice": "An invoice with this number is already recorded on this request.",
            }.get(msg, f"Could not record invoice ({msg})."),
@@ -1311,6 +1381,7 @@ def add_payment(pr_id):
         "amount": f.get("amount"), "method": f.get("method", "").strip(),
         "reference": f.get("reference", "").strip(), "paid_at": f.get("paid_at", "").strip(),
         "invoice_id": f.get("invoice_id"), "notes": f.get("notes", "").strip(),
+        "po_id": f.get("po_id"),
     }, _u(), ip=_ip(), force=(user_can("proc_admin") and f.get("override") == "1"))
     # Refusals in the reader's language, the way _submit_error does it: these
     # gates are described in AR and TR on /procurement/workflow, so the sentence
@@ -1439,18 +1510,33 @@ def pr_pdf(pr_id):
 @login_required
 @permission_required("proc_view")
 def po_pdf(pr_id):
+    """?po=<id> prints THAT vendor's order; without it, the primary one. A
+    request buying from several suppliers issues one document each, and each
+    carries only its own vendor's lines and prices.
+
+    Delivery statuses are on the list because the order genuinely exists at
+    them and reprinting it after a delivery is ordinary: on a split request the
+    per-vendor table is the ONLY route to the second and third suppliers'
+    documents, and the narrower gate made them unreachable the moment the first
+    supplier delivered."""
     bundle = svc.get_pr(pr_id)
     if not bundle:
         abort(404)
-    if bundle["pr"]["status"] not in ("approved", "po_issued", "closed"):
+    if bundle["pr"]["status"] not in ("approved", "po_issued", "partially_received",
+                                      "received", "closed"):
         abort(400, "The Purchase Order is available only after full approval.")
+    pos = bundle.get("pos") or []
+    want = request.args.get("po", type=int)
+    po = next((p for p in pos if p["id"] == want), None) if want else (pos[0] if pos else None)
+    if want and not po:
+        abort(404)
     try:
-        data = pdfgen.po_pdf(bundle)
+        data = pdfgen.po_pdf(bundle, po)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
     return send_file(io.BytesIO(data), mimetype="application/pdf",
                      as_attachment=False,
-                     download_name=f"{bundle['pr'].get('po_no', 'PO')}.pdf")
+                     download_name=f"{(po or {}).get('po_no') or bundle['pr'].get('po_no', 'PO')}.pdf")
 
 
 @bp.route("/pr/<int:pr_id>/grn.pdf")
@@ -1608,7 +1694,16 @@ def settings():
     return render_template("approvals/settings.html", active="proc_settings",
                            departments=depts, department=dept,
                            matrix=svc.get_dept_matrix(dept), ladder=C.LADDER,
-                           stage_labels=C.STAGE_LABELS, default_matrix=C.APPROVAL_MATRIX,
+                           # ACTIVE_MATRIX, not APPROVAL_MATRIX. The template
+                           # iterates C.LADDER, which rebinds to the 8-stage DOAM
+                           # ladder when the manual is in force, while
+                           # APPROVAL_MATRIX is the 6-stage paper form — so
+                           # 'scd' and 'bod' were missing keys and the {:,.0f}
+                           # format on an Undefined raised, taking the whole
+                           # screen to a 500 for every admin including
+                           # super_admin. The responsibility matrix could not be
+                           # opened at all.
+                           stage_labels=C.STAGE_LABELS, default_matrix=C.ACTIVE_MATRIX,
                            is_builtin=(dept in C.DEPARTMENTS),
                            has_custom=(dept in svc.all_dept_matrices()),
                            # Escalation chain: role names and the section's own

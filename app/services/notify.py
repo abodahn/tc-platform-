@@ -18,10 +18,33 @@ _MARKER = "System offline:"  # title prefix used to find/dedupe auto-notificatio
 # this often, process-wide.
 _SYNC_MIN_INTERVAL = 25
 _LAST_SYNC = [0.0]
+_LAST_HEALTH = [0.0]
 _VALID_SEV = {"info", "warning", "critical"}
 
 
-def sync_health_notifications(system_rows, statuses):
+def health_sync_due():
+    """Cheap predicate the bell poller checks BEFORE probing the four systems.
+
+    The guard inside sync_health_notifications alone is not enough: the caller has
+    to run health.check_all() to produce ``statuses``, and that is the expensive
+    half (up to _ALL_DEADLINE per poll, per browser). This lets the caller skip
+    the probe too. It does not stamp — sync_health_notifications does that.
+    """
+    return time.time() - _LAST_HEALTH[0] >= _SYNC_MIN_INTERVAL
+
+
+def sync_health_notifications(system_rows, statuses, force=False):
+    """Raise a critical "system offline" notification once per outage, and mark it
+    read again the moment the system answers.
+
+    Throttled like sync_system_notifications: the bell feed calls this on every
+    poll of every open browser, and each call is four SELECTs plus a commit.
+    ``force=True`` for /health, which probes uncached on purpose.
+    """
+    now = time.time()
+    if not force and (now - _LAST_HEALTH[0] < _SYNC_MIN_INTERVAL):
+        return
+    _LAST_HEALTH[0] = now
     conn = get_db()
     try:
         for row in system_rows:

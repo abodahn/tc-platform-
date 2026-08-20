@@ -61,6 +61,14 @@
       const v = el.getAttribute("data-loc-" + lang) || el.getAttribute("data-loc-en");
       if (v) el.textContent = v;
     });
+    // Figures: the thousands separator is a locale, not a constant (12,000 /
+    // 12.000 / 12٬000). Latin digits in Arabic so one page is not half
+    // Arabic-Indic — every other figure on the page is rendered server-side.
+    const numLocale = lang === "ar" ? "ar-u-nu-latn" : lang;
+    document.querySelectorAll("[data-num]").forEach(el => {
+      const n = Number(el.dataset.num);
+      if (!isNaN(n)) el.textContent = n.toLocaleString(numLocale);
+    });
   }
 
   async function setLanguage(lang, persist = true) {

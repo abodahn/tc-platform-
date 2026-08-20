@@ -172,7 +172,7 @@ with app.app_context():
     print("\n--- 4. no empty explanation panel, in any language -------------")
     for lang in ("en", "ar", "tr"):
         paras = prose_paragraphs(pages[lang])
-        # overview + 6 stages + 6 gates + 8 roles = 21 explanation bodies
+        # overview + requester + 8 ladder stages + 6 gates + 13 roles
         ok(f"[{lang}] {len(paras)} prose paragraphs, none blank",
            len(paras) >= 21 and all(p.strip() for p in paras))
         ok(f"[{lang}] every status meaning is non-blank",
@@ -342,14 +342,16 @@ with app.app_context():
                     data={"_csrf": "tok", "stage": "finance", "reset": "explanation"})
     row = dict(conn.execute("SELECT explanation, explanation_ar, explanation_tr "
                             "FROM proc_stage_meta WHERE stage='finance'").fetchone())
+    # Picked by stage key, not by ladder position: index 3 was 'finance' on the
+    # six-rung paper ladder and is 'scd' on the DOAM one.
+    _st = {s["stage"]: s for s in svc.workflow_view("Production", "tr")["stages"]}
     ok("reset clears all three languages so the code defaults apply again",
        r.status_code == 302 and not any(row.values())
-       and svc.workflow_view("Production", "tr")["stages"][3]["explanation"]
-       == T.STAGE_TR["finance"])
+       and _st["finance"]["explanation"] == T.STAGE_TR["finance"])
 
     print("\n--- 10. nothing else moved ------------------------------------")
-    ok("workflow_view still reports 6 stages / 6 gates / 9 statuses / 4 knobs",
-       len(v["stages"]) == 6 and len(v["gates"]) == 6
+    ok("workflow_view still reports the whole ladder / 6 gates / 9 statuses / 4 knobs",
+       [s["stage"] for s in v["stages"]] == list(C.LADDER) and len(v["gates"]) == 6
        and len(v["statuses"]) == len(C.PR_STATUSES) and len(v["knobs"]) == 4)
     ok("an unknown language falls back to English",
        svc.workflow_view("Production", "de")["overview"]["body"]

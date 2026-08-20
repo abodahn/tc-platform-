@@ -490,6 +490,29 @@ CREATE TABLE IF NOT EXISTS pr_returns (
 CREATE INDEX IF NOT EXISTS ix_pr_returns_pr ON pr_returns(pr_id);
 CREATE INDEX IF NOT EXISTS ix_pr_returns_vendor ON pr_returns(vendor, status);
 
+-- ===== Purchase orders — ONE DOCUMENT PER VENDOR =====
+-- A requisition may buy from several suppliers (pr_items.vendor). Each supplier
+-- gets its OWN order: a document carrying only that supplier's lines, its own
+-- totals and its own number, because a PO is sent to the supplier and must never
+-- show them a competitor's prices.
+-- pr_requests.po_no is NOT replaced: it keeps the FIRST (primary) order's number,
+-- so every existing screen, PDF link, report and the maintenance bridge resolve
+-- unchanged, and a request issued before this table existed is read through the
+-- fallback in services._pos_for() rather than migrated.
+CREATE TABLE IF NOT EXISTS pr_purchase_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER,
+    po_no TEXT,
+    vendor TEXT,
+    currency TEXT DEFAULT 'EGP',
+    subtotal REAL DEFAULT 0, tax REAL DEFAULT 0, grand REAL DEFAULT 0,
+    rev INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'issued',     -- issued (the only state today)
+    issued_at TEXT, issued_by TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_pr_po_pr ON pr_purchase_orders(pr_id);
+CREATE INDEX IF NOT EXISTS ix_pr_po_no ON pr_purchase_orders(po_no);
+
 -- ===== Agreed production forecasts (DOAM 3.4 sales-order gate, second half) =====
 -- "No direct production material may be requisitioned without a valid client
 -- sales order reference OR AGREED FORECAST." The sales-order half is validated
@@ -519,6 +542,50 @@ _PROSE_MIGRATIONS = [
     ("explanation_tr", "ALTER TABLE proc_role_meta ADD COLUMN explanation_tr TEXT"),
     ("body_ar", "ALTER TABLE proc_doc ADD COLUMN body_ar TEXT"),
     ("body_tr", "ALTER TABLE proc_doc ADD COLUMN body_tr TEXT"),
+]
+
+# ===== Requests for Quotation — ONE DOCUMENT PER VENDOR, sent BEFORE a price ==
+# The PR says what is needed, the PO commits a supplier; this is the document in
+# between, and it is what PRODUCES the competitive quotations DOAM §4.3 requires.
+# It carries the goods and the quantities and NO money at all: the supplier
+# writes the prices in and sends it back, and that answer is recorded as a
+# pr_quotes row pointing at the RFQ it answers (pr_quotes.rfq_id below).
+# Its own number from doc_no(), so it is a controlled document like the PR, the
+# PO and the GRN. Issuing one commits NOTHING — no status, total or ladder on
+# pr_requests is touched by it.
+_RFQ_DDL = """
+CREATE TABLE IF NOT EXISTS pr_rfqs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rfq_no TEXT UNIQUE,
+    pr_id INTEGER,
+    vendor TEXT,
+    reply_by TEXT,
+    status TEXT DEFAULT 'sent',       -- sent | answered
+    sent_at TEXT,
+    created_by TEXT,
+    notes TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_pr_rfqs_pr ON pr_rfqs(pr_id);
+"""
+
+# Columns added to pr_quotes after first release: the RFQ a returned quotation
+# answers. NULL is normal and stays legal — a quote handed over without an RFQ
+# (or recorded before this column existed) is still a quote.
+_QUOTE_MIGRATIONS = [
+    ("rfq_id", "ALTER TABLE pr_quotes ADD COLUMN rfq_id INTEGER"),
+]
+
+# Columns added to pr_invoices / pr_payments after first release: WHICH purchase
+# order (pr_purchase_orders.id) the money belongs to. Before a requisition could
+# name a supplier per line, one requisition was one supplier and the request
+# itself was the answer; once it can buy from three, an invoice with no order on
+# it can be billed and paid up to the combined value of the other two suppliers'
+# orders. NULL stays legal and means "the request as a whole" — every invoice and
+# payment recorded before this column existed, and every single-supplier request,
+# which is bounded by the request's own total exactly as it always was.
+_MONEY_MIGRATIONS = [
+    ("po_id", "ALTER TABLE pr_invoices ADD COLUMN po_id INTEGER"),
+    ("po_id", "ALTER TABLE pr_payments ADD COLUMN po_id INTEGER"),
 ]
 
 # Columns added to pr_items after first release (line-level receiving).
@@ -682,10 +749,11 @@ def create_and_seed(conn):
     conn.executescript(_SIGN_EVENTS_DDL)
     conn.executescript(_PO_REV_DDL)
     conn.executescript(_GRN_DDL)
+    conn.executescript(_RFQ_DDL)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS
-                       + _PROSE_MIGRATIONS):
+                       + _QUOTE_MIGRATIONS + _MONEY_MIGRATIONS + _PROSE_MIGRATIONS):
         try:
             conn.execute(_ddl)
             conn.commit()

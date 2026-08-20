@@ -32,6 +32,18 @@ STAGE_AR = {
         "مدير المصنع يؤكّد أن الطلب ضروري تشغيليًا وأن مواصفاته صحيحة للأصل أو "
         "الماكينة أو الخط الذي طُلب من أجله. مرحلة احتياج — مطلوبة دائمًا، أيًا "
         "كانت قيمة الطلب."),
+    "scd": (
+        "مدير سلسلة الإمداد مسؤول عن التشغيل وإعادة تدبير المخزون: يؤكّد أن "
+        "الطلب حاجة تجديد فعلية، وأن مصدره وتوقيته صحيحان مقابل الرصيد. مرحلة "
+        "قيمة في المصروفات التشغيلية — لا تُضاف إلى سلسلة الموافقات إلا عندما "
+        "يتجاوز الإجمالي المكافئ بالجنيه المصري (EGP) الحد الخاص بها — أما في "
+        "الطلبات الرأسمالية فهو يوقّع أيًا كانت القيمة. وإذا تبيّن بوضوح أن "
+        "الطلب التزام إنتاجي أو خاص بالصيانة، فإن مرحلة مدير المصنع تحمل هذا "
+        "المستوى بدلًا منها وتُسقَط هذه المرحلة؛ وإذا جمع الطلب الأمرين معًا أو "
+        "تعذّر التمييز، فإن المديرين كليهما يوقّعان. لا يوقّع على هذه المرحلة "
+        "افتراضيًا "
+        "سوى دور مدير سلسلة الإمداد، وهو يعتمد فقط — لا يُسعّر ولا يشتري ولا "
+        "يدفع."),
     "purchasing": (
         "المشتريات مسؤولة عن الجانب التجاري: اختيار المورّد، وإدخال الأسعار، "
         "وتحديد سعر الصرف (FX) في الطلب بعملة أجنبية، وجمع عروض الأسعار "
@@ -53,6 +65,17 @@ STAGE_AR = {
         "— لا تُضاف إلى سلسلة الموافقات إلا عندما يبلغ الإجمالي المكافئ بالجنيه "
         "المصري (EGP) الحد الخاص بها. وبمجرد وصول هذا التوقيع الأخير يصبح الطلب "
         "معتمدًا ويُجهَّز رقم أمر الشراء تلقائيًا."),
+    "bod": (
+        "مجلس الإدارة هو أعلى سلطة في سلسلة الموافقات: يوقّع على أكبر "
+        "الالتزامات، وليس فوقه جهة يُصعَّد إليها. مرحلة قيمة — لا تُضاف إلى "
+        "سلسلة الموافقات إلا عندما يتجاوز الإجمالي المكافئ بالجنيه المصري (EGP) "
+        "الحد الخاص بها، وهذا الحد في الطلبات الرأسمالية أقل منه في المصروفات "
+        "التشغيلية. وفوق 10,000,000 جنيه من قيمة الالتزام لا يستطيع المجلس "
+        "الاعتماد قبل تسجيل دراسة جدوى مكتوبة على الطلب، ويُفحص الشرط نفسه "
+        "مبكرًا عند مرحلة المشتريات حتى لا يدور طلب بهذا الحجم بدونها. لا يوقّع "
+        "على هذه المرحلة افتراضيًا سوى دور مجلس الإدارة، وهو يعتمد فقط — لا "
+        "يُسعّر ولا يشتري ولا يدفع. وبمجرد وصول هذا التوقيع الأخير يصبح الطلب "
+        "معتمدًا ويُجهَّز رقم أمر الشراء تلقائيًا."),
 }
 
 STAGE_TR = {
@@ -72,6 +95,18 @@ STAGE_TR = {
         "Fabrika Müdürü, talebin işletme açısından gerekli olduğunu ve talep "
         "edildiği varlık, makine veya hat için doğru tanımlandığını teyit eder. "
         "İhtiyaç aşaması — talebin tutarı ne olursa olsun her zaman gereklidir."),
+    "scd": (
+        "Tedarik Zinciri Direktörü, operasyonel ve stok ikmalinin sahibidir: "
+        "talebin gerçekten bir ikmal ihtiyacı olduğunu, doğru kaynaktan ve stoka "
+        "göre doğru zamanda istendiğini teyit eder. İşletme harcamalarında tutar "
+        "aşaması — yalnızca EGP karşılığı toplam kendi eşiğini aştığında onay "
+        "zincirine katılır — sermaye harcaması niteliğindeki bir talepte ise "
+        "tutar ne olursa olsun imzalar. Bir talep açıkça üretim veya bakım "
+        "taahhüdü olarak belirlendiğinde bu kademeyi Fabrika Müdürü aşaması "
+        "taşır ve bu aşama düşer; talep ikisi birden olduğunda ya da ayırt "
+        "edilemediğinde her iki direktör de imzalar. Bu aşamayı varsayılan "
+        "olarak yalnızca Tedarik Zinciri Direktörü rolü imzalar ve yalnızca "
+        "onaylar — fiyatlandırmaz, satın almaz, ödeme yapmaz."),
     "purchasing": (
         "Satın Alma ticari tarafın sahibidir: tedarikçiyi seçer, fiyatları girer, "
         "döviz cinsinden bir talepte kur (FX) oranını belirler, rekabetçi "
@@ -93,6 +128,19 @@ STAGE_TR = {
         "karşılığı toplam kendi eşiğine ulaştığında onay zincirine katılır. Bu "
         "son imza geldiğinde talep Onaylandı durumuna geçer ve otomatik olarak "
         "bir Satın alma emri numarası hazırlanır."),
+    "bod": (
+        "Yönetim Kurulu, onay zincirindeki en üst yetkidir: en büyük taahhütleri "
+        "imzalar ve üzerinde yükseltilebilecek bir merci yoktur. Tutar aşaması — "
+        "yalnızca EGP karşılığı toplam kendi eşiğini aştığında onay zincirine "
+        "katılır; bu eşik sermaye harcamalarında işletme harcamalarına göre daha "
+        "düşüktür. Taahhüt edilen tutar 10.000.000 EGP'yi aştığında Yönetim "
+        "Kurulu, talebe yazılı bir iş gerekçesi kaydedilmeden onay veremez; aynı "
+        "koşul daha önce Satın Alma aşamasında da kontrol edilir, böylece bu "
+        "büyüklükte bir talep gerekçesiz dolaşıma girmez. Bu aşamayı varsayılan "
+        "olarak yalnızca Yönetim Kurulu rolü imzalar ve yalnızca onaylar — "
+        "fiyatlandırmaz, satın almaz, ödeme yapmaz. Bu son imza geldiğinde talep "
+        "Onaylandı durumuna geçer ve otomatik olarak bir Satın alma emri "
+        "numarası hazırlanır."),
 }
 
 # --- Roles (proc_role_meta.explanation_ar / _tr) ---------------------------
@@ -106,6 +154,16 @@ ROLE_AR = {
     "factory_manager": (
         "مسؤول عن المصنع. يوقّع على مرحلة مدير المصنع: يؤكّد أن الطلب مبرَّر "
         "تشغيليًا ومواصفاته صحيحة."),
+    "plant_director": (
+        "مسؤول عن الالتزامات الإنتاجية والخاصة بالصيانة. يوقّع على مرحلة مدير "
+        "المصنع: إذا تبيّن بوضوح أن الطلب التزام من هذا النوع، فإن هذا المدير "
+        "يحمل ذلك المستوى وتُسقَط مرحلة مدير سلسلة الإمداد. يملك الاطلاع والاعتماد فقط — "
+        "لا ينشئ الطلبات ولا يُسعّرها ولا يشتري ولا يدفع."),
+    "supply_chain_director": (
+        "مسؤول عن التشغيل وإعادة تدبير المخزون. الدور الوحيد المرتبط بمرحلة مدير "
+        "سلسلة الإمداد: إذا تبيّن بوضوح أن الطلب إعادة تدبير للمخزون، فإن هذا "
+        "المدير يحمل ذلك المستوى وتُسقَط مرحلة مدير المصنع. يملك الاطلاع والاعتماد "
+        "فقط — لا ينشئ الطلبات ولا يُسعّرها ولا يشتري ولا يدفع."),
     "purchasing_manager": (
         "يدير المشتريات. يُسعّر الطلبات، ويحدّد أسعار الصرف (FX)، ويجمع عروض "
         "أسعار المورّدين ويقارنها، ويسجّل مبرّرات الشراء من مصدر واحد، ويوقّع على "
@@ -116,12 +174,29 @@ ROLE_AR = {
     "finance_user": (
         "عضو في فريق الإدارة المالية. يوقّع على مرحلة الإدارة المالية، ويتولّى "
         "تسجيل الفواتير وإثبات المدفوعات في العمل اليومي."),
+    "financial_director": (
+        "مسؤول عن الرقابة على الدفع. يوقّع على مرحلة الإدارة المالية — مراجعة "
+        "الطلب بعد تسعيره مقابل موازنة القسم والضريبة وشروط الدفع — ويصرف "
+        "المدفوعات للمورّدين، ولهذا يقع هذا الحق هنا لا لدى المشتري الذي التزم "
+        "بالمبلغ. يملك الاطلاع والاعتماد وصرف المدفوعات؛ ولا يستطيع تسعير طلب ولا "
+        "إصدار "
+        "أمر شراء (PO)."),
     "cfo": (
         "المدير المالي. يوقّع على مرحلة CFO للإنفاق الملتزم به الكبير، وهو صاحب "
         "القرار في حالات تجاوز الموازنة."),
     "ceo": (
         "الرئيس التنفيذي. يوقّع على مرحلة CEO — السلطة النهائية على أكبر عمليات "
         "الشراء."),
+    "managing_director": (
+        "العضو المنتدب. يوقّع على مرحلة CEO — نفس الدرجة التي يوقّع عليها الرئيس التنفيذي، لأن "
+        "الدورين مرتبطان بها وأيٌّ من التوقيعين يفي بها. وهو التوقيع الأخير على "
+        "الإنفاق الكبير دون مستوى مجلس الإدارة. يملك الاطلاع والاعتماد فقط — "
+        "يلتزم بالمبلغ ولا يشتري ولا يدفع."),
+    "board": (
+        "مجلس الإدارة. يوقّع على مرحلة مجلس الإدارة في أكبر الالتزامات، ولا "
+        "يستطيع اعتماد التزام يتجاوز 10,000,000 جنيه قبل تسجيل دراسة جدوى "
+        "مكتوبة على الطلب. يملك الاطلاع والاعتماد فقط — بلا صلاحيات شراء ولا "
+        "صرف."),
 }
 
 ROLE_TR = {
@@ -135,6 +210,19 @@ ROLE_TR = {
     "factory_manager": (
         "Fabrikadan sorumludur. Fabrika Müdürü aşamasını imzalar: talebin işletme "
         "açısından gerekçeli ve doğru tanımlanmış olduğunu teyit eder."),
+    "plant_director": (
+        "Üretim ve bakım taahhütlerinden sorumludur. Fabrika Müdürü aşamasını "
+        "imzalar: bir talep açıkça üretim veya bakım taahhüdü olarak "
+        "belirlendiğinde bu "
+        "kademeyi bu direktör taşır ve Tedarik Zinciri Direktörü aşaması düşer. "
+        "Yalnızca görüntüleme ve onay yetkisi vardır — talep açmaz, "
+        "fiyatlandırmaz, satın almaz, ödeme yapmaz."),
+    "supply_chain_director": (
+        "Operasyonel ve stok ikmalinden sorumludur. Tedarik Zinciri Direktörü "
+        "aşamasına bağlı tek roldür: bir talep açıkça stok ikmali olarak "
+        "belirlendiğinde bu kademeyi bu direktör taşır ve Fabrika Müdürü aşaması "
+        "düşer. Yalnızca görüntüleme ve onay yetkisi vardır — talep açmaz, "
+        "fiyatlandırmaz, satın almaz, ödeme yapmaz."),
     "purchasing_manager": (
         "Satın almayı yürütür. Talepleri fiyatlandırır, FX kurlarını belirler, "
         "tedarikçi tekliflerini toplayıp karşılaştırır, tek kaynak gerekçelerini "
@@ -146,12 +234,30 @@ ROLE_TR = {
     "finance_user": (
         "Finans ekibi üyesidir. Finans aşamasını imzalar; fatura kaydı ve ödeme "
         "girişini günlük olarak yürütür."),
+    "financial_director": (
+        "Ödeme kontrolünden sorumludur. Finans aşamasını imzalar — "
+        "fiyatlandırılmış talebi departman bütçesi, vergi ve ödeme koşullarına "
+        "göre kontrol eder — ve tedarikçilere ödemeleri serbest bırakır; bu "
+        "yetki bu yüzden harcamayı taahhüt eden alıcıda değil buradadır. "
+        "Görüntüleme, onay ve ödeme yetkileri vardır; talebi fiyatlandıramaz ve "
+        "satın alma emri açamaz."),
     "cfo": (
         "Mali İşler Direktörü (CFO). Önemli tutarlı taahhüt edilen harcama için "
         "CFO aşamasını imzalar ve bütçe aşımlarında yetkili kişidir."),
     "ceo": (
         "Genel Müdür (CEO). CEO aşamasını imzalar — en büyük satın almalarda son "
         "yetkili."),
+    "managing_director": (
+        "Murahhas Aza. CEO aşamasını imzalar — Genel Müdür ile aynı kademe; her iki rol de bu "
+        "aşamaya bağlıdır ve iki imzadan biri onu karşılar. Yönetim Kurulu "
+        "düzeyinin altındaki büyük harcamalarda son imzadır. Yalnızca "
+        "görüntüleme ve onay yetkisi vardır — parayı taahhüt eder, satın almaz "
+        "ve ödeme yapmaz."),
+    "board": (
+        "Yönetim Kurulu. En büyük taahhütlerde Yönetim Kurulu aşamasını imzalar "
+        "ve 10.000.000 EGP'yi aşan bir taahhüdü, talebe yazılı bir iş gerekçesi "
+        "kaydedilmeden onaylayamaz. Yalnızca görüntüleme ve onay yetkisi vardır "
+        "— satın alma ve ödeme yetkisi yoktur."),
 }
 
 # --- Free-text blocks: overview + one per gate (proc_doc.body_ar / _tr) ----
@@ -635,6 +741,14 @@ UI = {
             "Short delivery: this payment would exceed the value of the goods "
             "actually received. Pay for what was received, book the rest once it "
             "arrives — or ask an administrator to override.",
+        # --- a requisition buying from several suppliers ---
+        "po_required_flash":
+            "This request buys from several suppliers, so it has one purchase "
+            "order per supplier. Choose which order this belongs to.",
+        "exceeds_po_flash":
+            "This would bill that supplier's purchase order for more than the "
+            "order is worth. Check the amount, or book it against the right "
+            "supplier's order.",
         "advance_not_authorised_flash":
             "This is an advance payment (nothing invoiced yet). DOAM §4.3 requires "
             "it to be authorised first — record the advance authorisation on this "
@@ -737,6 +851,13 @@ UI = {
             "نقص في التوريد: هذا السداد يتجاوز قيمة البضاعة المستلمة فعلًا. ادفع "
             "مقابل ما تم استلامه وسجّل الباقي عند وصوله — أو اطلب من مسؤول النظام "
             "التجاوز.",
+        # --- a requisition buying from several suppliers ---
+        "po_required_flash":
+            "هذا الطلب يشتري من أكثر من مورد، ولكل مورد أمر شراء خاص به. اختر أمر "
+            "الشراء الذي يخص هذه العملية.",
+        "exceeds_po_flash":
+            "هذا يتجاوز قيمة أمر الشراء الخاص بذلك المورد. راجع المبلغ أو سجّله على "
+            "أمر شراء المورد الصحيح.",
         "advance_not_authorised_flash":
             "هذه دفعة مقدّمة (لا توجد فواتير بعد). يشترط البند 4-3 من دليل الصلاحيات "
             "اعتمادها أولًا — سجّل اعتماد الدفعة المقدّمة على هذا الطلب.",
@@ -844,6 +965,13 @@ UI = {
             "Eksik teslimat: bu ödeme fiilen teslim alınan malın değerini aşıyor. "
             "Teslim alınan kadarını ödeyin, kalanı geldiğinde kaydedin — ya da bir "
             "yöneticiden geçersiz kılmasını isteyin.",
+        # --- a requisition buying from several suppliers ---
+        "po_required_flash":
+            "Bu talep birden fazla tedarikçiden alım yapıyor ve her tedarikçinin "
+            "kendi siparişi var. Bunun hangi siparişe ait olduğunu seçin.",
+        "exceeds_po_flash":
+            "Bu, o tedarikçinin siparişini sipariş değerinin üzerinde faturalar. "
+            "Tutarı kontrol edin ya da doğru tedarikçinin siparişine kaydedin.",
         "advance_not_authorised_flash":
             "Bu bir avans ödemesidir (henüz fatura yok). DOAM §4.3 önce "
             "yetkilendirilmesini şart koşar — avans yetkisini bu talebe kaydedin.",

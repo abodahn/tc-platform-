@@ -525,10 +525,21 @@ def get_pr(pr_id):
         atts = conn.execute(
             "SELECT id, filename, content_type, size, uploaded_by, created_at "
             "FROM pr_attachments WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
-        quotes = conn.execute(
-            "SELECT id, pr_id, vendor, amount, currency, lead_time_days, warranty, "
-            "filename, is_chosen, notes, created_at FROM pr_quotes WHERE pr_id=? "
-            "ORDER BY amount", (pr_id,)).fetchall()
+        _qcols = ("id, pr_id, vendor, amount, currency, lead_time_days, warranty, "
+                  "filename, is_chosen, notes, created_at")
+        try:
+            quotes = conn.execute(
+                "SELECT " + _qcols + ", rfq_id FROM pr_quotes WHERE pr_id=? "
+                "ORDER BY amount", (pr_id,)).fetchall()
+        except Exception:
+            # Database predating the RFQ link column. The request page is the
+            # hottest read in the module; it must never depend on a migration
+            # having landed.
+            conn.rollback()
+            quotes = conn.execute(
+                "SELECT " + _qcols + " FROM pr_quotes WHERE pr_id=? ORDER BY amount",
+                (pr_id,)).fetchall()
+        rfqs = rfqs_for(conn, pr_id)
         invoices = conn.execute(
             "SELECT id, pr_id, invoice_no, invoice_date, amount, tax, currency, status, "
             "filename, notes, created_by, created_at FROM pr_invoices WHERE pr_id=? "
@@ -550,6 +561,7 @@ def get_pr(pr_id):
                 (pr_id,)).fetchall()]
         except Exception:
             grns, quarantine = [], []    # database predating the GRN tables
+        pos = _pos_for(conn, pr)     # one per vendor; falls back to pr.po_no
         returns_ok = True
         try:
             returns = [dict(r) for r in conn.execute(
@@ -592,10 +604,10 @@ def get_pr(pr_id):
             "l2_domain": C.l2_domain(pr_d.get("department"), pr_d.get("source_module"),
                                      any(_pr_field(r, "spare_id") for r in items)),
             "events": [dict(r) for r in events], "attachments": [dict(r) for r in atts],
-            "quotes": [dict(r) for r in quotes],
+            "quotes": [dict(r) for r in quotes], "rfqs": rfqs,
             "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments],
             "grns": grns, "quarantine": quarantine, "returns": returns,
-            "returns_ok": returns_ok}
+            "returns_ok": returns_ok, "pos": pos}
 
 
 def list_prs(status=None, requester=None, limit=500):
@@ -1028,8 +1040,8 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
                   if str(it.get("spare_id") or "").strip().isdigit()
                   and int(it["spare_id"]) in real_spares else None),
                  int(it["item_id"]) if str(it.get("item_id") or "").strip().isdigit() else None))
-        kind = "capex" if str(header.get("expenditure_kind") or "").strip().lower() \
-            in ("capex", "capital") else "opex"
+        # §4.2 — an unrecognised value must not quietly take the WEAKER ladder.
+        kind, _known = C.normalise_expenditure_kind(header.get("expenditure_kind"))
         try:
             # retention_until is stamped HERE, at creation, from the same two
             # numbers the controlled-forms register prints as prose: 10 years for
@@ -1094,7 +1106,8 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
     try:
         pr = conn.execute(
             "SELECT status, requester, tax_rate, payment_condition, pricing_status, "
-            "created_at FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+            "created_at, expenditure_kind FROM pr_requests WHERE id=?",
+            (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
         if pr["status"] not in ("draft", "rejected"):
@@ -1105,8 +1118,16 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
             else float(pr["tax_rate"] or 0)
         pay_cond = header.get("payment_condition") if can_price \
             else pr["payment_condition"]
-        kind = "capex" if str(header.get("expenditure_kind") or "").strip().lower() in (
-            "capex", "capital") else "opex"
+        kind, _known = C.normalise_expenditure_kind(header.get("expenditure_kind"))
+        # A re-file after rejection could change capex to opex and drop the
+        # Managing Director, and pr_events said only "edited". Which ladder a
+        # request routes on is exactly the kind of change an auditor asks about.
+        _was = (_pr_field(pr, "expenditure_kind") or "opex")
+        if _was != kind:
+            audit(conn, pr_id, (user or {}).get("username") or "system",
+                  "expenditure_kind_changed",
+                  f"Expenditure type changed from {_was.upper()} to {kind.upper()} — "
+                  f"this changes which DOAM ladder the request routes on.", ip)
         conn.execute(
             """UPDATE pr_requests SET title=?, request_for=?, department=?, currency=?,
                vendor=?, payment_condition=?, delivery_condition=?, req_del_date=?,
@@ -1528,6 +1549,16 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     # budget state). Signed / active rungs are never touched (seq > cur_seq).
     conn.execute("DELETE FROM pr_steps WHERE pr_id=? AND origin='unbudgeted' "
                  "AND status='pending' AND seq>?", (pr_id, cur_seq))
+    # §4.3's single-source rung has exactly the same problem, and it was left
+    # behind when Table 4's was fixed. "Approved one level above the value tier"
+    # is a function of the CURRENT value, and it was computed once at the waiver
+    # and never re-read. Measured through the screen: price 30,000, waive
+    # competition, re-price to 600,000 — the waiver rung was still the CFO, a
+    # signature 600,000 requires anyway, so waiving competition bought ZERO
+    # extra approval and the Board was never asked. Dropped here and re-derived
+    # by apply_single_source_state below, against the ladder as it now stands.
+    conn.execute("DELETE FROM pr_steps WHERE pr_id=? AND origin='single_source' "
+                 "AND status='pending' AND seq>?", (pr_id, cur_seq))
     existing = conn.execute(
         "SELECT id, seq, stage, status, esc_role, approver_user, "
         "COALESCE(origin,'ladder') AS origin FROM pr_steps "
@@ -1684,6 +1715,18 @@ def price_pr(pr_id, prices, meta, user, ip=None):
                 sets.append(f"{col}=?"); params.append(val)
         params.append(pr_id)
         conn.execute("UPDATE pr_requests SET " + ", ".join(sets) + " WHERE id=?", params)
+        # The lines follow the header vendor Purchasing just corrected — the ones
+        # still carrying the OLD one, that is; a line deliberately pointed at
+        # another supplier keeps its own. create_pr() seeds every line from the
+        # header (the REQUESTER's suggestion), and the purchase order, its PDF
+        # and the email now all resolve the supplier from the line. Without this
+        # the order went to the company the requester guessed at instead of the
+        # one Purchasing chose — worst on the maintenance auto-reorder bridge,
+        # whose requests are unpriced by design and all pass through here.
+        if meta.get("vendor") and meta["vendor"] != pr["vendor"]:
+            conn.execute("UPDATE pr_items SET vendor=? WHERE pr_id=? AND "
+                         "(vendor IS NULL OR vendor='' OR vendor=?)",
+                         (meta["vendor"], pr_id, pr["vendor"]))
 
         if pr["status"] == "pending":
             _reconcile_value_ladder(conn, pr_id, pr["department"], total)
@@ -1697,6 +1740,7 @@ def price_pr(pr_id, prices, meta, user, ip=None):
             # senior one at the top of the ladder rather than a rung the
             # directors sign after.
             apply_budget_state(conn, pr_id, ip=ip)
+            apply_single_source_state(conn, pr_id, ip=ip)
 
         cur = meta.get("currency") or pr["currency"]
         audit(conn, pr_id, (user or {}).get("username"), "priced",
@@ -2024,6 +2068,187 @@ def _unbudgeted_authority_given(pr_id, pr):
         conn.close()
 
 
+def po_groups(items, pr):
+    """Order lines grouped by the supplier whose document they belong on.
+
+    A line with no vendor of its own belongs to the request's header vendor —
+    which is every line of every request raised before per-line vendors existed.
+    Insertion-ordered, so the FIRST line's vendor owns the primary PO (the number
+    pr_requests.po_no keeps).
+
+    Grouped on C.vendor_key (trimmed, case-folded) so 'Alphatex' and 'ALPHATEX'
+    are one supplier and one document, as issue_rfqs already treats them; the
+    first spelling seen is the one printed. Keys stay the DISPLAY name — the RFQ
+    vendor list on the detail page reads them straight."""
+    groups, first = {}, {}
+    for it in items:
+        d = it if isinstance(it, dict) else dict(it)
+        v = (d.get("vendor") or _pr_field(pr, "vendor") or "").strip()
+        name = first.setdefault(C.vendor_key(v), v)
+        groups.setdefault(name, []).append(d)
+    return groups
+
+
+def _issue_po_rows(conn, pr_id, pr, base_no, user):
+    """Write one pr_purchase_orders row per distinct vendor on the request.
+
+    The first vendor keeps `base_no` — the number drafted at full approval and
+    already quoted in the bell, the audit trail and every link — so a
+    single-vendor request is numbered exactly as it is today. Later vendors hang
+    off the same number (-2, -3 …): unique by construction, where a second
+    id-based sequence through doc_no() would collide with the PO-YYYY-<pr id>
+    numbers already in the register.
+
+    Idempotent: rows already written are returned untouched."""
+    existing = conn.execute(
+        "SELECT * FROM pr_purchase_orders WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
+    if existing:
+        return [dict(r) for r in existing]
+    items = conn.execute("SELECT * FROM pr_items WHERE pr_id=? ORDER BY seq, id",
+                         (pr_id,)).fetchall()
+    groups = po_groups(items, pr) or {(_pr_field(pr, "vendor") or ""): []}
+    try:
+        rate = float(_pr_field(pr, "tax_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    cur_code, now = _pr_field(pr, "currency") or "EGP", _now()
+    uname = (user or {}).get("username")
+    rev = int(_pr_field(pr, "po_rev") or 0)
+    head_sub = round(float(_pr_field(pr, "total") or 0), 2)
+    rows = list(groups.items())
+    # Single vendor -> the header total itself, so the document is byte-for-byte
+    # what it prints today; only a split re-adds the lines per supplier.
+    subs = [head_sub if len(rows) == 1 else round(sum(_amount(l) for l in lines), 2)
+            for _v, lines in rows]
+    taxes = [round(s * rate / 100.0, 2) for s in subs]
+    # The orders must sum to the request they came from: three lines of 100.05 at
+    # 14% round to 342.18 across three documents where pr_amounts() reports
+    # 342.17, so the three suppliers' orders were a piastre more than the
+    # requisition that authorised them. The residual goes to the PRIMARY order —
+    # and only when the split genuinely ties to the request total, so no order is
+    # ever given tax its own subtotal does not carry.
+    if len(subs) > 1 and abs(sum(subs) - head_sub) < 0.005:
+        taxes[0] = round(round(head_sub * rate / 100.0, 2) - sum(taxes[1:]), 2)
+    out = []
+    for n, ((vendor, _lines), sub, tax) in enumerate(zip(rows, subs, taxes), start=1):
+        po_no = base_no if n == 1 else f"{base_no}-{n}"
+        row = {"pr_id": pr_id, "po_no": po_no, "vendor": vendor or None,
+               "currency": cur_code, "subtotal": sub, "tax": tax,
+               "grand": round(sub + tax, 2), "rev": rev, "status": "issued",
+               "issued_at": now, "issued_by": uname}
+        c = conn.execute(
+            """INSERT INTO pr_purchase_orders
+               (pr_id, po_no, vendor, currency, subtotal, tax, grand, rev, status,
+                issued_at, issued_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (pr_id, po_no, row["vendor"], cur_code, sub, tax, row["grand"], rev,
+             "issued", now, uname))
+        row["id"] = c.lastrowid
+        out.append(row)
+    return out
+
+
+def _pos_for(conn, pr):
+    """Every purchase order issued for a request — the read-through helper.
+
+    FALLBACK, not a migration: a request issued before the per-vendor split has
+    no rows here and its one order lives in pr_requests.po_no, so it is
+    synthesised on read. Historic rows are never rewritten."""
+    pr_id = _pr_field(pr, "id")
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM pr_purchase_orders WHERE pr_id=? ORDER BY id",
+            (pr_id,)).fetchall()]
+    except Exception:
+        conn.rollback()          # database predating the table
+        rows = []
+    if rows:
+        return rows
+    po_no = (_pr_field(pr, "po_no") or "").strip()
+    if not po_no:
+        return []
+    amt = pr_amounts(dict(pr))
+    return [{"id": None, "pr_id": pr_id, "po_no": po_no,
+             "vendor": _pr_field(pr, "vendor"), "currency": _pr_field(pr, "currency"),
+             "subtotal": amt["subtotal"], "tax": amt["tax"], "grand": amt["grand"],
+             "rev": int(_pr_field(pr, "po_rev") or 0),
+             "status": "issued" if _pr_field(pr, "status") != "approved" else "drafted",
+             "issued_at": None, "issued_by": None}]
+
+
+def split_order(conn, pr, po_id):
+    """The purchase order an invoice or a payment on a SPLIT requisition belongs
+    to. Returns (order_row, error).
+
+    (None, None) means the requisition is NOT split — one supplier, so the
+    request IS the order and every existing request-level cap already bounds it
+    exactly as it did before per-line vendors existed. The caller then skips the
+    per-order caps entirely and behaves bit-for-bit as before.
+
+    (None, "po_required") means it IS split and the caller did not say which
+    supplier's order the money is for. Fail closed: without it, one supplier can
+    be billed and paid up to the combined value of every other supplier's
+    order."""
+    pos = _pos_for(conn, pr)
+    if len(pos) < 2:
+        return None, None
+    try:
+        want = int(po_id)
+    except (TypeError, ValueError):
+        return None, "po_required"
+    po = next((p for p in pos if p.get("id") == want), None)
+    return (po, None) if po else (None, "po_required")
+
+
+def po_exposure(conn, pr, po):
+    """What ONE purchase order has been billed and paid, and the most it may be.
+
+    The same arithmetic three_way_match applies to a requisition, restricted to
+    one order's vendor: ordered is the order's own grand total, received is its
+    own lines, and the debit notes are the ones raised against its own supplier.
+    Only a split requisition needs it — see split_order()."""
+    pr_id, po_id = _pr_field(pr, "id"), po.get("id")
+    vendor = (po.get("vendor") or "").strip()
+    # Line matching uses the same supplier identity po_groups() grouped on and
+    # the PDF filters on: a line counted INTO this order's subtotal must count as
+    # received against it. The debit-note lookup below stays on the exact stored
+    # name — it is a money ceiling, and SQL's LOWER() folds differently from
+    # Python's for non-ASCII names.
+    vkey = C.vendor_key(vendor)
+    head = _pr_field(pr, "vendor")
+    try:
+        rate = float(_pr_field(pr, "tax_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    items = conn.execute(
+        "SELECT vendor, received_qty, unit_price FROM pr_items WHERE pr_id=?",
+        (pr_id,)).fetchall()
+    received = round(sum(float(i["received_qty"] or 0) * float(i["unit_price"] or 0)
+                         for i in items
+                         if C.vendor_key(i["vendor"] or head) == vkey), 2)
+    received_grand = round(received * (1 + rate / 100.0), 2)
+
+    def _sum(sql, *args):
+        row = conn.execute(sql, args).fetchone()
+        try:
+            return round(float(row["s"] or 0), 2) if row else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    invoiced = _sum("SELECT COALESCE(SUM(COALESCE(amount,0)+COALESCE(tax,0)),0) AS s "
+                    "FROM pr_invoices WHERE pr_id=? AND po_id=?", pr_id, po_id)
+    paid = _sum("SELECT COALESCE(SUM(COALESCE(amount,0)),0) AS s "
+                "FROM pr_payments WHERE pr_id=? AND po_id=?", pr_id, po_id)
+    # Keyed on the NAME, the way a PR names its supplier and the way
+    # _record_return writes it.
+    debit_open = _sum("SELECT COALESCE(SUM(COALESCE(total,0)),0) AS s FROM pr_returns "
+                      "WHERE pr_id=? AND status='open' AND COALESCE(TRIM(vendor),'')=?",
+                      pr_id, vendor)
+    ordered = round(float(po.get("grand") or 0), 2)
+    return {"ordered": ordered, "invoiced": invoiced, "paid": paid,
+            "received_grand": received_grand, "debit_open": debit_open,
+            "payable": round(max(0.0, min(received_grand, ordered - debit_open)), 2)}
+
+
 def issue_po(pr_id, user, ip=None, force=False):
     """Mark an approved PR's PO as issued (purchasing action). When an explicit
     department budget exists and this PO would leave it exceeded, issuing is
@@ -2047,11 +2272,20 @@ def issue_po(pr_id, user, ip=None, force=False):
         if force:
             audit(conn, pr_id, (user or {}).get("username"), "po_override",
                   "PO issued with admin override (budget exceeded)", ip)
-        po_no = pr["po_no"] or doc_no("PO", pr_id)
+        pos = _issue_po_rows(conn, pr_id, pr, pr["po_no"] or doc_no("PO", pr_id), user)
+        # The PRIMARY order's number stays on pr_requests.po_no: it is what every
+        # screen, PDF link, report and the maintenance bridge resolve against.
+        po_no = pos[0]["po_no"]
         conn.execute("UPDATE pr_requests SET status='po_issued', po_no=? WHERE id=?",
                      (po_no, pr_id))
-        audit(conn, pr_id, user.get("username"), "po_issued", f"PO {po_no} issued", ip)
-        bell(conn, "info", "Purchase Order issued", f"{po_no} issued for {pr['pr_no']}.")
+        each = ", ".join(f"{p['po_no']} ({p['vendor'] or '—'})" for p in pos)
+        audit(conn, pr_id, user.get("username"), "po_issued",
+              f"PO {po_no} issued" if len(pos) == 1
+              else f"{len(pos)} purchase orders issued, one per vendor: {each}", ip)
+        bell(conn, "info", "Purchase Order issued",
+             f"{po_no} issued for {pr['pr_no']}." if len(pos) == 1
+             else f"{len(pos)} purchase orders issued for {pr['pr_no']}, "
+                  f"one per vendor: {each}.")
         conn.commit()
         return True, po_no
     finally:
@@ -2118,6 +2352,7 @@ def set_fx(pr_id, rate, user, ip=None):
             _reconcile_value_ladder(conn, pr_id, pr["department"], pr["total"])
             # The EGP figure just moved, so the budget verdict can have moved too.
             apply_budget_state(conn, pr_id, ip=ip)
+            apply_single_source_state(conn, pr_id, ip=ip)
         conn.commit()
         return True, "fx_set"
     finally:
@@ -2244,36 +2479,61 @@ def _record_return(conn, pr_id, pr, lines, reason, user, grn_id=None):
     One row is both documents because they are one event: the goods go back and
     the supplier is debited for them. The debit-note number is allocated from the
     row id, exactly like a GRN number, so every return carries a distinct one.
-    Returns (return_id, dn_no)."""
+
+    ONE ROW PER SUPPLIER, split exactly the way _issue_po_rows splits the order:
+    the vendor is resolved from the REJECTED LINES, never from the header. Taking
+    it from the header debited the header's supplier for goods a different
+    supplier shipped — real money off the wrong payable, and the wrong ceiling in
+    three_way_match. A request with one supplier still writes exactly one row.
+    Returns [(return_id, dn_no), ...] — the primary first."""
     uname = (user or {}).get("username") or "system"
-    qty = round(sum(float(l["qty"]) for l in lines), 6)
-    net = round(sum(float(l["qty"]) * float(l["unit_price"] or 0) for l in lines), 2)
     try:
         rate = float(pr["tax_rate"] or 0)
     except (KeyError, IndexError, TypeError, ValueError):
         rate = 0.0
-    tax = round(net * rate / 100.0, 2)
-    cur = conn.execute(
-        """INSERT INTO pr_returns (pr_id, grn_id, vendor, vendor_id, lines_json, qty,
-           net, tax, total, currency, reason, status, created_by, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,'open',?,?)""",
-        (pr_id, grn_id, pr["vendor"], pr["vendor_id"], _json_dumps(lines), qty,
-         net, tax, round(net + tax, 2), pr["currency"] or "EGP", reason, uname, _now()))
-    ret_id = cur.lastrowid
-    dn_no = doc_no("DN", ret_id)
-    conn.execute("UPDATE pr_returns SET dn_no=? WHERE id=?", (dn_no, ret_id))
-    detail = ", ".join(f"{l['item']} {float(l['qty']):g}" for l in lines)
-    audit(conn, pr_id, uname, "goods_rejected",
-          f"{dn_no}: returned to {pr['vendor'] or 'the supplier'} — {detail}"
-          + (f" ({reason})" if reason else ""))
-    bell(conn, "warning", "Goods rejected — debit note raised",
-         f"{dn_no} ({pr['pr_no']}): {detail} returned to "
-         f"{pr['vendor'] or 'the supplier'}. Payable value reduced by "
-         f"{round(net + tax, 2):,.2f}.", link=_pr_link(pr_id))
-    notify_users(conn, [pr["requester"], uname], "warning", "Goods rejected on receipt",
-                 f"{pr['pr_no']}: {detail} rejected and returned. Debit note {dn_no}"
-                 + (f" — {reason}" if reason else "") + ".", link=_pr_link(pr_id))
-    return ret_id, dn_no
+    # Stripped, so the grouping key matches the one po_groups/_issue_po_rows use.
+    head_vendor = (pr["vendor"] or "").strip() or None
+    # Each rejected line belongs to the supplier its ORDER line names; a line
+    # naming none belongs to the header vendor, which is every line of every
+    # request raised before per-line vendors existed.
+    groups = {}
+    for l in lines:
+        row = conn.execute("SELECT vendor FROM pr_items WHERE id=?",
+                           (l.get("item_id"),)).fetchone()
+        vendor = ((row["vendor"] if row else None) or head_vendor or "").strip() or None
+        groups.setdefault(vendor, []).append(l)
+    out = []
+    for vendor, glines in groups.items():
+        qty = round(sum(float(l["qty"]) for l in glines), 6)
+        net = round(sum(float(l["qty"]) * float(l["unit_price"] or 0) for l in glines), 2)
+        tax = round(net * rate / 100.0, 2)
+        # The register id belongs to the HEADER's supplier and to no other. Every
+        # reader (vendor_dues, the debit note, the payable ceiling) keys on the
+        # NAME, so an unknown id is honest where a borrowed one is a lie.
+        vendor_id = pr["vendor_id"] if vendor == head_vendor else None
+        cur = conn.execute(
+            """INSERT INTO pr_returns (pr_id, grn_id, vendor, vendor_id, lines_json, qty,
+               net, tax, total, currency, reason, status, created_by, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,'open',?,?)""",
+            (pr_id, grn_id, vendor, vendor_id, _json_dumps(glines), qty,
+             net, tax, round(net + tax, 2), pr["currency"] or "EGP", reason, uname, _now()))
+        ret_id = cur.lastrowid
+        dn_no = doc_no("DN", ret_id)
+        conn.execute("UPDATE pr_returns SET dn_no=? WHERE id=?", (dn_no, ret_id))
+        detail = ", ".join(f"{l['item']} {float(l['qty']):g}" for l in glines)
+        audit(conn, pr_id, uname, "goods_rejected",
+              f"{dn_no}: returned to {vendor or 'the supplier'} — {detail}"
+              + (f" ({reason})" if reason else ""))
+        bell(conn, "warning", "Goods rejected — debit note raised",
+             f"{dn_no} ({pr['pr_no']}): {detail} returned to "
+             f"{vendor or 'the supplier'}. Payable value reduced by "
+             f"{round(net + tax, 2):,.2f}.", link=_pr_link(pr_id))
+        notify_users(conn, [pr["requester"], uname], "warning", "Goods rejected on receipt",
+                     f"{pr['pr_no']}: {detail} rejected and returned to "
+                     f"{vendor or 'the supplier'}. Debit note {dn_no}"
+                     + (f" — {reason}" if reason else "") + ".", link=_pr_link(pr_id))
+        out.append((ret_id, dn_no))
+    return out
 
 
 def get_return(ret_id):
@@ -2532,7 +2792,14 @@ def _due_date(payment_condition, base_date):
 
 
 def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64=None, ip=None):
-    """Record a vendor invoice, then (re)run the 3-way match for the PR."""
+    """Record a vendor invoice, then (re)run the 3-way match for the PR.
+
+    On a requisition SPLIT across suppliers the invoice must say WHICH order it
+    bills (`data["po_id"]`), and it may not bill that order for more than the
+    order is worth. Without that, one supplier's invoice could be accepted up to
+    the combined value of every other supplier's order — the request-level
+    ceiling bounds the three together, not one against its own. A single-supplier
+    request has no order to choose and is bounded exactly as it always was."""
     conn = get_db()
     try:
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
@@ -2542,6 +2809,16 @@ def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64
         if pr["status"] not in ("approved", "po_issued", "partially_received",
                                 "received", "closed"):
             return False, "not_invoicable"
+        po, po_err = split_order(conn, pr, data.get("po_id"))
+        if po_err:
+            return False, po_err
+        if po is not None:
+            ex = po_exposure(conn, pr, po)
+            gross = round(float(data.get("amount") or 0) + float(data.get("tax") or 0), 2)
+            tol = C.match_tolerance_value(ex["ordered"], fx_rate=_pr_fx(pr)) \
+                if C.DOAM_IN_FORCE else max(1.0, ex["ordered"] * 0.01)
+            if ex["invoiced"] + gross > ex["ordered"] + tol:
+                return False, "exceeds_po"
         inv_no = (data.get("invoice_no") or "").strip()
         if inv_no:
             # Dedup on (vendor, invoice_no) across ALL PRs — the same supplier invoice
@@ -2554,10 +2831,11 @@ def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64
                 return False, "duplicate_invoice"
         now = _now()
         conn.execute(
-            """INSERT INTO pr_invoices (pr_id, invoice_no, invoice_date, amount, tax,
+            """INSERT INTO pr_invoices (pr_id, po_id, invoice_no, invoice_date, amount, tax,
                currency, status, filename, content_type, content_b64, notes, created_by, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pr_id, data.get("invoice_no"), data.get("invoice_date") or now[:10],
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (pr_id, (po or {}).get("id"),
+             data.get("invoice_no"), data.get("invoice_date") or now[:10],
              float(data.get("amount") or 0), float(data.get("tax") or 0),
              data.get("currency") or pr["currency"] or "EGP", "received",
              filename, content_type, content_b64, data.get("notes"),
@@ -3464,7 +3742,11 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         setting 'payment_tolerance_pct' -> C.PAYMENT_TOLERANCE_PCT, default 1%);
       * on a SHORT DELIVERY the cap drops to the value actually received. Paying
         for what arrived is legitimate; paying the whole PO for part of it is
-        not, and the DOAM asks for the shortfall to be stated, not waved past."""
+        not, and the DOAM asks for the shortfall to be stated, not waved past;
+      * on a requisition SPLIT across suppliers the payment says which order it
+        settles (`data["po_id"]`) and the three caps above are applied a second
+        time to THAT order alone — computed on the requisition they bound three
+        suppliers together, so one could be paid the other two's money."""
     # run the match first (own connections) — before opening ours
     match = three_way_match(pr_id)
     conn = get_db()
@@ -3477,6 +3759,13 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         amount = float(data.get("amount") or 0)
         if amount <= 0:
             return False, "bad_amount"
+        # WHICH supplier's order this money is for. Only a SPLIT requisition has
+        # a choice to make; with one supplier this is (None, None) and every cap
+        # below is bit-for-bit what it was. Resolved before any write so the
+        # read-through in split_order cannot roll one back.
+        po, po_err = split_order(conn, pr, data.get("po_id"))
+        if po_err and not force:
+            return False, po_err
         # over-billing block (short delivery alone does not block the payment,
         # it caps it — see the received-value cap further down)
         if match and match["has_invoice"] and not force \
@@ -3526,15 +3815,35 @@ def add_payment(pr_id, data, user, ip=None, force=False):
             rcv = float(match.get("payable", match.get("received_grand")) or 0)
             if already + amount > rcv + max(1.0, rcv * _tol_pct):
                 return False, "exceeds_received"
+        # The same three caps AGAIN, this time against ONE supplier's own order.
+        # The three above are computed on the requisition, which is the right
+        # answer while a requisition is one supplier — and the wrong one the
+        # moment it is three, because they bound the three together: Gammaknit's
+        # 350 order could be invoiced and paid 3,350 without any of them firing.
+        # Reuses the existing refusal codes, so the message the payer reads is
+        # the one that already describes the cap that stopped them.
+        if po is not None and not force:
+            ex = po_exposure(conn, pr, po)
+            done = ex["paid"]
+            if ex["ordered"] > 0 and done + amount > ex["ordered"] + max(
+                    1.0, ex["ordered"] * _tol_pct):
+                return False, "over_payment"
+            if ex["invoiced"] > 0 and done + amount > ex["invoiced"] + max(
+                    1.0, ex["invoiced"] * _tol_pct):
+                return False, "exceeds_invoiced"
+            if (ex["received_grand"] < ex["ordered"] - 0.01 or ex["debit_open"] > 0) \
+               and done + amount > ex["payable"] + max(1.0, ex["payable"] * _tol_pct):
+                return False, "exceeds_received"
         now = _now()
         if force:
             audit(conn, pr_id, (user or {}).get("username"), "payment_override",
                   "Payment recorded with admin override (match/limit checks bypassed)", ip)
         conn.execute(
-            """INSERT INTO pr_payments (pr_id, invoice_id, amount, currency, method,
+            """INSERT INTO pr_payments (pr_id, po_id, invoice_id, amount, currency, method,
                reference, paid_at, notes, created_by, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (pr_id, data.get("invoice_id") or None, amount, pr["currency"] or "EGP",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (pr_id, (po or {}).get("id"),
+             data.get("invoice_id") or None, amount, pr["currency"] or "EGP",
              data.get("method"), data.get("reference"), data.get("paid_at") or now[:10],
              data.get("notes"), user.get("username") if user else "system", now))
         paid = float(pr["paid_amount"] or 0) + amount
@@ -3576,49 +3885,70 @@ def close_pr(pr_id, user, ip=None):
 
 
 def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
-    """Email the Purchase Order (PDF attached) to the vendor's address on file."""
+    """Email each Purchase Order (PDF attached) to ITS OWN vendor's address.
+
+    One send per order, never one broadcast: a request split across suppliers
+    has one document per supplier, and each supplier may only ever receive the
+    document carrying their own lines and prices. `pdf_bytes` (if supplied) is
+    the primary order's PDF, as before."""
     bundle = get_pr(pr_id)
     if not bundle:
         return False, "not_found"
     pr = bundle["pr"]
     if pr["status"] not in ("approved", "po_issued", "received", "closed"):
         return False, "not_approved"
-    # find the vendor's email
+    pos = bundle.get("pos") or []
+    if not pos:
+        return False, "no_vendor_email"
+    # find each vendor's email
     conn = get_db()
     try:
-        v = conn.execute("SELECT email FROM proc_vendors WHERE name=?", (pr.get("vendor"),)).fetchone()
+        emails = {}
+        for p in pos:
+            v = conn.execute("SELECT email FROM proc_vendors WHERE name=?",
+                             (p.get("vendor"),)).fetchone()
+            if v and v["email"]:
+                emails[p["po_no"]] = v["email"]
     finally:
         conn.close()
-    vendor_email = v["email"] if v else None
-    if not vendor_email:
+    if not emails:
         return False, "no_vendor_email"
-    if pdf_bytes is None:
-        try:
-            from app.approvals import pdf as _pdf
-            pdf_bytes = _pdf.po_pdf(bundle)
-        except Exception:
-            pdf_bytes = None
-    amt = pr_amounts(pr)
-    body = (f"Dear {pr.get('vendor')},\n\n"
-            f"Please find attached Purchase Order {pr.get('po_no')} "
-            f"(ref {pr.get('pr_no')}) from T&C Garments.\n\n"
-            f"Total: {amt['grand']:,.2f} {pr.get('currency') or ''}\n"
-            f"Payment: {pr.get('payment_condition') or '-'}\n"
-            f"Delivery: {pr.get('delivery_condition') or '-'}\n\n"
-            f"Regards,\nT&C Garments — Purchasing")
     from app.services.alerts import send_email_to
-    atts = [(f"{pr.get('po_no', 'PO')}.pdf", pdf_bytes, "application/pdf")] if pdf_bytes else None
-    ok = send_email_to([vendor_email], f"Purchase Order {pr.get('po_no')} — T&C Garments",
-                       body, attachments=atts)
+    from app.approvals import pdf as _pdf
+    sent, log_lines = False, []
+    for i, p in enumerate(pos):
+        vendor_email = emails.get(p["po_no"])
+        if not vendor_email:
+            log_lines.append(f"{p['po_no']}: no email on file for {p.get('vendor') or '—'}")
+            continue
+        blob = pdf_bytes if (i == 0 and pdf_bytes is not None) else None
+        if blob is None:
+            try:
+                blob = _pdf.po_pdf(bundle, p)
+            except Exception:
+                blob = None
+        body = (f"Dear {p.get('vendor') or pr.get('vendor')},\n\n"
+                f"Please find attached Purchase Order {p['po_no']} "
+                f"(ref {pr.get('pr_no')}) from T&C Garments.\n\n"
+                f"Total: {float(p.get('grand') or 0):,.2f} {p.get('currency') or pr.get('currency') or ''}\n"
+                f"Payment: {pr.get('payment_condition') or '-'}\n"
+                f"Delivery: {pr.get('delivery_condition') or '-'}\n\n"
+                f"Regards,\nT&C Garments — Purchasing")
+        atts = [(f"{p['po_no']}.pdf", blob, "application/pdf")] if blob else None
+        ok = send_email_to([vendor_email], f"Purchase Order {p['po_no']} — T&C Garments",
+                           body, attachments=atts)
+        sent = sent or ok
+        log_lines.append(f"{p['po_no']} -> {vendor_email}"
+                         + ("" if ok else " (SMTP not configured)"))
     conn = get_db()
     try:
         conn.execute("UPDATE pr_requests SET po_sent_at=? WHERE id=?", (_now(), pr_id))
         audit(conn, pr_id, user.get("username") if user else "system", "po_emailed",
-              f"PO emailed to {vendor_email}" + ("" if ok else " (SMTP not configured)"), ip)
+              "PO emailed — " + "; ".join(log_lines), ip)
         conn.commit()
     finally:
         conn.close()
-    return (True, "sent") if ok else (True, "logged")   # logged = SMTP not set yet
+    return (True, "sent") if sent else (True, "logged")   # logged = SMTP not set yet
 
 
 def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
@@ -3951,23 +4281,116 @@ def get_attachment(att_id):
 
 
 # --------------------------------------------------------------------------
+# Requests for Quotation — the document that PRODUCES the competitive quotes
+# --------------------------------------------------------------------------
+def issue_rfqs(pr_id, vendors, user, reply_by=None, notes=None, ip=None):
+    """Issue ONE Request for Quotation per vendor and return the rows written.
+
+    A request for INFORMATION, not a commitment: nothing here touches the
+    request's status, total, vendor or approval ladder — asking three suppliers
+    what something costs must leave the requisition exactly as it was.
+
+    Each RFQ takes its own number from doc_no(), so it is a controlled document
+    like the PR and the PO. Vendors are de-duplicated within the call; asking the
+    same supplier again later is a legitimate re-issue and gets its own number.
+
+    Sourcing CLOSES once the request is approved, ordered or cancelled — the
+    same rule the page applies when it hides the form. Checked here, not only in
+    the template, because a direct POST reaches the endpoint whatever the page
+    shows, and it wrote controlled RFQ numbers against cancelled requests.
+    """
+    names, seen = [], set()
+    for v in (vendors or []):
+        v = (v or "").strip()
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            names.append(v)
+    if not names:
+        return False, "no_vendors"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT pr_no, status FROM pr_requests WHERE id=?",
+                          (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] in ("approved", "po_issued", "partially_received",
+                            "received", "closed", "cancelled"):
+            return False, "locked"
+        uname = (user or {}).get("username") or "system"
+        now = _now()
+        out = []
+        # Every READ path in this feature degrades on a database predating the
+        # table (rfqs_for -> [], get_pr -> rfqs: [], add_quote -> no link); the
+        # write was the one place left that answered a missing table with a 500.
+        try:
+            for vendor in names:
+                cur = conn.execute(
+                    """INSERT INTO pr_rfqs (pr_id, vendor, reply_by, status, sent_at,
+                       created_by, notes) VALUES (?,?,?,'sent',?,?,?)""",
+                    (pr_id, vendor, (reply_by or None), now, uname, (notes or None)))
+                rfq_id = cur.lastrowid
+                rfq_no = doc_no("RFQ", rfq_id)
+                conn.execute("UPDATE pr_rfqs SET rfq_no=? WHERE id=?", (rfq_no, rfq_id))
+                out.append({"id": rfq_id, "rfq_no": rfq_no, "vendor": vendor})
+            audit(conn, pr_id, uname, "rfq_issued",
+                  "%d request(s) for quotation issued: %s" % (
+                      len(out), ", ".join("%s (%s)" % (r["rfq_no"], r["vendor"])
+                                          for r in out)), ip)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            return False, "unavailable"
+        return True, out
+    finally:
+        conn.close()
+
+
+def rfqs_for(conn, pr_id):
+    """Every RFQ issued for a request. Empty on a database predating the table."""
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM pr_rfqs WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()]
+    except Exception:
+        conn.rollback()
+        return []
+
+
+# --------------------------------------------------------------------------
 # multi-quote comparison
 # --------------------------------------------------------------------------
 def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=None, ip=None):
     conn = get_db()
     try:
+        # The RFQ this quotation answers, when it answers one. Validated against
+        # THIS request, so a stray id cannot attach a quote to another PR's RFQ.
+        # Unresolvable (bad id, or a database predating the table) -> no link,
+        # and the INSERT below is then byte-for-byte the one that always ran.
+        rfq_id = None
+        if str(data.get("rfq_id") or "").strip():
+            try:
+                row = conn.execute("SELECT id FROM pr_rfqs WHERE id=? AND pr_id=?",
+                                   (int(data["rfq_id"]), pr_id)).fetchone()
+                rfq_id = row["id"] if row else None
+            except Exception:
+                conn.rollback()
+                rfq_id = None
         conn.execute(
             """INSERT INTO pr_quotes
                (pr_id, vendor, amount, currency, lead_time_days, warranty,
-                filename, content_type, content_b64, notes, uploaded_by, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                filename, content_type, content_b64, notes, uploaded_by, created_at"""
+            + (", rfq_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)" if rfq_id
+               else ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"),
             (pr_id, data.get("vendor"), float(data.get("amount") or 0),
              data.get("currency") or "EGP",
              int(data["lead_time_days"]) if str(data.get("lead_time_days") or "").strip() else None,
              data.get("warranty"), filename, content_type, content_b64, data.get("notes"),
-             user.get("username") if user else "system", _now()))
+             user.get("username") if user else "system", _now())
+            + ((rfq_id,) if rfq_id else ()))
+        if rfq_id:
+            conn.execute("UPDATE pr_rfqs SET status='answered' WHERE id=?", (rfq_id,))
         audit(conn, pr_id, user.get("username") if user else "system", "quote_added",
-              f"Quote from {data.get('vendor')} @ {data.get('amount')}", ip)
+              f"Quote from {data.get('vendor')} @ {data.get('amount')}"
+              + (f" (answers RFQ #{rfq_id})" if rfq_id else ""), ip)
         conn.commit()
         return True, ""
     finally:
@@ -4307,6 +4730,54 @@ def budget_check(conn, department, egp_total, period=None, pr_id=None):
         return {"unbudgeted": True, "state": "over_budget",
                 "over_by": round(-float(st["remaining"] or 0), 2), "status": st}
     return {"unbudgeted": False, "state": "budgeted", "over_by": None, "status": st}
+
+
+def apply_single_source_state(conn, pr_id, pr=None, ip=None):
+    """DOAM §4.3 — re-derive the single-source escalation against the value the
+    request now carries. Caller commits.
+
+    "Single source (any value): written justification, approved ONE LEVEL ABOVE
+    THE VALUE TIER." One level above WHAT depends on the value, so the rung has
+    to move when the value does. It was derived once when competition was waived
+    and never revisited, which made the escalation a function of pricing history
+    rather than of the money being committed — and re-pricing upward quietly
+    turned the waiver into no extra approval at all.
+
+    Runs at the pricing gate for the same reason apply_budget_state does: every
+    request the UI creates is submitted at zero, so the value that decides this
+    does not exist until Purchasing prices it.
+    """
+    pr = pr or conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+    if not pr or not str(_pr_field(pr, "single_source_reason") or "").strip():
+        return None
+    if (_pr_field(pr, "status") or "") != "pending":
+        return None
+    rows = conn.execute("SELECT seq, stage, COALESCE(origin,'ladder') AS origin "
+                        "FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()
+    stages = [r["stage"] for r in rows]
+    kind = _pr_field(pr, "expenditure_kind")
+    extra = C.single_source_stage(stages, kind)
+    if not extra:
+        return None                      # the ladder already reaches that high
+    seq = max([r["seq"] for r in rows] or [0]) + 1
+    _roles = stage_roles_map(conn)
+    e_role, e_from, why = _esc_columns(conn, extra, _pr_field(pr, "requester"),
+                                       _roles, escalation_map(conn))
+    conn.execute(
+        "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, created_at, "
+        "esc_role, esc_from, origin) VALUES (?,?,?,?,?,?,?,?,?)",
+        (pr_id, seq, extra, "pending", stage_label(extra), _now(),
+         "" if why == "no_superior" else e_role, e_from, "single_source"))
+    audit(conn, pr_id, "system", "single_source_escalation",
+          f"Competition waived — DOAM §4.3 puts the approval one level above the "
+          f"value tier, which at this value is {stage_label(extra)}.", ip)
+    # The ladder's shape changed, so the Table 5 letters have to move with it —
+    # the same call _append_single_source_rung and apply_budget_state make after
+    # their own INSERT. Without it this rung kept the column default (A) instead
+    # of the E a control rung carries, so a waiver re-derived at the pricing gate
+    # printed a SECOND final authority beside the value tier's own.
+    stamp_step_actions(conn, pr_id)
+    return extra
 
 
 def apply_budget_state(conn, pr_id, pr=None, ip=None):
