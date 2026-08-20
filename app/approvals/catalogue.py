@@ -341,9 +341,19 @@ def upsert_items(conn, items, user, source="import"):
     counts = {"added": 0, "updated": 0, "unchanged": 0, "rejected": 0}
 
     existing = {}
+    # Keyed case-INSENSITIVELY, matching _code_taken() on the new-item door. The
+    # UNIQUE on proc_items.code is case-sensitive, so "AB-100" and "ab-100" are
+    # two rows to the database and one part to a human; keying this by exact code
+    # meant a second export spelling a code differently created a duplicate that
+    # would never merge afterwards. It is not hypothetical — the store's Optima
+    # sheet did it twice on its first import.
+    #
+    # The stored code keeps ITS OWN spelling: the row already on file wins, the
+    # way the first spelling of a vendor name wins in po_groups. An import may
+    # correct a name; it may not silently re-case a code other documents cite.
     for r in conn.execute("SELECT id, code, name, unit, category_code, category_name, "
                           "cost_price, has_cost FROM proc_items").fetchall():
-        existing[r["code"]] = r
+        existing[(r["code"] or "").casefold()] = r
 
     inserts, updates = [], []
     for it in items:
@@ -351,7 +361,7 @@ def upsert_items(conn, items, user, source="import"):
         if not code:
             counts["rejected"] += 1
             continue
-        row = existing.get(code)
+        row = existing.get(code.casefold())
         no_cost = it.get("cost_price") is None      # the file stated no price
         vals = {
             "name": str(it.get("name") or "").strip(),
@@ -387,9 +397,13 @@ def upsert_items(conn, items, user, source="import"):
             counts["unchanged"] += 1
             continue
         sets = ", ".join(f"{f}=?" for f in changed)
+        # Target the id, not the incoming code. The match above is case-
+        # insensitive, so `code` as typed in the file may not be the string
+        # stored on the row — WHERE code=? would then update nothing at all and
+        # still be counted as an update.
         updates.append((f"UPDATE proc_items SET {sets}, source=?, updated_by=?, "
-                        f"updated_at=? WHERE code=?",
-                        tuple(changed.values()) + (source, who, now, code)))
+                        f"updated_at=? WHERE id=?",
+                        tuple(changed.values()) + (source, who, now, row["id"])))
         counts["updated"] += 1
 
     cols = ("code, name, unit, category_code, category_name, cost_price, has_cost, "
