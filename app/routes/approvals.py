@@ -149,6 +149,7 @@ def new():
     if ticket_id and ticket_id.isdigit():
         prefill = svc.ticket_prefill(int(ticket_id)) or {}
     return render_template("approvals/new.html", active="proc_new",
+                           fields=svc.visible_fields(),
                            vendors=svc.list_vendors(), units=C.UNITS,
                            sales_orders=svc.list_sales_orders(),
                            forecasts=svc.list_forecasts(active_only=True),
@@ -172,7 +173,17 @@ def _can_price():
     return False
 
 
-def _parse_header(f, can_price=False):
+# Settings key -> the header field it switches off.
+_OPTIONAL_FIELD_NAMES = {
+    "show_expenditure_kind": "expenditure_kind",
+    "show_sales_order": "so_no",
+    "show_forecast_ref": "forecast_ref",
+    "show_cost_center": "cost_center",
+    "show_delivery_condition": "delivery_condition",
+}
+
+
+def _parse_header(f, can_price=False, existing=None):
     h = {
         "title": f.get("title", "").strip(),
         "request_for": f.get("request_for", "").strip(),
@@ -209,6 +220,31 @@ def _parse_header(f, can_price=False):
         # a requester can never set the payment terms or tax, whatever is POSTed.
         h["payment_condition"] = ""
         h["tax_rate"] = 0
+    # A field switched OFF in Settings is not rendered, so the browser posts
+    # nothing for it and the parser above reads "". On an edit that would blank
+    # whatever the request already carries — a sales order quietly erased by an
+    # admin toggling a display switch. So for any hidden field the stored value
+    # wins over the empty post. Nothing is lost by hiding a field, and unhiding
+    # it shows the value again.
+    hidden = [f_ for k_, f_ in _OPTIONAL_FIELD_NAMES.items()
+              if not svc.visible_fields().get(k_, True)]
+    if hidden:
+        for name in hidden:
+            if existing is not None:
+                try:
+                    h[name] = existing[name]
+                except (KeyError, IndexError, TypeError):
+                    pass
+            else:
+                # On a NEW request there is nothing to preserve; drop the key so
+                # create_pr applies its own default rather than storing "".
+                h.pop(name, None)
+        if "expenditure_kind" in hidden:
+            # Hiding the switch is an administrative decision that this site does
+            # not classify capital spend on the form. Everything is then OPEX by
+            # policy, and that is a recognised answer, not an unreadable one.
+            h["expenditure_kind"] = (h.get("expenditure_kind") or "opex")
+            h["_kind_recognised"] = True
     return h
 
 
@@ -652,6 +688,7 @@ def edit(pr_id):
                "so_no": pr.get("so_no"), "cost_center": pr.get("cost_center"),
                "forecast_ref": pr.get("forecast_ref")}
     return render_template("approvals/new.html", active="proc_list",
+                           fields=svc.visible_fields(),
                            vendors=svc.list_vendors(), units=C.UNITS,
                            sales_orders=svc.list_sales_orders(),
                            forecasts=svc.list_forecasts(active_only=True),
@@ -675,7 +712,7 @@ def edit_save(pr_id):
     if bundle["pr"]["requester"] != (_u() or {}).get("username") and not user_can("proc_admin"):
         abort(403)
     can_price = _can_price()
-    header = _parse_header(request.form, can_price)
+    header = _parse_header(request.form, can_price, existing=bundle["pr"])
     items = _parse_items(request.form, can_price)
     if not header["title"] or not items:
         flash("A title and at least one line item are required.", "error")
@@ -806,6 +843,7 @@ def detail(pr_id):
     # Requesters don't see commercial figures until Purchasing has priced the PR.
     show_commercial = is_priced or can_purchasing
     return render_template("approvals/detail.html", active="proc_list",
+                           fields=svc.visible_fields(),
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
                            act_why=act_why, act_sign=act_sign,
                            l2_domain=l2_dom, l2_note=l2_note,

@@ -75,7 +75,7 @@ STAGE_AR = {
         "مبكرًا عند مرحلة المشتريات حتى لا يدور طلب بهذا الحجم بدونها. لا يوقّع "
         "على هذه المرحلة افتراضيًا سوى دور مجلس الإدارة، وهو يعتمد فقط — لا "
         "يُسعّر ولا يشتري ولا يدفع. وبمجرد وصول هذا التوقيع الأخير يصبح الطلب "
-        "معتمدًا ويُجهَّز رقم أمر الشراء تلقائيًا."),
+        "معتمدًا ويُجهَّز رقم أمر الشراء تلقائيًا.")
 }
 
 STAGE_TR = {
@@ -140,7 +140,7 @@ STAGE_TR = {
         "olarak yalnızca Yönetim Kurulu rolü imzalar ve yalnızca onaylar — "
         "fiyatlandırmaz, satın almaz, ödeme yapmaz. Bu son imza geldiğinde talep "
         "Onaylandı durumuna geçer ve otomatik olarak bir Satın alma emri "
-        "numarası hazırlanır."),
+        "numarası hazırlanır.")
 }
 
 # --- Roles (proc_role_meta.explanation_ar / _tr) ---------------------------
@@ -196,7 +196,7 @@ ROLE_AR = {
         "مجلس الإدارة. يوقّع على مرحلة مجلس الإدارة في أكبر الالتزامات، ولا "
         "يستطيع اعتماد التزام يتجاوز 10,000,000 جنيه قبل تسجيل دراسة جدوى "
         "مكتوبة على الطلب. يملك الاطلاع والاعتماد فقط — بلا صلاحيات شراء ولا "
-        "صرف."),
+        "صرف.")
 }
 
 ROLE_TR = {
@@ -257,7 +257,7 @@ ROLE_TR = {
         "Yönetim Kurulu. En büyük taahhütlerde Yönetim Kurulu aşamasını imzalar "
         "ve 10.000.000 EGP'yi aşan bir taahhüdü, talebe yazılı bir iş gerekçesi "
         "kaydedilmeden onaylayamaz. Yalnızca görüntüleme ve onay yetkisi vardır "
-        "— satın alma ve ödeme yetkisi yoktur."),
+        "— satın alma ve ödeme yetkisi yoktur.")
 }
 
 # --- Free-text blocks: overview + one per gate (proc_doc.body_ar / _tr) ----
@@ -347,7 +347,7 @@ DOC_AR = {
         "استلامه فعلًا شاملة الضريبة — أي أن الحد الفعلي هو الأقل من الثلاثة "
         "المنطبقة، مع تطبيق هامش تفاوت الدفع على كل منها. ويُرفض الدفع أيضًا ما "
         "دامت المطابقة الثلاثية تُظهر فوترة زائدة. ويمكن للمسؤول تجاوز أي من هذه "
-        "القيود، ويُسجَّل التجاوز في سجل التدقيق."),
+        "القيود، ويُسجَّل التجاوز في سجل التدقيق.")
 }
 
 DOC_TR = {
@@ -446,7 +446,7 @@ DOC_TR = {
         "ödeme toleransı uygulanmış hâlleriyle geçerli olanların EN KÜÇÜĞÜdür. "
         "3'lü mutabakat fazla faturalama gösterirken de ödeme reddedilir. Bir "
         "yönetici bunların herhangi birini geçersiz kılabilir ve bu istisna "
-        "denetim kaydına girer."),
+        "denetim kaydına girer.")
 }
 
 # --- PR status meanings (proc_doc sections 'status.<key>') -----------------
@@ -460,7 +460,7 @@ STATUS_AR = {
     "partially_received": "تم استلام بعض بنود الطلب وليس كلها.",
     "received": "تم تأكيد التوريد لكل البنود.",
     "closed": "مكتمل ومؤرشف — لا يُتوقَّع أي إجراء آخر.",
-    "cancelled": "سُحب من مقدّم الطلب أو المشتريات أو المسؤول قبل الاكتمال.",
+    "cancelled": "سُحب من مقدّم الطلب أو المشتريات أو المسؤول قبل الاكتمال."
 }
 
 STATUS_TR = {
@@ -475,7 +475,7 @@ STATUS_TR = {
     "received": "Her satır için teslim teyit edildi.",
     "closed": "Tamamlandı ve arşivlendi — başka bir işlem beklenmiyor.",
     "cancelled": "Tamamlanmadan önce talep eden, Satın Alma veya bir yönetici "
-                 "tarafından geri çekildi.",
+                 "tarafından geri çekildi."
 }
 
 # --- What the seeder and the renderer consume ------------------------------
@@ -485,7 +485,7 @@ STAGE = {"ar": STAGE_AR, "tr": STAGE_TR}
 ROLE = {"ar": ROLE_AR, "tr": ROLE_TR}
 DOC = {
     "ar": dict(DOC_AR, **{f"status.{k}": v for k, v in STATUS_AR.items()}),
-    "tr": dict(DOC_TR, **{f"status.{k}": v for k, v in STATUS_TR.items()}),
+    "tr": dict(DOC_TR, **{f"status.{k}": v for k, v in STATUS_TR.items()})
 }
 
 
@@ -518,7 +518,7 @@ STAGE_LABEL = {
     "tr": {"requester": "Talep eden", "warehouse": "Depo",
            "factory_manager": "Fabrika Müdürü", "purchasing": "Satın Alma",
            "finance": "Finans", "cfo": "CFO", "ceo": "CEO",
-           "scd": "Tedarik Zinciri Direktörü", "bod": "Yönetim Kurulu"},
+           "scd": "Tedarik Zinciri Direktörü", "bod": "Yönetim Kurulu"}
 }
 
 GATE_LABEL = {
@@ -532,7 +532,7 @@ GATE_LABEL = {
     "tr": {"pricing_gate": "Fiyatlandırma kapısı",
            "rfq": "RFQ / rekabetçi teklifler",
            "sod": "Görevler ayrılığı (SoD)", "budget_gate": "Bütçe kapısı",
-           "three_way_match": "3'lü mutabakat", "payment_cap": "Ödeme üst sınırı"},
+           "three_way_match": "3'lü mutabakat", "payment_cap": "Ödeme üst sınırı"}
 }
 
 STATUS_LABEL = {
@@ -547,7 +547,7 @@ STATUS_LABEL = {
     "tr": {"draft": "Taslak", "pending": "Onay bekliyor", "approved": "Onaylandı",
            "rejected": "Reddedildi", "po_issued": "PO açıldı",
            "partially_received": "Kısmen teslim alındı", "received": "Teslim alındı",
-           "closed": "Kapatıldı", "cancelled": "İptal edildi"},
+           "closed": "Kapatıldı", "cancelled": "İptal edildi"}
 }
 
 # Full titles of the configurable rules (the short tag forms stay on their
@@ -556,15 +556,58 @@ SETTING_LABEL = {
     "en": {"rfq_quote_min": "Competing quotes required",
            "rfq_value_threshold": "Quotes required from (EGP)",
            "sod_admin_exempt": "Admins exempt from segregation of duties",
-           "payment_tolerance_pct": "Payment tolerance (%)"},
+           "payment_tolerance_pct": "Payment tolerance (%)",
+           "show_expenditure_kind": "Show ‘Expenditure type’ on requests",
+           "show_sales_order": "Show ‘Sales order’ on requests",
+           "show_forecast_ref": "Show ‘Agreed forecast’ on requests",
+           "show_cost_center": "Show ‘Cost centre’ on requests",
+           "show_delivery_condition": "Show ‘Delivery condition’ on requests"},
     "ar": {"rfq_quote_min": "عدد عروض الأسعار المتنافسة المطلوبة",
            "rfq_value_threshold": "عروض الأسعار مطلوبة من (EGP)",
            "sod_admin_exempt": "استثناء المسؤولين من الفصل بين المهام",
-           "payment_tolerance_pct": "هامش تفاوت الدفع (%)"},
+           "payment_tolerance_pct": "هامش تفاوت الدفع (%)",
+           "show_expenditure_kind": "إظهار «نوع الإنفاق» في الطلبات",
+           "show_sales_order": "إظهار «أمر البيع» في الطلبات",
+           "show_forecast_ref": "إظهار «التوقّع المعتمد» في الطلبات",
+           "show_cost_center": "إظهار «مركز التكلفة» في الطلبات",
+           "show_delivery_condition": "إظهار «شرط التسليم» في الطلبات"},
     "tr": {"rfq_quote_min": "Gereken rekabetçi teklif sayısı",
            "rfq_value_threshold": "Tekliflerin gerekli olduğu tutar (EGP)",
            "sod_admin_exempt": "Yöneticiler görevler ayrılığından muaf",
-           "payment_tolerance_pct": "Ödeme toleransı (%)"},
+           "payment_tolerance_pct": "Ödeme toleransı (%)",
+           "show_expenditure_kind": "Taleplerde ‘Harcama türü’ göster",
+           "show_sales_order": "Taleplerde ‘Satış siparişi’ göster",
+           "show_forecast_ref": "Taleplerde ‘Onaylı tahmin’ göster",
+           "show_cost_center": "Taleplerde ‘Masraf merkezi’ göster",
+           "show_delivery_condition": "Taleplerde ‘Teslim koşulu’ göster"}
+}
+
+
+# Consequence of switching each optional request field OFF. Server-rendered on
+# the workflow page, so it needs all three languages: an English-only sentence on
+# an Arabic page is the untranslated Latin run tests_i18n_adversarial refuses.
+SETTING_WARN = {
+    "en": {
+        "show_expenditure_kind": "Every request is then treated as OPEX. CAPEX routes through a stricter ladder (DOAM 4.2), so hiding this gives capital spend the weaker one.",
+        "show_sales_order": "DOAM 3.4 requires a valid sales order OR an agreed forecast on any request that is not maintenance spares. Hide BOTH and those requests are refused at submission — the gate is not switched off by hiding its field.",
+        "show_forecast_ref": "The other half of the DOAM 3.4 cost object. Safe to hide on its own if the plant works to sales orders; not safe to hide together with Sales order.",
+        "show_cost_center": "The route maintenance and facility spend uses to answer DOAM 3.4 instead of a sales order. Hiding it does not stop spare-part requests, which are recognised from the parts master.",
+        "show_delivery_condition": "Prints on the purchase order. Nothing routes on it.",
+    },
+    "ar": {
+        "show_expenditure_kind": "عندئذٍ يُعامَل كل طلب على أنه مصروف تشغيلي. أما المصروف الرأسمالي فيمرّ بسلسلة موافقات أشدّ (البند 4.2)، لذا فإخفاء هذا الحقل يمنح الإنفاق الرأسمالي السلسلة الأضعف.",
+        "show_sales_order": "يشترط البند 3.4 وجود أمر بيع صالح أو توقّع معتمد في أي طلب غير خاص بقطع غيار الصيانة. وإخفاء الحقلين معًا يعني رفض هذه الطلبات عند الإرسال — فإخفاء الحقل لا يوقف الضابط.",
+        "show_forecast_ref": "النصف الآخر من مرجع التكلفة في البند 3.4. إخفاؤه وحده آمن إذا كان المصنع يعمل بأوامر البيع، لكن إخفاءه مع «أمر البيع» غير آمن.",
+        "show_cost_center": "الطريق الذي تستخدمه مصروفات الصيانة والمرافق للإجابة على البند 3.4 بدلاً من أمر البيع. إخفاؤه لا يوقف طلبات قطع الغيار، فهي تُعرَف من دليل قطع الغيار.",
+        "show_delivery_condition": "يُطبع على أمر الشراء. ولا يُبنى عليه أي توجيه للموافقات.",
+    },
+    "tr": {
+        "show_expenditure_kind": "O zaman her talep işletme gideri sayılır. Sermaye harcaması daha katı bir onay zincirinden geçer (DOAM 4.2); bunu gizlemek sermaye harcamasına zayıf olanı verir.",
+        "show_sales_order": "DOAM 3.4, bakım yedek parçası olmayan her talepte geçerli bir satış siparişi VEYA onaylı bir tahmin ister. İkisini birden gizlerseniz bu talepler gönderimde reddedilir — alanı gizlemek denetimi kapatmaz.",
+        "show_forecast_ref": "DOAM 3.4 maliyet nesnesinin diğer yarısı. Fabrika satış siparişleriyle çalışıyorsa tek başına gizlemek güvenlidir; Satış siparişi ile birlikte gizlemek değildir.",
+        "show_cost_center": "Bakım ve tesis harcamalarının satış siparişi yerine DOAM 3.4'e cevap verirken kullandığı yol. Gizlemek yedek parça taleplerini durdurmaz; onlar parça ana verisinden tanınır.",
+        "show_delivery_condition": "Satın alma emrinde yazdırılır. Hiçbir yönlendirme buna bağlı değildir.",
+    },
 }
 
 # Platform role labels. English comes from app/security.py ROLES (the code
@@ -605,7 +648,7 @@ ROLE_LABEL = {
         "managing_director": "العضو المنتدب",
         "board": "مجلس الإدارة",
         "hr_officer": "مسؤول الموارد البشرية",
-        "hr_probation_admin": "مسؤول فترة الاختبار (الموارد البشرية)",
+        "hr_probation_admin": "مسؤول فترة الاختبار (الموارد البشرية)"
     },
     "tr": {
         "super_admin": "Süper Yönetici",
@@ -641,8 +684,8 @@ ROLE_LABEL = {
         "managing_director": "Murahhas Aza",
         "board": "Yönetim Kurulu",
         "hr_officer": "İK Sorumlusu",
-        "hr_probation_admin": "İK Deneme Süresi Yöneticisi",
-    },
+        "hr_probation_admin": "İK Deneme Süresi Yöneticisi"
+    }
 }
 
 # Small UI strings the trilingual editor itself needs.
@@ -761,7 +804,7 @@ UI = {
             "guarantee reference.",
         "advance_vendor_not_approved_flash":
             "No advance may be paid to a supplier off the approved vendor list "
-            "(DOAM §4.3). Add the supplier to the vendor master first.",
+            "(DOAM §4.3). Add the supplier to the vendor master first."
     },
     "ar": {
         "text_en": "النص (بالإنجليزية)", "text_ar": "النص (بالعربية)",
@@ -869,7 +912,7 @@ UI = {
             "إلى مرجع خطاب ضمان بنكي.",
         "advance_vendor_not_approved_flash":
             "لا يجوز دفع أي دفعة مقدّمة لمورد خارج قائمة الموردين المعتمدين (البند "
-            "4-3). أضف المورد إلى سجل الموردين أولًا.",
+            "4-3). أضف المورد إلى سجل الموردين أولًا."
     },
     "tr": {
         "text_en": "Metin (İngilizce)", "text_ar": "Metin (Arapça)",
@@ -983,6 +1026,6 @@ UI = {
             "teminat mektubu referansı gerekir.",
         "advance_vendor_not_approved_flash":
             "Onaylı tedarikçi listesi dışındaki bir tedarikçiye avans ödenemez "
-            "(DOAM §4.3). Önce tedarikçiyi tedarikçi ana kaydına ekleyin.",
-    },
+            "(DOAM §4.3). Önce tedarikçiyi tedarikçi ana kaydına ekleyin."
+    }
 }

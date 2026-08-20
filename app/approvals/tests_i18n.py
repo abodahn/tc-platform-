@@ -352,7 +352,7 @@ with app.app_context():
     print("\n--- 10. nothing else moved ------------------------------------")
     ok("workflow_view still reports the whole ladder / 6 gates / 9 statuses / 4 knobs",
        [s["stage"] for s in v["stages"]] == list(C.LADDER) and len(v["gates"]) == 6
-       and len(v["statuses"]) == len(C.PR_STATUSES) and len(v["knobs"]) == 4)
+       and len(v["statuses"]) == len(C.PR_STATUSES) and len(v["knobs"]) == len(C.WORKFLOW_SETTINGS))
     ok("an unknown language falls back to English",
        svc.workflow_view("Production", "de")["overview"]["body"]
        == C.DOC_SECTIONS["overview"])

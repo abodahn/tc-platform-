@@ -36,3 +36,6 @@ platform.db.*
 *.db.*
 *-bak
 *.bak
+
+# Beta server console capture — local diagnostics, never committed.
+beta-server*.log

@@ -5396,6 +5396,8 @@ def _labels(lang):
         "gate": {k: pick(T.GATE_LABEL, k, v) for k, v in T.GATE_LABEL["en"].items()},
         "status": {k: pick(T.STATUS_LABEL, k, v) for k, v in T.STATUS_LABEL["en"].items()},
         "setting": {k: pick(T.SETTING_LABEL, k, v) for k, v in T.SETTING_LABEL["en"].items()},
+        "setting_warn": {k: pick(T.SETTING_WARN, k, v)
+                         for k, v in T.SETTING_WARN["en"].items()},
         "role": roles,
         "ui": dict(T.UI["en"], **(T.UI.get(lang) or {})),
     }
@@ -5778,3 +5780,19 @@ def _same_value(spec, stored, effective):
         return float(str(stored).strip()) == float(effective)
     except (TypeError, ValueError):
         return False
+
+
+def visible_fields(conn=None):
+    """Which optional request fields are switched on, as {key: bool}.
+
+    One read for the whole set, so a page renders from a single snapshot rather
+    than asking the database once per field. Absent rows mean "as it always
+    was": every field defaults to visible.
+    """
+    own = conn is None
+    conn = conn or get_db()
+    try:
+        return {key: bool_setting(conn, key) for key, _l, _w in C.OPTIONAL_FIELDS}
+    finally:
+        if own:
+            conn.close()

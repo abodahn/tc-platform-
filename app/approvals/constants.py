@@ -1251,7 +1251,42 @@ WORKFLOW_SETTINGS = {
     # Capped at 100%: a fat-fingered 5000 would let someone pay 51x the PO.
     "payment_tolerance_pct": {"kind": "num", "min": 0, "max": 100,
                               "default": PAYMENT_TOLERANCE_PCT},
+    # --- optional fields on the request form and the request page ------------
+    # Not every plant uses all of these, and a field nobody fills is a field
+    # people learn to skip past. Each defaults to VISIBLE, so a database with no
+    # override rows shows exactly what it always showed.
+    #
+    # Hiding is display only. No gate is weakened by a switch here — see
+    # OPTIONAL_FIELDS below for what each one still costs.
+    "show_expenditure_kind": {"kind": "bool", "default": True},
+    "show_sales_order": {"kind": "bool", "default": True},
+    "show_forecast_ref": {"kind": "bool", "default": True},
+    "show_cost_center": {"kind": "bool", "default": True},
+    "show_delivery_condition": {"kind": "bool", "default": True},
 }
+
+# The optional fields an admin may hide, and the HONEST consequence of hiding
+# each. The settings screen prints `warn` next to the switch: a control that
+# still applies to a field nobody can fill is a request that cannot be
+# submitted, and the admin should read that before flipping it, not afterwards.
+OPTIONAL_FIELDS = (
+    ("show_expenditure_kind", "Expenditure type",
+     "Every request is then treated as OPEX. CAPEX routes through a stricter "
+     "ladder (DOAM 4.2), so hiding this gives capital spend the weaker one."),
+    ("show_sales_order", "Sales order",
+     "DOAM 3.4 requires a valid sales order OR an agreed forecast on any request "
+     "that is not maintenance spares. Hide BOTH and those requests are refused "
+     "at submission — the gate is not switched off by hiding its field."),
+    ("show_forecast_ref", "Agreed forecast",
+     "The other half of the DOAM 3.4 cost object. Safe to hide on its own if the "
+     "plant works to sales orders; not safe to hide together with Sales order."),
+    ("show_cost_center", "Cost centre",
+     "The route maintenance and facility spend uses to answer DOAM 3.4 instead "
+     "of a sales order. Hiding it does not stop spare-part requests, which are "
+     "recognised from the parts master."),
+    ("show_delivery_condition", "Delivery condition",
+     "Prints on the purchase order. Nothing routes on it."),
+)
 
 # Default explanation text per ladder stage. Seeded into proc_stage_meta and
 # used as the fallback whenever an admin resets a stage's explanation.

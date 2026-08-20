@@ -603,7 +603,7 @@ with app.app_context():
        len(svc.workflow_view("Production")["stages"]) == len(C.LADDER)
        and len(svc.workflow_view("Production")["gates"]) == 6
        and len(svc.workflow_view("Production")["statuses"]) == len(C.PR_STATUSES)
-       and len(svc.workflow_view("Production")["knobs"]) == 4)
+       and len(svc.workflow_view("Production")["knobs"]) == len(C.WORKFLOW_SETTINGS))
     viewer = mkuser(conn, "esc_view", "executive_viewer")
     conn.close()
 # =======================================================================

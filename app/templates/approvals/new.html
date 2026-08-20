@@ -36,26 +36,41 @@
     <div class="panel-head"><h3 data-i18n="proc.details">Request details</h3></div>
     <div class="panel-pad">
       <div class="grid cols-2">
-        <div class="field"><label data-i18n="proc.title_l">Title *</label>
+        {#- "Title" asked for a label; what the box is actually for is the reason
+            the purchase is being made, which is what an approver reads first. -#}
+        <div class="field"><label data-i18n="proc.title_l">Reason *</label>
           <input name="title" required autocomplete="off" data-ac data-polish="title" value="{{ prefill.title or '' }}" placeholder="e.g. Repair forklift battery"></div>
         <div class="field"><label data-i18n="proc.request_for_l">Request for</label>
           <input name="request_for" autocomplete="off" data-ac value="{{ prefill.request_for or '' }}" placeholder="Asset / machine / area"></div>
+        {#- The five optional fields below are switched on and off in
+            Procurement -> Settings. `fields` defaults every one to visible, so a
+            site that never touches the switches sees the form unchanged. A
+            hidden field is not posted; the value already on an existing request
+            is left alone rather than blanked. -#}
+        {% if fields.show_expenditure_kind %}
         <div class="field"><label data-i18n="proc.kind_l">Expenditure type</label>
           <select name="expenditure_kind" id="expKind">
             <option value="opex" {{ 'selected' if (prefill.expenditure_kind or 'opex') != 'capex' }} data-i18n="proc.kind_opex">Operating (OPEX) — consumables, spares, services</option>
             <option value="capex" {{ 'selected' if prefill.expenditure_kind == 'capex' }} data-i18n="proc.kind_capex">Capital (CAPEX) — machinery, vehicles, buildings, IT assets</option>
           </select>
           <span class="muted" style="font-size:12px" data-i18n="proc.kind_hint">Capital purchases follow the DOAM capital authority ladder — every level signs, and the Managing Director signs above 250,000 EGP.</span></div>
+        {% endif %}
+        {% if fields.show_sales_order %}
         <div class="field"><label data-i18n="proc.so_l">Sales order</label>
           <input name="so_no" list="soList" autocomplete="off" value="{{ prefill.so_no or '' }}" placeholder="SO / order number">
           <datalist id="soList">{% for o in sales_orders %}<option value="{{ o }}"></option>{% endfor %}</datalist>
           <span class="muted" style="font-size:12px" data-i18n="proc.so_hint">Required for fabric, yarn, trims, chemicals, packaging, subcontract and wash — that is the order this spend is costed against.</span></div>
+        {% endif %}
+        {% if fields.show_forecast_ref %}
         <div class="field"><label data-i18n="proc.fc_l">Agreed forecast</label>
           <input name="forecast_ref" list="fcList" autocomplete="off" value="{{ prefill.forecast_ref or '' }}" placeholder="Only if there is no sales order yet">
           <datalist id="fcList">{% for f in forecasts %}<option value="{{ f.ref }}">{{ f.description or f.period or '' }}</option>{% endfor %}</datalist>
           <span class="muted" style="font-size:12px" data-i18n="proc.fc_hint">Buying ahead of a confirmed client order? Cite an agreed forecast instead of a sales order (DOAM §3.4). Only forecasts the Supply Chain Director has agreed, and that are still in date, are listed. Fill in one or the other, not both.</span></div>
+        {% endif %}
+        {% if fields.show_cost_center %}
         <div class="field"><label data-i18n="proc.cc_l">Cost centre</label>
           <input name="cost_center" autocomplete="off" value="{{ prefill.cost_center or '' }}" placeholder="For MRO, facility, IT and utilities"></div>
+        {% endif %}
         <div class="field"><label data-i18n="proc.dept_l">Department</label>
           <select name="department" id="deptSel">
             <option value=""></option>
@@ -76,11 +91,13 @@
         <div class="field"><label data-i18n="proc.payment_l">Payment condition</label>
           <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}" {{ 'selected' if prefill.payment_condition==p }}>{{ p }}</option>{% endfor %}</select></div>
         {% endif %}
+        {% if fields.show_delivery_condition %}
         <div class="field"><label data-i18n="proc.delivery_l">Delivery condition</label>
           <select name="delivery_condition"><option value=""></option>
             {% for d in deliveries %}<option value="{{ d }}" {{ 'selected' if prefill.delivery_condition==d }}>{{ d }}</option>{% endfor %}
             {% if prefill.delivery_condition and prefill.delivery_condition not in deliveries %}<option value="{{ prefill.delivery_condition }}" selected>{{ prefill.delivery_condition }}</option>{% endif %}
           </select></div>
+        {% endif %}
       </div>
     </div>
   </div>

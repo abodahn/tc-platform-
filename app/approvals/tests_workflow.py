@@ -325,7 +325,7 @@ with app.app_context():
     ok("workflow_view: 6 stages, 6 gates, %d statuses, 4 knobs"
        % len(v["statuses"]),
        len(v["stages"]) == len(C.LADDER) and len(v["gates"]) == 6
-       and len(v["statuses"]) == len(C.PR_STATUSES) and len(v["knobs"]) == 4)
+       and len(v["statuses"]) == len(C.PR_STATUSES) and len(v["knobs"]) == len(C.WORKFLOW_SETTINGS))
     ok("every stage carries a non-empty explanation %r"
        % [s["stage"] for s in v["stages"] if not s["explanation"]],
        all(s["explanation"] for s in v["stages"]))
