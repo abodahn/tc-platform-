@@ -139,14 +139,24 @@ with app.app_context():
     # stuck one rung further down instead of at the first one). Every real company
     # has somebody above him; here that is the CEO.
     ceo = mkuser(conn, "esc_ceo", "ceo")
+    # The buyer. DOAM §4.1 makes Purchasing a DEMAND rung, and a rung with no
+    # holder at all is left alone by the climb — so without him nothing could
+    # walk this ladder past rung 2, and "the deadlock is gone, not moved" would
+    # be untestable.
+    pm = mkuser(conn, "esc_pm", "purchasing_manager")
     ok("esc_wm is the ONLY holder of a warehouse-stage role",
        svc.role_holders(conn, C.STAGE_ROLES["warehouse"]) == {"esc_wm"})
     ok("esc_fm is the ONLY holder of the factory-stage role",
        svc.role_holders(conn, C.STAGE_ROLES["factory_manager"]) == {"esc_fm"})
 
+    # PRICED past §4.1's tier-1 ceiling on purpose: the Plant Director joins the
+    # ladder only above 10,000, and the invariant below is that the climb must not
+    # hand the warehouse rung to the ONE person the factory rung of this same
+    # request depends on. At zero he is not on the ladder and there is nothing to
+    # collide with.
     pr1, no1 = svc.create_pr({"title": "Owner case", "department": "Production",
                               "currency": "EGP"},
-                             [{"item": "Pallet truck", "qty": 1, "unit_price": 0}],
+                             [{"item": "Pallet truck", "qty": 1, "unit_price": 20000}],
                              wm, submit=True)
     ok("the PR was accepted and is pending (not stuck as a draft)",
        conn.execute("SELECT status FROM pr_requests WHERE id=?",
@@ -182,6 +192,11 @@ with app.app_context():
     okk, msg = svc.act_on_step(pr1, ceo, "approve")
     ok("the CEO's signature is accepted and the PR advances (%s)" % msg,
        okk and msg == "advanced")
+    # Rung 2 is Purchasing under §4.1, and §4.3's lowest sourcing band still wants
+    # one quotation on file before the buyer signs.
+    svc.add_quote(pr1, {"vendor": "Owner Case Vendor", "amount": 20000}, pm)
+    okk, msg = svc.act_on_step(pr1, pm, "approve")
+    ok("the buyer signs the purchasing rung (%s)" % msg, okk and msg == "advanced")
     # ...and the rung the escalation used to steal is still signable by its own
     # owner. This is the end-to-end proof the deadlock is gone, not moved.
     okk, msg = svc.act_on_step(pr1, fm, "approve")
@@ -197,7 +212,7 @@ with app.app_context():
     activate("esc_ceo", on=0)
     pr1b, _ = svc.create_pr({"title": "No free superior", "department": "Production",
                              "currency": "EGP"},
-                            [{"item": "Trolley", "qty": 1, "unit_price": 0}],
+                            [{"item": "Trolley", "qty": 1, "unit_price": 20000}],
                             wm, submit=False)
     okk, msg = svc.submit_pr(pr1b, wm)
     # POLICY: the rung is PARKED, the submit is NOT refused. Refusing stopped
@@ -210,7 +225,7 @@ with app.app_context():
        okk)
     ok("the full ladder was written, no rung skipped",
        conn.execute("SELECT COUNT(*) c FROM pr_steps WHERE pr_id=?",
-                    (pr1b,)).fetchone()["c"] == len(C.build_ladder(0)))
+                    (pr1b,)).fetchone()["c"] == len(C.build_ladder(20000)))
     ok("the request is circulating, not stranded as a draft",
        conn.execute("SELECT status FROM pr_requests WHERE id=?",
                     (pr1b,)).fetchone()["status"] == "pending")
@@ -234,12 +249,15 @@ with app.app_context():
     fm2 = mkuser(conn, "esc_fm2", "factory_manager")
     pr1c, _ = svc.create_pr({"title": "Two factory managers", "department": "Production",
                              "currency": "EGP"},
-                            [{"item": "Fan", "qty": 1, "unit_price": 0}], wm, submit=True)
+                            [{"item": "Fan", "qty": 1, "unit_price": 20000}], wm,
+                            submit=True)
     st1c = steps_of(conn, pr1c)
     ok("the warehouse rung escalated to factory_manager, one level only (%r)"
        % st1c[0]["esc_role"], st1c[0]["esc_role"] == "factory_manager")
     okk, msg = svc.act_on_step(pr1c, fm, "approve")
     ok("factory manager #1 signs the escalated warehouse rung (%s)" % msg, okk)
+    svc.add_quote(pr1c, {"vendor": "Fan Vendor", "amount": 20000}, pm)
+    svc.act_on_step(pr1c, pm, "approve")            # rung 2: Purchasing (§4.1)
     okk, msg = svc.act_on_step(pr1c, fm, "approve")
     ok("...#1 is refused the factory rung he is eligible for: dual_role (%s)" % msg,
        not okk and msg == "dual_role")
@@ -322,19 +340,23 @@ with app.app_context():
     activate("esc_fm", "esc_cfo", "esc_ceo")
 
     print("\n--- 5. TERMINAL: the CEO raises a CEO-level request ------------")
+    # §4.1 tier 5 (2,000,001 - 5,000,000) is the first band that puts the Managing
+    # Director on the ladder at all; 250,000 was the paper form's CEO threshold and
+    # under the DOAM stops at the Financial Director, so there would be no CEO rung
+    # to strand.
     pr5, no5 = svc.create_pr({"title": "CEO purchase", "department": "Production",
                               "currency": "EGP"},
-                             [{"item": "Line upgrade", "qty": 1, "unit_price": 250000}],
+                             [{"item": "Line upgrade", "qty": 1, "unit_price": 2500000}],
                              ceo, submit=True)
     row5 = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr5,)).fetchone()
     # POLICY: nobody sits above the CEO, so his own rung is PARKED for an admin —
     # the request still circulates. Refusing it outright meant the CEO could not
     # raise a request at all, which is not a defensible governance rule.
-    ok("the CEO's 250 000 request circulates instead of being stranded",
+    ok("the CEO's 2 500 000 request circulates instead of being stranded",
        row5["status"] == "pending")
     ok("the full value ladder was written, nothing skipped",
        conn.execute("SELECT COUNT(*) c FROM pr_steps WHERE pr_id=?",
-                    (pr5,)).fetchone()["c"] == len(C.build_ladder(250000)))
+                    (pr5,)).fetchone()["c"] == len(C.build_ladder(2500000)))
     ok("the CEO's own rung is parked (esc_role='') for an admin to clear",
        conn.execute("SELECT COUNT(*) c FROM pr_steps WHERE pr_id=? AND esc_role=''",
                     (pr5,)).fetchone()["c"] >= 1)
@@ -394,7 +416,10 @@ with app.app_context():
     okk, msg = svc.act_on_step(pr6, signer, "approve")
     ok("the escalated signer %s signs the warehouse rung (%s)" % (signer["username"], msg),
        okk)
-    svc.add_delegation("esc_fm", signer["username"], None, None, "cover", admin)
+    # Rung 2 is Purchasing, so the delegation that creates the collision is the
+    # BUYER's — delegating the escalated signer's own authority to himself would
+    # grant nothing and the assertion below would pass on native eligibility.
+    svc.add_delegation(pm["username"], signer["username"], None, None, "cover", admin)
     ok("the delegation makes him eligible for the NEXT rung too",
        svc.can_act_step(signer, steps_of(conn, pr6)[1]))
     okk, msg = svc.act_on_step(pr6, signer, "approve")
@@ -408,9 +433,13 @@ with app.app_context():
     normal = mkuser(conn, "esc_normal", "normal_user")
     shapes = {}
     for total in (0, 9999, 10000, 24999, 25000, 48000, 99999, 100000, 5_000_000):
+        # A DISTINCT item per request. DOAM 3.4 aggregates same-department
+        # purchases of the SAME item inside 30 days, so nine identical "X" lines
+        # routed on their running total instead of their own value — which is the
+        # anti-splitting control working, not a ladder this section is measuring.
         prx, _ = svc.create_pr({"title": "Shape %d" % total, "department": "Production",
                                 "currency": "EGP"},
-                               [{"item": "X", "qty": 1, "unit_price": total}],
+                               [{"item": "X %d" % total, "qty": 1, "unit_price": total}],
                                normal, submit=True)
         shapes[total] = ladder_shape(conn, prx)
         expect = [(i, s) for i, s in enumerate(C.build_ladder(total), start=1)]
@@ -424,19 +453,22 @@ with app.app_context():
                            [{"item": "Pump", "qty": 1, "unit_price": 0}], normal, submit=True)
     ok("an unpriced PR routes the demand stages only",
        [s for _, s in ladder_shape(conn, prg)] == C.DEMAND_STAGES)
-    okk, msg = svc.act_on_step(prg, admin, "approve")           # warehouse
-    okk, msg = svc.act_on_step(prg, admin, "approve")           # factory
-    okk, msg = svc.act_on_step(prg, admin, "approve")           # purchasing, unpriced
+    # One person per rung: SOD_ADMIN_EXEMPT is False, so one account cannot sign
+    # two rungs of the same request and a single admin can no longer walk a ladder.
+    okk, msg = svc.act_on_step(prg, wm, "approve")              # warehouse
+    okk, msg = svc.act_on_step(prg, pm, "approve")              # purchasing, unpriced
     ok("PRICING GATE still blocks the purchasing stage while unpriced (%s)" % msg,
        not okk and msg == "needs_pricing")
     it = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (prg,)).fetchone()["id"]
-    svc.price_pr(prg, {it: 30000.0}, {"tax_rate": 0}, admin)
-    ok("pricing reconciles the value ladder to build_ladder(30000) exactly",
-       [s for _, s in ladder_shape(conn, prg)] == C.build_ladder(30000))
+    # §4.1 tier 4, so the CFO is already on the value ladder and Table 4's
+    # unbudgeted L1 rung adds nothing — the shape here is build_ladder() exactly.
+    svc.price_pr(prg, {it: 600000.0}, {"tax_rate": 0}, admin)
+    ok("pricing reconciles the value ladder to build_ladder(600000) exactly",
+       [s for _, s in ladder_shape(conn, prg)] == C.build_ladder(600000))
     ok("the appended value rungs were not escalated (normal requester)",
        all(s["esc_role"] is None for s in steps_of(conn, prg)))
     okk, msg = svc.act_on_step(prg, admin, "approve")
-    ok("RFQ GATE still blocks purchasing at 30 000 with no quotes (%s)" % msg,
+    ok("RFQ GATE still blocks purchasing at 600 000 with no quotes (%s)" % msg,
        not okk and msg == "needs_quotes")
 
     print("\n--- 8b. a value rung that joins AFTER pricing gets the same rule -")
@@ -455,11 +487,12 @@ with app.app_context():
     ok("the demand rungs were NOT escalated (others hold those roles)",
        all(s["esc_from"] is None for s in steps_of(conn, prr)))
     svc.act_on_step(prr, wm, "approve")                      # warehouse
-    svc.act_on_step(prr, fm, "approve")                      # factory
     itr = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (prr,)).fetchone()["id"]
-    svc.price_pr(prr, {itr: 30000.0}, {"tax_rate": 0}, admin)
-    ok("pricing appended the value rungs build_ladder(30000) requires",
-       [s for _, s in ladder_shape(conn, prr)] == C.build_ladder(30000))
+    # §4.1 tier 4: Finance AND the CFO both join here, which is what this case
+    # needs — the sole CFO must be left free for his own rung.
+    svc.price_pr(prr, {itr: 600000.0}, {"tax_rate": 0}, admin)
+    ok("pricing appended the value rungs build_ladder(600000) requires",
+       [s for _, s in ladder_shape(conn, prr)] == C.build_ladder(600000))
     fin = next(s for s in steps_of(conn, prr) if s["stage"] == "finance")
     cfo_step = next(s for s in steps_of(conn, prr) if s["stage"] == "cfo")
     ok("the finance rung escalated (%r)" % fin["esc_role"], bool(fin["esc_role"]))
@@ -472,7 +505,8 @@ with app.app_context():
     ok("and the CFO is left free for his OWN rung", svc.can_act_step(cfo, cfo_step))
     ok("the cfo rung itself was not escalated", cfo_step["esc_from"] is None)
     ok("the reconcile escalation is audited",
-       any(e["action"] == "escalated_stage" and "Finance" in (e["detail"] or "")
+       any(e["action"] == "escalated_stage"
+           and C.stage_label("finance") in (e["detail"] or "")
            for e in svc.get_pr(prr)["events"]))
     # the _busy hand-off itself: somebody who already signed a rung of this request
     # can never sign another (dual_role), so the climb must skip them too.

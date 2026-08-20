@@ -345,9 +345,21 @@ with app.app_context():
     ok(f"it submits into the ladder ({msg or 'ok'})", okk)
     steps = conn.execute("SELECT stage, status FROM pr_steps WHERE pr_id=? ORDER BY seq",
                          (pr_id,)).fetchall()
-    ok("the demand ladder is built (warehouse -> factory -> purchasing)",
-       [s["stage"] for s in steps][:3] == ["warehouse", "factory_manager", "purchasing"])
-    admin_actor = dict(admin)
+    ok("the demand ladder is built %s" % " -> ".join(C.DEMAND_STAGES),
+       [s["stage"] for s in steps][:len(C.DEMAND_STAGES)] == C.DEMAND_STAGES)
+    # ONE DISTINCT PERSON PER RUNG. SOD_ADMIN_EXEMPT is False, so the dual-role
+    # rule refuses any single account — admin included — a second rung of the
+    # same request; the ladder is walked as a real approval chain walks it.
+    # (Pattern from tests_three_way_match.py.)
+    for _stage, _roles in C.STAGE_ROLES.items():
+        conn.execute("INSERT OR IGNORE INTO users (username, password_hash, full_name, "
+                     "role, is_active, created_at) VALUES (?,?,?,?,1,'2026-01-01')",
+                     ("cat_" + _stage, "x", "Cat " + _stage, sorted(_roles)[0]))
+    conn.commit()
+    signer = {st: dict(conn.execute("SELECT * FROM users WHERE username=?",
+                                    ("cat_" + st,)).fetchone())
+              for st in C.STAGE_ROLES}
+    buyer = signer["purchasing"]
     guard = 0
     while guard < 12:
         guard += 1
@@ -360,8 +372,18 @@ with app.app_context():
                                  conn.execute("SELECT id FROM pr_items WHERE pr_id=?",
                                               (pr_id,)).fetchall()},
                          {"currency": "EGP", "vendor": "Delta Industrial Supplies"},
-                         admin_actor, ip="127.0.0.1")
-        a_ok, a_msg = svc.act_on_step(pr_id, admin_actor, "approve", "ok", ip="127.0.0.1")
+                         buyer, ip="127.0.0.1")
+        cur = conn.execute("SELECT stage FROM pr_steps WHERE pr_id=? AND status='pending' "
+                           "ORDER BY seq LIMIT 1", (pr_id,)).fetchone()
+        a_ok, a_msg = svc.act_on_step(pr_id, signer[cur["stage"]], "approve", "ok",
+                                      ip="127.0.0.1")
+        if not a_ok and a_msg == "needs_quotes":
+            # DOAM §4.3's lowest band is ONE quotation, not none — the buyer
+            # records the price basis even on a spot buy.
+            for n in range(int(svc.C.quotes_required(40.0 * 3))):
+                svc.add_quote(pr_id, {"vendor": "Quote Vendor %d" % n,
+                                      "amount": 120.0 + n}, buyer)
+            continue
         if not a_ok:
             print("      (ladder stopped: " + str(a_msg) + ")")
             break
