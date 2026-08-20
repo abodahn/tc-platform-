@@ -109,6 +109,12 @@ I18N = {
 }
 
 
+def _unit_for_store(raw):
+    """The unit as the CATALOGUE spells it, not as it was typed."""
+    from app.approvals.catalogue import norm_unit
+    return norm_unit((raw or "").strip()[:40])
+
+
 def _norm(s):
     return " ".join((s or "").strip().lower().split())
 
@@ -284,8 +290,13 @@ def counts():
         conn.close()
 
 
-def approve_item_request(req_id, code, user, ip=None):
-    """Approve with the ERP code. Returns (ok, msg_key, existing_row).
+def approve_item_request(req_id, code, user, ip=None, unit=None, category_name=None):
+    """Approve with the Optima code. Returns (ok, msg_key, existing_row).
+
+    `unit` and `category_name` are Purchasing's to set. The requester states
+    WHAT they need in their own words and nothing else; asking the floor to
+    guess a unit of measure or a catalogue category produced guesses, and the
+    person typing the Optima code is the person who knows both.
 
     Refuses on a code that is already in the catalogue and hands back the row
     that holds it, so Purchasing see WHAT they would have duplicated. Nothing is
@@ -319,8 +330,13 @@ def approve_item_request(req_id, code, user, ip=None):
                 "INSERT INTO proc_items (code, name, unit, category_code, category_name, "
                 "cost_price, has_cost, source, active, updated_by, updated_at) "
                 "VALUES (?,?,?,?,?,0,0,?,1,?,?)",
-                (code, req["name"], req["unit"] or "", req["category_code"] or "",
-                 req["category_name"] or "", SOURCE, who, now))
+                (code, req["name"],
+                 # norm_unit, not _norm: _norm lower-cases for COMPARISON and
+                 # would store "pcs" where the catalogue holds "Pcs".
+                 _unit_for_store(unit) or req["unit"] or "",
+                 req["category_code"] or "",
+                 (category_name or "").strip()[:120] or req["category_name"] or "",
+                 SOURCE, who, now))
             item_id = cur.lastrowid
         except Exception:
             # Two approvers on the same code at the same instant. The UNIQUE on

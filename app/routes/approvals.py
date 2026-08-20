@@ -364,18 +364,20 @@ def _queue(refused=None, code=200):
 @login_required
 @permission_required("proc_purchasing")
 def item_request_approve(req_id):
-    """Approve by TYPING the ERP code. Refuses a code the catalogue already
+    """Approve by TYPING the Optima code. Refuses a code the catalogue already
     holds and re-renders the queue showing the item that holds it — nothing is
     written. A similar NAME only warns: telling one part from another is the
     judgement Purchasing are here to make, not something a LIKE query decides."""
     from app.approvals import item_requests as ir
     ok, msg, existing = ir.approve_item_request(
-        req_id, request.form.get("code"), _u(), ip=_ip())
+        req_id, request.form.get("code"), _u(), ip=_ip(),
+        unit=request.form.get("unit"),
+        category_name=request.form.get("category_name"))
     if not ok:
         if msg == "duplicate_code":
             return _queue(refused={"code": (request.form.get("code") or "").strip(),
                                    "item": existing, "req_id": req_id})
-        flash({"code_required": "Type the ERP code before approving.",
+        flash({"code_required": "Type the Optima code before approving.",
                "not_pending": "That request has already been decided.",
                "not_found": "That request no longer exists."}.get(msg, msg), "error")
         return redirect(url_for("approvals.item_requests"))

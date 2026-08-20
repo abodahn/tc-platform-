@@ -77,15 +77,30 @@
           </td>
           <td>
             {% if r.status == 'pending' %}
+            {#- Purchasing type the Optima code and, in the same action, the unit
+                and category the floor is not placed to decide. Approving creates
+                the catalogue row: Optima code + the requester's own description,
+                linked back to this request. -#}
             <form method="post" action="{{ url_for('approvals.item_request_approve', req_id=r.id) }}" class="flex gap wrap">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <div class="field" style="margin:0;min-width:150px">
-                <label><span data-i18n="nir.code">ERP code</span> *</label>
-                <input name="code" maxlength="80" required>
+              <div class="field" style="margin:0;min-width:160px">
+                <label><span data-i18n="nir.code">Optima code</span> *</label>
+                <input name="code" maxlength="80" required autocomplete="off"
+                       placeholder="e.g. Spa-Sew-F-616-88" data-i18n-ph="nir.code_ph">
+              </div>
+              <div class="field" style="margin:0;min-width:90px">
+                <label data-i18n="nir.unit">Unit</label>
+                <input name="unit" list="nirUnits" maxlength="40" autocomplete="off"
+                       value="{{ r.unit or '' }}" placeholder="Pcs">
+              </div>
+              <div class="field" style="margin:0;min-width:130px">
+                <label data-i18n="nir.category">Category</label>
+                <input name="category_name" maxlength="120" autocomplete="off"
+                       value="{{ r.category_name or '' }}">
               </div>
               <button class="btn btn-primary btn-sm" type="submit" data-i18n="nir.approve">Approve</button>
             </form>
-            <div class="muted" style="font-size:12px" data-i18n="nir.code_hint">Type the code from the ERP. There is no auto-generated code — the ERP stays the single source of truth.</div>
+            <div class="muted" style="font-size:12px" data-i18n="nir.code_hint">Type the code Optima issued. The platform never invents a code — that is what keeps the two systems describing the same part. The requester's description becomes the item's name.</div>
             <form method="post" action="{{ url_for('approvals.item_request_reject', req_id=r.id) }}" class="flex gap wrap mt-2">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
               <div class="field" style="margin:0;min-width:150px">
@@ -100,6 +115,14 @@
       {% endfor %}
       </tbody>
     </table>
+    {#- The units the catalogue already normalises to, so the approver
+        picks one rather than inventing a spelling norm_unit will fold. -#}
+    <datalist id="nirUnits">
+      <option value="Pcs"></option><option value="Kg"></option>
+      <option value="Mtr"></option><option value="Ltr"></option>
+      <option value="Box"></option><option value="Set"></option>
+      <option value="Roll"></option><option value="Yrd"></option>
+    </datalist>
     {% endif %}
   </div>
 </div>
