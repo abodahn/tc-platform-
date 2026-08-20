@@ -110,10 +110,15 @@
         <span class="muted" style="font-size:12.5px" data-i18n="cat.pick_hint">Start typing an item code or name to pick from the catalogue — or just type what you need, exactly as before.</span>
       </div>
       {% endif %}
+      {# One requisition, several suppliers: the per-line vendor picks from the
+         same supplier list as the header field. Leave a line blank and it takes
+         the header vendor, exactly as before. #}
+      <datalist id="vendorList">{% for v in vendors %}<option value="{{ v.name }}"></option>{% endfor %}</datalist>
       <div class="li-head {{ '' if can_price else 'no-price' }}">
         <span data-i18n="proc.item">Item</span><span data-i18n="proc.desc">Description</span>
         <span data-i18n="proc.unit">Unit</span><span data-i18n="proc.qty">Qty</span>
         <span data-i18n="proc.stock">Stock</span>
+        <span data-i18n="proc.vendor_l">Vendor</span>
         {% if can_price %}<span data-i18n="proc.unit_price">Unit price</span>
         <span class="li-cost" data-i18n="proc.cost">Cost</span>{% endif %}
         <span></span>
@@ -235,11 +240,19 @@
       + '<select name="unit[]">'+unitOpts()+'</select>'
       + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
       + '<input name="current_stock[]" type="number" min="0" step="any" value="0">'
+      // Free text backed by the supplier list (same idiom as the SO / forecast
+      // fields above) — a select cannot hold a supplier that is not in its
+      // options, and these rows are cloned and re-filled from saved drafts.
+      + '<input name="vendor[]" list="vendorList" autocomplete="off" '
+      +   'placeholder="Vendor" data-i18n-ph="proc.vendor_l">'
       + priceCells
       + '<button type="button" class="li-del" title="Remove">✕</button>'
       + '</div>';
   }
-  function addRow(){ rows.insertAdjacentHTML('beforeend', rowHtml()); recalc(); }
+  // tcApplyI18n: a cloned row carries data-i18n-ph attributes that were never
+  // translated, because app.js ran before this row existed.
+  function addRow(){ rows.insertAdjacentHTML('beforeend', rowHtml()); recalc();
+    if (window.tcApplyI18n) window.tcApplyI18n(); }
 
   function recalc(){
     var total = 0;
@@ -436,6 +449,10 @@
     if (it.unit) r.querySelector('[name="unit[]"]').value = it.unit;
     r.querySelector('[name="qty[]"]').value = (it.qty != null ? it.qty : 1);
     r.querySelector('[name="current_stock[]"]').value = (it.current_stock != null ? it.current_stock : 0);
+    // Without this an edit would re-save every line against the header vendor,
+    // silently collapsing a multi-supplier request back to one supplier.
+    var vn = r.querySelector('[name="vendor[]"]');
+    if (vn) vn.value = (it.vendor != null ? it.vendor : '');
     var up = r.querySelector('[name="unit_price[]"]');   // absent in requester view
     if (up) up.value = (it.unit_price != null ? it.unit_price : 0);
     // Preserve the warehouse spare link across edit / AI-draft re-render — without

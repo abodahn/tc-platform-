@@ -624,6 +624,15 @@
           <div class="field"><label data-i18n="proc.date">Date</label><input name="invoice_date" type="date"></div>
           <div class="field"><label data-i18n="proc.amount">Amount (excl. tax) *</label><input name="amount" type="number" step="any" min="0" required></div>
           <div class="field"><label data-i18n="proc.tax">Tax</label><input name="tax" type="number" step="any" min="0" value="0"></div>
+          {# Several suppliers on one requisition = one order each, so an invoice
+             has to say which one it bills — otherwise a supplier can be billed
+             the combined value of the others' orders. #}
+          {% if (b['pos']|length) > 1 %}
+          <div class="field"><label data-i18n="proc.for_order">Which order *</label>
+            <select name="po_id" required>
+              {% for p in b['pos'] %}<option value="{{ p.id }}">{{ p.po_no }} — {{ p.vendor or pr.vendor }}</option>{% endfor %}
+            </select></div>
+          {% endif %}
         </div>
         <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv" style="margin-bottom:8px">
         <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_invoice">+ Add invoice</button>
@@ -658,6 +667,13 @@
           <div class="field"><label data-i18n="proc.date">Paid on</label><input name="paid_at" type="date"></div>
           <div class="field"><label data-i18n="proc.method">Method</label><input name="method" placeholder="Bank transfer / cheque" autocomplete="off"></div>
           <div class="field"><label data-i18n="proc.ref">Reference</label><input name="reference" autocomplete="off"></div>
+          {# Same rule as the invoice: money leaves against ONE supplier's order. #}
+          {% if (b['pos']|length) > 1 %}
+          <div class="field"><label data-i18n="proc.for_order">Which order *</label>
+            <select name="po_id" required>
+              {% for p in b['pos'] %}<option value="{{ p.id }}">{{ p.po_no }} — {{ p.vendor or pr.vendor }}</option>{% endfor %}
+            </select></div>
+          {% endif %}
         </div>
         <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_payment">+ Record payment</button>
       </form>
@@ -712,8 +728,14 @@
 </div></div>
 {% endif %}
 
-<!-- PO revisions: numbered, reasoned, immutable history -->
-{% if (pr.po_rev or 0) > 0 or (can_purchasing and pr.status in ('po_issued','partially_received')) %}
+<!-- Orders issued (one per vendor) + numbered, reasoned, immutable revisions -->
+{% set pos = b['pos'] %}
+{# Same statuses the po.pdf route accepts. _pos_for() synthesises an order from
+   pr_requests.po_no, which survives a cancellation — so without this a request
+   cancelled AFTER approval advertised a PO number and a PDF link answering 400. #}
+{% if (pos and pr.status in ('approved','po_issued','partially_received','received','closed'))
+      or (pr.po_rev or 0) > 0
+      or (can_purchasing and pr.status in ('po_issued','partially_received')) %}
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="proc.po.title">Purchase Order</h3>
     <div class="flex gap center">
@@ -722,6 +744,36 @@
     </div>
   </div>
   <div class="panel-pad">
+    {% if pos %}
+    {# One document per supplier: each PDF carries only that supplier's lines. #}
+    <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.vendor_l">Vendor</th>
+          <th data-i18n="proc.po.number">PO number</th>
+          {% if show_commercial %}<th data-i18n="proc.grand_total">Grand total</th>{% endif %}
+          <th></th>
+        </tr></thead>
+        <tbody>
+        {% for p in pos %}
+          <tr>
+            <td style="font-weight:600">{{ p.vendor or pr.vendor or '—' }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ p.po_no }}</td>
+            {% if show_commercial %}
+            <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.grand or 0) }} {{ p.currency or pr.currency }}</td>
+            {% endif %}
+            <td><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+                   href="{{ url_for('approvals.po_pdf', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_pdf', pr_id=pr.id) }}">
+              <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if pos|length > 1 %}
+    <div class="muted mt-2" style="font-size:12.5px" data-i18n="proc.po.per_vendor">This request buys from several suppliers, so it issues one purchase order per supplier — each document carries only that supplier's own lines, totals and number.</div>
+    {% endif %}
+    {% endif %}
     {% if (pr.po_rev or 0) > 0 %}
     <div class="muted" style="margin-bottom:10px;font-size:12.5px" data-i18n="proc.po.rev_hint">This order has been revised — the PO PDF carries the revision number, and every revision (with its reason and a snapshot of the lines) is kept on file.</div>
     {% endif %}
@@ -775,6 +827,12 @@
             <td>{{ loop.index }}</td>
             <td><div style="font-weight:600">{{ it.item }}</div>
                 <div class="muted" style="font-size:12px">{{ it.description }}</div>
+                {# A requisition can buy from several suppliers. Shown only when
+                   the line differs from the header vendor in the panel head. #}
+                {% if it.vendor and it.vendor != pr.vendor %}
+                <div class="muted" style="font-size:12px;margin-top:2px">
+                  <span data-i18n="proc.vendor_l">Vendor</span>: <b>{{ it.vendor }}</b></div>
+                {% endif %}
                 {% if it.spare_id and spare_live.get(it.spare_id) %}
                 <div style="font-size:12px;margin-top:2px">🏬 <span data-i18n="proc.live_stock">Warehouse now</span>:
                   <b>{{ '%g'|format(spare_live[it.spare_id].available) }} {{ spare_live[it.spare_id].uom }}</b>
@@ -862,6 +920,73 @@
       </div>
     </div>
 
+    <!-- Requests for Quotation — one per vendor, sent BEFORE any price exists -->
+    <div class="panel mt-4">
+      <div class="panel-head"><h3 data-i18n="proc.rfq.title">Requests for Quotation</h3>
+        {% if b.rfqs %}<span class="tag">{{ b.rfqs|length }}</span>{% endif %}
+      </div>
+      <div class="panel-pad">
+        {% if b.rfqs %}
+        <div style="overflow-x:auto">
+          <table class="tbl" style="margin-bottom:12px">
+            <thead><tr>
+              <th data-i18n="proc.rfq.number">RFQ number</th>
+              <th data-i18n="proc.vendor_l">Vendor</th>
+              <th data-i18n="proc.rfq.reply_by">Reply by</th>
+              <th data-i18n="proc.rfq.status">Status</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+            {% for r in b.rfqs %}
+              <tr>
+                <td style="font-variant-numeric:tabular-nums">{{ r.rfq_no }}</td>
+                <td style="font-weight:600">{{ r.vendor or '—' }}</td>
+                <td class="muted">{{ r.reply_by or '—' }}</td>
+                <td>{% if r.status == 'answered' %}
+                    <span class="badge b-approved" data-i18n="proc.rfq.answered">Answered</span>
+                    {% else %}<span class="badge b-pending" data-i18n="proc.rfq.sent">Sent</span>{% endif %}</td>
+                <td><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+                       href="{{ url_for('approvals.rfq_pdf', pr_id=pr.id, rfq=r.id) }}">
+                  <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rfq.pdf">RFQ PDF</span></a></td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="muted" style="margin-bottom:12px" data-i18n="proc.rfq.none">No request for quotation issued yet.</div>
+        {% endif %}
+        {% if can_purchasing and not rfq_locked %}
+        <details>
+          <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.rfq.issue">Issue requests for quotation</summary>
+          <div class="muted mt-2" style="font-size:12.5px" data-i18n="proc.rfq.hint">One document per supplier, carrying the same items and quantities as this request with the price columns left empty for the supplier to fill in. Issuing one commits nothing.</div>
+          <form method="post" action="{{ url_for('approvals.issue_rfq', pr_id=pr.id) }}" class="mt-2">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            {% if rfq_vendors %}
+            <div class="field"><label data-i18n="proc.rfq.ask">Ask these vendors</label>
+              <div class="flex gap wrap center">
+                {% for v in rfq_vendors %}
+                <label class="tag" style="cursor:pointer">
+                  <input type="checkbox" name="vendors" value="{{ v }}" checked> {{ v }}</label>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+            <div class="grid cols-2">
+              <div class="field"><label data-i18n="proc.rfq.other">Another vendor (optional)</label>
+                <input name="vendor_other" autocomplete="off" maxlength="120"></div>
+              <div class="field"><label data-i18n="proc.rfq.reply_by">Reply by</label>
+                <input name="reply_by" type="date"></div>
+            </div>
+            <div class="field"><label data-i18n="proc.rfq.notes">Note to the supplier (optional)</label>
+              <input name="notes" maxlength="300" autocomplete="off"></div>
+            <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.rfq.send">Issue RFQ</button>
+          </form>
+        </details>
+        {% endif %}
+      </div>
+    </div>
+
     <!-- Vendor quote comparison -->
     <div class="panel mt-4">
       <div class="panel-head"><h3 data-i18n="proc.quotes">Vendor quotes</h3>
@@ -893,6 +1018,7 @@
                   {% if q.amount == quote_cmp.lowest %}<span class="tag" style="color:var(--ok)">lowest</span>{% endif %}
                   {% if q.is_chosen %}<span class="badge b-approved">✓ chosen</span>{% endif %}</div>
                   {% if q.warranty %}<div class="muted" style="font-size:11.5px">{{ q.warranty }}</div>{% endif %}
+                  {% if q.rfq_id %}<div class="muted" style="font-size:11.5px">↩ {{ b.rfqs|selectattr('id','equalto',q.rfq_id)|map(attribute='rfq_no')|first }}</div>{% endif %}
                   {% if q.filename %}<a class="tag" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename }}</a>{% endif %}</td>
               <td style="font-variant-numeric:tabular-nums;font-weight:600">{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}</td>
               <td class="muted">{{ (q.lead_time_days ~ 'd') if q.lead_time_days else '—' }}</td>
@@ -1106,6 +1232,13 @@
               <div class="field"><label data-i18n="proc.amount">Amount</label><input name="amount" type="number" step="any" min="0" required></div>
               <div class="field"><label data-i18n="proc.lead">Lead time (days)</label><input name="lead_time_days" type="number" min="0"></div>
               <div class="field"><label data-i18n="proc.warranty">Warranty</label><input name="warranty" autocomplete="off"></div>
+              {% if b.rfqs %}
+              <div class="field"><label data-i18n="proc.rfq.answers">Answers RFQ</label>
+                <select name="rfq_id">
+                  <option value="" data-i18n="proc.rfq.no_rfq">— not against an RFQ —</option>
+                  {% for r in b.rfqs %}<option value="{{ r.id }}">{{ r.rfq_no }} · {{ r.vendor }}</option>{% endfor %}
+                </select></div>
+              {% endif %}
             </div>
             <div class="field"><label data-i18n="proc.quote_file">Quote file (optional)</label><input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv"></div>
             <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_quote">+ Add quote</button>

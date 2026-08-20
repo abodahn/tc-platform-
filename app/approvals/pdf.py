@@ -228,8 +228,13 @@ def _meta_grid(c, w, cm, y, pairs, cols=2, upper=True):
     return y - box_h - 0.4 * cm
 
 
+# A table cell that prints an empty ruled box instead of a value. No existing
+# document passes it, so every other PDF renders exactly as it did before.
+FILL_IN = object()
+
+
 def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None,
-           max_lines=4, font_size=8.5, pad=None):
+           max_lines=4, font_size=8.5, pad=None, row_h=None):
     """Bordered table with variable-height rows. cols = [(width_cm, header, align)].
     wrap_col makes that column a rich cell: pass the cell as (item, description) —
     the item renders bold and the description wraps beneath it (up to max_lines),
@@ -248,7 +253,9 @@ def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None,
         pad = 0.18 * cm
     hdr_size = font_size - 0.5
     line_h = font_size * 1.2                          # 0.36 cm at the default 8.5
-    base_rh = 0.6 * cm
+    # `row_h` raises the MINIMUM row height (a row still grows to fit its text).
+    # Only the RFQ passes it, so that a hand-filled box is big enough to write in.
+    base_rh = row_h or 0.6 * cm
     wcols = [] if wrap_col is None else (
         [wrap_col] if isinstance(wrap_col, int) else list(wrap_col))
 
@@ -322,7 +329,17 @@ def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None,
         cyc = y - rh / 2 - 0.09 * cm                      # single-line vertical centre
         xx = x0
         for idx, ((cw, _, align), wd, cell) in enumerate(zip(cols, widths, row)):
-            if idx in wrapped:
+            if cell is FILL_IN:
+                # An empty ruled box for the reader to WRITE IN — not a blank
+                # cell and never a 0.00. Used by the RFQ price columns: nothing
+                # is priced on a request for quotation, the supplier fills it.
+                c.setFillColorRGB(1, 1, 1)
+                c.setStrokeColorRGB(0.62, 0.62, 0.67)
+                c.setLineWidth(0.6)
+                c.roundRect(xx + pad, y - rh + 0.13 * cm, wd - 2 * pad,
+                            rh - 0.26 * cm, 2, stroke=1, fill=1)
+                c.setFillColorRGB(0, 0, 0)
+            elif idx in wrapped:
                 ly = y - line_h
                 for is_bold, txt in wrapped[idx]:
                     if is_bold:
@@ -676,12 +693,51 @@ def _verify_base():
 # --------------------------------------------------------------------------
 # Purchase Order
 # --------------------------------------------------------------------------
-def po_pdf(bundle):
+def po_pdf(bundle, po=None):
+    """Render ONE vendor's Purchase Order.
+
+    `po` is a row from bundle["pos"]; omitted, the primary (first) order — which
+    is the ONLY order on a single-vendor request and on every request issued
+    before purchase orders were split per vendor, so the old one-argument call
+    keeps printing exactly what it printed before.
+
+    When the request was split across suppliers, the lines and the totals are
+    filtered to `po`'s vendor: this document is sent to that supplier and must
+    never show them a competitor's lines or prices. A request with a single
+    order is never filtered — a legacy line whose vendor differs from the header
+    must not silently vanish off its own PO.
+
+    FILTERING is a split concern; IDENTITY is not. The vendor and number always
+    come from the order row, because the order row is what the register, the
+    screen and the supplier's copy all agree on. Gating that on a split printed
+    the stale HEADER vendor whenever one requisition resolved to a single
+    supplier the header did not name — and "—", no supplier at all, when the
+    header was left blank, which is the natural way to use the per-line field."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
     from reportlab.pdfgen import canvas
 
     pr, items = bundle["pr"], bundle["items"]
+    pos = bundle.get("pos") or []
+    po = po or (pos[0] if pos else None)
+    if po:
+        if len(pos) > 1:
+            # C.vendor_key on BOTH sides — the same identity po_groups() grouped
+            # on. A raw comparison dropped every line whose vendor differed only
+            # by surrounding whitespace or case: the line was grouped onto this
+            # order, priced into its subtotal, and then printed on no document at
+            # all. Only the two web forms trim the field; the maintenance
+            # auto-reorder bridge and the ERP item-master import do not.
+            head_vendor = pr.get("vendor")
+            want = C.vendor_key(po.get("vendor"))
+            items = [it for it in items
+                     if C.vendor_key(it.get("vendor") or head_vendor) == want]
+            pr = dict(pr, total=po.get("subtotal"))
+        # The legacy synthesised row from _pos_for() carries the request's own
+        # vendor and po_no, so this is a no-op for every pre-split request.
+        pr = dict(pr, vendor=po.get("vendor") or pr.get("vendor"),
+                  po_no=po.get("po_no") or pr.get("po_no"),
+                  po_rev=po.get("rev") or pr.get("po_rev"))
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
@@ -764,6 +820,103 @@ def po_pdf(bundle):
     c.setFillColorRGB(0, 0, 0)
 
     _footer(c, w, cm, pn["page"], None)
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+# --------------------------------------------------------------------------
+# Request for Quotation — the PO's layout, with the money taken out
+# --------------------------------------------------------------------------
+_RFQ_NOTES = [
+    "• This is a REQUEST FOR QUOTATION, not a purchase order: it commits neither "
+    "party and no order is placed by it.",
+    "• Please write your unit price and line total in the boxes provided, sign and "
+    "stamp below, and return this form by the reply-by date.",
+    "• Quoted prices are understood to include the stated delivery terms; state any "
+    "exclusion, validity period or lead time in writing.",
+]
+
+
+def rfq_pdf(bundle, rfq):
+    """Render ONE vendor's Request for Quotation.
+
+    Deliberately the PURCHASE ORDER's layout — same letterhead, meta grid,
+    bordered line table and footer — so a filed set reads as one family of
+    document. What is missing is the point of it: the UNIT PRICE and TOTAL
+    columns are printed as empty ruled boxes for the supplier to fill in, and
+    there is no totals block, no amount in words and no approval signature
+    grid. Nothing is being approved or committed by this sheet.
+
+    `rfq` is a pr_rfqs row. The lines are that supplier's own; a supplier who
+    owns no line on the request is being asked to quote the whole of it, which
+    is what asking a new supplier for a price means."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.pdfgen import canvas
+
+    pr, items = bundle["pr"], bundle["items"]
+    rfq = dict(rfq or {})
+    vendor = (rfq.get("vendor") or "").strip()
+    head_vendor = pr.get("vendor")
+    mine = [it for it in items
+            if ((it.get("vendor") or head_vendor or "").strip() == vendor)]
+    items = mine or items
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    pn = {"page": 1, "notes": _RFQ_NOTES}
+
+    y = _draw_header(c, w, h, cm, "REQUEST FOR QUOTATION", rfq.get("rfq_no") or "RFQ",
+                     "Ref " + (pr.get("pr_no") or ""), form_code=C.FORM_CODES["rfq"])
+
+    pairs = [
+        ("To (supplier)", vendor or "—"),
+        ("Reply by", rfq.get("reply_by") or "—"),
+        ("Issued on", (rfq.get("sent_at") or "")[:10]),
+        ("Issued by", rfq.get("created_by")),
+        ("Delivery", pr.get("delivery_condition")),
+        ("Payment terms", pr.get("payment_condition")),
+        ("Required delivery date", pr.get("req_del_date")),
+        ("Quote in currency", pr.get("currency")),
+    ]
+    if rfq.get("notes"):
+        pairs.append(("Notes", rfq.get("notes")))
+    y = _meta_grid(c, w, cm, y, pairs)
+
+    # The quantities are real; the two money columns are empty boxes.
+    rows = [[str(i), (it.get("item") or "", it.get("description") or ""),
+             it.get("unit") or "", _fmt(it.get("qty"), 0), FILL_IN, FILL_IN]
+            for i, it in enumerate(items, 1)]
+    y = _table(c, w, cm, y, [
+        (0.6, "#", "l"), (9.0, "ITEM / DESCRIPTION", "l"), (1.4, "UNIT", "l"),
+        (1.6, "QTY", "r"), (2.9, "UNIT PRICE", "r"), (3.0, "TOTAL", "r")],
+        rows, h, pn, title="Items to be quoted", wrap_col=1, row_h=1.0 * cm)
+
+    c.setFont("Helvetica-Oblique", 8.5)
+    c.setFillColorRGB(0.3, 0.3, 0.3)
+    c.drawString(1.5 * cm, y, "Prices to be entered by the supplier in %s. No value is "
+                 "stated by TC Garments on this form." % (pr.get("currency") or "the order currency"))
+    c.setFillColorRGB(0, 0, 0)
+    y -= 0.75 * cm
+
+    if y - 3.2 * cm < 2.2 * cm:                     # keep the sign-off whole
+        _footer(c, w, cm, pn["page"], _RFQ_NOTES)
+        c.showPage()
+        pn["page"] += 1
+        y = h - 2.5 * cm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(1.5 * cm, y, "Supplier's quotation — signature and stamp")
+    y -= 0.35 * cm
+    _grn_sign_strip(c, w, cm, y, [
+        ("Quoted by (supplier)", None, None),
+        ("Signature & company stamp", None, None),
+        ("Quotation valid until", None, None),
+    ])
+
+    _footer(c, w, cm, pn["page"], _RFQ_NOTES)
     c.showPage()
     c.save()
     buf.seek(0)
@@ -866,9 +1019,32 @@ def grn_pdf(bundle, grn=None):
                 received_at = (ev.get("created_at") or "")[:10]
                 break
 
+    # WHICH suppliers this delivery came from. A requisition may buy from
+    # several, and this note is the receiving evidence in the three-way match:
+    # naming one supplier at the top attributed the other two's deliveries to it.
+    # One supplier -> its own name and its own order number (which is not
+    # necessarily the header's). Several -> say so, and name the supplier on
+    # every line instead.
+    vendors = []
+    for it in items:
+        if grn and not by_line.get(it.get("id")):
+            continue
+        v = (it.get("vendor") or pr.get("vendor") or "").strip() or None
+        if v not in vendors:
+            vendors.append(v)
+    multi = len(vendors) > 1
+    one = vendors[0] if len(vendors) == 1 else None
+    if multi:
+        vendor_cell = po_cell = "Several suppliers — see line vendor"
+    else:
+        vendor_cell = one or pr.get("vendor")
+        po_cell = next((p.get("po_no") for p in (bundle.get("pos") or [])
+                        if p.get("vendor") == vendor_cell and p.get("po_no")),
+                       pr.get("po_no") or pr.get("pr_no"))
+
     pairs = [
-        ("Vendor", pr.get("vendor")), ("Department", pr.get("department")),
-        ("PO No", pr.get("po_no") or pr.get("pr_no")),
+        ("Vendor", vendor_cell), ("Department", pr.get("department")),
+        ("PO No", po_cell),
         ("Received by", (grn or {}).get("received_by") or pr.get("received_by")),
         ("Received at", received_at),
         ("Delivery condition", pr.get("delivery_condition")),
@@ -896,14 +1072,21 @@ def grn_pdf(bundle, grn=None):
         this_note = float(line["accepted"]) if line else received
         quar = float(line["quarantined"]) if line else 0.0
         rej = float(line.get("rejected") or 0) if line else 0.0
-        rows.append([str(len(rows) + 1), (it.get("item") or "", it.get("description") or ""),
-                     it.get("unit") or "", _fmt(ordered), _fmt(this_note), _fmt(rej),
-                     _fmt(quar), _fmt(max(0.0, ordered - received))])
-    y = _table(c, w, cm, y, [
-        (0.6, "#", "l"), (6.2, "ITEM / DESCRIPTION", "l"), (1.2, "UNIT", "l"),
-        (1.7, "ORDERED", "r"), (1.8, "ACCEPTED", "r"), (1.7, "REJECTED", "r"),
-        (2.0, "QUARANTINED", "r"), (2.1, "OUTSTANDING", "r")],
-        rows, h, pn, title="Received lines", wrap_col=1)
+        row = [str(len(rows) + 1), (it.get("item") or "", it.get("description") or ""),
+               it.get("unit") or "", _fmt(ordered), _fmt(this_note), _fmt(rej),
+               _fmt(quar), _fmt(max(0.0, ordered - received))]
+        if multi:
+            row.insert(2, (it.get("vendor") or pr.get("vendor") or "—"))
+        rows.append(row)
+    # Same total width either way; only a multi-supplier delivery pays for the
+    # extra column, so a single-supplier GRN prints exactly as it always has.
+    cols = [(0.6, "#", "l"), (6.2, "ITEM / DESCRIPTION", "l"), (1.2, "UNIT", "l"),
+            (1.7, "ORDERED", "r"), (1.8, "ACCEPTED", "r"), (1.7, "REJECTED", "r"),
+            (2.0, "QUARANTINED", "r"), (2.1, "OUTSTANDING", "r")]
+    if multi:
+        cols[1] = (4.4, "ITEM / DESCRIPTION", "l")
+        cols.insert(2, (1.8, "VENDOR", "l"))
+    y = _table(c, w, cm, y, cols, rows, h, pn, title="Received lines", wrap_col=1)
 
     # three-box sign-off strip (page-break guard first)
     if y - 3.2 * cm < 2.2 * cm:
@@ -956,6 +1139,14 @@ def debit_note_pdf(bundle, ret):
     except Exception:
         lines = []
     cur = ret.get("currency") or pr.get("currency") or "EGP"
+    # The RETURN's own supplier and that supplier's OWN order. A requisition can
+    # buy from several suppliers, and this document takes money off one of them:
+    # printing the header vendor debited whoever happened to be on the header for
+    # goods a different supplier shipped.
+    vendor = ret.get("vendor") or pr.get("vendor")
+    po_ref = next((p.get("po_no") for p in (bundle.get("pos") or [])
+                   if p.get("vendor") == vendor and p.get("po_no")),
+                  pr.get("po_no") or pr.get("pr_no"))
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -963,12 +1154,11 @@ def debit_note_pdf(bundle, ret):
     pn = {"page": 1, "notes": _DN_NOTES}
 
     y = _draw_header(c, w, h, cm, "DEBIT NOTE", ret.get("dn_no") or "DN",
-                     "Ref " + (pr.get("po_no") or pr.get("pr_no") or ""),
-                     form_code=C.FORM_CODES["dn"])
+                     "Ref " + (po_ref or ""), form_code=C.FORM_CODES["dn"])
 
     pairs = [
-        ("Supplier", pr.get("vendor")),
-        ("PO No", pr.get("po_no") or pr.get("pr_no")),
+        ("Supplier", vendor),
+        ("PO No", po_ref),
         ("Department", pr.get("department")),
         ("Raised by", ret.get("created_by")),
         ("Date", (ret.get("created_at") or "")[:10]),
