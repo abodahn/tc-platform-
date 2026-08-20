@@ -702,16 +702,23 @@ CONTROLLED_FORMS = [
     ("T&C-PUF-01", "Purchase Requisition", "Initiate a need (SO or cost centre linked)",
      "5 yrs", "/procurement/new"),
     ("T&C-PUF-02", "Purchase Order", "Commit a supplier", "5 yrs", "/procurement/list"),
+    # Produced FROM the request: one RFQ per vendor, numbered RFQ-YYYY-NNNNNN,
+    # printed with the price columns empty for the supplier to fill in. The old
+    # /procurement/rfqs this pointed at never existed — a register entry naming a
+    # 404 reads to an auditor as a form that is produced when it is not.
     ("T&C-PUF-03", "Request for Quotation", "Solicit supplier prices", "5 yrs",
-     "/procurement/rfqs"),
+     "/procurement/list"),
     ("T&C-PUF-04", "Quote Comparison", "Compare bids and justify award", "5 yrs",
-     "/procurement/rfqs"),
+     "/procurement/list"),
     ("T&C-PUF-05", "Purchasing Register", "Sequential log of PRs and POs", "5 yrs",
      "/procurement/list"),
+    # Both are produced FROM the request, like the RFQ two rows up: receiving
+    # and the three-way match happen on the request page. The /procurement/
+    # receiving and /procurement/invoices landings named here never existed.
     ("T&C-PUF-06", "Goods Receipt Note", "Confirm receipt and condition", "5 yrs",
-     "/procurement/receiving"),
+     "/procurement/list"),
     ("T&C-PUF-07", "Three-Way Match", "Reconcile PO, GRN and invoice", "5 yrs",
-     "/procurement/invoices"),
+     "/procurement/list"),
     ("T&C-PUF-08", "CAPEX Request", "Capital request and business case", "10 yrs",
      "/procurement/new"),
     ("T&C-PUF-09", "Engineering Justification", "Justify spares and MRO", "3 yrs",
@@ -740,7 +747,7 @@ CONTROLLED_FORMS = [
 # The form code a printed document carries, so a filed PDF can be traced back to
 # the register entry that governs its retention.
 FORM_CODES = {"pr": "T&C-PUF-01", "po": "T&C-PUF-02", "rfq": "T&C-PUF-03",
-              "grn": "T&C-PUF-06", "dn": "T&C-PUF-07", "capex": "T&C-PUF-08"}
+              "grn": "T&C-PUF-06", "dn": "T&C-PUF-13", "capex": "T&C-PUF-08"}
 
 # DOAM Annex / audit 3.4-b9b — RETENTION, as a date on the record rather than a
 # sentence on a page. The register above says "5 yrs" and "10 yrs" in prose; a
@@ -1200,6 +1207,23 @@ def match_tolerance_value(amount, fx_rate=1.0):
 PAYMENT_TOLERANCE_PCT = 1.0
 
 
+# --- Supplier-name identity -------------------------------------------------
+def vendor_key(v):
+    """The identity of a supplier NAME, for grouping and for matching.
+
+    Trimmed and case-folded, because every place that answers "is this line on
+    this order?" must answer it the same way. They did not: po_groups() stripped,
+    the PO's PDF filter compared raw, and the per-order exposure cap stripped but
+    kept case — so 'Alphatex ' with a trailing space grouped into the Alphatex
+    order and then vanished off its own document, and 'ALPHATEX' became a second
+    order to the same company. Lives here because pdf.py and services.py both
+    need it and constants.py is the leaf module both already import.
+
+    NOT a display value: the first spelling seen stays the name that is printed.
+    """
+    return (v or "").strip().lower()
+
+
 # ===========================================================================
 # Workflow & Governance — the admin-configurable surface
 # ===========================================================================
@@ -1240,6 +1264,16 @@ STAGE_EXPLAIN = {
         "The Factory Manager confirms the request is operationally necessary and "
         "correctly specified for the asset, machine or line it is raised for. Demand "
         "stage — always required, whatever the request is worth."),
+    "scd": (
+        "The Supply Chain Director owns operational and inventory replenishment: confirms "
+        "the request really is a replenishment need, correctly sourced and correctly timed "
+        "against stock. Value stage on operating spend — it joins the ladder only when the "
+        "EGP-equivalent total exceeds its threshold — while on a capital request it signs "
+        "whatever the value. When a request is positively identified as a production or "
+        "maintenance commitment, the Factory Manager stage carries that level instead and "
+        "this stage is dropped; when it is both, or cannot be told apart, both directors "
+        "sign. By default only the Supply Chain Director role signs here, and it approves "
+        "only — it does not price, buy or pay."),
     "purchasing": (
         "Purchasing owns the commercial side: choose the vendor, enter the pricing, set "
         "the exchange rate on a foreign-currency request, collect competing quotes (or "
@@ -1259,6 +1293,17 @@ STAGE_EXPLAIN = {
         "ladder only when the EGP-equivalent total reaches its threshold. When this "
         "last signature lands the request becomes Approved and a Purchase Order number "
         "is drafted automatically."),
+    "bod": (
+        "The Board of Directors is the highest authority on the ladder: it signs the "
+        "largest commitments and there is nothing above it to escalate to. Value stage — "
+        "it joins the ladder only when the EGP-equivalent total exceeds its threshold, "
+        "which is lower for a capital request than for operating spend. Above 10,000,000 "
+        "EGP committed the Board cannot approve until a written business case is recorded "
+        "on the request; the same condition is checked earlier at Purchasing, so a request "
+        "that size never circulates without one. By default only the Board role signs "
+        "here, and it approves only — it does not price, buy or pay. When this last "
+        "signature lands the request becomes Approved and a Purchase Order number is "
+        "drafted automatically."),
 }
 
 # Default explanation per role that signs somewhere in the cycle.
@@ -1272,6 +1317,17 @@ ROLE_EXPLAIN = {
     "factory_manager": (
         "Accountable for the plant. Signs the Factory Manager stage: confirms the "
         "request is operationally justified and correctly specified."),
+    "plant_director": (
+        "Accountable for production and maintenance commitments. Signs the Factory "
+        "Manager stage: when a request is positively identified as a plant commitment "
+        "this director carries that level and the Supply Chain Director stage is dropped. "
+        "Holds view and approve only — it does not raise requests, price them, buy or pay."),
+    "supply_chain_director": (
+        "Accountable for operational and inventory replenishment. The only role mapped to "
+        "the Supply Chain Director stage: when a request is positively identified as a "
+        "replenishment this director carries that level and the Factory Manager stage is "
+        "dropped. Holds view and approve only — it does not raise requests, price them, "
+        "buy or pay."),
     "purchasing_manager": (
         "Runs procurement. Prices requests, sets FX rates, collects and compares vendor "
         "quotes, records single-source justifications, signs the Purchasing stage and "
@@ -1282,12 +1338,28 @@ ROLE_EXPLAIN = {
     "finance_user": (
         "Finance team member. Signs the Finance stage and handles invoice registration "
         "and payment recording day to day."),
+    "financial_director": (
+        "Accountable for payment control. Signs the Finance stage — the priced request "
+        "against the department budget, the tax and the payment terms — and releases "
+        "payments to vendors, which is why that right sits here and not with the buyer "
+        "who committed the spend. Holds view, approve and pay; it cannot price a request "
+        "or issue a Purchase Order."),
     "cfo": (
         "Chief Financial Officer. Signs the CFO stage for significant committed spend "
         "and is the authority on budget breaches."),
     "ceo": (
         "Chief Executive Officer. Signs the CEO stage — the final authority on the "
         "largest purchases."),
+    "managing_director": (
+        "Managing Director. Signs the CEO stage — the same rung as the Chief Executive Officer, since both "
+        "roles are mapped to it and either signature satisfies it. The last signature on "
+        "major spend below Board level. Holds view and approve only — it commits the "
+        "money, it does not buy or pay."),
+    "board": (
+        "The Board of Directors. Signs the Board stage on the largest commitments, and "
+        "cannot approve one above 10,000,000 EGP until a written business case is "
+        "recorded on the request. Holds view and approve only — no purchasing and no "
+        "payment rights."),
 }
 
 # Default body per free-text documentation block (proc_doc sections).
