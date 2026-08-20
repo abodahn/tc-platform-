@@ -350,6 +350,7 @@ PERMISSION_LABELS = {
     "proc_approve": "Procurement: approve stages",
     "proc_purchasing": "Procurement: purchasing / PO / vendors",
     "proc_pay": "Procurement: release payments to suppliers",
+    "proc_catalogue": "Procurement: maintain the item master",
     "proc_admin": "Procurement: admin (any stage, budgets)",
     "prob_view": "Probation: view",
     "prob_evaluate": "Probation: evaluate (manager)",
@@ -421,6 +422,7 @@ PERMISSION_DESC = {
     "proc_pay": "Release payments to suppliers. DOAM §7.3.4 puts payment "
                 "control with the Financial Director, deliberately NOT with the "
                 "buyer who committed the spend.",
+    "proc_catalogue": "Add, correct and retire items in the item master. The store holds this because it handles the physical item daily. It does NOT include cost price, which is set only at the pricing gate.",
     "proc_admin": "Act on any stage; manage budgets/matrix.",
     "prob_view": "See probation dashboards and cases within your scope.",
     "prob_evaluate": "Evaluate employees assigned to you (draft, submit, correct).",

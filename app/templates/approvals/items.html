@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Items{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="proc.settings_eyebrow">Procurement</div>
+    <h1 data-i18n="items.title">Items</h1>
+    <div class="sub" data-i18n="items.sub">The item master the whole plant orders from. Search it, correct it, add what the ERP has issued a code for, and retire what nobody stocks any more.</div>
+  </div>
+</div>
+
+{#- Search first. The master runs to five figures, so the page opens on a search
+    box rather than on page 1 of 240 — the same way the requester picks a line. -#}
+<div class="panel">
+  <div class="panel-pad">
+    <form method="get" action="{{ url_for('approvals.items') }}" class="grid cols-4" style="gap:10px;align-items:end">
+      <div style="grid-column:span 2">
+        <label data-i18n="items.search_l">Search by code or name</label>
+        <input name="q" value="{{ q }}" autocomplete="off" data-ac
+               placeholder="e.g. bearing, or 4021-118" data-i18n-ph="items.search_ph">
+      </div>
+      <div>
+        <label data-i18n="items.category">Category</label>
+        <select name="cat">
+          <option value="" data-i18n="items.all_cats">All categories</option>
+          {% for c in cats %}
+          <option value="{{ c }}" {% if c == cat %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label data-i18n="items.status">Status</label>
+        <div style="display:flex;gap:8px">
+          <select name="active" style="flex:1">
+            <option value="1"   {% if active_filter == '1' %}selected{% endif %}   data-i18n="items.in_use">In use</option>
+            <option value="0"   {% if active_filter == '0' %}selected{% endif %}   data-i18n="items.retired">Retired</option>
+            <option value="all" {% if active_filter == 'all' %}selected{% endif %} data-i18n="items.any">Any</option>
+          </select>
+          <button class="btn btn-primary" type="submit" data-i18n="items.search">Search</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h3 data-i18n="items.found">Items</h3>
+    <span class="tag">{{ "{:,}".format(total) }}</span>
+    {% if q or cat or active_filter != '1' %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.items') }}" data-i18n="items.clear">Clear</a>
+    {% endif %}
+  </div>
+  <div class="panel-pad">
+
+    {% if not rows %}
+      <div class="muted" data-i18n="items.none">Nothing matched. Check the spelling, widen the status filter, or add the item below if the ERP has issued a code for it.</div>
+    {% else %}
+    <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th data-i18n="items.code">Code</th>
+            <th data-i18n="items.name">Name</th>
+            <th data-i18n="items.unit">Unit</th>
+            <th data-i18n="items.category">Category</th>
+            <th data-i18n="items.cost">Cost</th>
+            <th data-i18n="items.updated">Last change</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr {% if not r.active %}style="opacity:.55"{% endif %}>
+            <td><code>{{ r.code }}</code></td>
+            <td>{{ r.name }}
+              {% if not r.active %}<span class="badge b-pending" data-i18n="items.retired">Retired</span>{% endif %}</td>
+            <td>{{ r.unit or '—' }}</td>
+            <td>{{ r.category_name or r.category_code or '—' }}</td>
+            {#- Cost is SHOWN, never edited here: value enters at the pricing gate. -#}
+            <td style="text-align:right;font-variant-numeric:tabular-nums">
+              {% if r.has_cost %}{{ "{:,.2f}".format(r.cost_price or 0) }}
+              {% else %}<span class="muted" data-i18n="items.no_cost">not priced</span>{% endif %}
+            </td>
+            <td class="muted" style="font-size:12.5px">
+              {{ (r.updated_at or '')[:10] }}{% if r.updated_by %}<br>{{ r.updated_by }}{% endif %}
+            </td>
+            <td style="text-align:end;white-space:nowrap">
+              <a class="btn btn-ghost btn-sm"
+                 href="{{ url_for('approvals.items', q=q, cat=cat, active=active_filter, page=page, edit=r.id) }}#edit"
+                 data-i18n="items.edit">Edit</a>
+              <form method="post" action="{{ url_for('approvals.items_active', item_id=r.id) }}"
+                    style="display:inline">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="active" value="{{ 0 if r.active else 1 }}">
+                <button class="btn btn-ghost btn-sm" type="submit"
+                        data-i18n="{{ 'items.retire' if r.active else 'items.restore' }}">{{ 'Retire' if r.active else 'Restore' }}</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if pages > 1 %}
+    <div class="mt-3" style="display:flex;gap:8px;align-items:center;justify-content:center">
+      {% if page > 1 %}
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.items', q=q, cat=cat, active=active_filter, page=page-1) }}" data-i18n="items.prev">Previous</a>
+      {% endif %}
+      <span class="muted" style="font-size:12.5px">{{ page }} / {{ pages }}</span>
+      {% if page < pages %}
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.items', q=q, cat=cat, active=active_filter, page=page+1) }}" data-i18n="items.next">Next</a>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{#- Edit and add use the SAME field row as the requester's line editor, in the
+    same order, so the store is reading a layout it already knows. -#}
+<div class="panel" id="edit">
+  <div class="panel-head">
+    <h3 data-i18n="{{ 'items.editing' if editing else 'items.add' }}">{{ ('Editing ' ~ editing.code) if editing else 'Add an item' }}</h3>
+    {% if editing %}<a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.items', q=q, cat=cat, active=active_filter, page=page) }}" data-i18n="items.cancel">Cancel</a>{% endif %}
+  </div>
+  <div class="panel-pad">
+    <div class="muted mb-2" style="font-size:12.5px" data-i18n="items.hint">The code is the one the ERP issued — this platform never invents one, so the two systems keep describing the same part. Cost is set at the Purchasing pricing gate, not here.</div>
+    <form method="post"
+          action="{{ url_for('approvals.items_edit', item_id=editing.id) if editing else url_for('approvals.items_new') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="grid cols-4" style="gap:10px">
+        <div>
+          <label data-i18n="items.code">Code</label>
+          <input name="code" required autocomplete="off" value="{{ editing.code if editing else '' }}"
+                 placeholder="ERP code" data-i18n-ph="items.code_ph">
+        </div>
+        <div style="grid-column:span 2">
+          <label data-i18n="items.name">Name</label>
+          <input name="name" required autocomplete="off" data-ac value="{{ editing.name if editing else '' }}"
+                 placeholder="What the item is" data-i18n-ph="items.name_ph">
+        </div>
+        <div>
+          <label data-i18n="items.unit">Unit</label>
+          <input name="unit" list="unitList" autocomplete="off" value="{{ editing.unit if editing else '' }}"
+                 placeholder="Pcs" data-i18n-ph="items.unit_ph">
+          <datalist id="unitList">
+            <option value="Pcs"></option><option value="Kg"></option><option value="Mtr"></option>
+            <option value="Ltr"></option><option value="Box"></option><option value="Set"></option>
+            <option value="Roll"></option><option value="Yrd"></option>
+          </datalist>
+        </div>
+        <div>
+          <label data-i18n="items.cat_code">Category code</label>
+          <input name="category_code" autocomplete="off" value="{{ editing.category_code if editing else '' }}">
+        </div>
+        <div style="grid-column:span 2">
+          <label data-i18n="items.cat_name">Category name</label>
+          <input name="category_name" list="catList" autocomplete="off" data-ac
+                 value="{{ editing.category_name if editing else '' }}">
+          <datalist id="catList">{% for c in cats %}<option value="{{ c }}"></option>{% endfor %}</datalist>
+        </div>
+        <div>
+          <label data-i18n="items.cost">Cost</label>
+          <input value="{% if editing and editing.has_cost %}{{ '{:,.2f}'.format(editing.cost_price or 0) }}{% endif %}"
+                 disabled data-i18n-ph="items.cost_locked" placeholder="Set at the pricing gate">
+        </div>
+      </div>
+      <div class="mt-3">
+        <button class="btn btn-primary" type="submit"
+                data-i18n="{{ 'items.save' if editing else 'items.add_btn' }}">{{ 'Save changes' if editing else 'Add item' }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if editing %}
+<div class="panel">
+  <div class="panel-head"><h3 data-i18n="items.history">Change history</h3></div>
+  <div class="panel-pad">
+    {% if not history %}
+      <div class="muted" data-i18n="items.no_history">No changes recorded for this item yet.</div>
+    {% else %}
+    <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="items.when">When</th>
+          <th data-i18n="items.who">Who</th>
+          <th data-i18n="items.what">What changed</th>
+        </tr></thead>
+        <tbody>
+          {% for h in history %}
+          <tr>
+            <td class="muted" style="white-space:nowrap">{{ (h.created_at or '')[:16] }}</td>
+            <td>{{ h.username }}</td>
+            <td>{{ h.detail.split('—', 1)[1] if '—' in h.detail else h.detail }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

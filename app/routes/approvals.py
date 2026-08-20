@@ -400,6 +400,106 @@ def item_request_reject(req_id):
 
 
 # --------------------------------------------------------------------------
+# Item master — the store's door. Browse, add, edit, retire, one row at a time.
+# The bulk import below is a different door for a different job.
+# --------------------------------------------------------------------------
+@bp.route("/items", methods=["GET"])
+@login_required
+@permission_required("proc_catalogue")
+def items():
+    from app.db import get_db
+    from app.approvals import items_admin as IA
+    q = (request.args.get("q") or "").strip()
+    cat = (request.args.get("cat") or "").strip()
+    active = request.args.get("active", "1")
+    if active not in ("0", "1", "all"):
+        active = "1"
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    per = 60
+    conn = get_db()
+    try:
+        rows, total = IA.search_items(conn, q, cat, active, limit=per,
+                                      offset=(page - 1) * per)
+        cats = IA.categories(conn)
+        edit_id = request.args.get("edit", type=int)
+        editing = IA.get_item(conn, edit_id) if edit_id else None
+        history = IA.item_history(conn, edit_id) if edit_id else []
+    finally:
+        conn.close()
+    return render_template("approvals/items.html", active="procurement",
+                           rows=rows, total=total, page=page, per=per,
+                           q=q, cat=cat, cats=cats, active_filter=active,
+                           editing=editing, history=history,
+                           can_cost=user_can("proc_purchasing") or user_can("proc_admin"),
+                           pages=max(1, (total + per - 1) // per))
+
+
+@bp.route("/items/new", methods=["POST"])
+@login_required
+@permission_required("proc_catalogue")
+def items_new():
+    from app.db import get_db
+    from app.approvals import items_admin as IA
+    conn = get_db()
+    try:
+        ok, msg = IA.create_item(conn, request.form, _u(), _ip())
+    finally:
+        conn.close()
+    flash(("Item %s added." % msg) if ok else
+          {"code_required": "An item needs the code the ERP issued for it.",
+           "name_required": "An item needs a name.",
+           "duplicate_code": "That code is already in the catalogue — search for "
+                             "it instead of adding it twice."}.get(msg, msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.items", q=msg if ok else
+                            (request.form.get("code") or "").strip()))
+
+
+@bp.route("/items/<int:item_id>", methods=["POST"])
+@login_required
+@permission_required("proc_catalogue")
+def items_edit(item_id):
+    from app.db import get_db
+    from app.approvals import items_admin as IA
+    conn = get_db()
+    try:
+        ok, msg = IA.update_item(conn, item_id, request.form, _u(), _ip())
+    finally:
+        conn.close()
+    flash({"updated": "Saved. Purchasing have been told.",
+           "unchanged": "Nothing was changed.",
+           "not_found": "That item no longer exists.",
+           "code_required": "An item needs the code the ERP issued for it.",
+           "name_required": "An item needs a name.",
+           "duplicate_code": "Another item already carries that code."}.get(msg, msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.items", q=(request.form.get("code") or "").strip()))
+
+
+@bp.route("/items/<int:item_id>/active", methods=["POST"])
+@login_required
+@permission_required("proc_catalogue")
+def items_active(item_id):
+    from app.db import get_db
+    from app.approvals import items_admin as IA
+    conn = get_db()
+    try:
+        ok, msg = IA.set_item_active(conn, item_id, request.form.get("active"),
+                                     _u(), _ip())
+    finally:
+        conn.close()
+    flash({"retired": "Retired. It stays on every document that already used it.",
+           "restored": "Back in use.",
+           "unchanged": "Nothing was changed.",
+           "not_found": "That item no longer exists."}.get(msg, msg),
+          "success" if ok else "error")
+    return redirect(request.referrer or url_for("approvals.items"))
+
+
+# --------------------------------------------------------------------------
 # Item catalogue — admin import (front door A; the CLI is front door B)
 # --------------------------------------------------------------------------
 @bp.route("/catalogue", methods=["GET"])

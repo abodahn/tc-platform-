@@ -1102,6 +1102,22 @@ def search():
                     results.append({"type": "pr", "name": f"{pr['pr_no']} · {pr['title'] or ''}",
                                     "sub": "Purchase request",
                                     "url": url_for("approvals.detail", pr_id=pr["id"])})
+        if user_has_permission(user, "proc_catalogue"):
+            # The item master, searched in the database rather than pulled into
+            # memory: it holds five figures of rows, and the fuzzy() helper above
+            # would have to walk every one of them on every keystroke.
+            like = "%" + q + "%"
+            for it in conn.execute(
+                    "SELECT id, code, name, unit, active FROM proc_items "
+                    "WHERE code LIKE ? OR name LIKE ? "
+                    "ORDER BY CASE WHEN code LIKE ? THEN 0 ELSE 1 END, active DESC, code "
+                    "LIMIT 20", (like, like, q + "%")):
+                results.append({
+                    "type": "item",
+                    "name": f"{it['code']} · {it['name']}",
+                    "sub": "Item" + ("" if it["active"] else " (retired)"),
+                    "url": url_for("approvals.items", q=it["code"])})
+
         if has_permission(user["role"], "open_module"):
             for p in conn.execute("SELECT name,area FROM production_lines"):
                 if fuzzy(f"{p['name']} {p['area']}"):

@@ -62,6 +62,9 @@ NAV = [
         # DOAM §3.4 — the register that makes "...or agreed forecast" real.
         ("proc_forecasts", "nav.proc_forecasts", "target", "approvals.forecasts", "proc_view", "nav.b_requests"),
         ("proc_item_requests", "nir.queue", "boxes", "approvals.item_requests", "proc_purchasing", "nav.b_requests"),
+        # The store maintains the item master, so this sits with the requests the
+        # store already works from rather than behind the admin import screen.
+        ("proc_items", "items.nav", "boxes", "approvals.items", "proc_catalogue", "nav.b_requests"),
         ("proc_vendors", "nav.proc_vendors", "users", "approvals.vendors", "proc_view", "nav.b_suppliers"),
         ("proc_budgets", "nav.proc_budgets", "wallet", "approvals.budgets", "proc_view", "nav.b_suppliers"),
         ("proc_delegations", "nav.proc_delegations", "users", "approvals.delegations", "proc_view", "nav.b_suppliers"),
