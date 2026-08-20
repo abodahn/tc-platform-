@@ -162,6 +162,35 @@ class _PGCursor:
     def __iter__(self):
         return (self._wrap(r) for r in self._raw)
 
+    @property
+    def rowcount(self):
+        """How many rows the last statement touched.
+
+        sqlite3 cursors carry this, psycopg2 cursors carry this, and this shim
+        carried neither — so four call sites worked in every test and every
+        SQLite environment and raised AttributeError the moment they ran on
+        PostgreSQL. It took the production schema bootstrap down: the seed could
+        not report how many rows it filled, the exception was recorded as
+        bootstrap_error, and schema_ready stayed false with every data page
+        serving "database unavailable".
+
+        Returns -1 when the driver cannot say, which is psycopg2's own
+        convention, so `(cur.rowcount or 0) > 0` reads false rather than
+        exploding."""
+        try:
+            n = self._raw.rowcount
+        except AttributeError:
+            return -1
+        return -1 if n is None else n
+
+    def __getattr__(self, name):
+        """Anything else this shim does not wrap goes straight to the driver.
+
+        The rowcount outage was one missing attribute away from being three more
+        (description, arraysize, statusmessage). Delegating means the next one
+        does not have to be found in production."""
+        return getattr(self._raw, name)
+
 
 def _pg_session_guards(raw):
     """Stop a statement from waiting on a lock forever.
@@ -499,11 +528,90 @@ def _open_db():
                 return conn
             except psycopg2.OperationalError as exc:
                 last_err = exc
+                # WHY the private-network host was refused decides the remedy,
+                # and it was being discarded. A name-resolution failure means the
+                # web service and the database are in different regions (internal
+                # DNS is region-local) — no code change can fix that. A timeout or
+                # a refusal means something else entirely. Recorded sanitised:
+                # the message can echo the host, which is not for a public
+                # endpoint or a public repository.
+                _note_internal_failure(cand, exc)
         raise last_err
     conn = sqlite3.connect(Config.DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+_PG_INTERNAL_FAIL = None   # sanitised reason the private host was refused
+
+
+def _note_internal_failure(cand, exc):
+    """Classify a failed internal-host attempt. Stores a CATEGORY, never the
+    host, URL or driver message — those can carry the hostname."""
+    global _PG_INTERNAL_FAIL
+    host = urlsplit(cand).hostname or ""
+    if not (host.startswith("dpg-") and "." not in host):
+        return                      # only the private-network candidate matters
+    text = str(exc).lower()
+    if "translate host name" in text or "name or service not known" in text             or "nodename nor servname" in text or "could not resolve" in text:
+        _PG_INTERNAL_FAIL = "dns"           # region mismatch: internal DNS is region-local
+    elif "timeout" in text or "timed out" in text:
+        _PG_INTERNAL_FAIL = "timeout"
+    elif "refused" in text:
+        _PG_INTERNAL_FAIL = "refused"
+    elif "password" in text or "authentication" in text:
+        _PG_INTERNAL_FAIL = "auth"
+    else:
+        _PG_INTERNAL_FAIL = type(exc).__name__
+
+
+def pg_internal_failure():
+    """Why the private-network host was not used, as a category, or None."""
+    return _PG_INTERNAL_FAIL
+
+
+def pg_db_region():
+    """The database's region, read off Render's external hostname (e.g.
+    'frankfurt'). Compare it with the WEB SERVICE's region: if they differ, the
+    internal host can never resolve and every query pays a public round trip.
+    A region name is not a credential; the hostname it came from is not returned."""
+    url = _RESOLVED_PG_URL or ""
+    host = urlsplit(url).hostname or ""
+    if host.endswith("-postgres.render.com"):
+        # dpg-<id>-a . <region>-postgres . render . com  ->  the region is [-3].
+        # [-4] was the DATABASE ID, and this is a public endpoint: the first
+        # deploy of this helper published the host identifier. Guarded below so
+        # a parsing slip can never republish it.
+        parts = host.split(".")
+        region = parts[-3].replace("-postgres", "") if len(parts) >= 3 else ""
+        if not region or region.startswith("dpg-"):
+            return None
+        return region
+    return None
+
+
+def pg_host_kind():
+    """Which Render host the live connection actually resolved to: "internal"
+    (the private network) or "external" (out to the public internet and back).
+
+    _pg_candidates() puts the internal host first, but nothing ever reported
+    WHICH one won, so a silent fallback to external looked identical to success
+    while charging a public-internet round trip to every query on every page.
+    Measured on production: 324 ms per statement.
+
+    Returns a CATEGORY, never the host or the URL — /api/health is public and
+    this repository is public. The database hostname is not for either.
+    """
+    url = _RESOLVED_PG_URL
+    if not url:
+        return None
+    host = urlsplit(url).hostname or ""
+    if host.startswith("dpg-") and "." not in host:
+        return "internal"
+    if host.endswith("-postgres.render.com"):
+        return "external"
+    return "other"
 
 
 def utcnow():

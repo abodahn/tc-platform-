@@ -425,8 +425,10 @@ def test_ai_core_primitives(app_ctx):
 def test_executive_summary(app_ctx):
     from app.insights import executive_summary
     s = executive_summary()
-    assert "insights" in s and "headline" in s
-    assert s["headline"] in ("sum_attention", "sum_watch", "sum_healthy")
+    assert s["tone"] in ("good", "warn", "crit")
+    # One sentence per language, none of them empty: the briefing is emitted as
+    # data-loc-* and a blank attribute would render as an empty line.
+    assert all(s["text"][lang] for lang in ("en", "ar", "tr"))
 
 
 def test_platform_search_finds_machine(app_ctx):

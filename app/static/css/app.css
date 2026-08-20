@@ -632,7 +632,13 @@ a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
   .embed-stage { min-height: 78vh; }
 }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
-.page-head h1 { font-size: var(--fs-2xl); margin: 0 0 4px; letter-spacing: -.3px; }
+.page-head h1, .page-head .h1-like { font-size: var(--fs-2xl); margin: 0 0 4px; letter-spacing: -.3px; font-weight: 700; }
+/* Visible to assistive tech only — lets a page carry its name for heading
+   navigation while the visible line says something else. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 .page-head .sub { color: var(--muted); font-size: 13.5px; }
 .page-head .eyebrow { color: var(--tc-red); font-weight: 700; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; }
 
@@ -650,6 +656,11 @@ a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
 .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--line-2); }
 .panel-head h3 { margin: 0; font-size: 15px; }
 .panel-head .muted { color: var(--muted); font-size: 12.5px; }
+
+/* Command Center order-commitment table: figures right-aligned and lined up,
+   late milestone counts carry the severity colour the badge already uses. */
+.dash-num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dash-late { color: var(--crit); font-weight: 600; }
 
 /* ---------- Grid ---------- */
 .grid { display: grid; gap: 18px; }
@@ -687,7 +698,8 @@ a.kpi-link:hover .kpi-go, a.kpi-link:focus-visible .kpi-go { opacity: 1; }
 
 .kpi .ktop { display: flex; align-items: center; justify-content: space-between; }
 .kpi .kicon { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: var(--crit-bg); color: var(--tc-red); }
-.kpi .kval { font-size: 30px; font-weight: 800; letter-spacing: -1px; margin-top: 14px; }
+.kpi .kval { font-size: 30px; font-weight: 800; letter-spacing: -1px; margin-top: 14px;
+  font-variant-numeric: tabular-nums; }   /* KPI figures stack in a 4-column grid */
 .kpi .klabel { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 .kpi .ktrend { font-size: 11.5px; font-weight: 700; padding: 3px 8px; border-radius: var(--r-pill); }
 .kpi.good .kicon { background: var(--ok-bg); color: var(--ok); }
@@ -705,22 +717,6 @@ a.kpi-link:hover .kpi-go, a.kpi-link:focus-visible .kpi-go { opacity: 1; }
 .ring::after { content: ""; width: 72px; height: 72px; border-radius: 50%; background: var(--panel); position: absolute; }
 .ring b { position: relative; z-index: 1; font-size: 20px; font-weight: 800; }
 .ring-wrap { position: relative; display: grid; place-items: center; }
-
-/* ---------- Hero command strip ---------- */
-.hero {
-  border-radius: var(--r-xl); padding: 26px 28px; color: #fff; position: relative; overflow: hidden;
-  background: radial-gradient(120% 160% at 100% 0%, rgba(237,28,36,.85), transparent 55%),
-              linear-gradient(120deg, #0a0c12, #07080b);
-  box-shadow: var(--shadow-strong);
-}
-.hero::after {
-  content:""; position:absolute; inset:0; opacity:.5;
-  background: repeating-linear-gradient(45deg, rgba(255,255,255,.04) 0 1px, transparent 1px 22px);
-}
-.hero h2 { margin: 0 0 6px; font-size: 24px; position: relative; }
-.hero p { margin: 0; color: rgba(255,255,255,.78); position: relative; max-width: 640px; }
-.hero .chips { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; position: relative; }
-.hero .chip { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.16); padding: 8px 14px; border-radius: var(--r-pill); font-size: 12.5px; font-weight: 600; }
 
 /* ---------- Badges / status ---------- */
 .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: var(--r-pill); font-size: 12px; font-weight: 700; }
@@ -1239,7 +1235,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 /* Line-item editor (new PR) */
 .li-head, .li-row {
   display: grid; align-items: center; gap: 8px;
-  grid-template-columns: 1.4fr 2fr .7fr .7fr .8fr 1fr .9fr 34px;
+  grid-template-columns: 1.4fr 2fr .7fr .7fr .8fr 1.1fr 1fr .9fr 34px;
 }
 .li-head { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 600; padding: 0 2px 4px; }
 .li-row { margin-bottom: 8px; }
@@ -1253,7 +1249,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .li-row .li-del:hover { border-color: var(--crit); color: var(--crit); }
 .li-cost { text-align: end; font-variant-numeric: tabular-nums; font-weight: 600; }
 /* Requester view: no commercial columns (unit price / cost are Purchasing-only) */
-.li-head.no-price, .li-row.no-price { grid-template-columns: 1.4fr 2fr .7fr .7fr .8fr 34px; }
+.li-head.no-price, .li-row.no-price { grid-template-columns: 1.4fr 2fr .7fr .7fr .8fr 1.1fr 34px; }
 @media (max-width: 820px) {
   .li-head { display: none; }
   .li-row { grid-template-columns: 1fr 1fr; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel-2); }

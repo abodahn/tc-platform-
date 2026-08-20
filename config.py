@@ -99,6 +99,10 @@ class Config:
 
     SESSION_MINUTES = int(os.getenv("TC_SESSION_MINUTES", "120"))
 
+    # The factory's wall clock. Render runs the process in UTC; dates the plant
+    # reads ("13 days ago", "2 days late") must be counted in plant-local time.
+    TC_TZ = os.getenv("TC_TZ", "Europe/Istanbul")
+
     ADMIN_USER = os.getenv("TC_ADMIN_USER", "admin")
     ADMIN_PASSWORD = os.getenv("TC_ADMIN_PASSWORD", "Admin@12345")
 
