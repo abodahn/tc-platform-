@@ -595,12 +595,84 @@ def _esc_lines(steps):
 _ACTION_WORDS = {"review": "REVIEW (R)", "approve": "APPROVE (A)",
                  "endorse": "ENDORSE (E)"}
 
+# The one sentence that explains a ladder carrying two (A)s. Kept beside the
+# letters, and mirrored on the request page (proc.act.joint) so the paper and
+# the screen say the same thing in the same words.
+JOINT_APPROVAL_NOTE = (
+    "More than one signature here is marked APPROVE (A): the DOAM makes this a "
+    "joint approval — each (A) commits the purchase, each (R) verifies it.")
+
+# Trilingual, kept in this module rather than in the shared i18n file (the
+# orchestrator merges it). Only the client-side keys need translating; the PDF
+# itself is printed in English, like every other document in this file.
+I18N = {
+    "proc.act.joint": (
+        JOINT_APPROVAL_NOTE,
+        "يحمل هذا الطلب أكثر من توقيع باعتماد (A): دليل تفويض الصلاحيات يعتبره "
+        "اعتماداً مشتركاً — كل توقيع (A) يُلزِم الشركة بالشراء، وكل توقيع (R) "
+        "يتحقق منه فقط.",
+        "Bu talepte birden fazla ONAY (A) imzası var: Yetki devri kılavuzu bunu "
+        "ortak onay sayar — her (A) imzası satın almayı taahhüt eder, her (R) "
+        "imzası yalnızca doğrular."),
+}
+
+
+def _step_action(s):
+    """The Table 5 letter on one step row, from whichever field the caller has.
+
+    Absent and unreadable resolve differently, exactly as in
+    services.step_action_of: a row predating the column meant Approve, while a
+    value nobody can parse gets the weaker letter. This function decides what a
+    printed document CLAIMS about a named person, and an uninterpretable string
+    must not print as an approval.
+    """
+    act = str(s.get("action") or s.get("action_type") or "").strip().lower()
+    if act in _ACTION_WORDS:
+        return act
+    return C.STEP_ACTION_DEFAULT if not act else C.STEP_ACTION_UNREADABLE
+
+
+def _authority_lines(steps):
+    """Who COMMITTED the purchase, and who only verified it — by name of office.
+
+    §4.2 makes a capital purchase a joint approval (Plant Director + CFO) while
+    Purchasing reviews it, and §4.1 tier 5 needs the MD and the CFO together. A
+    document that names one authority cannot state either truthfully, so both
+    sides are printed from the Table 5 letters the request page shows — the two
+    cannot drift apart, because they are the same field.
+
+    Only SIGNED rungs are named: an office that has not signed has authorised
+    nothing yet, and printing it here would read as though it had.
+    """
+    done = [s for s in (steps or []) if s.get("status") == "approved"]
+    def _names(*acts):
+        return ", ".join("%s (%s)" % (C.stage_label(s.get("stage") or ""),
+                                      C.STEP_ACTION_CODE[_step_action(s)])
+                         for s in done if _step_action(s) in acts)
+    committed, verified = _names("approve", "endorse"), _names("review")
+    out = []
+    if committed:
+        out.append("Approved under DOAM authority by: " + committed)
+    if verified:
+        out.append("Reviewed by: " + verified)
+    return out
+
 
 def _signature_grid(c, w, h, cm, y, pr, steps, pn):
     c.setFont("Helvetica-Bold", 10)
     c.drawString(1.5 * cm, y, "Approval signatures (DOAM Table 5: P prepare / "
                               "R review / A approve / E endorse)")
     y -= 0.35 * cm
+    # More than one A on the ladder is not a duplicate: the DOAM says so in as
+    # many words, and the reader of the paper form is owed the sentence rather
+    # than left to guess which of the two signatures was the real one.
+    if sum(1 for s in (steps or []) if _step_action(s) == "approve") > 1:
+        c.setFont("Helvetica-Oblique", 7.4)
+        c.setFillColorRGB(0.3, 0.3, 0.35)
+        c.drawString(1.5 * cm, y, _clip(c, JOINT_APPROVAL_NOTE, "Helvetica-Oblique",
+                                        7.4, w - 3 * cm))
+        c.setFillColorRGB(0, 0, 0)
+        y -= 0.32 * cm
     for line in _esc_lines(steps):
         c.setFont("Helvetica-Oblique", 7.4)
         c.setFillColorRGB(0.62, 0.18, 0.08)
@@ -615,8 +687,7 @@ def _signature_grid(c, w, h, cm, y, pr, steps, pn):
         # DOAM Table 5 — the block says WHAT the signature is (Review / Approve /
         # Endorse), not just whose it is. Without it the printed form evidences a
         # signature was collected and nothing about the authority it carried.
-        act = str(s.get("action") or s.get("action_type") or "approve").lower()
-        act = act if act in _ACTION_WORDS else "approve"
+        act = _step_action(s)
         blocks.append({"role": (s.get("approver_role") or s.get("stage") or "")
                        + " — " + _ACTION_WORDS[act]
                        + (" (ESCALATED)" if s.get("esc_from") else ""),
@@ -813,10 +884,18 @@ def po_pdf(bundle, po=None):
         c.setFillColorRGB(0, 0, 0)
         y -= 0.15 * cm
 
+    # WHO authorised this order. It used to read "Authorised by Purchasing" over
+    # every order ever printed — and on the §4.2 CAPEX ladder Purchasing approves
+    # nothing at all: it reviews, and the Plant Director and the CFO commit. The
+    # offices are read off the same Table 5 letters the request page shows, so
+    # the supplier's copy and the screen name the same authority.
     c.setFont("Helvetica", 8.5)
     c.setFillColorRGB(0.4, 0.4, 0.4)
-    c.drawString(1.5 * cm, y, "Authorised by Purchasing — TC Garments. This order references the approved "
-                 "purchase request above.")
+    for line in (_authority_lines(bundle.get("steps")) or
+                 ["Authorised by Purchasing — TC Garments."]):
+        c.drawString(1.5 * cm, y, _clip(c, line, "Helvetica", 8.5, w - 3 * cm))
+        y -= 0.34 * cm
+    c.drawString(1.5 * cm, y, "This order references the approved purchase request above.")
     c.setFillColorRGB(0, 0, 0)
 
     _footer(c, w, cm, pn["page"], None)

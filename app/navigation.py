@@ -59,6 +59,9 @@ NAV = [
         ("procurement", "nav.proc_home", "cart", "approvals.index", "proc_view", "nav.b_requests"),
         ("proc_new", "nav.proc_new", "report", "approvals.new", "proc_create", "nav.b_requests"),
         ("proc_list", "nav.proc_list", "kanban", "approvals.listing", "proc_view", "nav.b_requests"),
+        # Sits with the requests, not under Insight: "who is sitting on my PR" is
+        # something a buyer acts on this morning, not something they report on.
+        ("proc_aging", "aging.nav", "clock", "proc_aging.index", "proc_view", "nav.b_requests"),
         # DOAM §3.4 — the register that makes "...or agreed forecast" real.
         ("proc_forecasts", "nav.proc_forecasts", "target", "approvals.forecasts", "proc_view", "nav.b_requests"),
         ("proc_item_requests", "nir.queue", "boxes", "approvals.item_requests", "proc_purchasing", "nav.b_requests"),

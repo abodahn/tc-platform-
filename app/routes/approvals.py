@@ -140,6 +140,34 @@ _PICK_I18N = {
 }
 
 
+_LANG_IDX = {"en": 0, "ar": 1, "tr": 2}
+
+# Refusal copy for an expenditure type nobody could read. Straight quotes and
+# apostrophes are avoided on purpose: base.html emits flashes into a JS string
+# literal, where Jinja escaping would surface as &#34; on the screen.
+I18N = {
+    "proc.kind_unreadable": (
+        "Expenditure type “{}” was not understood, so nothing was saved. "
+        "Answer Operating (OPEX) or Capital (CAPEX). Capital spend routes on "
+        "the stricter DOAM §4.2 ladder, so an answer that cannot be read is "
+        "never taken to mean OPEX.",
+        "لم يُفهم نوع الإنفاق «{}»، ولم يتم حفظ أي شيء. اختر إنفاقاً تشغيلياً "
+        "(OPEX) أو إنفاقاً رأسمالياً (CAPEX). الإنفاق الرأسمالي يسير في مسار "
+        "اعتماد أكثر صرامة (DOAM §4.2)، لذلك لا تُعتبر الإجابة غير المفهومة "
+        "إنفاقاً تشغيلياً أبداً.",
+        "“{}” harcama türü anlaşılmadı, bu nedenle hiçbir şey kaydedilmedi. "
+        "İşletme gideri (OPEX) veya Yatırım harcaması (CAPEX) seçin. Yatırım "
+        "harcaması daha katı DOAM §4.2 onay basamağını izler; bu yüzden "
+        "okunamayan bir yanıt asla OPEX sayılmaz.",
+    ),
+    "proc.kind_blank": (
+        "(nothing was chosen)",
+        "(لم يتم اختيار أي قيمة)",
+        "(hiçbir şey seçilmedi)",
+    ),
+}
+
+
 @bp.route("/new", methods=["GET"])
 @login_required
 @permission_required("proc_create")
@@ -184,6 +212,8 @@ _OPTIONAL_FIELD_NAMES = {
 
 
 def _parse_header(f, can_price=False, existing=None):
+    _kind_raw = f.get("expenditure_kind")
+    _kind, _kind_ok = C.normalise_expenditure_kind(_kind_raw)
     h = {
         "title": f.get("title", "").strip(),
         "request_for": f.get("request_for", "").strip(),
@@ -201,13 +231,18 @@ def _parse_header(f, can_price=False, existing=None):
         # not explicitly marked capital is operating expenditure.
         # Normalised, not lower-cased: "capitol", "1", a blank and a capex
         # carrying an invisible character all used to store opex — the
-        # weaker §4.2 ladder — with nothing saying so. The helper reports
-        # whether it recognised the value; _submit_error refuses the
-        # submit when it did not, so a downgrade cannot happen silently.
-        "expenditure_kind": C.normalise_expenditure_kind(
-            f.get("expenditure_kind"))[0],
-        "_kind_recognised": C.normalise_expenditure_kind(
-            f.get("expenditure_kind"))[1],
+        # weaker §4.1 ladder — with nothing saying so. The helper reports
+        # whether it recognised the value; _kind_refusal turns a "no" into a
+        # refused POST, so a downgrade cannot happen silently.
+        "expenditure_kind": _kind,
+        # A key the form never posted at all is the UNMARKED request that
+        # build_ladder already documents as OPEX: the browser omits the field
+        # when an admin hides the switch, and the other in-house forms that
+        # reach this parser have never sent it. Only an answer that WAS given
+        # and could not be read is a refusal — the raw text is carried along so
+        # the refusal can quote what actually arrived.
+        "_kind_recognised": _kind_ok or _kind_raw is None,
+        "_kind_raw": "" if _kind_raw is None else str(_kind_raw),
         # DOAM §5 — the cost object this spend belongs to.
         "so_no": f.get("so_no", "").strip(),
         "cost_center": f.get("cost_center", "").strip(),
@@ -246,6 +281,28 @@ def _parse_header(f, can_price=False, existing=None):
             h["expenditure_kind"] = (h.get("expenditure_kind") or "opex")
             h["_kind_recognised"] = True
     return h
+
+
+def _kind_refusal(header):
+    """The message refusing a request whose expenditure type could not be read.
+
+    DOAM §4.1 is the SHORTER ladder, so treating an unreadable answer as OPEX is
+    a downgrade nobody sees — a 900,000 capital request loses the Managing
+    Director and the audit trail says nothing. The normaliser has always
+    reported that it could not read the value; this is the refusal that was
+    missing. It names what arrived and the two answers that are accepted, so a
+    requester can fix it without guessing. Returns None when there is nothing
+    to refuse.
+    """
+    if header.get("_kind_recognised"):
+        return None
+    lang = (_u() or {}).get("lang_pref") or "en"
+    i = _LANG_IDX.get(lang, 0)
+    # Truncated: the message is flashed into the page, and a hand-crafted post
+    # can carry a kilobyte of "expenditure type".
+    shown = (header.get("_kind_raw") or "").strip()[:40]
+    return I18N["proc.kind_unreadable"][i].format(
+        shown or I18N["proc.kind_blank"][i])
 
 
 def _parse_items(f, can_price=False):
@@ -616,8 +673,11 @@ def create():
     can_price = _can_price()
     header = _parse_header(request.form, can_price)
     items = _parse_items(request.form, can_price)
-    if not header["title"] or not items:
-        flash("A title and at least one line item are required.", "error")
+    # Refused before anything is written: a request stored with a guessed
+    # expenditure type is already on the wrong ladder.
+    bad_kind = _kind_refusal(header)
+    if not header["title"] or not items or bad_kind:
+        flash(bad_kind or "A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.new"))
     submit = request.form.get("action") != "draft"
     # priced=None -> inferred from the total: a requester's locked (zero-value)
@@ -714,8 +774,11 @@ def edit_save(pr_id):
     can_price = _can_price()
     header = _parse_header(request.form, can_price, existing=bundle["pr"])
     items = _parse_items(request.form, can_price)
-    if not header["title"] or not items:
-        flash("A title and at least one line item are required.", "error")
+    # Same refusal on the re-file after a rejection, which is where a CAPEX
+    # request would otherwise be downgraded on its way back through.
+    bad_kind = _kind_refusal(header)
+    if not header["title"] or not items or bad_kind:
+        flash(bad_kind or "A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.edit", pr_id=pr_id))
     ok, msg = svc.update_pr(pr_id, header, items, _u(), ip=_ip(), can_price=can_price)
     if not ok:

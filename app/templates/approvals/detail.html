@@ -920,6 +920,17 @@
           </div>
           {% endfor %}
         </div>
+        {#- DOAM §4.2 (CAPEX: PD + CFO commit, SCD + FIND review) and §4.1 tier 5
+            ("MD *and* CFO") are JOINT approvals, so a ladder can carry two (A)s.
+            Said in words, because two Approve tags on one request otherwise read
+            as a duplicate — and the reader would have to guess which signature
+            was the real one. Same sentence the printed PR carries. -#}
+        {% if steps|selectattr('action','equalto','approve')|list|length > 1 %}
+        <div class="muted mt-3" style="font-size:12.5px;line-height:1.6"
+             data-i18n="proc.act.joint">More than one signature here is marked APPROVE (A):
+          the DOAM makes this a joint approval — each (A) commits the purchase, each (R)
+          verifies it.</div>
+        {% endif %}
       </div>
     </div>
 

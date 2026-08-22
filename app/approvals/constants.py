@@ -133,7 +133,22 @@ LEVEL_ORDER = ["L4", "L3", "L2", "L1", "BOD"]
 # Nothing here changes WHO signs or in what order — it only records what the
 # signature was, which is what makes the section-7 RACI evidenceable.
 STEP_ACTIONS = ["review", "approve", "endorse"]
+# ABSENT is not the same as UNREADABLE, and they must not resolve the same way.
+#
+# ABSENT — NULL or empty — means the row predates the action_type column. The
+# migration added that column with DEFAULT 'approve', so the platform has already
+# decided what a pre-migration rung meant, and every such row in the database
+# carries 'approve' because the ALTER wrote it there. Reading a stray NULL as
+# anything else would describe those requests differently from the data.
 STEP_ACTION_DEFAULT = "approve"
+# UNREADABLE — a non-empty value that is not one of STEP_ACTIONS ('sign', 'yes',
+# a truncated write, a letter from some future version) — is a different thing: a
+# value the system holds and cannot interpret. That must NOT become the STRONGEST
+# claim available. This function decides what a printed document asserts about a
+# named person, and printing "approved" over somebody on the strength of a string
+# nobody can parse is the one failure direction that actually matters. A guess
+# goes DOWNWARDS; understating authority is merely unhelpful.
+STEP_ACTION_UNREADABLE = "review"
 # RACI letter per action, for the signature block and the printed PDF.
 STEP_ACTION_CODE = {"review": "R", "approve": "A", "endorse": "E"}
 # English labels; AR/TR are client-side i18n keys (proc.act.*).
@@ -153,12 +168,41 @@ STEP_ACTION_WHY = {
 # beside the actions because that is the only thing that reads it.
 CONTROL_ORIGINS = ("single_source", "unbudgeted", "deviation")
 
+# ...and where the DOAM does NOT decide the letter by place. Two of its ladders
+# name a JOINT approval — two authorities that commit the money together — and a
+# purely positional rule can only ever call the last of them the Approve, so the
+# co-approver printed as "REVIEW (R)" on the request and the order an auditor
+# reads. He did not review it; he committed it.
+#
+#   §4.2 CAPEX — "review SCD + FIND, approve PD + CFO", then "+ MD", then Board.
+#       The REVIEWERS are fixed by name on that ladder and every other rung is an
+#       approving authority the tier added, so the letters are read off the names
+#       (Purchasing is the buyer preparing the commercial terms — it verifies).
+#   §4.1 OPEX tier 5 — "MD *and* CFO". Every other OPEX tier names ONE authority,
+#       which is the top rung, so only this tier needs naming.
+#
+# Nothing here moves WHO signs or in what order; build_ladder is untouched.
+CAPEX_REVIEW_STAGES = ("purchasing", "scd", "finance")
+# top rung of the value ladder -> the stages that commit ALONGSIDE it.
+OPEX_JOINT_APPROVERS = {"ceo": ("cfo",)}
 
-def step_action(origin, is_top_of_value_ladder):
-    """Table 5 letter for one rung. `origin` is pr_steps.origin."""
+
+def step_action(origin, is_top_of_value_ladder, stage=None, top_stage=None, kind=None):
+    """Table 5 letter for one rung. `origin` is pr_steps.origin.
+
+    `stage`/`top_stage`/`kind` are what make the letter the DOAM's rather than
+    the rung's position. Omitted, the old positional reading applies — that is
+    the fallback for a caller with no ladder in hand, never the rule.
+    """
     if (origin or "ladder") in CONTROL_ORIGINS:
         return "endorse"
-    return "approve" if is_top_of_value_ladder else "review"
+    if stage and str(kind or "").strip().lower() == "capex":
+        return "review" if stage in CAPEX_REVIEW_STAGES else "approve"
+    if is_top_of_value_ladder:
+        return "approve"
+    if stage and stage in OPEX_JOINT_APPROVERS.get(top_stage or "", ()):
+        return "approve"
+    return "review"
 
 
 # --- DOAM Table 4 L2: the two directors own DIFFERENT things -----------------
@@ -253,6 +297,82 @@ STAGE_ROLES = {
     "ceo": {"ceo", "managing_director"},
     "bod": {"board"},
 }
+
+# --- DOAM §3.2: the authority level a ROLE carries -------------------------
+# DOAM_LEVEL above says what a RUNG demands. This says what a SIGNER brings.
+# Both halves are needed: without this one the ladder only ever asked WHICH ROLE
+# signs, so whoever an admin mapped onto the CFO rung held L1 authority by the
+# act of being mapped — a storekeeper included, and a role invented in
+# Admin -> Roles with proc_approve just the same.
+#
+# A person's level is their role's. Users carry exactly one role and no table
+# holds a per-user level, so the role IS the grant; keys here are platform role
+# keys. This is a DECLARATION of T&C's org in the DOAM's own terms, deliberately
+# NOT generated from STAGE_ROLES — a table derived from the thing it checks
+# cannot disagree with it. The two are cross-checked instead: tests_authority_
+# level.py asserts every role mapped to a rung declares at least that rung's
+# level, so re-tiering a role here immediately stops it signing what it may no
+# longer commit, and the mismatch is caught rather than silently applied.
+#
+# A role that is NOT listed holds no DOAM authority: it fails CLOSED at the rung,
+# and the rung is reported by services.ladder_signer_health() (and so on
+# /governance/findings) instead of quietly waiting for a signature that will be
+# refused. Procurement authority is granted here, in the document's terms, not
+# by handing out proc_approve.
+#
+# super_admin / proc_admin are absent on purpose: the platform-admin override is
+# checked BEFORE this in can_act(), stays audited, and must keep working.
+ROLE_LEVEL = {
+    "board": "BOD",
+    # L1 — commits major spend, and unbudgeted spend to the L1 limit (Table 4).
+    "ceo": "L1",
+    "managing_director": "L1",
+    "cfo": "L1",
+    # L2 — the three directors of Table 4: FIN-D payment control, SC-D
+    # operational and inventory replenishment, PD production and maintenance.
+    "financial_director": "L2",
+    "supply_chain_director": "L2",
+    "plant_director": "L2",
+    "factory_manager": "L2",
+    # These two sign the Financial Director's rung at T&C (STAGE_ROLES['finance']),
+    # so those accounts carry its level. That is a statement about T&C's staffing,
+    # not about the DOAM: the day Finance says a finance_user is L4, this line
+    # changes and the finance rung stops accepting them — which is the point of
+    # writing the levels down separately.
+    "finance_manager": "L2",
+    "finance_user": "L2",
+    # L4 — operational / supervisory: prepares, verifies, and buys within tier 1.
+    "purchasing_manager": "L4",
+    "warehouse_manager": "L4",
+    "storekeeper": "L4",
+}
+
+
+def role_level(role):
+    """The DOAM §3.2 authority level a platform role carries, or None when it
+    carries none. None is not L4 — it is "no authority recorded"."""
+    return ROLE_LEVEL.get(role)
+
+
+def holds_authority(role, stage):
+    """May a holder of `role` commit what `stage` commits?
+
+    True when the role's declared level is at or above the rung's. Fails CLOSED
+    on an unknown level: a role nobody has placed in the DOAM must not inherit
+    L1 by being typed into a stage override. The refusal is visible —
+    ladder_signer_health() reports the rung — rather than silent.
+    """
+    need = DOAM_LEVEL.get(stage)
+    if need is None:
+        return True                     # a rung the DOAM does not level
+    have = ROLE_LEVEL.get(role)
+    if have is None:
+        return False
+    try:
+        return LEVEL_ORDER.index(have) >= LEVEL_ORDER.index(need)
+    except ValueError:                  # a level not on the DOAM's own scale
+        return False
+
 
 # --- Amount-threshold routing (EGP-equivalent) ------------------------------
 # A stage joins the ladder when the total EXCEEDS its threshold; a threshold of
@@ -1263,6 +1383,18 @@ WORKFLOW_SETTINGS = {
     "show_forecast_ref": {"kind": "bool", "default": True},
     "show_cost_center": {"kind": "bool", "default": True},
     "show_delivery_condition": {"kind": "bool", "default": True},
+    # --- approval aging (app/approvals/aging.py) -----------------------------
+    # DAYS, not hours. SLA_HOURS_PER_STAGE above is the escalation engine's unit
+    # and stays that way; a buyer chasing a signature counts in days, and the
+    # aging screen is written for the buyer.
+    #
+    # Defaults: amber on day 2 (a rung that sat over a weekend), red on day 4
+    # (SLA_HOURS_PER_STAGE is 48h, so by day 4 the escalation has already fired
+    # once and nobody moved). Both are floored at 1: an overdue count of 0 makes
+    # every rung overdue the instant it activates, which would bell every signer
+    # in the plant on the first run and teach them to ignore it.
+    "aging_warn_days": {"kind": "int", "min": 1, "default": 2},
+    "aging_overdue_days": {"kind": "int", "min": 1, "default": 4},
 }
 
 # The optional fields an admin may hide, and the HONEST consequence of hiding

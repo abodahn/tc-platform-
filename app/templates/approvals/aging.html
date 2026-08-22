@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Approval aging{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="proc.settings_eyebrow">Procurement</div>
+    <h1 data-i18n="aging.title">Approval aging</h1>
+    <div class="sub" data-i18n="aging.sub">Every request still waiting on a signature, the one it has waited longest on first — which rung it is on, who can sign it, and how long it has been there.</div>
+  </div>
+</div>
+
+{# The two counts a buyer acts on sit next to the two they report on. Overdue is
+   the only one that has also rung a bell, so it carries the loud card. #}
+<div class="grid cols-4">
+  <div class="kpi info">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-clock"></use></svg></div></div>
+    <div class="kval">{{ v.n }}</div>
+    <div class="klabel" data-i18n="aging.k_waiting">Waiting on a signature</div>
+  </div>
+  <div class="kpi{{ ' warn' if v.n_overdue else '' }}">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-alert"></use></svg></div>
+      {% if v.n_overdue %}<span class="ktrend b-critical">{{ v.overdue_days }}+</span>{% endif %}</div>
+    <div class="kval">{{ v.n_overdue }}</div>
+    <div class="klabel" data-i18n="aging.k_overdue">Overdue</div>
+  </div>
+  <div class="kpi">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-bell"></use></svg></div>
+      {% if v.n_warn %}<span class="ktrend b-warning">{{ v.warn_days }}+</span>{% endif %}</div>
+    <div class="kval">{{ v.n_warn }}</div>
+    <div class="klabel" data-i18n="aging.k_warn">Due soon</div>
+  </div>
+  <div class="kpi">
+    <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-wallet"></use></svg></div></div>
+    <div class="kval">{{ '{:,.0f}'.format(v.value_egp or 0) }}</div>
+    <div class="klabel" data-i18n="aging.k_value">Value held up (EGP)</div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-pad">
+    <form method="get" action="{{ url_for('proc_aging.index') }}" class="grid cols-4" style="gap:10px;align-items:end">
+      <div>
+        <label data-i18n="aging.dept">Department</label>
+        <select name="dept">
+          <option value="" data-i18n="aging.all_depts">All departments</option>
+          {% for d in v.departments %}
+          <option value="{{ d }}" {% if d == v.department %}selected{% endif %}>{{ d }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label data-i18n="aging.rung">Rung</label>
+        <select name="stage">
+          <option value="" data-i18n="aging.all_rungs">All rungs</option>
+          {% for s in v.stages %}
+          <option value="{{ s.key }}" {% if s.key == v.stage %}selected{% endif %}>{{ s.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" type="submit" data-i18n="aging.apply">Apply</button>
+        {% if v.department or v.stage %}
+        <a class="btn btn-ghost" href="{{ url_for('proc_aging.index') }}" data-i18n="aging.clear">Clear</a>
+        {% endif %}
+      </div>
+      {#- The thresholds are read from the database, so the sentence explaining
+          the colours is built server-side with the live numbers in it. -#}
+      <div class="muted" style="font-size:12px">{{ v.rule }}</div>
+    </form>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head">
+    <h3 data-i18n="aging.stuck">What is stuck</h3>
+    <span class="tag">{{ v.n }}</span>
+  </div>
+  <div class="panel-pad" style="overflow-x:auto">
+    {% if v.rows %}
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="aging.request">Request</th>
+        <th data-i18n="proc.dept">Department</th>
+        <th data-i18n="aging.value">Value</th>
+        <th data-i18n="aging.rung">Rung</th>
+        <th data-i18n="aging.signers">Who can sign</th>
+        <th data-i18n="aging.on_rung">On this rung</th>
+        <th data-i18n="aging.since_submit">Since submitted</th>
+      </tr></thead>
+      <tbody>
+      {% for r in v.rows %}
+        <tr onclick="location.href='{{ url_for('approvals.detail', pr_id=r.pr_id) }}'" style="cursor:pointer">
+          <td><div style="font-weight:600">{{ r.pr_no }}</div>
+              <div class="muted" style="font-size:12px">{{ r.title }}</div></td>
+          <td>{{ r.department or '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(r.value_egp or 0) }} {{ r.currency }}</td>
+          <td>{{ r.seq }}. {{ r.stage_label }}</td>
+          <td>
+            <div>{{ r.signers.role_names or '—' }}</div>
+            {% if r.signers.people %}
+            <div class="muted" style="font-size:12px">{{ r.signers.people|join(', ') }}</div>
+            {% else %}
+            <div style="font-size:12px;color:var(--crit)" data-i18n="aging.nobody">Nobody active can sign this — delegate the authority or add a role holder.</div>
+            {% endif %}
+          </td>
+          <td style="font-variant-numeric:tabular-nums">
+            <span class="badge {{ 'b-critical' if r.level == 'overdue' else ('b-warning' if r.level == 'warn' else 'b-approved') }}">
+              {{ '%g'|format(r.days_on_rung) }} <span data-i18n="aging.days">days</span>
+            </span>
+          </td>
+          <td class="muted" style="font-variant-numeric:tabular-nums">
+            {{ '%g'|format(r.days_since_submit) }} <span data-i18n="aging.days">days</span>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="muted" data-i18n="aging.none">Nothing is waiting on a signature.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

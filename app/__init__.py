@@ -201,6 +201,11 @@ def create_app():
     # with a BuildError. The revert dropped it — the button was added later.
     from app.backup import bp as backup_bp
     app.register_blueprint(backup_bp)
+    # Approval aging (/procurement/aging). The sidebar links proc_aging.index, so
+    # exactly like backup.download above, dropping this line turns every page in
+    # the app into a BuildError — base.html resolves nav endpoints unguarded.
+    from app.approvals.aging import bp as proc_aging_bp
+    app.register_blueprint(proc_aging_bp)
 
     # --- Error handlers ---
     from flask import render_template

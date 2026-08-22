@@ -1,6 +1,41 @@
 {% extends "base.html" %}
 {% block title %}Vendors{% endblock %}
+
+{# The MEASURED scorecard (app/approvals/vendor_score.py) rendered for one
+   supplier. `scores` is keyed by constants.vendor_key(name) — trimmed and
+   case-folded — which is exactly what `|trim|lower` produces here.
+   Every figure prints its sample size, and a metric below the minimum sample
+   prints no number at all: a percentage without its n is worse than nothing. #}
+{% macro metric(m, unit_key, unit_en, signed=false) -%}
+  {% if m and m.enough %}
+    <span style="font-variant-numeric:tabular-nums;font-weight:600">
+      {%- if signed and m.pct > 0 %}+{% endif %}{{ '%.1f'|format(m.pct) }}%</span>
+    <span class="muted" style="font-size:11px">({{ m.n }} <span data-i18n="{{ unit_key }}">{{ unit_en }}</span>)</span>
+  {% else %}
+    <span class="muted" style="font-size:11.5px" data-i18n="vsc.thin">Not enough history</span>
+    <span class="muted" style="font-size:11px">({{ m.n if m else 0 }} <span data-i18n="{{ unit_key }}">{{ unit_en }}</span>)</span>
+  {% endif %}
+{%- endmacro %}
+
+{% macro scorecard(s) -%}
+  {% if s %}
+  <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;align-items:baseline">
+    <span class="muted" data-i18n="vsc.on_time">On-time delivery</span>
+    <span>{{ metric(s.on_time, 'vsc.receipts', 'receipts') }}</span>
+    <span class="muted" data-i18n="vsc.quantity">Quantity accuracy</span>
+    <span>{{ metric(s.quantity, 'vsc.lines', 'order lines') }}</span>
+    <span class="muted" data-i18n="vsc.rejection">Rejection rate</span>
+    <span>{{ metric(s.rejection, 'vsc.receipts', 'receipts') }}</span>
+    <span class="muted" data-i18n="vsc.price">Price variance</span>
+    <span>{{ metric(s.price_variance, 'vsc.orders', 'orders', signed=true) }}</span>
+  </div>
+  {% else %}
+  <span class="muted" style="font-size:11.5px" data-i18n="vsc.none">Nothing measured yet</span>
+  {% endif %}
+{%- endmacro %}
+
 {% block content %}
+{% set scores = scores|default({}, true) %}
 
 <div class="page-head">
   <div>
@@ -20,17 +55,31 @@
           <th data-i18n="proc.vendor_name">Vendor</th>
           <th data-i18n="proc.contact">Contact</th>
           <th data-i18n="proc.terms">Terms</th>
-          <th data-i18n="proc.rating">Rating</th>
+          <th data-i18n="vsc.manual">Manual rating</th>
+          <th data-i18n="vsc.title">Measured performance</th>
           <th data-i18n="proc.rtv.dues">Outstanding dues</th>
         </tr></thead>
         <tbody>
         {% for v in vendors %}
+          {% set s = scores.get(v.name|trim|lower) %}
           <tr>
             <td><div style="font-weight:600">{{ v.name }}</div>
                 <div class="muted" style="font-size:12px">{{ v.category or '' }}{% if v.email %} · {{ v.email }}{% endif %}</div></td>
             <td>{{ v.contact_person or '—' }}<div class="muted" style="font-size:12px">{{ v.phone or '' }}</div></td>
             <td>{{ v.payment_terms or '—' }}</td>
             <td>{% if v.rating %}<span class="tag">★ {{ '%.1f'|format(v.rating) }}</span>{% else %}—{% endif %}</td>
+            <td>
+              {% if s and s.score is not none %}
+                <div style="margin-bottom:4px">
+                  <span class="badge {{ 'b-approved' if s.score >= 85 else ('b-warning' if s.score >= 65 else 'b-rejected') }}"
+                        style="font-variant-numeric:tabular-nums">{{ '%.0f'|format(s.score) }}<span style="opacity:.7">/100</span></span>
+                  <span class="muted" style="font-size:11px">{{ s.score_n }} <span data-i18n="vsc.samples">observations</span></span>
+                </div>
+              {% elif s %}
+                <div style="margin-bottom:4px"><span class="badge b-pending" data-i18n="vsc.thin">Not enough history</span></div>
+              {% endif %}
+              {{ scorecard(s) }}
+            </td>
             <td>{% if v.dues %}<span style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(v.dues) }}</span>
                 <div class="muted" style="font-size:12px">{{ v.dues_count }} <span data-i18n="proc.rtv.open_dn">open debit note(s)</span></div>
                 {% else %}—{% endif %}</td>
@@ -38,6 +87,11 @@
         {% endfor %}
         </tbody>
       </table>
+      <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="vsc.manual_note">Manual rating is a person's judgement typed on this screen. The measured score is computed from goods receipts, returns and invoices — the two are shown side by side and are never mixed.</div>
+      <div class="muted" style="font-size:11px;margin-top:4px" data-i18n="vsc.legend">On-time is measured per goods receipt against the promised delivery date. Quantity accuracy is measured per order line that is already past that date. Rejection covers goods refused on receipt or held in quarantine. Price variance is invoiced against ordered, per purchase order — a positive figure means the supplier billed above the order. Every figure states how many observations it rests on; below {n} the platform reports no number.</div>
+      <div class="muted" style="font-size:11px;margin-top:4px">
+        <span data-i18n="vsc.window">Window</span>: {{ score_months|default(12) }}
+        <span data-i18n="vsc.months">months</span></div>
       <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.rtv.dues_note">Outstanding dues are the open debit notes raised for goods rejected on receipt and returned — value the supplier still owes back.</div>
       {% else %}
       <div class="muted" data-i18n="proc.no_vendors">No vendors yet.</div>
@@ -63,6 +117,7 @@
           <div class="field"><label data-i18n="proc.terms">Payment terms</label><input name="payment_terms" autocomplete="off"></div>
           <div class="field"><label data-i18n="proc.rating">Rating (0–5)</label><input name="rating" type="number" min="0" max="5" step="0.1"></div>
         </div>
+        <div class="muted" style="font-size:11px;margin:-4px 0 8px" data-i18n="vsc.manual_note">Manual rating is a person's judgement typed on this screen. The measured score is computed from goods receipts, returns and invoices — the two are shown side by side and are never mixed.</div>
         <button class="btn btn-primary" type="submit" data-i18n="proc.save_vendor">Save vendor</button>
       </form>
     </div>

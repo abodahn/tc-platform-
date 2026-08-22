@@ -22,6 +22,20 @@ from app.approvals.constants import (
 
 log = logging.getLogger("tc.procurement")
 
+# Wording for the two facts ladder_signer_health() now returns about a rung whose
+# configured roles do not hold its DOAM authority level. Kept here rather than in
+# app/static/i18n/*.json, which this module does not own; the same pattern as
+# app/approvals/catalogue.py. Read by /governance/findings.
+I18N = {
+    "gov.find.level": ("Authority level required",
+                       "مستوى الصلاحية المطلوب",
+                       "Gereken yetki seviyesi"),
+    "gov.find.underlevel": (
+        "Below the authority level this rung commits at, so it cannot sign:",
+        "أقل من مستوى الصلاحية المطلوب لهذه الدرجة، لذلك لا يمكنه التوقيع:",
+        "Bu basamağın taahhüt ettiği yetki seviyesinin altında olduğu için imzalayamaz:"),
+}
+
 
 def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -216,6 +230,25 @@ def role_holders(conn, roles):
     return out
 
 
+def stage_signers(conn, stage, roles):
+    """Usernames who may ACTUALLY sign `stage`: role_holders() minus anyone whose
+    role sits below the rung's DOAM §3.2 authority level.
+
+    THE one definition of "who can sign this rung", because two of them is how
+    the ladder deadlocks. can_act() refuses an under-level signer, so any caller
+    that asks "is this rung covered?" with the unfiltered set gets yes for a rung
+    nobody may commit — and the SoD climb, which exists precisely to break that,
+    concludes a colleague can sign and stays put. Measured before this existed:
+    the CFO rung mapped to {cfo, purchasing_manager} (an admin adding the buyer
+    so he could help chase approvals), the CFO raises a 600,000 request himself,
+    and the rung parked forever — buyer 'forbidden', CFO 'self_approval', nothing
+    escalated, status 'pending' with no error anywhere.
+
+    Roles are filtered, not people: authority is a property of the role, and a
+    delegation deliberately conveys the DELEGATED role's authority."""
+    return role_holders(conn, [r for r in (roles or ()) if C.holds_authority(r, stage)])
+
+
 def ladder_signer_health(conn=None):
     """Every ladder rung with the roles that sign it and whether anyone can.
 
@@ -227,6 +260,8 @@ def ladder_signer_health(conn=None):
     Covers the DOAM ladder and any legacy rung not in it, so the answer stays
     right whichever ladder DOAM_IN_FORCE selects. Per rung:
       roles         the role keys that may sign it (admin override applied)
+      level         the DOAM §3.2 authority level the rung commits at
+      underlevel    those roles that do NOT hold it (they cannot sign the rung)
       unregistered  those roles that are in no role registry at all
       holders       count of active users (incl. delegates) who hold one
       ok            False = nobody can sign this rung
@@ -241,9 +276,17 @@ def ladder_signer_health(conn=None):
         out = []
         for stage in stages:
             roles = sorted(rmap.get(stage, ()))
-            holders = role_holders(conn, roles)
+            # A role mapped to the rung but BELOW its DOAM authority level cannot
+            # sign it (can_act applies the same filter), so it must not be counted
+            # as a holder — a rung nobody may commit would otherwise read as
+            # staffed and the deadlock would be silent again. Same for a role with
+            # no level recorded at all, which fails closed by design.
+            holders = stage_signers(conn, stage, roles)
             out.append({"stage": stage, "label": C.stage_label(stage),
                         "roles": roles,
+                        "level": C.DOAM_LEVEL.get(stage),
+                        "underlevel": [r for r in roles
+                                       if not C.holds_authority(r, stage)],
                         "unregistered": [r for r in roles if r not in registry],
                         "holders": len(holders),
                         "ok": bool(holders)})
@@ -258,9 +301,14 @@ def eligible_approvers(conn, stage, roles=None):
     plus anyone with an active delegation from such a person.
 
     `roles` overrides the stage's configured roles — pass a step's escalated role
-    set so a notification reaches whoever actually has to sign that rung."""
-    return list(role_holders(conn, roles if roles is not None
-                             else stage_roles_map(conn).get(stage, set())))
+    set so a notification reaches whoever actually has to sign that rung.
+
+    Roles below the rung's DOAM authority level are dropped, the same filter
+    can_act() applies, so a rung never sends a signature request to somebody who
+    would be refused when they opened it."""
+    if roles is None:
+        roles = stage_roles_map(conn).get(stage, set())
+    return list(stage_signers(conn, stage, roles))
 
 
 def _proc_admins(conn):
@@ -318,7 +366,15 @@ def can_act(user, stage, _deleg=None, _roles=None):
         return False
     if _roles is None:
         _roles = stage_roles_map()
-    allowed = _roles.get(stage, set())
+    # DOAM §3.2 / Table 4: being MAPPED to a rung is not the same as holding the
+    # authority that rung commits. A role signs here only if it carries at least
+    # the rung's level, which is what stops an admin stage override (or a role
+    # invented in Admin -> Roles with proc_approve) from buying L1 authority with
+    # a role name. Filtering `allowed` covers the delegated path in the same
+    # line: a delegation conveys the DELEGATED role's authority, which is what a
+    # delegation is, and it is dated, revocable and audited — unlike the ambient
+    # membership this closes.
+    allowed = {r for r in _roles.get(stage, ()) if C.holds_authority(r, stage)}
     if role in allowed:
         return True
     if _deleg is None:
@@ -373,14 +429,24 @@ def _sole_signers(holders, requester, skip=None):
     return out
 
 
-def can_sign_role(role_key):
+def can_sign_role(role_key, stage=None):
     """Can a holder of this role sign an approval rung AT ALL? An escalation that
     lands on a role without proc_approve produces a rung whose "new signer" is
     refused ("forbidden") by can_act — a silent permanent deadlock, exactly what
     this feature exists to prevent — so such a role is never a candidate. Mirrors
-    can_act's own predicate."""
-    return (role_key == "super_admin" or has_permission(role_key, "proc_admin")
-            or has_permission(role_key, "proc_approve"))
+    can_act's own predicate.
+
+    With `stage` given it mirrors the WHOLE predicate, authority level included:
+    an escalation chain an admin pointed at a junior role must not stamp that
+    role onto an L1 rung, and the climb walks past it to somebody who really can
+    commit that money rather than parking on a signature can_act would refuse.
+    Called without a stage (the settings dropdown) it answers the permission
+    half only, which is the question that screen asks."""
+    if role_key == "super_admin" or has_permission(role_key, "proc_admin"):
+        return True
+    if not has_permission(role_key, "proc_approve"):
+        return False
+    return stage is None or C.holds_authority(role_key, stage)
 
 
 def resolve_escalation(conn, stage, requester, _roles=None, _chain=None,
@@ -414,7 +480,7 @@ def resolve_escalation(conn, stage, requester, _roles=None, _chain=None,
         return None, ""
     people = (_holders or {}).get(stage)
     if people is None:
-        people = role_holders(conn, roles)
+        people = stage_signers(conn, stage, roles)
     if not people:
         return None, ""                       # nobody eligible at all: unchanged
     if people - {requester} - set(_busy):
@@ -431,7 +497,7 @@ def resolve_escalation(conn, stage, requester, _roles=None, _chain=None,
         nxt = {chain.get(r) or "" for r in level} - {""} - seen
         if not nxt:
             break
-        found = {r for r in nxt if can_sign_role(r)
+        found = {r for r in nxt if can_sign_role(r, stage)
                  and role_holders(conn, {r}) - {requester} - busy}
         if found:
             return found, "escalated"
@@ -1232,33 +1298,76 @@ def stamp_step_actions(conn, pr_id):
     """DOAM Table 5 — stamp WHAT each pending rung's signature is (R/A/E).
     Caller commits.
 
-    Must run after EVERY change to the ladder's shape, because the letters are
-    positional: an unpriced request submits with Purchasing on top, so Purchasing
-    is the Approve; pricing pulls a director in above it and Purchasing becomes
-    the Review. The pricing gate guarantees that reshuffle happens before the
-    purchasing rung can be signed, so no rung is ever signed under a letter the
-    ladder later contradicts.
+    Must run after EVERY change to the ladder's shape. Where §4.1 names ONE
+    authority per tier the letter follows the ladder's top rung, so it moves when
+    the ladder does: an unpriced request submits with Purchasing on top and
+    Purchasing is the Approve; pricing pulls a director in above it and
+    Purchasing becomes the Review. The pricing gate guarantees that reshuffle
+    happens before the purchasing rung can be signed, so no rung is ever signed
+    under a letter the ladder later contradicts. Where the DOAM names a JOINT
+    approval instead (§4.2 PD + CFO, §4.1 tier 5 MD *and* CFO) the letter is the
+    stage's, not the position's — see C.step_action.
 
-    Only PENDING rows are restamped. A signature already given said what it said,
-    and rewriting it afterwards is exactly the thing an audit trail exists to
-    prevent.
+    Only PENDING rows are RE-stamped. A signature already given said what it
+    said, and rewriting it afterwards is exactly the thing an audit trail exists
+    to prevent. The one exception is a signed row carrying no readable letter at
+    all — written before action_type existed — which is a blank being filled
+    rather than a signature being rewritten. See the loop.
     """
     rows = conn.execute(
-        "SELECT id, status, COALESCE(origin,'ladder') AS origin FROM pr_steps "
+        "SELECT id, stage, status, COALESCE(origin,'ladder') AS origin FROM pr_steps "
         "WHERE pr_id=? ORDER BY seq, id", (pr_id,)).fetchall()
     ladder = [r for r in rows if r["origin"] not in C.CONTROL_ORIGINS]
     top = ladder[-1]["id"] if ladder else None
+    top_stage = ladder[-1]["stage"] if ladder else None
+    # §4.2 assigns the CAPEX letters by ROLE, so which ladder this is decides
+    # them. Read through normalise_expenditure_kind, the same reader that chose
+    # the ladder — a raw column value that routed as OPEX must not be lettered
+    # as CAPEX, or the two would describe different requests.
+    _k = conn.execute("SELECT expenditure_kind FROM pr_requests WHERE id=?",
+                      (pr_id,)).fetchone()
+    kind = C.normalise_expenditure_kind(_k["expenditure_kind"] if _k else None)[0]
+    acts = {r["id"]: C.step_action(r["origin"], r["id"] == top, r["stage"],
+                                   top_stage, kind) for r in rows}
+    # A ladder whose every rung reads as a Review commits nothing — the document
+    # would evidence a purchase nobody approved. A department responsibility
+    # matrix can produce exactly that on the CAPEX ladder (name only reviewing
+    # stages), so the top rung carries the A rather than the request printing
+    # with none.
+    if top and "approve" not in acts.values():
+        acts[top] = "approve"
+    # Read what each row currently carries, so a blank can be told from a letter.
+    have = {r["id"]: str(r["action_type"] or "").strip().lower()
+            for r in conn.execute(
+                "SELECT id, action_type FROM pr_steps WHERE pr_id=?",
+                (pr_id,)).fetchall()}
     for r in rows:
-        if r["status"] != "pending":
+        readable = have.get(r["id"]) in C.STEP_ACTIONS
+        if r["status"] != "pending" and readable:
             continue
+        # A signed row that carries NO readable letter was never stamped — a row
+        # written before action_type existed. Filling a blank is not rewriting a
+        # signature, and the alternative is worse: with the fallback now being
+        # the weaker letter, such a request would print every rung as a Review
+        # and evidence a purchase nobody approved. A row that DOES carry a letter
+        # is never touched once signed, which is the rule above.
         conn.execute("UPDATE pr_steps SET action_type=? WHERE id=?",
-                     (C.step_action(r["origin"], r["id"] == top), r["id"]))
+                     (acts[r["id"]], r["id"]))
 
 
 def step_action_of(step):
-    """The Table 5 action a step carries, tolerant of a pre-migration row."""
-    act = str(_pr_field(step, "action_type") or "").strip().lower()
-    return act if act in C.STEP_ACTIONS else C.STEP_ACTION_DEFAULT
+    """The Table 5 action a step carries, tolerant of a pre-migration row.
+
+    Absent and unreadable are answered differently on purpose — see the two
+    constants. A row that predates the column meant Approve, and still does. A
+    row holding a value nobody can parse gets the weaker letter, because this
+    decides what a document CLAIMS about a named person.
+    """
+    raw = _pr_field(step, "action_type")
+    act = str(raw or "").strip().lower()
+    if act in C.STEP_ACTIONS:
+        return act
+    return C.STEP_ACTION_DEFAULT if not act else C.STEP_ACTION_UNREADABLE
 
 
 def submit_pr(pr_id, user, ip=None):
@@ -1336,7 +1445,7 @@ def submit_pr(pr_id, user, ip=None):
         # the climb reads it so an escalation never lands on the only person able
         # to sign another rung — signing two rungs is refused by the dual-role
         # rule, so that would just move the deadlock one rung down.
-        _holders = {s: role_holders(conn, _roles.get(s) or ()) for s in flat_stages}
+        _holders = {s: stage_signers(conn, s, _roles.get(s) or ()) for s in flat_stages}
         esc, blocked = {}, []
         for stage in flat_stages:
             e_role, e_from, why = _esc_columns(conn, stage, pr["requester"], _roles,
@@ -1604,7 +1713,7 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
              if not (r["stage"] in VALUE_STAGES and r["stage"] not in target
                      and r["status"] == "pending" and r["seq"] > cur_seq)]
     _esc = {r["stage"]: r["esc_role"] for r in existing}
-    _holders = {s: role_holders(conn, _csv_set(_esc.get(s)) or _roles.get(s) or ())
+    _holders = {s: stage_signers(conn, s, _csv_set(_esc.get(s)) or _roles.get(s) or ())
                 for s in dict.fromkeys(_live + list(target))}
     _busy = {r["approver_user"] for r in existing
              if r["status"] in ("approved", "rejected") and r["approver_user"]}
