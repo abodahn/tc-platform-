@@ -1,13 +1,14 @@
 """A request form says WHAT and HOW MANY. Nothing else on the line is set there.
 
-A request line carries the item, a description and a quantity. Unit of measure,
-stock on hand and the supplier are NOT set there — by anyone, including a buyer
-and a super admin. They are commercial and warehouse facts, and a request form is
-where a need is stated, not where sourcing is decided. Asking for them produced
-guesses Purchasing then had to undo, and a wrong unit on a purchase order is a
-real ordering error rather than a cosmetic one.
+A request line asks two questions: WHAT is needed, and HOW MANY. That is the
+whole line. Which catalogue item it is, in what unit, what is on the shelf and
+which supplier will provide it are not drawn on the form at all — for anyone,
+buyer and super admin included. They are commercial and warehouse facts, and a
+request form is where a need is stated, not where sourcing is decided.
 
-Those three move to where the knowledge is:
+They were greyed first, and that was not enough: a box a person can never fill is
+still a box they read, hesitate over, and ask about. So they are gone from the
+line, and they move to where the knowledge is:
 
   * UNIT comes from the catalogue when the line was picked — master data, not
     anybody's opinion. A free-text line falls back to "Pcs" until corrected.
@@ -15,8 +16,8 @@ Those three move to where the knowledge is:
     moment Purchasing record what that supplier charges. Section 3 proves it.
   * STOCK ON HAND belongs to the warehouse rung, which reads it from the shelf.
 
-THE SCREEN IS THE COURTESY; THE PARSER IS THE CONTROL. The three boxes are greyed
-so nobody wastes time typing into them, but the lock that matters is server-side:
+THE SCREEN IS THE COURTESY; THE PARSER IS THE CONTROL. The fields are off the
+screen, but the lock that matters is server-side:
 the request routes call _parse_items with can_buy=False for everybody, so a
 hand-crafted POST carrying a unit, a stock figure or a supplier has them dropped,
 exactly as unit_price has always been dropped.
@@ -27,9 +28,11 @@ Two traps this file exists to hold:
     _can_price() is hardcoded False for EVERYONE — a governance rule that nobody
     prices a request at creation time, not even a super admin — so a lock built
     on it would look right while meaning something else entirely.
-  * The boxes are `readonly`, never `disabled`. A disabled field posts nothing,
-    and the line editor reads its rows back as PARALLEL ARRAYS, so one skipped
-    value would shift every field on every line below it onto the wrong row.
+  * The fields are HIDDEN, never absent. The line editor reads its rows back as
+    PARALLEL ARRAYS, so a field missing from a row would shift every value on
+    every line below it onto the wrong row — and _parse_items iterates item[],
+    so removing that one outright would have dropped every line of every
+    request and submitted an empty basket.
 
     python app/approvals/tests_requester_line_lock.py
 """
@@ -110,19 +113,30 @@ def run():
     chk("can_price stays false for BOTH — it is a governance rule, not a role",
         flag(hr, "CAN_PRICE") == "false" and flag(hb, "CAN_PRICE") == "false",
         (flag(hr, "CAN_PRICE"), flag(hb, "CAN_PRICE")))
-    chk("the greyed boxes explain themselves on hover",
+    chk("the hint text is still rendered for the fields that remain",
         "LOCK_HINT" in hr and re.search(r'var LOCK_HINT\s*=\s*"[^"]+"', hr) is not None)
     # Read the row-builder SOURCE, not the rendered page: the markup is assembled
-    # by JS at runtime, so the page carries both branches and counting classes in
-    # the HTML would prove nothing either way.
-    branches = re.findall(r"class=.li-locked.[^']*", hr)
-    chk("all three locked boxes are in the row builder", len(branches) == 3,
-        len(branches))
-    chk("every one of them is readonly", all("readonly" in b for b in branches),
-        branches[:1])
-    chk("and none is disabled — a disabled field posts nothing, which would "
-        "shift every line below it onto the wrong row",
-        not any("disabled" in b for b in branches))
+    # by JS at runtime, so counting classes in the HTML would prove nothing.
+    row = re.search(r"class=.li-row request-line.>'(.*?)</div>';", hr, re.S)
+    chk("the request line is built", row is not None)
+    body = row.group(1) if row else ""
+    def field(nm):
+        m = re.search(r"name=\"%s\"[^>]*" % re.escape(nm), body)
+        return m.group(0) if m else ""
+    for nm in ("item[]", "unit[]", "current_stock[]", "vendor[]"):
+        f = field(nm)
+        chk("%-16s is HIDDEN, not drawn on the line" % nm,
+            f and 'type="hidden"' in f, f[:60] or "ABSENT")
+        # Present but hidden, never absent: the rows are read back as PARALLEL
+        # ARRAYS, so a field missing from one row would shift every value on
+        # every line below it onto the wrong row.
+        chk("%-16s is still POSTED, so the arrays stay aligned" % nm, bool(f))
+    for nm in ("description[]", "qty[]"):
+        f = field(nm)
+        chk("%-16s is VISIBLE — what, and how many" % nm,
+            f and 'type="hidden"' not in f, f[:60] or "ABSENT")
+    chk("no catalogue picker is drawn on a request line",
+        "li-pick" not in body and "sp-drop" not in body)
 
     # ---- 2. THE CONTROL: the parser drops what the screen locked ---------
     print("\nwhat a requester posts for those three fields is dropped")

@@ -131,13 +131,14 @@
          same supplier list as the header field. Leave a line blank and it takes
          the header vendor, exactly as before. #}
       <datalist id="vendorList">{% for v in vendors %}<option value="{{ v.name }}"></option>{% endfor %}</datalist>
-      <div class="li-head {{ '' if can_price else 'no-price' }}">
-        <span data-i18n="proc.item">Item</span><span data-i18n="proc.desc">Description</span>
-        <span data-i18n="proc.unit">Unit</span><span data-i18n="proc.qty">Qty</span>
-        <span data-i18n="proc.stock">Stock</span>
-        <span data-i18n="proc.vendor_l">Vendor</span>
-        {% if can_price %}<span data-i18n="proc.unit_price">Unit price</span>
-        <span class="li-cost" data-i18n="proc.cost">Cost</span>{% endif %}
+      {#- A request line asks two questions: what, and how many. Everything else
+          on it — which catalogue item, in what unit, what is on the shelf, from
+          which supplier — is answered later by the people who know, so those
+          columns are not drawn here at all. A greyed box a requester can never
+          fill is still a box they read, hesitate over, and ask about. -#}
+      <div class="li-head request-line">
+        <span data-i18n="proc.desc">Description</span>
+        <span data-i18n="proc.qty">Qty</span>
         <span></span>
       </div>
       <div id="rows"></div>
@@ -206,6 +207,7 @@
   var CAN_BUY   = {{ 'true' if can_buy else 'false' }};
   // Why the greyed boxes are greyed, shown on hover.
   var LOCK_HINT = {{ lock_hint | tojson }};
+  var DESC_PH = {{ desc_ph | tojson }};
   // Picker copy. These strings are BUILT INTO the row markup by JS, which runs
   // after app.js has already swapped data-i18n, so a data-i18n attribute here
   // would never be translated. Resolve them server-side instead — the same
@@ -245,42 +247,21 @@
     var research = CAN_PRICE
       ? '<button type="button" class="li-research" title="Market price research" aria-label="Market price research">🔎</button>'
       : '';
-    return '<div class="li-row' + (CAN_PRICE ? '' : ' no-price') + '">'
-      // The field is a PICKER over the item catalogue, not a plain text box. It
-      // used to look identical to every other input and only reacted to typing,
-      // so nobody knew a list of 19,000 items was behind it. The caret button
-      // makes it visibly a dropdown and opens it without typing anything.
-      + '<div class="li-item" style="position:relative">'
-      + '<input name="item[]" placeholder="' + (ITEM_PH || 'Search item or type your own') + '" '
-      +   'autocomplete="off" data-ac style="padding-inline-end:26px">'
-      + '<button type="button" class="li-pick" tabindex="-1" '
-      +   'title="' + (ITEM_BROWSE || 'Browse the item catalogue') + '" '
-      +   'style="position:absolute;inset-inline-end:4px;top:5px;width:20px;height:22px;'
-      +   'border:0;background:none;cursor:pointer;opacity:.55;line-height:1;font-size:11px">▼</button>'
+    return '<div class="li-row request-line">'
+      // item[] is still POSTED, empty and hidden. The rows are read back as
+      // PARALLEL ARRAYS keyed off this field, so removing it entirely would
+      // leave the parser with nothing to iterate; _parse_items falls back to the
+      // DESCRIPTION as the line's identity when it is blank.
+      + '<input name="item[]" type="hidden">'
       + '<input name="spare_id[]" type="hidden">'
       + '<input name="item_id[]" type="hidden">'
-      + '<div class="sp-drop" style="display:none;position:absolute;z-index:40;top:100%;left:0;right:0;background:var(--panel,#fff);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow:auto"></div>'
-      + research + '</div>'
-      + '<input name="description[]" placeholder="Description" autocomplete="off" data-ac>'
-      // A REQUESTER says WHAT and HOW MANY. Unit of measure, stock on hand and
-      // the supplier are commercial and warehouse facts they are not placed to
-      // assert, so all three are locked here and DROPPED server-side in
-      // _parse_items — the screen is the courtesy, the parser is the control.
-      //
-      // readonly, never disabled: a disabled field posts nothing, and these rows
-      // are read back as PARALLEL ARRAYS, so one skipped value would shift every
-      // field on every line below it onto the wrong row.
-      + '<input name="unit[]" class="li-locked" readonly tabindex="-1" '
-        + 'title="' + LOCK_HINT + '" placeholder="—">'
+      + '<input name="unit[]" type="hidden">'
+      + '<input name="current_stock[]" type="hidden" value="0">'
+      + '<input name="vendor[]" type="hidden">'
+      + '<input name="item_notes[]" type="hidden">'
+      + '<input name="description[]" placeholder="' + (DESC_PH || 'What you need') + '" '
+      +   'autocomplete="off" data-ac>'
       + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
-      + '<input name="current_stock[]" class="li-locked" readonly tabindex="-1" '
-        + 'title="' + LOCK_HINT + '" value="0">'
-      // Free text backed by the supplier list (same idiom as the SO / forecast
-      // fields above) — a select cannot hold a supplier that is not in its
-      // options, and these rows are cloned and re-filled from saved drafts.
-      + '<input name="vendor[]" class="li-locked" readonly tabindex="-1" '
-        + 'title="' + LOCK_HINT + '" placeholder="—">'
-      + priceCells
       + '<button type="button" class="li-del" title="Remove">✕</button>'
       + '</div>';
   }

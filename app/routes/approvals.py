@@ -178,6 +178,7 @@ def new():
         prefill = svc.ticket_prefill(int(ticket_id)) or {}
     return render_template("approvals/new.html", active="proc_new",
                            lock_hint=_LOCK_HINT.get(_lang(), _LOCK_HINT["en"]),
+                           desc_ph=_DESC_PH.get(_lang(), _DESC_PH["en"]),
                            can_buy=user_can("proc_purchasing") or user_can("proc_admin"),
                            fields=svc.visible_fields(),
                            vendors=svc.list_vendors(), units=C.UNITS,
@@ -219,6 +220,14 @@ _LOCK_HINT = {
     "en": "Purchasing set this. Say what you need and how many.",
     "ar": "المشتريات هي من تحدد هذا. اذكر ما تحتاجه والكمية فقط.",
     "tr": "Bunu Satın Alma belirler. Siz ne ve ne kadar istediğinizi yazın.",
+}
+
+# Placeholder inside the locked ITEM box, so the empty cell says WHY it is empty
+# rather than just looking broken.
+_DESC_PH = {
+    "en": "What you need — name it, with any size, model or spec",
+    "ar": "ما تحتاجه — اذكره مع المقاس أو الموديل أو المواصفة إن وُجدت",
+    "tr": "İhtiyacınız — adını, varsa ölçü, model veya teknik özelliğiyle yazın",
 }
 
 
@@ -332,12 +341,22 @@ def _parse_items(f, can_price=False, can_buy=False):
     stocks = f.getlist("current_stock[]"); prices = f.getlist("unit_price[]")
     notes = f.getlist("item_notes[]"); spares = f.getlist("spare_id[]")
     item_ids = f.getlist("item_id[]"); vendors = f.getlist("vendor[]")
+    # A line is real if it says WHAT is needed — in the item box or, on a request
+    # form where that box is locked, in the description. Requiring item[] would
+    # have silently dropped every line of every request the moment the picker was
+    # locked, and the request would submit with nothing on it.
     for i in range(len(names)):
-        if not (names[i] or "").strip():
+        name = (names[i] or "").strip()
+        desc = (descs[i].strip() if i < len(descs) else "")
+        if not name and not desc:
             continue
         items.append({
-            "item": names[i].strip(),
-            "description": descs[i].strip() if i < len(descs) else "",
+            # The description IS the line when nothing else names it: pr_items.item
+            # is what the PDFs print, what the off-catalogue queue groups by, and
+            # what Purchasing read when they assign the Optima code. Leaving it
+            # blank would put an unnamed line on a purchase order.
+            "item": name or desc,
+            "description": desc,
             # A REQUESTER states WHAT they need and HOW MANY, and nothing else
             # about the line. Unit of measure, stock on hand and the supplier are
             # commercial and warehouse facts they are not placed to assert, and
@@ -866,6 +885,7 @@ def edit(pr_id):
                "forecast_ref": pr.get("forecast_ref")}
     return render_template("approvals/new.html", active="proc_list",
                            lock_hint=_LOCK_HINT.get(_lang(), _LOCK_HINT["en"]),
+                           desc_ph=_DESC_PH.get(_lang(), _DESC_PH["en"]),
                            can_buy=user_can("proc_purchasing") or user_can("proc_admin"),
                            fields=svc.visible_fields(),
                            vendors=svc.list_vendors(), units=C.UNITS,

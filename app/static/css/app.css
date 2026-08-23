@@ -1313,9 +1313,26 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
    disabled input posts nothing, which would shift every value on every line
    below it onto the wrong row. The real lock is server-side in _parse_items. */
 .li-locked {
-  background: var(--surface-2, rgba(127, 127, 127, .10));
+  /* --surface-2 is not a token in this theme, so the original fallback resolved
+     to a 10% grey that was invisible next to a white QTY box — the field read as
+     editable and people typed into it. panel-2 is a real token, and the DASHED
+     border is what actually carries the message: a box you cannot fill should
+     not be drawn like the box beside it that you can. */
+  background: var(--panel-2, #f1f3f7);
+  border: 1px dashed var(--line, #d7dbe3) !important;
   color: var(--muted, #7b7b7b);
   cursor: not-allowed;
-  opacity: .7;
 }
-.li-locked:focus { outline: none; box-shadow: none; }
+.li-locked::placeholder { color: var(--muted, #9aa1ae); }
+.li-locked:focus, .li-locked:focus-visible {
+  outline: none; box-shadow: none; border-style: dashed;
+}
+
+/* A REQUEST line asks two questions: what, and how many. The item, unit, stock
+   and supplier columns are not drawn on it — they are answered later by the
+   people who know, and a greyed box a requester can never fill is still a box
+   they read, hesitate over, and ask about. */
+.li-head.request-line, .li-row.request-line { grid-template-columns: 3fr 1fr 34px; }
+@media (max-width: 720px) {
+  .li-head.request-line, .li-row.request-line { grid-template-columns: 1fr 1fr; }
+}
