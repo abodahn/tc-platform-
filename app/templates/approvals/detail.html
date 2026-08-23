@@ -467,7 +467,30 @@
                 </div>
                 {% endif %}
             </td>
-            <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}
+              {#- What the store handed over off the shelf. Without this the line
+                  just reads a smaller number than was asked for, and the only
+                  explanation sits in the audit trail — which reads as though the
+                  requester changed their mind. -#}
+              {% if it.issued_qty %}
+              <div class="muted" style="font-size:12px">
+                <span class="badge b-approved">{{ '%g'|format(it.issued_qty) }}</span>
+                <span data-i18n="proc.issued_qty">issued from stock</span>
+                {% if it.issued_from %}· {{ it.issued_from }}{% endif %}
+                {#- The undo has to live WHERE the issue is visible, and on a
+                    request the issue closed — that is precisely the case somebody
+                    needs to unwind, and it is no longer on anyone's queue. -#}
+                {% if can_reverse_issue %}
+                <form method="post" style="display:inline"
+                      action="{{ url_for('approvals.reverse_stock_issue', pr_id=pr.id, line_id=it.id) }}">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <button class="btn btn-ghost btn-sm" type="submit"
+                          data-i18n="proc.issue_undo">Put back</button>
+                </form>
+                {% endif %}
+              </div>
+              {% endif %}
+            </td>
             <td>
               <input name="linevendor_{{ it.id }}" list="vlistAll" autocomplete="off"
                      value="{{ it.vendor or '' }}" style="min-width:150px"
@@ -1062,7 +1085,30 @@
                   <b>{{ '%g'|format(spare_live[it.spare_id].available) }} {{ spare_live[it.spare_id].uom }}</b>
                   <span class="muted" data-i18n="proc.live_stock_hint">available</span></div>
                 {% endif %}</td>
-            <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}
+              {#- What the store handed over off the shelf. Without this the line
+                  just reads a smaller number than was asked for, and the only
+                  explanation sits in the audit trail — which reads as though the
+                  requester changed their mind. -#}
+              {% if it.issued_qty %}
+              <div class="muted" style="font-size:12px">
+                <span class="badge b-approved">{{ '%g'|format(it.issued_qty) }}</span>
+                <span data-i18n="proc.issued_qty">issued from stock</span>
+                {% if it.issued_from %}· {{ it.issued_from }}{% endif %}
+                {#- The undo has to live WHERE the issue is visible, and on a
+                    request the issue closed — that is precisely the case somebody
+                    needs to unwind, and it is no longer on anyone's queue. -#}
+                {% if can_reverse_issue %}
+                <form method="post" style="display:inline"
+                      action="{{ url_for('approvals.reverse_stock_issue', pr_id=pr.id, line_id=it.id) }}">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <button class="btn btn-ghost btn-sm" type="submit"
+                          data-i18n="proc.issue_undo">Put back</button>
+                </form>
+                {% endif %}
+              </div>
+              {% endif %}
+            </td>
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(it.unit_price or 0) }}</td>
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(it.est_cost or 0) }}</td>

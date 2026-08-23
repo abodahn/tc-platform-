@@ -4028,5 +4028,6 @@
   "proc.wh_issue_btn": "Stoktan çıkış yap",
   "proc.stock_met": "Stoktan karşılandı",
   "proc.stock_partial": "Kısmen stoktan karşılandı",
-  "proc.issued_qty": "stoktan verildi"
+  "proc.issued_qty": "stoktan verildi",
+  "proc.issue_undo": "Geri koy"
 }

@@ -332,6 +332,122 @@ def run():
             signer["warehouse"])
     chk("issuing more than is FREE is refused (reserved stock is not available)",
         not ok7 and msg7 == "not_enough_free_stock", msg7)
+    # ---- 7. putting it back ------------------------------------------------
+    # An action that moves physical stock and cannot be undone from the screen
+    # that did it is a trap, not a feature — and the case that most needs
+    # undoing is the one where the issue CLOSED the request, because it is then
+    # on nobody's queue.
+    print("\nand an issue can be put back")
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        conn = get_db()
+        conn.execute("UPDATE mnt_spare_parts SET stock_qty=30, reserved_qty=0 "
+                     "WHERE code='SP-ISS-1'")
+        conn.commit()
+        pid5, _ = svc.create_pr(
+            {"title": "To undo", "department": "IT", "currency": "EGP"},
+            [{"item": "Needle plate", "unit": "Pcs", "qty": 5, "unit_price": 0}],
+            {"username": "wr_req", "id": 77}, priced=False)
+        line5 = conn.execute("SELECT id FROM pr_items WHERE pr_id=?",
+                             (pid5,)).fetchone()["id"]
+        conn.close()
+        # issue ALL of it, which closes the request
+        okA, msgA = svc.issue_from_stock(
+            pid5, {line5: {"code": "SP-ISS-1", "qty": 5}}, signer["warehouse"])
+        conn = get_db()
+        closed = dict(conn.execute(
+            "SELECT status, stock_outcome FROM pr_requests WHERE id=?",
+            (pid5,)).fetchone())
+        shelf_after_issue = conn.execute(
+            "SELECT stock_qty FROM mnt_spare_parts WHERE code='SP-ISS-1'"
+        ).fetchone()["stock_qty"]
+        conn.close()
+    chk("the request was closed by the issue",
+        okA and closed["status"] == "closed", (msgA, closed))
+    chk("and the shelf went down 30 -> 25", float(shelf_after_issue) == 25.0,
+        shelf_after_issue)
+
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        okB, msgB = svc.reverse_stock_issue(pid5, line5, signer["warehouse"])
+        conn = get_db()
+        back = dict(conn.execute(
+            "SELECT status, stock_outcome, current_seq FROM pr_requests WHERE id=?",
+            (pid5,)).fetchone())
+        ln5 = dict(conn.execute(
+            "SELECT qty, issued_qty, issued_from FROM pr_items WHERE id=?",
+            (line5,)).fetchone())
+        shelf_back = conn.execute(
+            "SELECT stock_qty FROM mnt_spare_parts WHERE code='SP-ISS-1'"
+        ).fetchone()["stock_qty"]
+        mvs = [dict(r) for r in conn.execute(
+            "SELECT type, qty FROM mnt_stock_movements WHERE request_id=? "
+            "ORDER BY id", (pid5,)).fetchall()]
+        pend = conn.execute(
+            "SELECT COUNT(*) n FROM pr_steps WHERE pr_id=? AND status='pending'",
+            (pid5,)).fetchone()["n"]
+        conn.close()
+    chk("the reversal is accepted, and says it reopened",
+        okB and msgB == "reopened", msgB)
+    chk("THE SHELF IS WHOLE AGAIN, 25 -> 30", float(shelf_back) == 30.0, shelf_back)
+    chk("the line asks for the full 5 once more", float(ln5["qty"]) == 5.0, ln5["qty"])
+    chk("and no longer claims anything was issued",
+        float(ln5["issued_qty"] or 0) == 0 and not ln5["issued_from"], ln5)
+    chk("the request is CIRCULATING again, not left closed",
+        back["status"] == "pending", back["status"])
+    chk("with a rung for somebody to sign", pend > 0, pend)
+    chk("and stock_outcome cleared", not back["stock_outcome"], back["stock_outcome"])
+    # A reversal, not a delete: the shelf's history must show both movements.
+    chk("BOTH movements are on the record — issued, then returned",
+        len(mvs) == 2 and mvs[0]["qty"] == -5.0 and mvs[1]["qty"] == 5.0, mvs)
+
+    with app.app_context():
+        from app.approvals import services as svc
+        okC, msgC = svc.reverse_stock_issue(pid5, line5, signer["warehouse"])
+    chk("reversing twice puts nothing back a second time",
+        not okC and msgC == "nothing_issued", msgC)
+
+    # Not once the request carries money.
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        conn = get_db()
+        pid6, _ = svc.create_pr(
+            {"title": "Priced then undo", "department": "IT", "currency": "EGP"},
+            [{"item": "Needle plate", "unit": "Pcs", "qty": 4, "unit_price": 0}],
+            {"username": "wr_req", "id": 77}, priced=False)
+        line6 = conn.execute("SELECT id FROM pr_items WHERE pr_id=?",
+                             (pid6,)).fetchone()["id"]
+        conn.close()
+        svc.issue_from_stock(pid6, {line6: {"code": "SP-ISS-1", "qty": 1}},
+                             signer["warehouse"])
+        svc.price_pr(pid6, {line6: 100}, {}, signer["purchasing"])
+        okD, msgD = svc.reverse_stock_issue(pid6, line6, signer["warehouse"])
+    chk("a priced request refuses the reversal",
+        not okD and msgD == "already_priced", msgD)
+
+    # And it is not open to anyone who fancies it.
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        conn = get_db()
+        pid7, _ = svc.create_pr(
+            {"title": "Eligibility", "department": "IT", "currency": "EGP"},
+            [{"item": "Needle plate", "unit": "Pcs", "qty": 2, "unit_price": 0}],
+            {"username": "wr_req", "id": 77}, priced=False)
+        line7 = conn.execute("SELECT id FROM pr_items WHERE pr_id=?",
+                             (pid7,)).fetchone()["id"]
+        conn.close()
+        svc.issue_from_stock(pid7, {line7: {"code": "SP-ISS-1", "qty": 1}},
+                             signer["warehouse"])
+        okE, msgE = svc.reverse_stock_issue(pid7, line7, signer["finance"])
+        okF, msgF = svc.reverse_stock_issue(
+            pid7, line7, {"username": "wr_admin", "role": "super_admin", "id": 1})
+    chk("finance cannot put stock back", not okE and msgE == "not_eligible", msgE)
+    chk("but an admin can — the person who erred may be the one unable to fix it",
+        okF, msgF)
     print("\n" + ("RESULT: ALL GREEN" if ok_all[0] else "RESULT: FAILURES ABOVE"))
     return ok_all[0]
 

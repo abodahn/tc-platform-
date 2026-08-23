@@ -532,7 +532,7 @@ def pr_pdf(bundle):
     # system knows them, and a printed 0 would be a claim the buyer would believe.
     lead = _chosen_lead_time(bundle)
     rows = [[str(i), it.get("item") or "", _line_desc(it),
-             it.get("unit") or "", _fmt(it.get("qty"), 0),
+             it.get("unit") or "", _qty_cell(it),
              _fmt(it.get("current_stock"), 0),
              "", "", _fmt(it.get("last_order_qty"), 0), it.get("last_order_date") or "",
              it.get("vendor") or pr.get("vendor") or "", _fmt(it.get("unit_price")),
@@ -615,6 +615,20 @@ I18N = {
         "ortak onay sayar — her (A) imzası satın almayı taahhüt eder, her (R) "
         "imzası yalnızca doğrular."),
 }
+
+
+def _qty_cell(it):
+    """The quantity, saying what was met off the shelf when some of it was.
+
+    A line that reads "2" after the store issued 4 of the 6 asked for is telling
+    the reader something untrue by omission: the request was for six. Documents
+    an auditor reads have to carry both figures.
+    """
+    q = _fmt(it.get("qty"), 0)
+    iss = float(it.get("issued_qty") or 0)
+    if iss <= 0:
+        return q
+    return "%s  (+%s from stock)" % (q, _fmt(iss, 0))
 
 
 def _line_desc(it):
@@ -978,7 +992,7 @@ def rfq_pdf(bundle, rfq):
 
     # The quantities are real; the two money columns are empty boxes.
     rows = [[str(i), (it.get("item") or "", _line_desc(it)),
-             it.get("unit") or "", _fmt(it.get("qty"), 0), FILL_IN, FILL_IN]
+             it.get("unit") or "", _qty_cell(it), FILL_IN, FILL_IN]
             for i, it in enumerate(items, 1)]
     y = _table(c, w, cm, y, [
         (0.6, "#", "l"), (9.0, "ITEM / DESCRIPTION", "l"), (1.4, "UNIT", "l"),

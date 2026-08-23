@@ -4028,5 +4028,6 @@
   "proc.wh_issue_btn": "Issue from stock",
   "proc.stock_met": "Met from stock",
   "proc.stock_partial": "Partly met from stock",
-  "proc.issued_qty": "issued from stock"
+  "proc.issued_qty": "issued from stock",
+  "proc.issue_undo": "Put back"
 }

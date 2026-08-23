@@ -560,6 +560,31 @@ def item_request_reject(req_id):
     return redirect(url_for("approvals.item_requests"))
 
 
+@bp.route("/pr/<int:pr_id>/reverse-issue/<int:line_id>", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def reverse_stock_issue(pr_id, line_id):
+    """Put back what was issued off the shelf, and restore the line."""
+    ok, msg = svc.reverse_stock_issue(pr_id, line_id, _u(), ip=_ip())
+    flash({"reversed": "Put back. The stock is on the shelf again and the line "
+                       "asks for the full quantity.",
+           "reopened": "Put back, and the request is circulating again — it had "
+                       "been closed because stock covered it.",
+           "nothing_issued": "Nothing was issued on that line.",
+           "already_priced": "This request already carries prices. Putting stock "
+                             "back now would restore a quantity people have "
+                             "priced against.",
+           "not_reversible": "This request has moved on — it can no longer be "
+                             "unwound from here.",
+           "stock_item_gone": "That stock item is no longer in the register.",
+           "not_eligible": "Only the warehouse rung or a procurement admin can "
+                           "reverse an issue.",
+           "line_not_found": "That line is not on this request.",
+           "not_found": "That request no longer exists."}.get(msg, msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
 @bp.route("/pr/<int:pr_id>/issue-stock", methods=["POST"])
 @login_required
 @permission_required("proc_approve")
@@ -1159,6 +1184,18 @@ def detail(pr_id):
                            # The warehouse rung may correct quantities, but only
                            # while the request is still worth nothing — after
                            # pricing a quantity moves a signed total.
+                           # An issue can be unwound by the warehouse rung or a
+                           # procurement admin, and — unlike the review panel —
+                           # ALSO on a request the issue itself closed, which is
+                           # exactly the case that needs unwinding.
+                           can_reverse_issue=bool(
+                               (not is_priced)
+                               and pr["status"] in ("pending", "closed")
+                               and ((actionable
+                                     and actionable["stage"] == "warehouse")
+                                    or user_can("proc_admin")
+                                    or svc.can_act_step(
+                                        user, {"stage": "warehouse", "pr_id": pr["id"]}))),
                            wh_review=bool(actionable
                                           and actionable.get("stage") == "warehouse"
                                           and not is_priced),

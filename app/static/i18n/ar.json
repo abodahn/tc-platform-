@@ -4028,5 +4028,6 @@
   "proc.wh_issue_btn": "صرف من المخزن",
   "proc.stock_met": "تم الصرف من المخزن",
   "proc.stock_partial": "صُرف جزء منه من المخزن",
-  "proc.issued_qty": "مصروف من المخزن"
+  "proc.issued_qty": "مصروف من المخزن",
+  "proc.issue_undo": "إرجاع للمخزن"
 }

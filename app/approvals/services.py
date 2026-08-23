@@ -6165,3 +6165,98 @@ def issue_from_stock(pr_id, issues, user, ip=None):
         return True, "met_from_stock" if fully else "partly_issued"
     finally:
         conn.close()
+
+
+def reverse_stock_issue(pr_id, line_id, user, ip=None):
+    """Put back what was issued off the shelf, and restore the line.
+
+    A storekeeper issues the wrong quantity, or against the wrong request, and
+    until now there was no way back from procurement: the movement would have to
+    be hand-written in the maintenance module, and the request's own figures
+    would stay wrong regardless. An action that changes physical stock and cannot
+    be undone from the screen that did it is a trap, not a feature.
+
+    It is a REVERSAL, not a delete: a second movement of the opposite sign, so
+    the shelf's history reads "issued 4, returned 4" rather than pretending the
+    first one never happened. That is the same reason a rejected receipt raises a
+    debit note instead of editing the receipt.
+
+    Returns (ok, msg).
+    """
+    from app.maintenance.services import _move_stock
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        ln = conn.execute("SELECT * FROM pr_items WHERE id=? AND pr_id=?",
+                          (line_id, pr_id)).fetchone()
+        if not ln:
+            return False, "line_not_found"
+        issued = float(_pr_field(ln, "issued_qty") or 0)
+        code = str(_pr_field(ln, "issued_from") or "").strip()
+        if issued <= 0 or not code:
+            return False, "nothing_issued"
+        # Reversible only while the request has not moved on. Once it is priced,
+        # ordered or received, putting stock back would restore a quantity that
+        # people have since signed, priced or bought against.
+        if (_pr_field(pr, "pricing_status") or "unpriced") == "priced":
+            return False, "already_priced"
+        if (pr["status"] or "") not in ("pending", "closed"):
+            return False, "not_reversible"
+        # The storekeeper who could have issued it, or a procurement admin — the
+        # same pair who can unstick anything else in this module. An admin is
+        # included deliberately: the person who made the mistake may be the one
+        # person unable to come back and fix it.
+        _role = (user or {}).get("role") or ""
+        _admin = _role == "super_admin" or has_permission(_role, "proc_admin")
+        if not can_act_step(user, {"stage": "warehouse", "pr_id": pr_id}) and not _admin:
+            return False, "not_eligible"
+
+        sp = conn.execute("SELECT id FROM mnt_spare_parts WHERE code=? OR "
+                          "LOWER(code)=LOWER(?)", (code, code)).fetchone()
+        if not sp:
+            return False, "stock_item_gone"
+        ok, msg = _move_stock(
+            conn, sp["id"], "receipt", issued, user, request_id=pr_id,
+            notes="Issue reversed on %s" % (pr["pr_no"] or ("PR#%d" % pr_id)))
+        if not ok:
+            return False, msg
+
+        conn.execute(
+            "UPDATE pr_items SET qty=COALESCE(qty,0)+?, issued_qty=0, "
+            "issued_from=NULL WHERE id=?", (issued, line_id))
+        # A request CLOSED because stock covered it has to start circulating
+        # again — the need is back, and nobody has bought anything.
+        reopened = False
+        if (pr["status"] or "") == "closed":
+            conn.execute(
+                "UPDATE pr_steps SET status='pending' WHERE pr_id=? AND status='skipped'",
+                (pr_id,))
+            first = conn.execute(
+                "SELECT MIN(seq) AS s FROM pr_steps WHERE pr_id=? AND status='pending'",
+                (pr_id,)).fetchone()
+            conn.execute(
+                "UPDATE pr_requests SET status='pending', closed_at=NULL, "
+                "current_seq=? WHERE id=?", (first["s"] or 1, pr_id))
+            reopened = True
+        still = conn.execute(
+            "SELECT COALESCE(SUM(issued_qty),0) AS n FROM pr_items WHERE pr_id=?",
+            (pr_id,)).fetchone()["n"]
+        conn.execute("UPDATE pr_requests SET stock_outcome=? WHERE id=?",
+                     ("partial" if float(still or 0) > 0 else None, pr_id))
+
+        audit(conn, pr_id, (user or {}).get("username"), "stock_issue_reversed",
+              "%s: %g returned to %s%s" % (ln["item"], issued, code,
+                                           " — request reopened" if reopened else ""), ip)
+        notify_users(
+            conn, [pr["requester"]], "info",
+            "Stock issue reversed on %s" % (pr["pr_no"] or "your request"),
+            "%g %s went back to stock%s." % (issued, ln["item"],
+                                             " and the request is circulating again"
+                                             if reopened else ""),
+            link="/procurement/pr/%d" % pr_id)
+        conn.commit()
+        return True, "reopened" if reopened else "reversed"
+    finally:
+        conn.close()
