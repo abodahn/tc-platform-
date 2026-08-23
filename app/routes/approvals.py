@@ -177,6 +177,8 @@ def new():
     if ticket_id and ticket_id.isdigit():
         prefill = svc.ticket_prefill(int(ticket_id)) or {}
     return render_template("approvals/new.html", active="proc_new",
+                           lock_hint=_LOCK_HINT.get(_lang(), _LOCK_HINT["en"]),
+                           can_buy=user_can("proc_purchasing") or user_can("proc_admin"),
                            fields=svc.visible_fields(),
                            vendors=svc.list_vendors(), units=C.UNITS,
                            sales_orders=svc.list_sales_orders(),
@@ -209,6 +211,24 @@ _OPTIONAL_FIELD_NAMES = {
     "show_cost_center": "cost_center",
     "show_delivery_condition": "delivery_condition",
 }
+
+
+# Why the locked boxes on a requester's line are locked. Server-rendered as a
+# tooltip, so it needs all three languages like every other sentence on the page.
+_LOCK_HINT = {
+    "en": "Purchasing set this. Say what you need and how many.",
+    "ar": "المشتريات هي من تحدد هذا. اذكر ما تحتاجه والكمية فقط.",
+    "tr": "Bunu Satın Alma belirler. Siz ne ve ne kadar istediğinizi yazın.",
+}
+
+
+def _lang():
+    """The reader's language, defaulting to English."""
+    try:
+        from flask import session as _s
+        return (_s.get("lang") or "en")[:2].lower()
+    except Exception:
+        return "en"
 
 
 def _parse_header(f, can_price=False, existing=None):
@@ -305,7 +325,7 @@ def _kind_refusal(header):
         shown or I18N["proc.kind_blank"][i])
 
 
-def _parse_items(f, can_price=False):
+def _parse_items(f, can_price=False, can_buy=False):
     items = []
     names = f.getlist("item[]"); descs = f.getlist("description[]")
     units = f.getlist("unit[]"); qtys = f.getlist("qty[]")
@@ -318,13 +338,23 @@ def _parse_items(f, can_price=False):
         items.append({
             "item": names[i].strip(),
             "description": descs[i].strip() if i < len(descs) else "",
-            "unit": units[i] if i < len(units) else "Pcs",
+            # A REQUESTER states WHAT they need and HOW MANY, and nothing else
+            # about the line. Unit of measure, stock on hand and the supplier are
+            # commercial and warehouse facts they are not placed to assert, and
+            # the form locks all three — but the form is not the control. These
+            # are dropped here too, so a hand-crafted POST cannot set them
+            # either, exactly as unit_price already works below.
+            #
+            # Unit survives one way: a line PICKED from the catalogue carries the
+            # catalogue's own unit, which is master data rather than the
+            # requester's opinion. services.py resolves that from item_id.
+            "unit": (units[i] if i < len(units) else "Pcs") if can_buy else "",
             "qty": qtys[i] if i < len(qtys) else 0,
-            "current_stock": stocks[i] if i < len(stocks) else 0,
+            "current_stock": (stocks[i] if i < len(stocks) else 0) if can_buy else 0,
             # One requisition, several suppliers: each line may name its own.
             # Left blank it stays blank here and services.py falls back to the
             # header vendor — the behaviour every existing request relies on.
-            "vendor": vendors[i].strip() if i < len(vendors) else "",
+            "vendor": (vendors[i].strip() if i < len(vendors) else "") if can_buy else "",
             # Commercial lockout: unit price is forced to 0 for requesters, no
             # matter what the form (or a hand-crafted request) sends.
             "unit_price": (prices[i] if i < len(prices) else 0) if can_price else 0,
@@ -752,7 +782,8 @@ def catalogue_import():
 def create():
     can_price = _can_price()
     header = _parse_header(request.form, can_price)
-    items = _parse_items(request.form, can_price)
+    items = _parse_items(request.form, can_price,
+                         can_buy=user_can("proc_purchasing") or user_can("proc_admin"))
     # Refused before anything is written: a request stored with a guessed
     # expenditure type is already on the wrong ladder.
     bad_kind = _kind_refusal(header)
@@ -828,6 +859,8 @@ def edit(pr_id):
                "so_no": pr.get("so_no"), "cost_center": pr.get("cost_center"),
                "forecast_ref": pr.get("forecast_ref")}
     return render_template("approvals/new.html", active="proc_list",
+                           lock_hint=_LOCK_HINT.get(_lang(), _LOCK_HINT["en"]),
+                           can_buy=user_can("proc_purchasing") or user_can("proc_admin"),
                            fields=svc.visible_fields(),
                            vendors=svc.list_vendors(), units=C.UNITS,
                            sales_orders=svc.list_sales_orders(),
@@ -853,7 +886,8 @@ def edit_save(pr_id):
         abort(403)
     can_price = _can_price()
     header = _parse_header(request.form, can_price, existing=bundle["pr"])
-    items = _parse_items(request.form, can_price)
+    items = _parse_items(request.form, can_price,
+                         can_buy=user_can("proc_purchasing") or user_can("proc_admin"))
     # Same refusal on the re-file after a rejection, which is where a CAPEX
     # request would otherwise be downgraded on its way back through.
     bad_kind = _kind_refusal(header)

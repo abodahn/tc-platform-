@@ -57,16 +57,21 @@ def run():
         HEAD, A, B = "Nilehouse", "Alphatex", "Betatrim"
 
         # --- 1. the form's POST is read positionally, blank lines included ----
+        # can_buy=True: naming a supplier per line is a PURCHASING act. A
+        # requester states what they need and how many, and _parse_items now
+        # drops any vendor, unit or stock they post — so the buyer's flag is
+        # what this file has always been exercising, and now says so.
         items = _parse_items(MultiDict([
             ("item[]", "Cotton twill"), ("qty[]", "500"), ("vendor[]", A),
             ("item[]", "Sewing thread"), ("qty[]", "40"), ("vendor[]", "  "),
             ("item[]", "Metal zippers"), ("qty[]", "2000"), ("vendor[]", B),
-        ]))
+        ]), can_buy=True)
         assert [i["vendor"] for i in items] == [A, "", B], items
 
         # a form that posts no vendor[] at all (an older cached page) must not
         # throw and must leave every line inheriting the header
-        legacy = _parse_items(MultiDict([("item[]", "Bearing 6204"), ("qty[]", "4")]))
+        legacy = _parse_items(MultiDict([("item[]", "Bearing 6204"), ("qty[]", "4")]),
+                              can_buy=True)
         assert legacy[0]["vendor"] == "", legacy
 
         # --- 2. stored: three lines, three different suppliers ---------------

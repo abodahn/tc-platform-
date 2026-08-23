@@ -1092,6 +1092,7 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
         pr_id = cur.lastrowid
         pr_no = doc_no("PR", pr_id)
         conn.execute("UPDATE pr_requests SET pr_no=? WHERE id=?", (pr_no, pr_id))
+        fill_units_from_catalogue(conn, items)
         for i, it in enumerate(items, start=1):
             conn.execute(
                 """INSERT INTO pr_items
@@ -1221,6 +1222,7 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
             conn.execute("UPDATE pr_requests SET pricing_status='unpriced', "
                          "priced_at=NULL, priced_by=NULL WHERE id=?", (pr_id,))
         conn.execute("DELETE FROM pr_items WHERE pr_id=?", (pr_id,))
+        fill_units_from_catalogue(conn, items)
         for i, it in enumerate(items, start=1):
             conn.execute(
                 """INSERT INTO pr_items (pr_id, seq, item, description, unit, qty,
@@ -1292,6 +1294,41 @@ def egp_commitment(pr):
     except (TypeError, ValueError):
         rate = 1.0
     return round(grand * (rate if rate > 0 else 1.0), 2)
+
+
+def fill_units_from_catalogue(conn, items):
+    """Give every PICKED line the unit its catalogue row carries.
+
+    A requester states what they need and how many; the unit of measure is master
+    data, not their opinion, so the form locks it and _parse_items drops whatever
+    was posted. That leaves a line with no unit — and a blank unit used to become
+    a flat "Pcs", which on a line of fabric or dye is simply wrong and would be
+    ordered that way.
+
+    So a line linked to a catalogue item takes THAT item's unit.
+
+    A FREE-TEXT line still falls back to "Pcs" at the INSERT below, as it always
+    has. That is a placeholder, not a fact — on a line of fabric or dye it is
+    wrong until Purchasing correct it at the pricing gate. It is left alone here
+    because a NULL unit would reach receiving, the purchase order and the
+    three-way match, none of which expect one, and widening this fix that far is
+    a bigger change than the lock it exists to support.
+    """
+    want = {}
+    for it in items:
+        iid = str(it.get("item_id") or "").strip()
+        if iid.isdigit() and not str(it.get("unit") or "").strip():
+            want.setdefault(int(iid), []).append(it)
+    if not want:
+        return items
+    marks = ",".join("?" for _ in want)
+    for r in conn.execute(
+            "SELECT id, unit FROM proc_items WHERE id IN (%s)" % marks,
+            list(want)).fetchall():
+        for it in want.get(r["id"], []):
+            if r["unit"]:
+                it["unit"] = r["unit"]
+    return items
 
 
 def stamp_step_actions(conn, pr_id):

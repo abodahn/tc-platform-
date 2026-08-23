@@ -198,6 +198,14 @@
 <script>
 (function () {
   var CAN_PRICE = {{ 'true' if can_price else 'false' }};  // only Purchasing sees pricing
+  // CAN_BUY is NOT can_price. _can_price() is hardcoded False for EVERYONE — a
+  // governance rule that nobody prices a request at creation time, not even a
+  // super admin — so keying the line lock on it would grey the unit, stock and
+  // vendor boxes for Purchasing as well. This is the real "may this person state
+  // the commercial facts on a line" flag.
+  var CAN_BUY   = {{ 'true' if can_buy else 'false' }};
+  // Why the greyed boxes are greyed, shown on hover.
+  var LOCK_HINT = {{ lock_hint | tojson }};
   // Picker copy. These strings are BUILT INTO the row markup by JS, which runs
   // after app.js has already swapped data-i18n, so a data-i18n attribute here
   // would never be translated. Resolve them server-side instead — the same
@@ -254,14 +262,31 @@
       + '<div class="sp-drop" style="display:none;position:absolute;z-index:40;top:100%;left:0;right:0;background:var(--panel,#fff);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow:auto"></div>'
       + research + '</div>'
       + '<input name="description[]" placeholder="Description" autocomplete="off" data-ac>'
-      + '<select name="unit[]">'+unitOpts()+'</select>'
+      // A REQUESTER says WHAT and HOW MANY. Unit of measure, stock on hand and
+      // the supplier are commercial and warehouse facts they are not placed to
+      // assert, so all three are locked here and DROPPED server-side in
+      // _parse_items — the screen is the courtesy, the parser is the control.
+      //
+      // readonly, never disabled: a disabled field posts nothing, and these rows
+      // are read back as PARALLEL ARRAYS, so one skipped value would shift every
+      // field on every line below it onto the wrong row.
+      + (CAN_BUY
+          ? '<select name="unit[]">'+unitOpts()+'</select>'
+          : '<input name="unit[]" class="li-locked" readonly tabindex="-1" '
+            + 'title="' + LOCK_HINT + '" placeholder="—">')
       + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
-      + '<input name="current_stock[]" type="number" min="0" step="any" value="0">'
+      + (CAN_BUY
+          ? '<input name="current_stock[]" type="number" min="0" step="any" value="0">'
+          : '<input name="current_stock[]" class="li-locked" readonly tabindex="-1" '
+            + 'title="' + LOCK_HINT + '" value="0">')
       // Free text backed by the supplier list (same idiom as the SO / forecast
       // fields above) — a select cannot hold a supplier that is not in its
       // options, and these rows are cloned and re-filled from saved drafts.
-      + '<input name="vendor[]" list="vendorList" autocomplete="off" '
-      +   'placeholder="Vendor" data-i18n-ph="proc.vendor_l">'
+      + (CAN_BUY
+          ? '<input name="vendor[]" list="vendorList" autocomplete="off" '
+            + 'placeholder="Vendor" data-i18n-ph="proc.vendor_l">'
+          : '<input name="vendor[]" class="li-locked" readonly tabindex="-1" '
+            + 'title="' + LOCK_HINT + '" placeholder="—">')
       + priceCells
       + '<button type="button" class="li-del" title="Remove">✕</button>'
       + '</div>';
