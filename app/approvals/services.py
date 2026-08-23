@@ -6044,3 +6044,124 @@ def warehouse_revise(pr_id, qtys, stocks, user, ip=None):
         return True, "revised"
     finally:
         conn.close()
+
+
+def issue_from_stock(pr_id, issues, user, ip=None):
+    """The store hands part of a request over off the shelf instead of buying it.
+
+    `issues` maps pr_items.id -> {"code": <stock code>, "qty": <how many>}. Both
+    are chosen explicitly by the storekeeper — nothing is inferred from the item
+    text, and nothing moves that they did not pick. A line with no entry is left
+    entirely alone.
+
+    WHAT HAPPENS TO THE REQUEST
+      every line fully covered -> closed, stock_outcome 'met_from_stock'. It
+                                  never reaches Purchasing, no order, no money.
+      partly covered           -> the issued amount comes OFF the line's quantity
+                                  and the request continues for the shortfall.
+      nothing covered          -> unchanged.
+
+    THE SHELF REALLY MOVES. This is the first thing in procurement that changes
+    physical inventory, so it goes through maintenance's own _move_stock: the
+    same negative-stock guard, the same movement row, the same numbering. Issuing
+    on paper while the shelf stays full is worse than not issuing at all — the
+    next person reads stock that is not there.
+
+    issued_qty is kept beside qty rather than replacing it: qty becomes what must
+    still be bought, and without the separate figure that drop reads as the
+    requester changing their mind. Returns (ok, msg).
+    """
+    from app.maintenance.services import _move_stock
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if (pr["status"] or "") != "pending":
+            return False, "not_pending"
+        if (_pr_field(pr, "pricing_status") or "unpriced") == "priced":
+            return False, "already_priced"
+        rung = conn.execute(
+            "SELECT stage FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr_id, pr["current_seq"])).fetchall()
+        if not any(r["stage"] == "warehouse" for r in rung):
+            return False, "not_warehouse_rung"
+        if not can_act_step(user, {"stage": "warehouse", "pr_id": pr_id}):
+            return False, "not_eligible"
+
+        lines = [dict(r) for r in conn.execute(
+            "SELECT id, item, qty, issued_qty FROM pr_items WHERE pr_id=?",
+            (pr_id,)).fetchall()]
+        done = []
+        for ln in lines:
+            spec = issues.get(ln["id"], issues.get(str(ln["id"])))
+            if not spec:
+                continue
+            code = str(spec.get("code") or "").strip()
+            try:
+                want = float(spec.get("qty") or 0)
+            except (TypeError, ValueError):
+                want = 0.0
+            if not code or want <= 0:
+                continue
+            want = min(want, float(ln["qty"] or 0))     # never issue more than asked
+            if want <= 0:
+                continue
+            sp = conn.execute(
+                "SELECT id, stock_qty, COALESCE(reserved_qty,0) AS res FROM "
+                "mnt_spare_parts WHERE code=? OR LOWER(code)=LOWER(?)",
+                (code, code)).fetchone()
+            if not sp:
+                # Only the spare store can be moved from here. The materials
+                # warehouse issues against a production order, not a purchase
+                # request, and reaching into it from this screen would be the
+                # kind of change that needs asking about first.
+                return False, "not_a_spare"
+            free = float(sp["stock_qty"] or 0) - float(sp["res"] or 0)
+            if want > free:
+                return False, "not_enough_free_stock"
+            ok, msg = _move_stock(
+                conn, sp["id"], "issue", -want, user, request_id=pr_id,
+                notes="Issued against %s" % (pr["pr_no"] or ("PR#%d" % pr_id)))
+            if not ok:
+                return False, msg
+            conn.execute(
+                "UPDATE pr_items SET qty=?, issued_qty=COALESCE(issued_qty,0)+?, "
+                "issued_from=? WHERE id=?",
+                (float(ln["qty"] or 0) - want, want, code, ln["id"]))
+            done.append("%s: %g issued from %s" % (ln["item"], want, code))
+
+        if not done:
+            return True, "nothing_issued"
+
+        left = conn.execute(
+            "SELECT COALESCE(SUM(qty),0) AS n FROM pr_items WHERE pr_id=?",
+            (pr_id,)).fetchone()["n"]
+        fully = float(left or 0) <= 0
+        conn.execute("UPDATE pr_requests SET stock_outcome=? WHERE id=?",
+                     ("met_from_stock" if fully else "partial", pr_id))
+        if fully:
+            # 'closed' is an existing terminal status, deliberately reused rather
+            # than inventing a new one: every list, report and filter in the
+            # module already understands it, and a new status word would have to
+            # be taught to all of them at once.
+            conn.execute(
+                "UPDATE pr_requests SET status='closed', closed_at=?, current_seq=0 "
+                "WHERE id=?", (_now(), pr_id))
+            conn.execute(
+                "UPDATE pr_steps SET status='skipped' WHERE pr_id=? AND status='pending'",
+                (pr_id,))
+        audit(conn, pr_id, (user or {}).get("username"),
+              "issued_from_stock" if not fully else "met_from_stock",
+              " | ".join(done)[:2000], ip)
+        notify_users(
+            conn, [pr["requester"]], "info",
+            ("%s met from stock" if fully else "%s partly met from stock")
+            % (pr["pr_no"] or "Your request"),
+            (" | ".join(done)[:400]) + ("" if fully else
+             " — the rest continues to Purchasing."),
+            link="/procurement/pr/%d" % pr_id)
+        conn.commit()
+        return True, "met_from_stock" if fully else "partly_issued"
+    finally:
+        conn.close()

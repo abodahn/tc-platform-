@@ -4023,5 +4023,10 @@
   "proc.wh_dlg": "Stock on hand",
   "proc.wh_dlg_ph": "Search the stores…",
   "proc.wh_dlg_hint": "Free = on hand minus what is already promised to another order. Clicking a row copies the free figure into the line.",
-  "proc.wh_dlg_none": "Nothing in the stores matches that."
+  "proc.wh_dlg_none": "Nothing in the stores matches that.",
+  "proc.wh_issue": "Issue from stock",
+  "proc.wh_issue_btn": "Issue from stock",
+  "proc.stock_met": "Met from stock",
+  "proc.stock_partial": "Partly met from stock",
+  "proc.issued_qty": "issued from stock"
 }

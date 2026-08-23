@@ -206,6 +206,132 @@ def run():
     chk("with where to find it", hit and "A-12" in (hit["where"] or ""),
         hit and hit["where"])
 
+    # ---- 6. issuing off the shelf, which really moves stock ---------------
+    print("\nthe store hands it over instead of buying it")
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        conn = get_db()
+        conn.execute(
+            "INSERT OR IGNORE INTO mnt_spare_parts (code, name, uom, stock_qty, "
+            "reserved_qty, warehouse, is_active) VALUES "
+            "('SP-ISS-1','Needle plate','Pcs',20,5,'Main',1)")
+        conn.commit()
+        conn.close()
+        pid3, _ = svc.create_pr(
+            {"title": "Plates", "department": "IT", "currency": "EGP"},
+            [{"item": "Needle plate", "unit": "Pcs", "qty": 6, "unit_price": 0}],
+            {"username": "wr_req", "id": 77}, priced=False)
+        conn = get_db()
+        line3 = conn.execute("SELECT id FROM pr_items WHERE pr_id=?",
+                             (pid3,)).fetchone()["id"]
+        before = conn.execute(
+            "SELECT stock_qty FROM mnt_spare_parts WHERE code='SP-ISS-1'"
+        ).fetchone()["stock_qty"]
+        conn.close()
+
+    # PARTIAL: 4 of the 6 come off the shelf, 2 still have to be bought.
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        ok4, msg4 = svc.issue_from_stock(
+            pid3, {line3: {"code": "SP-ISS-1", "qty": 4}}, signer["warehouse"])
+        conn = get_db()
+        ln = dict(conn.execute(
+            "SELECT qty, issued_qty, issued_from FROM pr_items WHERE id=?",
+            (line3,)).fetchone())
+        pr3 = dict(conn.execute(
+            "SELECT status, stock_outcome FROM pr_requests WHERE id=?",
+            (pid3,)).fetchone())
+        after = conn.execute(
+            "SELECT stock_qty FROM mnt_spare_parts WHERE code='SP-ISS-1'"
+        ).fetchone()["stock_qty"]
+        mv = [dict(r) for r in conn.execute(
+            "SELECT type, qty, before_qty, after_qty FROM mnt_stock_movements "
+            "WHERE request_id=? ORDER BY id DESC LIMIT 1", (pid3,)).fetchall()]
+        conn.close()
+    chk("a partial issue is accepted", ok4 and msg4 == "partly_issued", msg4)
+    chk("THE SHELF REALLY MOVED, 20 -> 16", float(after) == 16.0,
+        "%s -> %s" % (before, after))
+    chk("with a movement recorded against the request",
+        mv and mv[0]["type"] == "issue" and float(mv[0]["qty"]) == -4.0, mv[:1])
+    chk("the line now asks only for what must be BOUGHT (6 - 4 = 2)",
+        float(ln["qty"]) == 2.0, ln["qty"])
+    chk("and separately records what was issued, so the drop is explained",
+        float(ln["issued_qty"]) == 4.0 and ln["issued_from"] == "SP-ISS-1", ln)
+    chk("the request keeps circulating for the shortfall",
+        pr3["status"] == "pending", pr3["status"])
+    chk("marked as partly met from stock", pr3["stock_outcome"] == "partial",
+        pr3["stock_outcome"])
+
+    # FULLY: the remaining 2 come off the shelf and the request is finished.
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        ok5, msg5 = svc.issue_from_stock(
+            pid3, {line3: {"code": "SP-ISS-1", "qty": 2}}, signer["warehouse"])
+        conn = get_db()
+        pr3b = dict(conn.execute(
+            "SELECT status, stock_outcome FROM pr_requests WHERE id=?",
+            (pid3,)).fetchone())
+        pend = conn.execute(
+            "SELECT COUNT(*) n FROM pr_steps WHERE pr_id=? AND status='pending'",
+            (pid3,)).fetchone()["n"]
+        note = [dict(x) for x in conn.execute(
+            "SELECT target_user, title FROM notifications "
+            "WHERE title LIKE '%stock%'").fetchall()]
+        conn.close()
+    chk("covering the rest closes it", ok5 and msg5 == "met_from_stock", msg5)
+    chk("the request is CLOSED, not left waiting for a buyer",
+        pr3b["status"] == "closed", pr3b["status"])
+    chk("recorded as met from stock", pr3b["stock_outcome"] == "met_from_stock",
+        pr3b["stock_outcome"])
+    chk("no rung is left pending for somebody to sign", pend == 0, pend)
+    chk("and the requester was told",
+        any(n["target_user"] == "wr_req" for n in note),
+        sorted(x for x in {n["target_user"] for n in note} if x))
+
+    # NOTHING moves that the storekeeper did not explicitly pick.
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        pid4, _ = svc.create_pr(
+            {"title": "Untouched", "department": "IT", "currency": "EGP"},
+            [{"item": "Needle plate", "unit": "Pcs", "qty": 3, "unit_price": 0}],
+            {"username": "wr_req", "id": 77}, priced=False)
+        conn = get_db()
+        s_before = conn.execute(
+            "SELECT stock_qty FROM mnt_spare_parts WHERE code='SP-ISS-1'"
+        ).fetchone()["stock_qty"]
+        conn.close()
+        ok6, msg6 = svc.issue_from_stock(pid4, {}, signer["warehouse"])
+        conn = get_db()
+        s_after = conn.execute(
+            "SELECT stock_qty FROM mnt_spare_parts WHERE code='SP-ISS-1'"
+        ).fetchone()["stock_qty"]
+        conn.close()
+    chk("issuing with nothing picked moves nothing at all",
+        ok6 and msg6 == "nothing_issued" and float(s_before) == float(s_after),
+        "%s | %s -> %s" % (msg6, s_before, s_after))
+
+    # And the shelf cannot be taken below what is genuinely free.
+    with app.app_context():
+        from app.db import get_db
+        from app.approvals import services as svc
+        conn = get_db()
+        line4 = conn.execute("SELECT id FROM pr_items WHERE pr_id=?",
+                             (pid4,)).fetchone()["id"]
+        conn.execute("UPDATE pr_items SET qty=999 WHERE id=?", (line4,))
+        conn.commit()
+        free_before = conn.execute(
+            "SELECT stock_qty - COALESCE(reserved_qty,0) AS f FROM mnt_spare_parts "
+            "WHERE code='SP-ISS-1'").fetchone()["f"]
+        conn.close()
+        ok7, msg7 = svc.issue_from_stock(
+            pid4, {line4: {"code": "SP-ISS-1", "qty": float(free_before) + 1}},
+            signer["warehouse"])
+    chk("issuing more than is FREE is refused (reserved stock is not available)",
+        not ok7 and msg7 == "not_enough_free_stock", msg7)
     print("\n" + ("RESULT: ALL GREEN" if ok_all[0] else "RESULT: FAILURES ABOVE"))
     return ok_all[0]
 

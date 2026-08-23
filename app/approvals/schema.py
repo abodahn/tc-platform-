@@ -334,6 +334,11 @@ _PR_MIGRATIONS = [
     # (the machine, the line); this records which register it came from, so a
     # report can group by it without parsing the text back apart.
     ("request_for_kind", "ALTER TABLE pr_requests ADD COLUMN request_for_kind TEXT"),
+    # How much of this request the STORE met off the shelf. NULL on every request
+    # raised before the warehouse could issue from stock, which is what they were.
+    #   met_from_stock — every line covered; nothing was bought
+    #   partial        — some issued, the rest continued to Purchasing
+    ("stock_outcome", "ALTER TABLE pr_requests ADD COLUMN stock_outcome TEXT"),
     ("tax_rate", "ALTER TABLE pr_requests ADD COLUMN tax_rate REAL DEFAULT 0"),
     ("received_at", "ALTER TABLE pr_requests ADD COLUMN received_at TEXT"),
     ("received_by", "ALTER TABLE pr_requests ADD COLUMN received_by TEXT"),
@@ -609,6 +614,11 @@ _MONEY_MIGRATIONS = [
 # Columns added to pr_items after first release (line-level receiving).
 _ITEM_MIGRATIONS = [
     ("received_qty", "ALTER TABLE pr_items ADD COLUMN received_qty REAL DEFAULT 0"),
+    # How much of this line the store handed over off the shelf, and from which
+    # stock row. Kept SEPARATE from qty: qty falls to what still has to be bought,
+    # and without this the drop would look like the requester changed their mind.
+    ("issued_qty", "ALTER TABLE pr_items ADD COLUMN issued_qty REAL DEFAULT 0"),
+    ("issued_from", "ALTER TABLE pr_items ADD COLUMN issued_from TEXT"),
     # Cross-module mesh: a PR line may reference a real maintenance spare part
     # (mnt_spare_parts.id). Picking one auto-fills live stock on the form, and
     # the goods receipt posts the received quantity straight into that spare's

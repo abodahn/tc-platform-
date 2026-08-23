@@ -4023,5 +4023,10 @@
   "proc.wh_dlg": "Eldeki stok",
   "proc.wh_dlg_ph": "Depolarda ara…",
   "proc.wh_dlg_hint": "Serbest = eldeki miktar eksi başka bir siparişe söz verilmiş olan. Bir satıra tıklamak serbest miktarı satıra kopyalar.",
-  "proc.wh_dlg_none": "Depolarda bununla eşleşen bir şey yok."
+  "proc.wh_dlg_none": "Depolarda bununla eşleşen bir şey yok.",
+  "proc.wh_issue": "Stoktan çıkış",
+  "proc.wh_issue_btn": "Stoktan çıkış yap",
+  "proc.stock_met": "Stoktan karşılandı",
+  "proc.stock_partial": "Kısmen stoktan karşılandı",
+  "proc.issued_qty": "stoktan verildi"
 }

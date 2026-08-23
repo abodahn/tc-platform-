@@ -230,6 +230,7 @@
           <th>#</th><th data-i18n="proc.item">Item</th>
           <th data-i18n="proc.wh_qty">Quantity requested</th>
           <th data-i18n="proc.wh_onhand">On hand</th>
+          <th data-i18n="proc.wh_issue">Issue from stock</th>
           <th></th>
         </tr></thead>
         <tbody>
@@ -247,11 +248,27 @@
             <td><input type="number" name="whstock_{{ it.id }}" min="0" step="any"
                        value="{{ it.current_stock or 0 }}" style="max-width:120px"
                        id="whstock_{{ it.id }}"></td>
+            {#- Issuing off the shelf. Deliberately EXPLICIT: a line moves stock
+                only when the storekeeper has picked a stock row AND typed a
+                quantity. Nothing is inferred from the item text, and a line left
+                blank is untouched. -#}
+            <td>
+              <div class="flex gap wrap" style="gap:6px;align-items:center">
+                <input name="issueqty_{{ it.id }}" type="number" min="0" step="any"
+                       placeholder="0" style="max-width:90px"
+                       id="issueqty_{{ it.id }}">
+                <input name="issuecode_{{ it.id }}" readonly class="li-locked"
+                       placeholder="—" style="max-width:150px"
+                       id="issuecode_{{ it.id }}" tabindex="-1">
+              </div>
+            </td>
             <td>
               {#- The store should not have to leave this page, open the stores
                   module, search, remember a number and come back. -#}
               <button type="button" class="btn btn-ghost btn-sm js-wh-search"
                       data-target="whstock_{{ it.id }}"
+                      data-code="issuecode_{{ it.id }}"
+                      data-qty="issueqty_{{ it.id }}"
                       data-item="{{ it.item }}"
                       data-i18n="proc.wh_search">🔎 Search on WH</button>
             </td>
@@ -262,6 +279,11 @@
       </div>
       <div class="mt-3">
         <button class="btn btn-primary" type="submit" data-i18n="proc.wh_save">Save quantities</button>
+        {#- A SEPARATE submit, because issuing moves physical stock and saving a
+            quantity does not. One button doing both would mean a storekeeper
+            correcting a number could empty a shelf by accident. -#}
+        <button class="btn btn-ghost" type="submit" data-i18n="proc.wh_issue_btn"
+                formaction="{{ url_for('approvals.issue_from_stock', pr_id=pr.id) }}">📦 Issue from stock</button>
         <span class="muted" style="font-size:12px" data-i18n="proc.wh_save_hint">The requester is told what changed. You still sign the stage below.</span>
       </div>
     </form>
@@ -317,7 +339,9 @@
       return;
     }
     body.innerHTML = '<table class="tbl"><tbody>' + rows.map(function (r) {
-      return '<tr class="js-wh-row" data-free="' + r.free + '" style="cursor:pointer">'
+      return '<tr class="js-wh-row" data-free="' + r.free + '"'
+        + ' data-code="' + esc(r.value) + '" data-want="' + (window.__whWant || 0) + '"'
+        + ' style="cursor:pointer">'
         + '<td><b>' + esc(r.label) + '</b><div class="muted" style="font-size:12px">'
         + esc(r.source) + (r.where ? ' · ' + esc(r.where) : '') + '</div></td>'
         + '<td style="text-align:right;font-variant-numeric:tabular-nums">'
@@ -338,11 +362,17 @@
       .catch(function (e) { if (!e || e.name !== 'AbortError') body.innerHTML = ''; });
   }
 
+  var codeBox = null, qtyBox = null;
   function openDlg(btn) {
     target = document.getElementById(btn.dataset.target);
+    codeBox = btn.dataset.code ? document.getElementById(btn.dataset.code) : null;
+    qtyBox = btn.dataset.qty ? document.getElementById(btn.dataset.qty) : null;
     // Seed the search with the line's own words: the store is looking for THIS
     // item, and making them retype it is the friction this box exists to remove.
     q.value = btn.dataset.item || '';
+    // what this line still asks for, so the suggested issue never exceeds it
+    var qtyIn = btn.closest('tr') && btn.closest('tr').querySelector('[name^="whqty_"]');
+    window.__whWant = qtyIn ? (parseFloat(qtyIn.value) || 0) : 0;
     dlg.style.display = '';
     search();
     q.focus();
@@ -358,6 +388,15 @@
     if (row && target) {
       target.value = row.dataset.free;
       target.dispatchEvent(new Event('input', { bubbles: true }));
+      // Picking a row also names WHICH stock it would be issued from, and
+      // suggests a quantity — never more than the line asked for, never more
+      // than is free. The storekeeper still has to press Issue.
+      if (codeBox) codeBox.value = row.dataset.code || '';
+      if (qtyBox && !qtyBox.value) {
+        var free = parseFloat(row.dataset.free) || 0;
+        var want = parseFloat(row.dataset.want) || 0;
+        qtyBox.value = want > 0 ? Math.min(free, want) : free;
+      }
       closeDlg();
     }
   });

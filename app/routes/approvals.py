@@ -560,6 +560,50 @@ def item_request_reject(req_id):
     return redirect(url_for("approvals.item_requests"))
 
 
+@bp.route("/pr/<int:pr_id>/issue-stock", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def issue_from_stock(pr_id):
+    """The store hands part of a request over off the shelf instead of buying it.
+
+    Nothing moves that the storekeeper did not pick: a line only issues when they
+    chose a stock code AND a quantity for it.
+    """
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    f = request.form
+    issues = {}
+    for it in bundle["items"]:
+        code = (f.get("issuecode_%s" % it["id"]) or "").strip()
+        qty = (f.get("issueqty_%s" % it["id"]) or "").strip()
+        if code and qty:
+            issues[it["id"]] = {"code": code, "qty": qty}
+    ok, msg = svc.issue_from_stock(pr_id, issues, _u(), ip=_ip())
+    flash({"met_from_stock": "Issued from stock. The whole request was met off the "
+                             "shelf, so it is closed and nothing will be bought.",
+           "partly_issued": "Issued from stock. The request continues for what is "
+                            "left to buy.",
+           "nothing_issued": "Nothing was issued — pick a stock item and a quantity "
+                             "on a line first.",
+           "not_enough_free_stock": "That is more than the free stock on that item "
+                                    "(free = on hand minus what another order is "
+                                    "already promised).",
+           "not_a_spare": "Only the spare store can be issued from here. Materials "
+                          "are issued against a production order, not a purchase "
+                          "request.",
+           "already_priced": "This request already carries prices — issuing now "
+                             "would move a total people have signed.",
+           "not_warehouse_rung": "The request is not on the warehouse stage.",
+           "not_eligible": "You are not one of the people who signs the warehouse "
+                           "stage on this request.",
+           "stock_would_go_negative": "That would take the shelf below zero.",
+           "not_pending": "This request is not circulating.",
+           "not_found": "That request no longer exists."}.get(msg, msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
 @bp.route("/pr/<int:pr_id>/warehouse", methods=["POST"])
 @login_required
 @permission_required("proc_approve")
