@@ -32,19 +32,19 @@ next is not worth translating carefully.
 # that choice honest.
 MESSAGES = {
     "A justification is required to waive competitive quotes.": {
-        "ar": "يلزم تسجيل مبرّر للاستغناء عن عروض الأسعار التنافسية.",
-        "tr": "Rekabetçi tekliflerden vazgeçmek için bir gerekçe girilmesi zorunludur.",
+        "ar": "يجب كتابة مبرّر للاستغناء عن عروض الأسعار التنافسية.",
+        "tr": "Rekabetçi tekliflerden vazgeçmek için gerekçe yazmanız gerekir.",
     },
     "A rejected quantity needs a reason.": {
-        "ar": "الكمية المرفوضة تحتاج إلى تسجيل سبب الرفض.",
-        "tr": "Reddedilen miktar için bir gerekçe girilmelidir.",
+        "ar": "اكتب سبب رفض هذه الكمية.",
+        "tr": "Reddedilen miktarın gerekçesini yazın.",
     },
     "Above 10,000,000 EGP the DOAM requires a written business case alongside Board approval. Record it before signing.": {
-        "ar": "فوق 10,000,000 EGP يشترط الـ DOAM إرفاق دراسة جدوى مكتوبة إلى جانب موافقة مجلس الإدارة. سجّلها قبل التوقيع.",
-        "tr": "10.000.000 EGP üzerinde DOAM, Yönetim Kurulu onayının yanı sıra yazılı bir iş gerekçesi ister. İmzalamadan önce kaydedin.",
+        "ar": "فوق 10,000,000 EGP يطلب الـ DOAM دراسة جدوى مكتوبة مع موافقة مجلس الإدارة. سجّلها قبل التوقيع.",
+        "tr": "10.000.000 EGP üzerinde DOAM hem Yönetim Kurulu onayı hem de yazılı iş gerekçesi ister. İmzalamadan önce kaydedin.",
     },
     "Added. %d request line(s) now point at it.": {
-        "ar": "تمت الإضافة. %d من بنود الطلب أصبحت مرتبطة به الآن.",
+        "ar": "تمت الإضافة. %d من بنود الطلب مرتبطة به الآن.",
         "tr": "Eklendi. %d talep satırı artık buna bağlı.",
     },
     "Advance authorised.": {
@@ -52,32 +52,32 @@ MESSAGES = {
         "tr": "Avans onaylandı.",
     },
     "An advance above 25% on an order over 500,000 EGP needs a bank guarantee reference.": {
-        "ar": "الدفعة المقدمة التي تتجاوز 25% في أمر شراء تزيد قيمته عن 500,000 EGP تتطلب رقم خطاب ضمان بنكي.",
-        "tr": "500.000 EGP üzerindeki bir siparişte %25'i aşan avans için banka teminat mektubu referansı gerekir.",
+        "ar": "الدفعة المقدمة فوق 25% في أمر شراء أكبر من 500,000 EGP تحتاج رقم خطاب ضمان بنكي.",
+        "tr": "500.000 EGP üzerindeki bir siparişte %25'ten fazla avans için banka teminat mektubu referansı gerekir.",
     },
     "An advance of this size needs a higher authority: up to 25% the Financial Director, above that the CFO or the Managing Director.": {
-        "ar": "دفعة مقدمة بهذا الحجم تحتاج صلاحية أعلى: حتى 25% المدير المالي، وما فوق ذلك الـ CFO أو العضو المنتدب.",
-        "tr": "Bu büyüklükteki bir avans daha üst bir yetki gerektirir: %25'e kadar Mali Direktör, üzerinde CFO veya Murahhas Aza.",
+        "ar": "دفعة مقدمة بهذا الحجم تحتاج صلاحية أعلى. حتى 25%: المدير المالي. أكثر من ذلك: الـ CFO أو العضو المنتدب.",
+        "tr": "Bu büyüklükteki avans daha üst bir yetki ister. %25'e kadar: Mali Direktör. Üzerinde: CFO veya Murahhas Aza.",
     },
     "An item needs a name.": {
         "ar": "الصنف يحتاج إلى اسم.",
         "tr": "Malzemenin bir adı olmalıdır.",
     },
     "An item needs the code the ERP issued for it.": {
-        "ar": "الصنف يحتاج إلى الكود الصادر له من نظام الـ ERP.",
-        "tr": "Malzeme için ERP tarafından verilen kod girilmelidir.",
+        "ar": "الصنف يحتاج كود الـ ERP الخاص به.",
+        "tr": "Malzemenin ERP kodunu girin.",
     },
     "Another item already carries that code.": {
         "ar": "هذا الكود مستخدم بالفعل لصنف آخر.",
         "tr": "Bu kod başka bir malzemede kullanılıyor.",
     },
     "Approved & signed. Waiting on the co-approver at this stage.": {
-        "ar": "تمت الموافقة والتوقيع. في انتظار المعتمد المشارك في هذه المرحلة.",
+        "ar": "تمت الموافقة والتوقيع. في انتظار المعتمد الآخر في هذه المرحلة.",
         "tr": "Onaylandı ve imzalandı. Bu aşamadaki ikinci onaycı bekleniyor.",
     },
     "Approved — routed to the next approver.": {
-        "ar": "تمت الموافقة — أُحيل الطلب إلى المعتمد التالي.",
-        "tr": "Onaylandı — bir sonraki onaycıya iletildi.",
+        "ar": "تمت الموافقة. أُرسل الطلب إلى المعتمد التالي.",
+        "tr": "Onaylandı. Sıradaki onaycıya gönderildi.",
     },
     "Back in the queue.": {
         "ar": "أُعيد إلى قائمة الانتظار.",
@@ -116,8 +116,8 @@ MESSAGES = {
         "tr": "Bir departman seçin veya adını yazın.",
     },
     "Competitive quotes required — attach at least 2 vendor quotes for this order value, or record a single-source justification in the Vendor quotes panel.": {
-        "ar": "عروض الأسعار التنافسية مطلوبة — أرفق عرضَي سعر على الأقل من مورّدين لهذه القيمة، أو سجّل مبرّر التوريد من مصدر واحد في لوحة «عروض أسعار المورّدين».",
-        "tr": "Rekabetçi teklif zorunlu — bu sipariş tutarı için en az 2 tedarikçi teklifi ekleyin ya da «Tedarikçi teklifleri» panelinde tek kaynak gerekçesini kaydedin.",
+        "ar": "هذه القيمة تحتاج عرضَي سعر تنافسيين على الأقل من مورّدين. أرفقهما، أو سجّل مبرّر التوريد من مصدر واحد في لوحة «عروض أسعار المورّدين».",
+        "tr": "Bu tutar için en az 2 rekabetçi tedarikçi teklifi gerekir. Teklifleri ekleyin ya da «Tedarikçi teklifleri» panelinde tek kaynak gerekçesini kaydedin.",
     },
     "Could not add delegation (": {
         "ar": "تعذّر إضافة التفويض (",
@@ -228,7 +228,7 @@ MESSAGES = {
         "tr": "Teslimat tamamen onaylandı.",
     },
     "Department and amount are required.": {
-        "ar": "الإدارة والمبلغ حقلان مطلوبان.",
+        "ar": "الإدارة والمبلغ مطلوبان.",
         "tr": "Departman ve tutar zorunludur.",
     },
     "Draft saved.": {
@@ -236,8 +236,8 @@ MESSAGES = {
         "tr": "Taslak kaydedildi.",
     },
     "Email logged (set the SMTP env vars to actually send).": {
-        "ar": "تم تسجيل رسالة البريد الإلكتروني (اضبط متغيّرات بيئة SMTP كي تُرسل فعليًا).",
-        "tr": "E-posta kaydedildi (gerçekten gönderilmesi için SMTP ortam değişkenlerini ayarlayın).",
+        "ar": "تم تسجيل البريد الإلكتروني (اضبط متغيّرات بيئة SMTP ليُرسل فعليًا).",
+        "tr": "E-posta kaydedildi (gerçekten göndermek için SMTP ortam değişkenlerini ayarlayın).",
     },
     "Engineering justification": {
         "ar": "المبرر الهندسي",
@@ -248,48 +248,48 @@ MESSAGES = {
         "tr": "Sıfırdan büyük geçerli bir FX kuru girin.",
     },
     "Enter an accepted or a rejected quantity on at least one line.": {
-        "ar": "أدخل كمية مقبولة أو كمية مرفوضة في سطر واحد على الأقل.",
-        "tr": "En az bir satıra kabul edilen veya reddedilen bir miktar girin.",
+        "ar": "أدخل كمية مقبولة أو مرفوضة في سطر واحد على الأقل.",
+        "tr": "En az bir satıra kabul veya ret miktarı girin.",
     },
     "Enter the advance as a percentage of the PO value (1–100).": {
         "ar": "أدخل الدفعة المقدّمة كنسبة مئوية من قيمة أمر الشراء PO (1–100).",
         "tr": "Avansı, PO değerinin yüzdesi olarak girin (1–100).",
     },
     "Enter the pricing before approving the Purchasing stage — the request has no commercial value yet.": {
-        "ar": "أدخل التسعير قبل اعتماد مرحلة المشتريات — فالطلب ليست له قيمة مالية حتى الآن.",
-        "tr": "Satın alma aşamasını onaylamadan önce fiyatlandırmayı girin — talebin henüz ticari bir değeri yok.",
+        "ar": "أدخل التسعير قبل اعتماد مرحلة المشتريات. الطلب بلا قيمة مالية حتى الآن.",
+        "tr": "Satın alma aşamasını onaylamadan önce fiyatlandırmayı girin. Talebin henüz ticari değeri yok.",
     },
     "Enter the reason for the revision — it is kept in the PO history.": {
-        "ar": "أدخل سبب التعديل — فهو يُحفظ في سجل أمر الشراء PO.",
-        "tr": "Revizyon gerekçesini girin — PO geçmişinde saklanır.",
+        "ar": "أدخل سبب التعديل. سيُحفظ في سجل أمر الشراء PO.",
+        "tr": "Revizyon gerekçesini girin. PO geçmişine kaydedilir.",
     },
     "Escalation chain saved (": {
         "ar": "تم حفظ مسار التصعيد (",
         "tr": "Eskalasyon zinciri kaydedildi (",
     },
     "FX rate saved — approval thresholds now route on the EGP equivalent.": {
-        "ar": "تم حفظ سعر الصرف FX — أصبحت حدود الموافقة تُحتسب على أساس المقابل بالـ EGP.",
-        "tr": "FX kuru kaydedildi — onay limitleri artık EGP karşılığı üzerinden yönlendiriliyor.",
+        "ar": "تم حفظ سعر الصرف FX. حدود الموافقة تُحسب الآن على المقابل بالـ EGP.",
+        "tr": "FX kuru kaydedildi. Onay limitleri artık EGP karşılığı üzerinden hesaplanıyor.",
     },
     "File too large (max 3 MB).": {
         "ar": "حجم الملف كبير جدًا (الحد الأقصى 3 ميجابايت).",
         "tr": "Dosya çok büyük (en fazla 3 MB).",
     },
     "Final approval complete. Purchase Order drafted.": {
-        "ar": "اكتملت الموافقة النهائية. وتم إنشاء مسودة أمر الشراء.",
+        "ar": "اكتملت الموافقة النهائية. تم إنشاء مسودة أمر الشراء.",
         "tr": "Nihai onay tamamlandı. Satın alma emri taslağı oluşturuldu.",
     },
     "Foreign-currency request: enter the EGP exchange rate before pricing, so the value approvals route on the true EGP equivalent.": {
-        "ar": "طلب بعملة أجنبية: أدخل سعر الصرف مقابل الـ EGP قبل التسعير، حتى تسير موافقات القيمة على المقابل الحقيقي بالـ EGP.",
-        "tr": "Yabancı para birimli talep: fiyatlandırmadan önce EGP kurunu girin; böylece tutar onayları gerçek EGP karşılığı üzerinden yönlendirilir.",
+        "ar": "الطلب بعملة أجنبية. أدخل سعر الصرف مقابل الـ EGP قبل التسعير. عندها تسير الموافقات على القيمة الحقيقية بالـ EGP.",
+        "tr": "Talep yabancı para birimli. Fiyatlandırmadan önce EGP kurunu girin. Böylece onaylar gerçek EGP karşılığı üzerinden ilerler.",
     },
     "Give a reason so the requester knows what to do next.": {
-        "ar": "اذكر السبب حتى يعرف مُقدّم الطلب ما الذي يفعله بعد ذلك.",
-        "tr": "Talebi açan kişinin bundan sonra ne yapacağını bilmesi için bir gerekçe yazın.",
+        "ar": "اذكر السبب حتى يعرف مُقدّم الطلب ما يفعله بعد ذلك.",
+        "tr": "Bir gerekçe yazın. Talebi açan kişi ne yapacağını bilsin.",
     },
     "Goods were already received against this order — close it instead of cancelling.": {
-        "ar": "سبق استلام أصناف على هذا الأمر — أغلقه بدلًا من إلغائه.",
-        "tr": "Bu emir üzerinden mal girişi yapılmış — iptal etmek yerine emri kapatın.",
+        "ar": "تم استلام أصناف على هذا الأمر. أغلقه بدلًا من إلغائه.",
+        "tr": "Bu emirde mal girişi yapılmış. İptal etmek yerine emri kapatın.",
     },
     "Import failed part-way (": {
         "ar": "توقّف الاستيراد في منتصفه (",
@@ -300,7 +300,7 @@ MESSAGES = {
         "tr": "Fatura dosyası çok büyük (en fazla 3 MB).",
     },
     "Invoice number and amount are required.": {
-        "ar": "رقم الفاتورة والمبلغ حقلان مطلوبان.",
+        "ar": "رقم الفاتورة والمبلغ مطلوبان.",
         "tr": "Fatura numarası ve tutar zorunludur.",
     },
     "Invoice recorded and matched.": {
@@ -308,12 +308,12 @@ MESSAGES = {
         "tr": "Fatura kaydedildi ve eşleştirildi.",
     },
     "Issued from stock. The request continues for what is left to buy.": {
-        "ar": "تم الصرف من المخزن. ويستمر الطلب للكمية المتبقّية للشراء.",
+        "ar": "تم الصرف من المخزن. الطلب مستمر للكمية المتبقّية للشراء.",
         "tr": "Stoktan çıkış yapıldı. Talep, satın alınacak kalan miktar için devam ediyor.",
     },
     "Issued from stock. The whole request was met off the shelf, so it is closed and nothing will be bought.": {
-        "ar": "تم الصرف من المخزن. تمت تلبية الطلب بالكامل من الرصيد المتاح، لذلك أُغلق الطلب ولن يتم شراء أي شيء.",
-        "tr": "Stoktan çıkış yapıldı. Talebin tamamı eldeki stoktan karşılandı; bu nedenle talep kapatıldı ve satın alma yapılmayacak.",
+        "ar": "تم الصرف من المخزن. الرصيد غطّى الطلب بالكامل. أُغلق الطلب ولن يتم شراء أي شيء.",
+        "tr": "Stoktan çıkış yapıldı. Talebin tamamı stoktan karşılandı. Talep kapatıldı, satın alma yapılmayacak.",
     },
     "Item %s added.": {
         "ar": "تمت إضافة الصنف %s.",
@@ -328,8 +328,8 @@ MESSAGES = {
         "tr": "Gerekçe notu kaydedildi.",
     },
     "Linked. %d request line(s) now point at it.": {
-        "ar": "تم الربط. أصبح %d من بنود الطلب مرتبطًا به الآن.",
-        "tr": "Bağlandı. Talebin %d satırı artık buna işaret ediyor.",
+        "ar": "تم الربط. أصبح %d من بنود الطلب مرتبطًا به.",
+        "tr": "Bağlandı. Talebin %d satırı artık buna bağlı.",
     },
     "No active approval step.": {
         "ar": "لا توجد خطوة موافقة نشطة.",
@@ -337,11 +337,11 @@ MESSAGES = {
     },
     "No catalogue item holds that code.": {
         "ar": "لا يوجد صنف في الكتالوج بهذا الكود.",
-        "tr": "Bu kodu taşıyan bir katalog kalemi yok.",
+        "tr": "Bu koda sahip bir katalog kalemi yok.",
     },
     "No email on file for this vendor — add one in Vendors.": {
-        "ar": "لا يوجد بريد إلكتروني مسجَّل لهذا المورّد — أضِف بريدًا من شاشة «الموردين».",
-        "tr": "Bu tedarikçi için kayıtlı e-posta yok — «Tedarikçiler» ekranından bir e-posta ekleyin.",
+        "ar": "لا يوجد بريد إلكتروني لهذا المورّد. أضِف بريدًا من شاشة «الموردين».",
+        "tr": "Bu tedarikçinin kayıtlı e-postası yok. «Tedarikçiler» ekranından bir e-posta ekleyin.",
     },
     "No file selected.": {
         "ar": "لم يتم اختيار ملف.",
@@ -372,28 +372,28 @@ MESSAGES = {
         "tr": "Bu satırda hiçbir stok çıkışı yapılmadı.",
     },
     "Nothing was issued — pick a stock item and a quantity on a line first.": {
-        "ar": "لم يتم صرف أي شيء — اختر أولًا صنفًا من المخزن وكمية على أحد البنود.",
-        "tr": "Hiçbir stok çıkışı yapılmadı — önce bir satırda stok kalemi ve miktar seçin.",
+        "ar": "لم يتم صرف أي شيء. اختر أولًا صنفًا من المخزن وكمية في أحد البنود.",
+        "tr": "Stok çıkışı yapılmadı. Önce bir satırda stok kalemi ve miktar seçin.",
     },
     "Only an issued (or partially received) Purchase Order can be revised.": {
         "ar": "لا يمكن تعديل أمر الشراء إلا إذا كان صادرًا (أو مستلمًا جزئيًا).",
         "tr": "Yalnızca gönderilmiş (veya kısmen teslim alınmış) bir satın alma emri revize edilebilir.",
     },
     "Only draft or rejected requests can be edited.": {
-        "ar": "لا يمكن تعديل سوى الطلبات التي في حالة مسودة أو مرفوضة.",
+        "ar": "لا يمكن تعديل سوى الطلبات في حالة مسودة أو مرفوضة.",
         "tr": "Yalnızca taslak veya reddedilmiş talepler düzenlenebilir.",
     },
     "Only the requester (or Purchasing/an admin) can cancel this request.": {
-        "ar": "لا يستطيع إلغاء هذا الطلب سوى مُقدِّم الطلب (أو المشتريات/مسؤول النظام).",
-        "tr": "Bu talebi yalnızca talebi açan kişi (ya da Satın Alma/bir yönetici) iptal edebilir.",
+        "ar": "لا يستطيع إلغاء هذا الطلب إلا مُقدِّم الطلب أو المشتريات أو مسؤول النظام.",
+        "tr": "Bu talebi yalnızca talebi açan kişi, Satın Alma veya bir yönetici iptal edebilir.",
     },
     "Only the spare store can be issued from here. Materials are issued against a production order, not a purchase request.": {
-        "ar": "لا يمكن الصرف من هنا إلا من مخزن قطع الغيار. أما الخامات فتُصرف على أمر إنتاج، وليس على طلب شراء.",
-        "tr": "Buradan yalnızca yedek parça deposundan çıkış yapılabilir. Malzemeler satın alma talebine karşılık değil, üretim emrine karşılık çıkılır.",
+        "ar": "الصرف من هنا يكون من مخزن قطع الغيار فقط. الخامات تُصرف على أمر إنتاج، وليس على طلب شراء.",
+        "tr": "Buradan yalnızca yedek parça deposundan çıkış yapılabilir. Malzeme çıkışı satın alma talebiyle değil, üretim emriyle yapılır.",
     },
     "Only the warehouse rung or a procurement admin can reverse an issue.": {
-        "ar": "لا يمكن عكس عملية الصرف إلا من مستوى المخزن أو من مسؤول المشتريات.",
-        "tr": "Bir stok çıkışını yalnızca depo kademesi veya bir satın alma yöneticisi geri alabilir.",
+        "ar": "لا يمكن التراجع عن الصرف إلا من مستوى المخزن أو مسؤول المشتريات.",
+        "tr": "Stok çıkışını yalnızca depo kademesi veya satın alma yöneticisi geri alabilir.",
     },
     "Over-delivery accepted as a free issue (stock unchanged).": {
         "ar": "تم قبول الكمية الزائدة كتوريد مجاني (الرصيد دون تغيير).",
@@ -404,8 +404,8 @@ MESSAGES = {
         "tr": "Fazla teslimat tedarikçiye iade edilmek üzere işaretlendi.",
     },
     "PO revision opened — the order now reads Rev": {
-        "ar": "تم فتح مراجعة لأمر الشراء PO — أصبح الأمر الآن يحمل المراجعة Rev",
-        "tr": "PO revizyonu açıldı — emir artık şu revizyonu taşıyor: Rev",
+        "ar": "تم فتح مراجعة لأمر الشراء PO. رقم المراجعة الآن Rev",
+        "tr": "PO revizyonu açıldı. Emrin revizyonu artık Rev",
     },
     "Partial receipt recorded.": {
         "ar": "تم تسجيل استلام جزئي.",
@@ -416,8 +416,8 @@ MESSAGES = {
         "tr": "Ödeme kaydedildi (",
     },
     "Pricing saved — the request now carries its commercial value and any value-based approvals have joined the ladder.": {
-        "ar": "تم حفظ التسعير — أصبح الطلب يحمل قيمته المالية، وانضمت إلى مسار الاعتماد أي موافقات مرتبطة بالقيمة.",
-        "tr": "Fiyatlandırma kaydedildi — talep artık ticari değerini taşıyor ve değere bağlı onaylar onay basamaklarına eklendi.",
+        "ar": "تم حفظ التسعير. أصبح للطلب قيمة مالية، وأُضيفت إلى مسار الاعتماد الموافقات المرتبطة بالقيمة.",
+        "tr": "Fiyatlandırma kaydedildi. Talebin artık ticari değeri var. Değere bağlı onaylar onay basamaklarına eklendi.",
     },
     "Purchase Order": {
         "ar": "أمر شراء",
@@ -432,12 +432,12 @@ MESSAGES = {
         "tr": "Satın alma talebi",
     },
     "Put back, and the request is circulating again — it had been closed because stock covered it.": {
-        "ar": "تمت الإعادة، وعاد الطلب إلى دورته من جديد — كان قد أُغلق لأن الرصيد غطّاه.",
-        "tr": "Geri alındı ve talep yeniden akışa girdi — stok karşıladığı için kapatılmıştı.",
+        "ar": "تمت الإعادة. عاد الطلب إلى دورته من جديد. كان قد أُغلق لأن الرصيد غطّاه.",
+        "tr": "Geri alındı. Talep yeniden akışa girdi. Stok karşıladığı için kapatılmıştı.",
     },
     "Put back. The stock is on the shelf again and the line asks for the full quantity.": {
-        "ar": "تمت الإعادة. عادت الكمية إلى رصيد المخزن، وأصبح البند يطلب الكمية كاملة من جديد.",
-        "tr": "Geri alındı. Stok yeniden depoda ve satır tüm miktarı talep ediyor.",
+        "ar": "تمت الإعادة. عادت الكمية إلى رصيد المخزن. البند يطلب الكمية كاملة من جديد.",
+        "tr": "Geri alındı. Stok yeniden depoda. Satır tüm miktarı istiyor.",
     },
     "Quotation attached.": {
         "ar": "تم إرفاق عرض السعر.",
@@ -464,7 +464,7 @@ MESSAGES = {
         "tr": "Kayıt kütükten çıkarıldı (saklama süresi doldu",
     },
     "Recorded. The people who typed it have been told.": {
-        "ar": "تم التسجيل، وأُبلغ من قاموا بإدخاله.",
+        "ar": "تم التسجيل. وتم إبلاغ من أدخلوه.",
         "tr": "Kaydedildi. Girişi yapan kişiler bilgilendirildi.",
     },
     "Rejected goods returned to the supplier under a debit note.": {
@@ -472,8 +472,8 @@ MESSAGES = {
         "tr": "Reddedilen mallar borç dekontu ile tedarikçiye iade edildi.",
     },
     "Renamed to “": {
-        "ar": "تمت إعادة التسمية إلى “",
-        "tr": "Şu adla değiştirildi: “",
+        "ar": "تم تغيير الاسم إلى “",
+        "tr": "Şu ada değiştirildi: “",
     },
     "Request cancelled.": {
         "ar": "تم إلغاء الطلب.",
@@ -492,8 +492,8 @@ MESSAGES = {
         "tr": "Talep reddedildi ve talep sahibine iade edildi.",
     },
     "Request rejected. The purchase-request line is untouched.": {
-        "ar": "تم رفض الطلب، ولم يطرأ أي تغيير على بند طلب الشراء.",
-        "tr": "Talep reddedildi. Satın alma talebi satırında hiçbir değişiklik yapılmadı.",
+        "ar": "تم رفض الطلب. بند طلب الشراء لم يتغيّر.",
+        "tr": "Talep reddedildi. Satın alma talebi satırı değişmedi.",
     },
     "Requests for quotation are not available on this database yet.": {
         "ar": "طلبات عروض الأسعار (RFQ) غير متاحة على قاعدة البيانات هذه بعد.",
@@ -504,7 +504,7 @@ MESSAGES = {
         "tr": "Sorumluluk matrisi şunun için kaydedildi:",
     },
     "Retired. It stays on every document that already used it.": {
-        "ar": "تم إيقافه. وسيظل ظاهرًا على كل مستند سبق أن استخدمه.",
+        "ar": "تم إيقافه. وسيبقى ظاهرًا في المستندات التي استخدمته من قبل.",
         "tr": "Kullanımdan kaldırıldı. Daha önce kullanan tüm belgelerde görünmeye devam eder.",
     },
     "Saved and submitted for approval.": {
@@ -512,47 +512,47 @@ MESSAGES = {
         "tr": "Kaydedildi ve onaya gönderildi.",
     },
     "Saved. Purchasing have been told.": {
-        "ar": "تم الحفظ، وتم إبلاغ إدارة المشتريات.",
+        "ar": "تم الحفظ. وتم إبلاغ إدارة المشتريات.",
         "tr": "Kaydedildi. Satın alma birimi bilgilendirildi.",
     },
     "Saved. The requester has been told what changed.": {
-        "ar": "تم الحفظ، وأُبلغ مُقدّم الطلب بما تم تغييره.",
+        "ar": "تم الحفظ. وتم إبلاغ مُقدّم الطلب بما تغيّر.",
         "tr": "Kaydedildi. Talep sahibine neyin değiştiği bildirildi.",
     },
     "Say why, and which code to use instead.": {
-        "ar": "اذكر السبب، والكود الذي يُستخدم بدلًا منه.",
-        "tr": "Nedenini ve bunun yerine hangi kodun kullanılacağını yazın.",
+        "ar": "اكتب السبب، والكود البديل.",
+        "tr": "Nedenini ve bunun yerine kullanılacak kodu yazın.",
     },
     "Similar items were already on file — check it is not the same part under another name.": {
-        "ar": "توجد أصناف مشابهة مسجّلة بالفعل — تأكّد أنه ليس الصنف نفسه باسم آخر.",
-        "tr": "Benzer kalemler zaten kayıtlı — aynı parçanın başka bir adla girilmediğinden emin olun.",
+        "ar": "توجد أصناف مشابهة مسجّلة بالفعل. تأكّد أنه ليس الصنف نفسه باسم آخر.",
+        "tr": "Benzer kalemler zaten kayıtlı. Aynı parçanın başka bir adla girilmediğinden emin olun.",
     },
     "Single-source justification saved — competitive quotes waived.": {
-        "ar": "تم حفظ مبرر التوريد من مصدر وحيد — وتم الإعفاء من عروض الأسعار التنافسية.",
-        "tr": "Tek kaynak gerekçesi kaydedildi — rekabetçi tekliflerden vazgeçildi.",
+        "ar": "تم حفظ مبرر التوريد من مصدر وحيد. لا حاجة إلى عروض أسعار تنافسية.",
+        "tr": "Tek kaynak gerekçesi kaydedildi. Rekabetçi teklif istenmeyecek.",
     },
     "Sourcing is locked — this request is already approved or closed.": {
-        "ar": "التوريد مُقفل — هذا الطلب معتمد أو مُقفل بالفعل.",
-        "tr": "Tedarik kilitli — bu talep zaten onaylanmış veya kapatılmış.",
+        "ar": "التوريد مُقفل. هذا الطلب معتمد أو مُقفل بالفعل.",
+        "tr": "Tedarik kilitli. Bu talep zaten onaylanmış veya kapatılmış.",
     },
     "Sourcing is locked — this request is already approved, ordered, closed or cancelled.": {
-        "ar": "التوريد مُقفل — هذا الطلب معتمد أو صدر به أمر شراء أو مُقفل أو ملغى بالفعل.",
-        "tr": "Tedarik kilitli — bu talep zaten onaylanmış, siparişe dönüşmüş, kapatılmış veya iptal edilmiş.",
+        "ar": "التوريد مُقفل. هذا الطلب معتمد أو صدر به أمر شراء أو مُقفل أو ملغى بالفعل.",
+        "tr": "Tedarik kilitli. Bu talep zaten onaylanmış, siparişe dönüşmüş, kapatılmış veya iptal edilmiş.",
     },
     "Submitted for approval.": {
         "ar": "تم الإرسال للموافقة.",
         "tr": "Onaya gönderildi.",
     },
     "That code is already in the catalogue — search for it instead of adding it twice.": {
-        "ar": "هذا الكود موجود بالفعل في الكتالوج — ابحث عنه بدلًا من إضافته مرتين.",
-        "tr": "Bu kod katalogda zaten var — ikinci kez eklemek yerine arayın.",
+        "ar": "هذا الكود موجود بالفعل في الكتالوج. ابحث عنه بدلًا من إضافته مرة أخرى.",
+        "tr": "Bu kod katalogda zaten var. Yeniden eklemek yerine arayın.",
     },
     "That code is already in the catalogue.": {
         "ar": "هذا الكود موجود بالفعل في الكتالوج.",
         "tr": "Bu kod katalogda zaten var.",
     },
     "That debit note is already settled.": {
-        "ar": "هذا الإشعار المدين تمت تسويته بالفعل.",
+        "ar": "تمت تسوية هذا الإشعار المدين بالفعل.",
         "tr": "Bu borç dekontu zaten kapatılmış.",
     },
     "That engineering justification no longer exists.": {
@@ -561,7 +561,7 @@ MESSAGES = {
     },
     "That is more than the free stock on that item (free = on hand minus what another order is already promised).": {
         "ar": "الكمية أكبر من الرصيد المتاح لهذا الصنف (المتاح = الرصيد ناقص ما هو محجوز لأمر آخر).",
-        "tr": "Bu miktar, kalemin serbest stokundan fazla (serbest = elde bulunan eksi başka bir siparişe ayrılmış olan).",
+        "tr": "Bu miktar, kalemin serbest stokundan fazla (serbest stok = eldeki stok eksi başka siparişe ayrılan miktar).",
     },
     "That item no longer exists.": {
         "ar": "لم يعد هذا الصنف موجودًا.",
@@ -576,15 +576,15 @@ MESSAGES = {
         "tr": "Bu satır bu talebe ait değil.",
     },
     "That quarantine record is already decided.": {
-        "ar": "تم البتّ في سجل الحجر هذا بالفعل.",
+        "ar": "تم اتخاذ قرار بشأن سجل الحجر هذا بالفعل.",
         "tr": "Bu karantina kaydı hakkında zaten karar verilmiş.",
     },
     "That report is not signed yet. Engineering must approve it before Procurement can accept the request.": {
-        "ar": "هذا التقرير غير موقّع بعد. يجب أن تعتمده الإدارة الهندسية قبل أن تتمكن المشتريات من قبول الطلب.",
-        "tr": "Bu rapor henüz imzalanmadı. Satın almanın talebi kabul edebilmesi için önce mühendisliğin onaylaması gerekir.",
+        "ar": "هذا التقرير غير موقّع بعد. يجب أن تعتمده الإدارة الهندسية أولًا، وبعدها يمكن للمشتريات قبول الطلب.",
+        "tr": "Bu rapor henüz imzalanmadı. Önce mühendislik onaylamalı, sonra satın alma talebi kabul edebilir.",
     },
     "That request has already been decided.": {
-        "ar": "تم البتّ في هذا الطلب بالفعل.",
+        "ar": "تم اتخاذ قرار بشأن هذا الطلب بالفعل.",
         "tr": "Bu talep hakkında zaten karar verilmiş.",
     },
     "That request no longer exists.": {
@@ -596,11 +596,11 @@ MESSAGES = {
         "tr": "Bu stok kalemi artık kayıtta yok.",
     },
     "That would take the shelf below zero.": {
-        "ar": "هذه العملية ستنزل رصيد الرف إلى ما دون الصفر.",
+        "ar": "هذه العملية ستجعل رصيد الرف أقل من صفر.",
         "tr": "Bu işlem raf stoğunu sıfırın altına düşürür.",
     },
     "The FX rate is locked once the request is approved.": {
-        "ar": "يُثبَّت سعر الصرف FX بمجرد اعتماد الطلب.",
+        "ar": "سعر الصرف FX يثبت بمجرد اعتماد الطلب.",
         "tr": "Talep onaylandıktan sonra FX kuru sabitlenir.",
     },
     "The PO isn't ready to send yet.": {
@@ -608,52 +608,52 @@ MESSAGES = {
         "tr": "PO henüz gönderilmeye hazır değil.",
     },
     "The department budget for this period is exceeded — an administrator must issue this PO (or raise the budget).": {
-        "ar": "تم تجاوز موازنة الإدارة لهذه الفترة — يجب أن يصدر أمر الشراء PO أحد المسؤولين (أو تُرفع الموازنة).",
-        "tr": "Bu dönem için departman bütçesi aşıldı — bu PO'yu bir yönetici düzenlemeli (ya da bütçe artırılmalı).",
+        "ar": "تم تجاوز موازنة الإدارة لهذه الفترة. يلزم مسؤول لإصدار أمر الشراء PO، أو زيادة الموازنة.",
+        "tr": "Bu dönemin departman bütçesi aşıldı. Bu PO'yu bir yönetici düzenlemeli ya da bütçe artırılmalı.",
     },
     "The request is not on the warehouse stage.": {
         "ar": "الطلب ليس في مرحلة المخزن.",
         "tr": "Talep depo aşamasında değil.",
     },
     "There is no Purchase Order yet to advance against.": {
-        "ar": "لا يوجد أمر شراء بعد يمكن صرف دفعة مقدّمة على أساسه.",
-        "tr": "Henüz üzerine avans verilebilecek bir satın alma emri yok.",
+        "ar": "لا يوجد أمر شراء بعد لصرف دفعة مقدّمة عليه.",
+        "tr": "Henüz avans verilecek bir satın alma emri yok.",
     },
     "This order is off plan (over target price, over the stock ceiling, or above the net requirement after inventory netting — §3.4). DOAM §4.4 requires a written justification memo before it is signed — record it in the Coverage check / Deviation from plan panel.": {
-        "ar": "هذا الأمر خارج الخطة (أعلى من السعر المستهدف، أو يتجاوز سقف المخزون، أو أكبر من الاحتياج الصافي بعد خصم الرصيد — §3.4). يشترط DOAM §4.4 مذكّرة تبرير مكتوبة قبل التوقيع — سجّلها في لوحة «فحص التغطية / الانحراف عن الخطة».",
-        "tr": "Bu sipariş plan dışı (hedef fiyatın üzerinde, stok tavanının üzerinde ya da stok mahsuplaşması sonrası net ihtiyacın üzerinde — §3.4). DOAM §4.4 uyarınca imzalanmadan önce yazılı bir gerekçe notu gerekir — bunu «Karşılama kontrolü / Plandan sapma» panelinde kaydedin.",
+        "ar": "هذا الأمر خارج الخطة: أعلى من السعر المستهدف، أو فوق سقف المخزون، أو أكبر من الاحتياج الصافي بعد خصم الرصيد (§3.4). يطلب DOAM §4.4 مذكّرة تبرير مكتوبة قبل التوقيع. سجّلها في لوحة «فحص التغطية / الانحراف عن الخطة».",
+        "tr": "Bu sipariş plan dışı: hedef fiyatın üzerinde, stok tavanının üzerinde ya da stok mahsuplaşması sonrası net ihtiyacın üzerinde (§3.4). DOAM §4.4, imzadan önce yazılı bir gerekçe notu ister. Notu «Karşılama kontrolü / Plandan sapma» panelinde kaydedin.",
     },
     "This record has already been retired.": {
-        "ar": "هذا السجل مُستبعَد من الاستخدام بالفعل.",
+        "ar": "هذا السجل مستبعد من الاستخدام بالفعل.",
         "tr": "Bu kayıt zaten kullanımdan kaldırılmış.",
     },
     "This record is still inside its retention period — it must be kept until": {
-        "ar": "هذا السجل ما زال ضمن مدة الحفظ — يجب الاحتفاظ به حتى",
-        "tr": "Bu kayıt hâlâ saklama süresi içinde — saklanması gereken tarih:",
+        "ar": "هذا السجل ما زال ضمن مدة الحفظ. يجب الاحتفاظ به حتى",
+        "tr": "Bu kayıt hâlâ saklama süresi içinde. Şu tarihe kadar saklanmalı:",
     },
     "This request already carries prices — issuing now would move a total people have signed.": {
-        "ar": "هذا الطلب مسعّر بالفعل — الصرف الآن سيغيّر إجماليًا سبق أن وقّع عليه المعتمدون.",
-        "tr": "Bu talep zaten fiyatlandırılmış — şimdi çıkış yapmak, imzalanmış bir toplamı değiştirir.",
+        "ar": "هذا الطلب مسعّر بالفعل. الصرف الآن سيغيّر الإجمالي الذي وقّع عليه المعتمدون.",
+        "tr": "Bu talep zaten fiyatlandırılmış. Şimdi çıkış yapmak, imzalanmış toplamı değiştirir.",
     },
     "This request already carries prices, so a quantity cannot be changed here — it would move a total that people have already signed. Reject it back instead.": {
-        "ar": "هذا الطلب مسعّر بالفعل، فلا يمكن تعديل الكمية هنا — التعديل سيغيّر إجماليًا سبق توقيعه. أعِد الطلب بالرفض بدلًا من ذلك.",
-        "tr": "Bu talep zaten fiyatlandırılmış, bu yüzden burada miktar değiştirilemez — imzalanmış bir toplamı değiştirir. Bunun yerine talebi reddedip geri gönderin.",
+        "ar": "هذا الطلب مسعّر بالفعل، فلا يمكن تعديل الكمية هنا. التعديل سيغيّر الإجمالي الذي وقّع عليه المعتمدون. أعِد الطلب بالرفض بدلًا من ذلك.",
+        "tr": "Bu talep zaten fiyatlandırılmış, bu yüzden burada miktar değiştirilemez. Değişiklik, imzalanmış toplamı değiştirir. Bunun yerine talebi reddedip geri gönderin.",
     },
     "This request already carries prices. Putting stock back now would restore a quantity people have priced against.": {
-        "ar": "هذا الطلب مسعّر بالفعل. إرجاع الكمية إلى المخزن الآن سيعيد كمية جرى التسعير على أساسها.",
-        "tr": "Bu talep zaten fiyatlandırılmış. Şimdi stoğu geri almak, üzerinden fiyat verilmiş bir miktarı geri getirir.",
+        "ar": "هذا الطلب مسعّر بالفعل. إرجاع الكمية إلى المخزن الآن سيعيد كمية تم التسعير عليها.",
+        "tr": "Bu talep zaten fiyatlandırılmış. Şimdi stoğu geri almak, fiyatı verilmiş bir miktarı geri getirir.",
     },
     "This request can no longer be priced.": {
         "ar": "لم يعد بالإمكان تسعير هذا الطلب.",
         "tr": "Bu talep artık fiyatlandırılamaz.",
     },
     "This request has moved on — it can no longer be unwound from here.": {
-        "ar": "تجاوز هذا الطلب هذه المرحلة — لم يعد بالإمكان التراجع عنه من هنا.",
-        "tr": "Bu talep sonraki aşamaya geçti — artık buradan geri alınamaz.",
+        "ar": "هذا الطلب تجاوز هذه المرحلة. لا يمكن التراجع عنه من هنا.",
+        "tr": "Bu talep sonraki aşamaya geçti. Artık buradan geri alınamaz.",
     },
     "This request is already approved — only an administrator can cancel it.": {
-        "ar": "هذا الطلب معتمد بالفعل — لا يمكن إلغاؤه إلا بواسطة أحد المسؤولين.",
-        "tr": "Bu talep zaten onaylandı — yalnızca bir yönetici iptal edebilir.",
+        "ar": "هذا الطلب معتمد بالفعل. لا يلغيه إلا أحد المسؤولين.",
+        "tr": "Bu talep zaten onaylandı. Yalnızca bir yönetici iptal edebilir.",
     },
     "This request is closed.": {
         "ar": "هذا الطلب مُغلق.",
@@ -668,8 +668,8 @@ MESSAGES = {
         "tr": "Bu talep dolaşımda değil.",
     },
     "This supplier is not on the approved vendor list, so no advance may be authorised (DOAM §4.3).": {
-        "ar": "هذا المورّد غير مدرج في قائمة الموردين المعتمدين، فلا يجوز اعتماد دفعة مقدّمة له (DOAM §4.3).",
-        "tr": "Bu tedarikçi onaylı tedarikçi listesinde değil, bu nedenle avans onaylanamaz (DOAM §4.3).",
+        "ar": "هذا المورّد غير مدرج في قائمة الموردين المعتمدين. لا يجوز صرف دفعة مقدّمة له (DOAM §4.3).",
+        "tr": "Bu tedarikçi onaylı tedarikçi listesinde değil. Bu yüzden avans onaylanamaz (DOAM §4.3).",
     },
     "Type the Optima code before adding.": {
         "ar": "اكتب كود Optima قبل الإضافة.",
@@ -712,12 +712,12 @@ MESSAGES = {
         "tr": "Tedarikçi kaydedildi.",
     },
     "Write the actual reasoning — a few words cannot satisfy a DOAM document requirement.": {
-        "ar": "اكتب المبرر الفعلي — كلمات قليلة لا تفي بمتطلب التوثيق في DOAM.",
-        "tr": "Gerçek gerekçeyi yazın — birkaç kelime, DOAM'ın belge şartını karşılamaz.",
+        "ar": "اكتب المبرر الفعلي. كلمات قليلة لا تكفي لمتطلب التوثيق في DOAM.",
+        "tr": "Gerçek gerekçeyi yazın. Birkaç kelime DOAM'ın belge şartını karşılamaz.",
     },
     "You already signed another stage of this request — a different approver must take this one.": {
-        "ar": "سبق أن وقّعت على مرحلة أخرى من هذا الطلب — يجب أن يتولى هذه المرحلة معتمد آخر.",
-        "tr": "Bu talebin başka bir aşamasını zaten imzaladınız — bu aşamayı farklı bir onaylayıcı üstlenmeli.",
+        "ar": "أنت وقّعت على مرحلة أخرى من هذا الطلب. هذه المرحلة يجب أن يوقّعها معتمد آخر.",
+        "tr": "Bu talebin başka bir aşamasını zaten imzaladınız. Bu aşamayı başka bir onaylayıcı imzalamalı.",
     },
     "You are not authorised for this approval stage.": {
         "ar": "ليست لديك صلاحية على مرحلة الموافقة هذه.",
@@ -728,10 +728,11 @@ MESSAGES = {
         "tr": "Bu talepte depo aşamasını imzalayanlar arasında değilsiniz.",
     },
     "You cannot approve your own request — raising it is your signature.": {
-        "ar": "لا يمكنك اعتماد طلبك بنفسك — تقديمك للطلب هو توقيعك عليه.",
-        "tr": "Kendi talebinizi onaylayamazsınız — talebi açmanız zaten sizin imzanızdır.",
+        "ar": "لا يمكنك اعتماد طلبك بنفسك. تقديمك للطلب هو توقيعك.",
+        "tr": "Kendi talebinizi onaylayamazsınız. Talebi açmanız zaten sizin imzanız.",
     },
 }
+
 
 
 def _t(text, lang):

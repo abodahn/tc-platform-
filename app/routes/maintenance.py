@@ -28,6 +28,39 @@ bp = Blueprint("maintenance", __name__, url_prefix="/maintenance")
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+from flask import flash as _flask_flash                          # noqa: E402
+from app.maintenance.messages import translate as _translate_msg  # noqa: E402
+
+
+def _msg(text):
+    """`text` in the reader's language. Use it on a TEMPLATE, then format:
+
+        flash(_msg("Could not send this report (%s).") % err)
+
+    Translating before formatting keeps the lookup an exact match on a fixed
+    string, instead of a guess at which part of a finished sentence was fixed.
+    """
+    return _translate_msg(text, _lang())
+
+
+def flash(message, category="message"):
+    """Flash in the reader's own language.
+
+    Fifty of the fifty-one flash() calls here pass an m_* key that app.js
+    resolves client-side; those have no entry in the table and pass through
+    untouched. This catches the fifteen that were plain English because they
+    carry a value a key cannot carry. See app/maintenance/messages.py.
+    """
+    return _flask_flash(_translate_msg(message, _lang()), category)
+
+
+def _lang():
+    try:
+        return (current_user() or {}).get("lang_pref") or "en"
+    except Exception:
+        return "en"
+
+
 def _u():
     return current_user()
 
@@ -337,8 +370,9 @@ def ticket_new():
             data["allow_duplicate"] = f.get("allow_duplicate") == "on"
             tid, err = svc.create_ticket(data, _u(), request.remote_addr)
             if err and err.startswith("duplicate_open:"):
-                flash("This machine already has an open ticket (%s). Tick "
-                      "'create anyway' if this is a separate fault." % err.split(":", 1)[1], "error")
+                flash(_msg("This machine already has an open ticket (%s). Tick "
+                           "'create anyway' if this is a separate fault.")
+                      % err.split(":", 1)[1], "error")
             elif err:
                 flash("m_desc_required", "error")
             else:
@@ -794,11 +828,11 @@ def justification_new():
             if request.form.get("submit_now"):
                 good, msg = ejr.submit(conn, ejr_id)
                 if not good and msg.startswith("incomplete"):
-                    flash("Saved as a draft. Still needed: " + msg.split(":", 1)[1], "warning")
+                    flash(_msg("Saved as a draft. Still needed: %s") % msg.split(":", 1)[1], "warning")
                 elif good:
-                    flash(f"{ejr_no} sent to Engineering for signature.", "success")
+                    flash(_msg("Sent to Engineering for signature. %s") % ejr_no, "success")
             else:
-                flash(f"{ejr_no} saved as a draft.", "success")
+                flash(_msg("Saved as a draft. Not sent yet. %s") % ejr_no, "success")
             conn.commit()
             return redirect(url_for("maintenance.justification", jid=ejr_id))
         machines = [dict(m) for m in machines]
@@ -844,9 +878,9 @@ def justification_submit(jid):
     if good:
         flash("Sent to Engineering for signature.", "success")
     elif msg.startswith("incomplete"):
-        flash("Cannot send yet. Still needed: " + msg.split(":", 1)[1], "error")
+        flash(_msg("Cannot send yet. Still needed: %s") % msg.split(":", 1)[1], "error")
     else:
-        flash(f"Could not send this report ({msg}).", "error")
+        flash(_msg("Could not send this report (%s).") % msg, "error")
     return redirect(url_for("maintenance.justification", jid=jid))
 
 
@@ -877,7 +911,7 @@ def justification_decide(jid):
     elif msg == "not_pending":
         flash("This report is not waiting for a signature.", "error")
     else:
-        flash(f"Could not record that decision ({msg}).", "error")
+        flash(_msg("Could not record that decision (%s).") % msg, "error")
     return redirect(url_for("maintenance.justification", jid=jid))
 
 
@@ -1608,14 +1642,16 @@ def import_page():
                         conn.rollback()
                     except Exception:
                         pass
-                    flash(f"Import failed ({type(exc).__name__}). Nothing was written "
-                          f"— fix the file and run it again.", "error")
+                    flash(_msg("Import failed (%s). Nothing was written "
+                               "— fix the file and run it again.")
+                          % type(exc).__name__, "error")
                 finally:
                     conn.close()
                 if reg_result is not None:
-                    flash(f"{reg_result['added']} added, {reg_result['updated']} updated, "
-                          f"{reg_result['unchanged']} unchanged, "
-                          f"{len(reg_parsed.get('rejects') or [])} rejected.", "success")
+                    flash(_msg("%s added, %s updated, %s unchanged, %s rejected.")
+                          % (reg_result["added"], reg_result["updated"],
+                             reg_result["unchanged"],
+                             len(reg_parsed.get("rejects") or [])), "success")
     reg_stats = None
     if kind == "register":
         conn = _db()
