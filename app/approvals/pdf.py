@@ -531,7 +531,7 @@ def pr_pdf(bundle):
     # Stock days / Pending qty / Last Stock stay blank on purpose: nothing in the
     # system knows them, and a printed 0 would be a claim the buyer would believe.
     lead = _chosen_lead_time(bundle)
-    rows = [[str(i), it.get("item") or "", it.get("description") or "",
+    rows = [[str(i), it.get("item") or "", _line_desc(it),
              it.get("unit") or "", _fmt(it.get("qty"), 0),
              _fmt(it.get("current_stock"), 0),
              "", "", _fmt(it.get("last_order_qty"), 0), it.get("last_order_date") or "",
@@ -615,6 +615,17 @@ I18N = {
         "ortak onay sayar — her (A) imzası satın almayı taahhüt eder, her (R) "
         "imzası yalnızca doğrular."),
 }
+
+
+def _line_desc(it):
+    """The line's description, or nothing when it merely repeats the item.
+
+    A request line's identity IS its description now that the item box is off the
+    request form, so the two are usually the same string. Printing both puts the
+    same words twice on every document.
+    """
+    d = (it.get("description") or "").strip()
+    return "" if d and d == (it.get("item") or "").strip() else d
 
 
 def _step_action(s):
@@ -842,7 +853,7 @@ def po_pdf(bundle, po=None):
     y = _meta_grid(c, w, cm, y, meta_pairs)
 
     cur = pr.get("currency") or ""
-    rows = [[str(i), (it.get("item") or "", it.get("description") or ""),
+    rows = [[str(i), (it.get("item") or "", _line_desc(it)),
              _fmt(it.get("qty")), _fmt(it.get("unit_price")), _fmt(it.get("est_cost"))]
             for i, it in enumerate(items, 1)]
     y = _table(c, w, cm, y, [
@@ -966,7 +977,7 @@ def rfq_pdf(bundle, rfq):
     y = _meta_grid(c, w, cm, y, pairs)
 
     # The quantities are real; the two money columns are empty boxes.
-    rows = [[str(i), (it.get("item") or "", it.get("description") or ""),
+    rows = [[str(i), (it.get("item") or "", _line_desc(it)),
              it.get("unit") or "", _fmt(it.get("qty"), 0), FILL_IN, FILL_IN]
             for i, it in enumerate(items, 1)]
     y = _table(c, w, cm, y, [

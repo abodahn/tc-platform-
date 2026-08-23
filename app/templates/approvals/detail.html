@@ -248,7 +248,13 @@
           <tr>
             <td>{{ loop.index }}</td>
             <td><div style="font-weight:600">{{ it.item }}</div>
+                {#- A request line's identity IS its description now that the
+                    item box is off the form, so the two are usually the same
+                    string. Printing it twice reads as a bug on the one screen an
+                    approver looks at hardest. -#}
+                {% if it.description and it.description != it.item %}
                 <div class="muted" style="font-size:12px">{{ it.description }}</div>
+                {% endif %}
                 {% set ref = item_costs.get(it.item_id) if it.item_id else None %}
                 {% if ref %}
                 <div class="muted" style="font-size:12px;margin-top:3px">
@@ -839,7 +845,13 @@
           <tr>
             <td>{{ loop.index }}</td>
             <td><div style="font-weight:600">{{ it.item }}</div>
+                {#- A request line's identity IS its description now that the
+                    item box is off the form, so the two are usually the same
+                    string. Printing it twice reads as a bug on the one screen an
+                    approver looks at hardest. -#}
+                {% if it.description and it.description != it.item %}
                 <div class="muted" style="font-size:12px">{{ it.description }}</div>
+                {% endif %}
                 {# A requisition can buy from several suppliers. Shown only when
                    the line differs from the header vendor in the panel head. #}
                 {% if it.vendor and it.vendor != pr.vendor %}

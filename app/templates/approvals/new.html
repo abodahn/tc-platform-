@@ -388,6 +388,12 @@
     var free = document.getElementById('rfFree');
     var label = document.getElementById('rfPickLabel');
 
+    function clearPick() {
+      if (!pick) return;
+      pick.value = '';
+      pick.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
     function srcFor(k) {
       if (k === 'machine') {
         var t = (type && type.value) ? '&type=' + encodeURIComponent(type.value) : '';
@@ -410,20 +416,26 @@
         pick.dataset.src = srcFor(k);
         // Clear on a KIND change — a machine is not an area — but never on the
         // first render, or opening an existing request would lose what it is for.
-        if (resetPick) { pick.innerHTML = '<option value=""></option>'; pick.value = ''; }
-        // Only ONE field may carry the answer, or the form posts request_for twice.
-        pick.disabled = (k === 'other' || k === '');
+        // The combobox listens for `change` on its select and re-syncs from it,
+        // which is what puts the VISIBLE input back to empty; without the event
+        // the old label sits there over a cleared value.
+        if (resetPick) { clearPick(); }
       }
-      if (free) free.disabled = (k !== 'other');
+      // NOT disabled. tc-combobox copies sel.disabled onto its visible input
+      // ONCE, when it builds — so a field disabled at first render (nothing
+      // chosen yet) stayed dead even after the select was re-enabled, and the
+      // list could never be opened. Hiding the wrapper is enough: the two boxes
+      // have different names, and _parse_header takes request_for or falls back
+      // to request_for_free, so only the one on screen can carry the answer.
       if (window.tcCombobox && window.tcCombobox.scan) window.tcCombobox.scan(document);
     }
 
     kind.addEventListener('change', function () { apply(true); });
     if (type) type.addEventListener('change', function () {
+      // A different machine type means a different list, and whatever was picked
+      // from the old one is not in it.
       pick.dataset.src = srcFor('machine');
-      pick.innerHTML = '<option value=""></option>';
-      pick.value = '';
-      if (window.tcCombobox && window.tcCombobox.scan) window.tcCombobox.scan(document);
+      clearPick();
     });
     apply(false);
   })();
