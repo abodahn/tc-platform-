@@ -96,6 +96,13 @@ def run():
     chk("with a quantity box on the line", ('name="whqty_%d"' % line) in h)
     chk("and an on-hand box", ('name="whstock_%d"' % line) in h)
     chk("and a Search on WH button", "js-wh-search" in h)
+    # The button is useless without the code that opens the dialog, and that is
+    # exactly what went wrong: the script was appended to the page's OTHER script
+    # block, which lives inside {% if needs_pricing %} and therefore only ever
+    # rendered for Purchasing. The store got a button wired to nothing.
+    chk("...and the code that opens it, in the same render",
+        "function openDlg(" in h and "whDlgBody" in h)
+    chk("the dialog itself is on the page", 'id="whDlg"' in h)
     # Everything commercial stays out of it.
     panel = re.search(r'proc\.wh_gate(.{0,3000}?)</form>', h, re.S)
     body = panel.group(1) if panel else ""

@@ -283,6 +283,92 @@
     <div id="whDlgBody" class="mt-2"></div>
   </div>
 </div>
+
+{#- Its own script block, NOT the one further down the page: that one lives
+    inside {% if needs_pricing %} and therefore only ever reaches Purchasing —
+    so this dialog rendered for the store with nothing to open it. -#}
+<script>
+/* --- Warehouse: search the stores without leaving the request ---------------
+   The store's question is "is this on the shelf?", and answering it used to mean
+   opening the stores module in another tab, searching, remembering a number and
+   coming back. This searches the spare store and the materials warehouse
+   together and drops the FREE figure straight onto the line — free being what is
+   on hand minus what another order has already been promised, which is the
+   difference between "we have 40" and "we have 40, 30 of them spoken for". */
+(function () {
+  var dlg = document.getElementById('whDlg');
+  if (!dlg) return;
+  var q = document.getElementById('whDlgQ');
+  var body = document.getElementById('whDlgBody');
+  var closeBtn = document.getElementById('whDlgClose');
+  var target = null, timer = null, req = null;
+
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"]/g, function (m) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m];
+    });
+  }
+
+  function render(rows) {
+    if (!rows.length) {
+      body.innerHTML = '<div class="muted" style="padding:10px">'
+        + esc(window.tcT ? tcT('proc.wh_dlg_none') : 'Nothing in the stores matches that.')
+        + '</div>';
+      return;
+    }
+    body.innerHTML = '<table class="tbl"><tbody>' + rows.map(function (r) {
+      return '<tr class="js-wh-row" data-free="' + r.free + '" style="cursor:pointer">'
+        + '<td><b>' + esc(r.label) + '</b><div class="muted" style="font-size:12px">'
+        + esc(r.source) + (r.where ? ' · ' + esc(r.where) : '') + '</div></td>'
+        + '<td style="text-align:right;font-variant-numeric:tabular-nums">'
+        + '<b>' + r.free + '</b> ' + esc(r.uom)
+        + '<div class="muted" style="font-size:12px">'
+        + r.on_hand + ' on hand · ' + r.reserved + ' reserved</div></td></tr>';
+    }).join('') + '</tbody></table>';
+  }
+
+  function search() {
+    if (req) { req.abort(); req = null; }
+    var ctrl = new AbortController(); req = ctrl;
+    body.innerHTML = '<div class="muted" style="padding:10px">…</div>';
+    fetch('/api/lookup/wh-stock?q=' + encodeURIComponent(q.value || ''),
+          { credentials: 'same-origin', signal: ctrl.signal })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (req === ctrl) { req = null; render(d.results || []); } })
+      .catch(function (e) { if (!e || e.name !== 'AbortError') body.innerHTML = ''; });
+  }
+
+  function openDlg(btn) {
+    target = document.getElementById(btn.dataset.target);
+    // Seed the search with the line's own words: the store is looking for THIS
+    // item, and making them retype it is the friction this box exists to remove.
+    q.value = btn.dataset.item || '';
+    dlg.style.display = '';
+    search();
+    q.focus();
+    q.select();
+  }
+  function closeDlg() { dlg.style.display = 'none'; target = null; }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('.js-wh-search');
+    if (btn) { e.preventDefault(); return openDlg(btn); }
+    if (e.target === closeBtn) return closeDlg();
+    var row = e.target.closest && e.target.closest('.js-wh-row');
+    if (row && target) {
+      target.value = row.dataset.free;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      closeDlg();
+    }
+  });
+  q.addEventListener('input', function () {
+    clearTimeout(timer); timer = setTimeout(search, 180);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && dlg.style.display !== 'none') closeDlg();
+  });
+})();
+</script>
 {% endif %}
 
 <!-- Pricing gate: Purchasing enters the commercial value -->
@@ -459,86 +545,6 @@
   });
 })();
 
-/* --- Warehouse: search the stores without leaving the request ---------------
-   The store's question is "is this on the shelf?", and answering it used to mean
-   opening the stores module in another tab, searching, remembering a number and
-   coming back. This searches the spare store and the materials warehouse
-   together and drops the FREE figure straight onto the line — free being what is
-   on hand minus what another order has already been promised, which is the
-   difference between "we have 40" and "we have 40, 30 of them spoken for". */
-(function () {
-  var dlg = document.getElementById('whDlg');
-  if (!dlg) return;
-  var q = document.getElementById('whDlgQ');
-  var body = document.getElementById('whDlgBody');
-  var closeBtn = document.getElementById('whDlgClose');
-  var target = null, timer = null, req = null;
-
-  function esc(t) {
-    return String(t == null ? '' : t).replace(/[&<>"]/g, function (m) {
-      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m];
-    });
-  }
-
-  function render(rows) {
-    if (!rows.length) {
-      body.innerHTML = '<div class="muted" style="padding:10px">'
-        + esc(window.tcT ? tcT('proc.wh_dlg_none') : 'Nothing in the stores matches that.')
-        + '</div>';
-      return;
-    }
-    body.innerHTML = '<table class="tbl"><tbody>' + rows.map(function (r) {
-      return '<tr class="js-wh-row" data-free="' + r.free + '" style="cursor:pointer">'
-        + '<td><b>' + esc(r.label) + '</b><div class="muted" style="font-size:12px">'
-        + esc(r.source) + (r.where ? ' · ' + esc(r.where) : '') + '</div></td>'
-        + '<td style="text-align:right;font-variant-numeric:tabular-nums">'
-        + '<b>' + r.free + '</b> ' + esc(r.uom)
-        + '<div class="muted" style="font-size:12px">'
-        + r.on_hand + ' on hand · ' + r.reserved + ' reserved</div></td></tr>';
-    }).join('') + '</tbody></table>';
-  }
-
-  function search() {
-    if (req) { req.abort(); req = null; }
-    var ctrl = new AbortController(); req = ctrl;
-    body.innerHTML = '<div class="muted" style="padding:10px">…</div>';
-    fetch('/api/lookup/wh-stock?q=' + encodeURIComponent(q.value || ''),
-          { credentials: 'same-origin', signal: ctrl.signal })
-      .then(function (r) { return r.json(); })
-      .then(function (d) { if (req === ctrl) { req = null; render(d.results || []); } })
-      .catch(function (e) { if (!e || e.name !== 'AbortError') body.innerHTML = ''; });
-  }
-
-  function openDlg(btn) {
-    target = document.getElementById(btn.dataset.target);
-    // Seed the search with the line's own words: the store is looking for THIS
-    // item, and making them retype it is the friction this box exists to remove.
-    q.value = btn.dataset.item || '';
-    dlg.style.display = '';
-    search();
-    q.focus();
-    q.select();
-  }
-  function closeDlg() { dlg.style.display = 'none'; target = null; }
-
-  document.addEventListener('click', function (e) {
-    var btn = e.target.closest && e.target.closest('.js-wh-search');
-    if (btn) { e.preventDefault(); return openDlg(btn); }
-    if (e.target === closeBtn) return closeDlg();
-    var row = e.target.closest && e.target.closest('.js-wh-row');
-    if (row && target) {
-      target.value = row.dataset.free;
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-      closeDlg();
-    }
-  });
-  q.addEventListener('input', function () {
-    clearTimeout(timer); timer = setTimeout(search, 180);
-  });
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && dlg.style.display !== 'none') closeDlg();
-  });
-})();
 </script>
 {% endif %}
 
