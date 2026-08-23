@@ -162,6 +162,10 @@
     input.addEventListener("keydown", function (e) { inst.key(e); });
     input.addEventListener("blur", function () {
       // The popup swallows its own mousedown, so a blur here is always real.
+      // On a data-free field, keep what was typed BEFORE closing — close(true)
+      // restores the label from the select, which would silently discard a value
+      // the registers do not hold. keepTyped is a no-op everywhere else.
+      inst.keepTyped();
       if (open === inst) inst.close(true); else inst.syncFromSelect();
     });
     clear.addEventListener("click", function () {
@@ -416,6 +420,26 @@
       this.input.focus();
     },
 
+    /** Keep what the user typed, on a field that allows values the registers do
+     *  not hold (data-free).
+     *
+     *  A <select> only accepts its own options, so turning a free-text box into
+     *  a searchable dropdown would otherwise LOSE the ability to name something
+     *  that is not on file — a machine nobody has registered yet, an area the
+     *  plant calls by a nickname. setValue already creates an option for a value
+     *  the DOM has not seen, so committing the typed text is enough.
+     *
+     *  Fields WITHOUT data-free are untouched: for those, only a listed value
+     *  being valid is the entire point of the control.
+     */
+    keepTyped: function () {
+      if (!this.sel.hasAttribute("data-free")) return;
+      var typed = (this.input.value || "").trim();
+      if (!typed || typed === labelFor(this.sel)) return;
+      this.setValue(typed, typed);
+      this.close(true);
+    },
+
     /* --- keyboard --- */
     key: function (e) {
       var k = e.key;
@@ -432,6 +456,7 @@
         e.preventDefault();
         var row = pop.querySelector(".tc-cb-opt.is-active");
         if (row) this.commit(row);
+        else this.keepTyped();
         return;
       }
       if (k === "Escape") { e.preventDefault(); e.stopPropagation(); return this.close(true); }

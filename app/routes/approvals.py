@@ -292,6 +292,11 @@ def _parse_header(f, can_price=False, existing=None):
     # it shows the value again.
     hidden = [f_ for k_, f_ in _OPTIONAL_FIELD_NAMES.items()
               if not svc.visible_fields().get(k_, True)]
+    # The supplier box is gone from the request form for everyone, so nothing is
+    # ever posted for it. Treat it exactly like a switched-off field: the stored
+    # value wins on an edit, rather than an absent field silently clearing the
+    # supplier a buyer already chose.
+    hidden.append("vendor")
     if hidden:
         for name in hidden:
             if existing is not None:

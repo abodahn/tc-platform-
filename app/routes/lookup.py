@@ -119,6 +119,61 @@ def departments():
                                 for d in names[:LIMIT]]})
 
 
+@bp.route("/request-for")
+@login_required
+def request_for():
+    """What a purchase request is FOR: an asset, a machine, a line or an area.
+
+    Its own endpoint rather than an entry in SOURCES because it is a UNION of
+    three registers and the generic path builds one WHERE clause against one
+    table. It also differs from the `machines` lookup in two ways that matter
+    here: the value is the TEXT that goes on the request (pr_requests.request_for
+    is free text, not a foreign key), and the permission is the requester's own —
+    gating this on maint_view would hand a blank box to the people who raise most
+    of the requests.
+
+    Free typing still works. This offers what the plant already has on file; a
+    requester who needs something not in any register types it, exactly as before.
+    """
+    _guard("proc_create")
+    q = (request.args.get("q") or "").strip()
+    like = "%" + q.lower() + "%"
+    out, seen = [], set()
+
+    def add(label, hint):
+        key = (label or "").strip().lower()
+        if label and key not in seen:
+            seen.add(key)
+            out.append({"value": label, "label": label, "hint": hint or ""})
+
+    conn = get_db()
+    try:
+        # Machines first: most requests are raised against one, and a plant with
+        # 5,000 of them is exactly why this box needed a search instead of a list.
+        try:
+            rows = conn.execute(
+                "SELECT code, name, COALESCE(area,'') AS area FROM mnt_machines "
+                "WHERE is_active=1 AND (? = '' OR LOWER(code) LIKE ? OR "
+                "LOWER(name) LIKE ? OR LOWER(COALESCE(area,'')) LIKE ?) "
+                "ORDER BY code LIMIT ?", (q.lower(), like, like, like, LIMIT)).fetchall()
+            for r in rows:
+                add("%s · %s" % (r["code"], r["name"] or ""), r["area"])
+        except Exception:
+            pass                    # module not installed: offer what else there is
+        try:
+            rows = conn.execute(
+                "SELECT name, COALESCE(area,'') AS area FROM production_lines "
+                "WHERE (? = '' OR LOWER(name) LIKE ? OR LOWER(COALESCE(area,'')) LIKE ?) "
+                "ORDER BY name LIMIT ?", (q.lower(), like, like, LIMIT)).fetchall()
+            for r in rows:
+                add(r["name"], r["area"])
+        except Exception:
+            pass
+    finally:
+        conn.close()
+    return jsonify({"results": out[:LIMIT]})
+
+
 @bp.route("/<kind>")
 @login_required
 def lookup(kind):

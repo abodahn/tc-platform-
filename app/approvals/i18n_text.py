@@ -722,12 +722,21 @@ UI = {
                              "have been notified — a delegation, a second holder of the "
                              "role, or an admin override is needed.",
         # --- DOAM §5 golden thread: the sales-order gate ---
+        # Rewritten to say what to DO. The old wording read like a failed
+        # approval and cited a clause number — but nothing had been approved or
+        # rejected: the request never left the requester's hands. It also said
+        # "pick one from the lists" without naming the boxes, and never mentioned
+        # the third answer, the cost centre, which is the right one for
+        # maintenance, IT, facility and utility spend.
         "cost_object_required_flash":
-            "This request buys direct materials — fabric, yarn, trims, thread, "
-            "labels, packaging, wash or print work — so it must name what it is "
-            "costed against (DOAM §3.4): either the client sales order, or an "
-            "agreed production forecast. Pick one from the lists on the request "
-            "and submit again.",
+            "Not sent yet — this request needs one more thing. It buys direct "
+            "materials (fabric, yarn, trims, thread, labels, packaging, wash or "
+            "print work), so it has to say which job the cost belongs to. Fill "
+            "in ONE of these three on the request, then submit again — "
+            "Sales order: the client order this is for. "
+            "Agreed forecast: if you are buying ahead of a confirmed order. "
+            "Cost centre: if this is really maintenance, IT, facility or utility "
+            "spend and not for a client order at all.",
         "so_unknown_flash":
             "The sales order on this request is not an order on file, so it is not "
             "a cost object (DOAM §5). Pick a real, open sales order from the list "
@@ -838,11 +847,14 @@ UI = {
                              "— المطلوب تفويض أو إضافة شخص ثانٍ لهذا الدور أو تدخّل من "
                              "مسؤول.",
         "cost_object_required_flash":
-            "هذا الطلب يشتري خامات إنتاج مباشرة — أقمشة أو خيوط أو إكسسوارات أو "
-            "ليبل أو مواد تغليف أو غسيل أو طباعة — لذلك يجب أن يذكر ما تُحمّل "
-            "عليه تكلفته (البند 3-4 من دليل الصلاحيات): إما أمر بيع العميل وإما "
-            "توقعات إنتاج معتمدة. اختر أحدهما من القوائم الموجودة في الطلب ثم "
-            "أعد الإرسال.",
+            "لم يُرسَل بعد — ينقص هذا الطلب شيء واحد. فهو يشتري خامات إنتاج "
+            "مباشرة (أقمشة أو خيوط أو إكسسوارات أو ليبل أو مواد تغليف أو غسيل "
+            "أو طباعة)، لذلك يجب أن يذكر على أي شغل تُحمَّل تكلفته. املأ واحدًا "
+            "فقط من هذه الثلاثة ثم أعد الإرسال — "
+            "«أمر البيع»: طلب العميل الذي يخصّه هذا الشراء. "
+            "«التوقّع المعتمد»: إذا كنت تشتري قبل تأكيد طلب العميل. "
+            "«مركز التكلفة»: إذا كان الشراء في الحقيقة للصيانة أو تقنية "
+            "المعلومات أو المرافق وليس لطلب عميل إطلاقًا.",
         "so_unknown_flash":
             "أمر البيع المكتوب في هذا الطلب غير مسجّل في النظام، وبالتالي فهو ليس "
             "مركز تكلفة صالحًا (البند 5 من دليل الصلاحيات). اختر أمر بيع حقيقيًا "
@@ -947,11 +959,7 @@ UI = {
                              "yöneticileri bilgilendirildi — bir vekâlet, rolü taşıyan "
                              "ikinci bir kişi ya da yönetici müdahalesi gerekiyor.",
         "cost_object_required_flash":
-            "Bu talep doğrudan üretim malzemesi satın alıyor — kumaş, iplik, "
-            "aksesuar, dikiş ipliği, etiket, ambalaj, yıkama veya baskı — bu yüzden "
-            "neye maliyetlendirildiğini belirtmesi gerekir (DOAM §3.4): ya müşteri "
-            "satış siparişi ya da onaylı bir üretim tahmini. Talepteki listelerden "
-            "birini seçip yeniden gönderin.",
+            "Henüz gönderilmedi — bu talepte bir şey eksik. Doğrudan üretim malzemesi satın alıyor (kumaş, iplik, aksesuar, etiket, ambalaj, yıkama veya baskı), bu yüzden maliyetin hangi işe ait olduğunu belirtmesi gerekir. Talepte şu üçünden YALNIZCA birini doldurup tekrar gönderin — Satış siparişi: bunun ait olduğu müşteri siparişi. Onaylı tahmin: onaylanmış bir sipariş öncesinde alım yapıyorsanız. Masraf merkezi: bu aslında bakım, BT, tesis veya işletme gideriyse ve bir müşteri siparişi için değilse.",
         "so_unknown_flash":
             "Bu talepteki satış siparişi sistemde kayıtlı bir sipariş değil, "
             "dolayısıyla geçerli bir maliyet nesnesi sayılmaz (DOAM §5). Talepteki "

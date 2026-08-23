@@ -40,8 +40,19 @@
             the purchase is being made, which is what an approver reads first. -#}
         <div class="field"><label data-i18n="proc.title_l">Reason *</label>
           <input name="title" required autocomplete="off" data-ac data-polish="title" value="{{ prefill.title or '' }}" placeholder="e.g. Repair forklift battery"></div>
+        {#- A searchable list, not a free box with a placeholder. The plant has
+            5,000 machines and a handful of lines; typing the name from memory is
+            how the same asset ends up spelled four ways. The <select> is the
+            form control (tc-combobox keeps it in sync), data-src searches the
+            registers server-side, and the value stored is still the TEXT — the
+            column is free text, and a requester whose asset is in no register
+            must still be able to say what it is. -#}
         <div class="field"><label data-i18n="proc.request_for_l">Request for</label>
-          <input name="request_for" autocomplete="off" data-ac value="{{ prefill.request_for or '' }}" placeholder="Asset / machine / area"></div>
+          <select name="request_for" data-search data-src="/api/lookup/request-for"
+                  data-free="1">
+            <option value=""></option>
+            {% if prefill.request_for %}<option value="{{ prefill.request_for }}" selected>{{ prefill.request_for }}</option>{% endif %}
+          </select></div>
         {#- The five optional fields below are switched on and off in
             Procurement -> Settings. `fields` defaults every one to visible, so a
             site that never touches the switches sees the form unchanged. A
@@ -79,12 +90,12 @@
           </select></div>
         <div class="field"><label data-i18n="proc.date_l">Request date</label>
           <input type="date" name="request_date" value="{{ '' }}"></div>
-        <div class="field"><label data-i18n="proc.vendor_l">Vendor</label>
-          <select name="vendor" data-src="/api/lookup/vendors">
-            <option value=""></option>
-            {% for v in vendors %}<option value="{{ v.name }}" {{ 'selected' if prefill.vendor==v.name }}>{{ v.name }}</option>{% endfor %}
-            {% if prefill.vendor and prefill.vendor not in vendors|map(attribute='name')|list %}<option value="{{ prefill.vendor }}" selected>{{ prefill.vendor }}</option>{% endif %}
-          </select></div>
+        {#- No supplier on a request form. Choosing one is a sourcing decision
+            Purchasing take at the pricing gate, beside the price that supplier
+            quoted — asking for it here only produced a guess made before anyone
+            had quoted anything. The value a request already carries is kept:
+            the field is not rendered, so nothing is posted for it, and
+            _parse_header leaves the stored vendor alone on an edit. -#}
         <div class="field"><label data-i18n="proc.currency_l">Currency</label>
           <select name="currency">{% for c in currencies %}<option value="{{ c }}" {{ 'selected' if prefill.currency==c }}>{{ c }}</option>{% endfor %}</select></div>
         {% if can_price %}
