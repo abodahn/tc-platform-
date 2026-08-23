@@ -3997,5 +3997,7 @@
   "offc.linked": "satır bağlandı",
   "offc.decided": "Karara bağlandı",
   "offc.show_decided": "Reddedilenleri göster",
-  "offc.nav": "Katalog dışı satırlar"
+  "offc.nav": "Katalog dışı satırlar",
+  "offc.link": "Bu kaleme bağla",
+  "offc.match": "Zaten katalogda"
 }

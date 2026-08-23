@@ -33,6 +33,8 @@ TWO RULES CARRIED OVER, because they are the same rules the new-item door keeps:
     at the Purchasing pricing gate and nowhere else, so adding an item can never
     be a way to set what it costs.
 """
+import re
+
 from app.db import get_db
 from app.approvals import constants as C
 
@@ -65,6 +67,10 @@ I18N = {
     "offc.unit": ("Unit", "الوحدة", "Birim"),
     "offc.category": ("Category", "الفئة", "Kategori"),
     "offc.add": ("Add to catalogue", "إضافة إلى الكتالوج", "Kataloga ekle"),
+    "offc.link": ("Link to this item", "ربط بهذا الصنف", "Bu kaleme bağla"),
+    "offc.match": ("Already in the catalogue",
+                   "موجود بالفعل في الكتالوج",
+                   "Zaten katalogda"),
     "offc.reject": ("Reject", "رفض", "Reddet"),
     "offc.reason": ("Why not, and what to use instead",
                     "سبب الرفض، والكود الذي يُستخدم بدلاً منه",
@@ -114,6 +120,7 @@ def pending(conn, include_decided=False, limit=200):
     for r in rows:
         d = dict(r)
         d["decision"] = _decision(conn, d["k"])
+        d["match"] = suggest_match(conn, d["item_text"])
         if d["decision"] and not include_decided:
             continue
         out.append(d)
@@ -244,3 +251,53 @@ def _tell_requesters(conn, key, decision, message):
     if who:
         notify_users(conn, who, "info", "Item request decided", message,
                      link="/procurement/off-catalogue")
+
+
+# A code-shaped token inside the typed text. People paste "CODE — description"
+# onto a line constantly, and when they do the item is usually already in the
+# master: the line is unlinked because it was TYPED, not because the item is
+# missing. Offering "Add" there is wrong twice over — it fails as a duplicate,
+# and it hides the one action that is actually correct.
+_CODE_TOKEN = re.compile(r"[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+){1,}")
+
+
+def suggest_match(conn, text):
+    """A catalogue row this typed text is probably already describing, or None.
+
+    Only an exact code hit counts. A fuzzy name match would be a guess, and
+    linking the wrong item is worse than leaving the line unlinked — it would
+    silently attribute a purchase to a part nobody bought.
+    """
+    from app.approvals import items_admin as IA
+    for tok in _CODE_TOKEN.findall(text or "")[:6]:
+        row = IA.item_by_code(conn, tok)
+        if row:
+            return row
+    return None
+
+
+def link_to_existing(text, code, user, ip=""):
+    """Point every line carrying this text at an item ALREADY in the catalogue.
+
+    Returns (ok, msg, linked_count). Nothing is created: this is the case where
+    the item was never missing, only untyped.
+    """
+    from app.approvals import items_admin as IA
+    key = _norm(text)
+    if not key:
+        return False, "no_text", 0
+    conn = get_db()
+    try:
+        row = IA.item_by_code(conn, code)
+        if not row:
+            return False, "unknown_code", 0
+        n = link_existing_lines(conn, key, row["id"])
+        _record(conn, key, "linked", "linked to %s" % row["code"], user)
+        conn.commit()
+        _tell_requesters(conn, key, "linked",
+                         "“%s” is the catalogue item %s. Pick it from the list "
+                         "next time." % ((text or "").strip()[:80], row["code"]))
+        conn.commit()
+        return True, "linked", n
+    finally:
+        conn.close()

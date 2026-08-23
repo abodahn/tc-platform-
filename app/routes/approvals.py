@@ -535,6 +535,21 @@ def off_catalogue_add():
     return redirect(url_for("approvals.off_catalogue"))
 
 
+@bp.route("/off-catalogue/link", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def off_catalogue_link():
+    """The item was never missing — the line was typed instead of picked."""
+    from app.approvals import off_catalogue as OC
+    f = request.form
+    ok, msg, linked = OC.link_to_existing(f.get("text"), f.get("code"), _u(), ip=_ip())
+    flash(("Linked. %d request line(s) now point at it." % linked) if ok else
+          {"unknown_code": "No catalogue item holds that code.",
+           "no_text": "Nothing to link."}.get(msg, msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.off_catalogue"))
+
+
 @bp.route("/off-catalogue/reject", methods=["POST"])
 @login_required
 @permission_required("proc_purchasing")

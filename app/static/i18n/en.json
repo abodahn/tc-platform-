@@ -3997,5 +3997,7 @@
   "offc.linked": "lines linked",
   "offc.decided": "Decided",
   "offc.show_decided": "Show rejected",
-  "offc.nav": "Off-catalogue lines"
+  "offc.nav": "Off-catalogue lines",
+  "offc.link": "Link to this item",
+  "offc.match": "Already in the catalogue"
 }

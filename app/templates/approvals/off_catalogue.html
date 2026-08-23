@@ -64,6 +64,22 @@
                 <button class="btn btn-ghost btn-sm" type="submit">Reopen</button>
               </form>
               {% else %}
+              {#- When the typed text carries a code the catalogue ALREADY holds,
+                  the item was never missing — the line was typed instead of
+                  picked. Adding would fail as a duplicate, so the correct action
+                  leads. -#}
+              {% if r.match %}
+              <form method="post" action="{{ url_for('approvals.off_catalogue_link') }}"
+                    class="flex gap wrap" style="gap:6px;align-items:center">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="text" value="{{ r.item_text }}">
+                <input type="hidden" name="code" value="{{ r.match.code }}">
+                <span class="badge b-approved" data-i18n="offc.match">Already in the catalogue</span>
+                <span style="font-size:12.5px"><code>{{ r.match.code }}</code> {{ r.match.name }}</span>
+                <button class="btn btn-primary btn-sm" type="submit" data-i18n="offc.link">Link to this item</button>
+              </form>
+              <details class="mt-2"><summary class="muted" style="cursor:pointer;font-size:12px">Other actions</summary>
+              {% endif %}
               {#- Add: the Optima code, plus the unit and category Purchasing are
                   the ones placed to decide. The typed text becomes the name. -#}
               <form method="post" action="{{ url_for('approvals.off_catalogue_add') }}"
@@ -96,6 +112,7 @@
                 </div>
                 <button class="btn btn-ghost btn-sm" type="submit" data-i18n="offc.reject">Reject</button>
               </form>
+              {% if r.match %}</details>{% endif %}
               {% endif %}
             </td>
           </tr>
