@@ -525,7 +525,7 @@ def pr_pdf(bundle):
         ("Name of Requestor", pr.get("requester_name") or pr.get("requester")),
         ("REQUEST FOR", pr.get("request_for")),
         ("Department Name", pr.get("department")),
-        ("Title", pr.get("title")),
+        ("Reason", pr.get("title")),
     ] + _cost_object_pairs(pr), cols=3, upper=False)
 
     # Stock days / Pending qty / Last Stock stay blank on purpose: nothing in the

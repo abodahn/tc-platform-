@@ -2844,7 +2844,7 @@
   "proc.threshold": "Applies when total ≥ (EGP)",
   "proc.timeline": "Audit trail",
   "proc.title": "Procurement & Approvals",
-  "proc.title_l": "Title *",
+  "proc.title_l": "Reason *",
   "proc.total": "Total",
   "proc.unbud_none": "No approved budget is set for this department and period.",
   "proc.unbud_over": "Over the approved budget by",

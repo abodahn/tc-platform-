@@ -41,7 +41,7 @@
       <p class="sub">This approval is genuine. It matches the platform's signing record below.</p>
       <dl>
         <dt>Document</dt><dd>{{ pr.pr_no }}{% if pr.po_no %} · {{ pr.po_no }}{% endif %}</dd>
-        <dt>Title</dt><dd>{{ pr.title or "—" }}</dd>
+        <dt>Reason</dt><dd>{{ pr.title or "—" }}</dd>
         {#- DOAM Table 5: the signing record says which of R / A / E it was.
             'approve' also covers every event written before the action types
             existed, which is exactly what those rows meant. -#}

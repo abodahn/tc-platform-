@@ -2844,7 +2844,7 @@
   "proc.threshold": "Toplam ≥ olduğunda uygulanır (EGP)",
   "proc.timeline": "Denetim izi",
   "proc.title": "Satın Alma ve Onaylar",
-  "proc.title_l": "Başlık *",
+  "proc.title_l": "Gerekçe *",
   "proc.total": "Toplam",
   "proc.unbud_none": "Bu departman ve dönem için onaylı bir bütçe tanımlı değil.",
   "proc.unbud_over": "Onaylı bütçeyi aşan tutar:",
