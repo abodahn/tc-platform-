@@ -1,4 +1,11 @@
 {% extends "base.html" %}
+{# `form` is the POST that came back refused, so nothing typed is lost when the
+   duplicate guard says no. Empty on a fresh GET, which is why every read goes
+   through v() rather than form.x — a MultiDict and a {} do not answer the same
+   way to a missing key. #}
+{% macro v(name, default="") %}{{ (form.get(name) if form else None) or default }}{% endmacro %}
+{% macro sel(name, value) %}{{ "selected" if form and form.get(name) == value }}{% endmacro %}
+{% macro chk(name) %}{{ "checked" if form and form.get(name) == "on" }}{% endmacro %}
 {% block title %}New Maintenance Ticket{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -8,6 +15,23 @@
   </div>
   <a class="btn btn-ghost" href="{{ url_for('maintenance.tickets') }}"><span data-i18n="nav.maint_tickets">Tickets</span></a>
 </div>
+
+{% if dup %}
+{# The amber carries the warning; the text stays --ink. --warn on --warn-bg is
+   3.16:1 in the dark theme, which is under the floor for anything but a heading,
+   and this block's second line is 12.5px. #}
+<div class="flex gap center wrap" style="max-width:980px;background:var(--warn-bg);color:var(--ink);padding:12px 14px;border-radius:12px;margin-bottom:14px">
+  <svg class="ico" style="color:var(--warn)"><use href="#i-alert"></use></svg>
+  <div style="flex:1;min-width:240px">
+    <b data-i18n="m.dup_title">This machine already has an open ticket.</b>
+    <div style="margin-top:2px;font-size:12.5px">
+      <span data-i18n="m.dup_body">Look at it first — if this is the same fault, add to that ticket instead of opening a second one.</span>
+    </div>
+  </div>
+  {% if dup.id %}<a class="btn btn-sm btn-ghost" href="{{ url_for('maintenance.ticket_detail', tid=dup.id) }}">{{ dup.no }}</a>
+  {% else %}<span class="badge b-warning">{{ dup.no }}</span>{% endif %}
+</div>
+{% endif %}
 
 <form method="post" enctype="multipart/form-data" class="panel accent" style="max-width:980px">
   <div class="panel-pad">
@@ -19,24 +43,24 @@
           {% for mm in machines %}<option value="{{ mm.id }}" data-dept="{{ mm.department or '' }}" data-area="{{ mm.area or '' }}" data-line="{{ mm.line_no or '' }}" {{ 'selected' if prefill and prefill|string==mm.id|string }}>{{ mm.code }} · {{ mm.name }}</option>{% endfor %}
         </select>
       </div>
-      <div class="field"><label data-i18n="m.requester">Requester</label><input name="requester" value="{{ cu.full_name or cu.username }}"></div>
+      <div class="field"><label data-i18n="m.requester">Requester</label><input name="requester" value="{{ v('requester', cu.full_name or cu.username) }}"></div>
       <div class="field"><label data-i18n="m.shift">Shift</label>
-        <select name="shift"><option>A</option><option>B</option><option>C</option></select></div>
+        <select name="shift">{% for sh in ["A","B","C"] %}<option {{ sel("shift", sh) }}>{{ sh }}</option>{% endfor %}</select></div>
 
-      <div class="field"><label data-i18n="m.department">Department</label><input name="department"></div>
-      <div class="field"><label data-i18n="m.area">Production area</label><input name="area"></div>
-      <div class="field"><label data-i18n="m.line">Line</label><input name="line_no"></div>
+      <div class="field"><label data-i18n="m.department">Department</label><input name="department" value="{{ v('department') }}"></div>
+      <div class="field"><label data-i18n="m.area">Production area</label><input name="area" value="{{ v('area') }}"></div>
+      <div class="field"><label data-i18n="m.line">Line</label><input name="line_no" value="{{ v('line_no') }}"></div>
 
       <div class="field"><label data-i18n="m.issue_category">Issue category</label>
-        <select name="issue_category">{% for c in C.ISSUE_CATEGORIES %}<option value="{{ c }}" data-i18n="mx.{{ c }}">{{ c|mtext }}</option>{% endfor %}</select></div>
+        <select name="issue_category">{% for c in C.ISSUE_CATEGORIES %}<option value="{{ c }}" data-i18n="mx.{{ c }}" {{ sel("issue_category", c) }}>{{ c|mtext }}</option>{% endfor %}</select></div>
       <div class="field"><label data-i18n="m.priority">Priority</label>
-        <select name="priority">{% for p in C.PRIORITIES %}<option value="{{ p }}" data-i18n="mx.{{ p }}" {{ 'selected' if p=='medium' }}>{{ p|mtext }}</option>{% endfor %}</select></div>
+        <select name="priority">{% for p in C.PRIORITIES %}<option value="{{ p }}" data-i18n="mx.{{ p }}" {{ sel("priority", p) if form else ('selected' if p=='medium') }}>{{ p|mtext }}</option>{% endfor %}</select></div>
       <div class="field"><label data-i18n="m.severity">Severity</label>
-        <select name="severity">{% for s in C.SEVERITIES %}<option value="{{ s }}" data-i18n="mx.{{ s }}" {{ 'selected' if s=='moderate' }}>{{ s|mtext }}</option>{% endfor %}</select></div>
+        <select name="severity">{% for s in C.SEVERITIES %}<option value="{{ s }}" data-i18n="mx.{{ s }}" {{ sel("severity", s) if form else ('selected' if s=='moderate') }}>{{ s|mtext }}</option>{% endfor %}</select></div>
     </div>
 
     <div class="field"><label data-i18n="m.description">Issue description</label>
-      <input name="description" id="descInput" required style="height:auto;min-height:44px"></div>
+      <input name="description" id="descInput" required value="{{ v('description') }}" style="height:auto;min-height:44px"></div>
     <div id="triageBox" class="ai-suggest" style="display:none">
       <div class="flex gap center" style="margin-bottom:6px">
         <svg class="ico" style="width:15px;height:15px;color:var(--tc-red)"><use href="#i-sparkles"></use></svg>
@@ -48,16 +72,26 @@
     </div>
 
     <div class="grid cols-3">
-      <div class="field"><label data-i18n="m.est_downtime">Estimated downtime (min)</label><input name="est_downtime_min" type="number" min="0" value="0"></div>
-      <div class="field" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="safety_impact" style="width:auto;height:auto"> <span data-i18n="m.safety">Safety impact</span></label></div>
-      <div class="field" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="production_stopped" style="width:auto;height:auto"> <span data-i18n="m.prod_stopped">Production stopped</span></label></div>
+      <div class="field"><label data-i18n="m.est_downtime">Estimated downtime (min)</label><input name="est_downtime_min" type="number" min="0" value="{{ v('est_downtime_min', '0') }}"></div>
+      <div class="field" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="safety_impact" {{ chk("safety_impact") }} style="width:auto;height:auto"> <span data-i18n="m.safety">Safety impact</span></label></div>
+      <div class="field" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="production_stopped" {{ chk("production_stopped") }} style="width:auto;height:auto"> <span data-i18n="m.prod_stopped">Production stopped</span></label></div>
     </div>
-    <div class="field"><label data-i18n="m.remarks">Remarks</label><input name="remarks"></div>
+    <div class="field"><label data-i18n="m.remarks">Remarks</label><input name="remarks" value="{{ v('remarks') }}"></div>
     <div class="field">
       <label data-i18n="m.photos">Photos (issue)</label>
       <input type="file" name="photos" accept="image/*" capture="environment" multiple
              style="height:auto;padding:10px;border:1px dashed var(--line);border-radius:var(--r-md);background:var(--panel);width:100%">
     </div>
+{% if dup %}
+    <div class="field" style="background:var(--warn-bg);border-radius:12px;padding:12px 14px">
+      <label style="display:flex;gap:9px;margin:0;align-items:flex-start;cursor:pointer">
+        <input type="checkbox" name="allow_duplicate" style="width:auto;height:auto;margin-top:3px">
+        <span><b data-i18n="m.dup_override">This is a separate fault — create the ticket anyway</b>
+          <span class="muted" style="display:block;font-size:12.5px" data-i18n="m.dup_override_note">Leave this unticked and press Submit again to be stopped again.</span></span>
+      </label>
+    </div>
+    <div class="muted" style="font-size:12.5px" data-i18n="m.dup_photos">Your photos were not kept — please choose them again.</div>
+{% endif %}
   </div>
   <div class="modal-foot">
     <a class="btn btn-ghost" href="{{ url_for('maintenance.dashboard') }}" data-i18n="m.cancel">Cancel</a>

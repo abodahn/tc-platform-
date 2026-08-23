@@ -191,13 +191,23 @@ def create_ticket(data, user, ip=None, submit=True):
         # (the guard itself is switchable from Workflow & Governance; default ON,
         # so with no override row this is the same unconditional check as before)
         mid = data.get("machine_id") or None
-        if mid and submit and not data.get("allow_duplicate") and wf.dup_guard_on(conn):
+        # Looked up whether or not the override is set, because a control that
+        # can be overridden from the screen has to leave a trace saying it was:
+        # the override is now offered on the form after a refusal, and "a second
+        # open ticket appeared on this machine" should be answerable afterwards.
+        overridden = None
+        if mid and submit and wf.dup_guard_on(conn):
             dup = conn.execute(
                 "SELECT ticket_no FROM mnt_tickets WHERE machine_id=? AND is_active=1 "
                 "AND status IN (%s) ORDER BY id DESC LIMIT 1" % ",".join("?" * len(OPEN_TICKET_STATUSES)),
                 (mid, *OPEN_TICKET_STATUSES)).fetchone()
             if dup:
-                return None, "duplicate_open:%s" % dup["ticket_no"]
+                if not data.get("allow_duplicate"):
+                    return None, "duplicate_open:%s" % dup["ticket_no"]
+                # Only when something was actually overridden. Ticking the box on
+                # a machine whose other ticket has since been closed overrides
+                # nothing, and recording it would be a false signal.
+                overridden = dup["ticket_no"]
 
         priority = data.get("priority", "medium")
         cur = conn.execute(
@@ -237,6 +247,10 @@ def create_ticket(data, user, ip=None, submit=True):
         if mid and data.get("production_stopped"):
             conn.execute("UPDATE mnt_machines SET status='stopped' WHERE id=?", (mid,))
         audit(conn, user, "ticket_create", "ticket", tid, None, doc_no("MNT", tid), ip=ip)
+        if overridden:
+            audit(conn, user, "duplicate_override", "ticket", tid,
+                  overridden, doc_no("MNT", tid),
+                  comment="raised while %s was still open" % overridden, ip=ip)
         if submit:
             notify(conn, "maintenance_manager", "New maintenance ticket",
                    f"{doc_no('MNT', tid)} on {data.get('machine_code') or 'a machine'}",

@@ -4029,5 +4029,19 @@
   "proc.stock_met": "Stoktan karşılandı",
   "proc.stock_partial": "Kısmen stoktan karşılandı",
   "proc.issued_qty": "stoktan verildi",
-  "proc.issue_undo": "Geri koy"
+  "proc.issue_undo": "Geri koy",
+  "m.dup_title": "Bu makinenin zaten açık bir talebi var.",
+  "m.dup_body": "Önce ona bakın — aynı arızaysa ikinci bir talep açmak yerine o talebe ekleyin.",
+  "m.dup_override": "Bu ayrı bir arıza — talebi yine de oluştur",
+  "m.dup_override_note": "İşaretlemeden tekrar Gönder'e basarsanız yine durdurulursunuz.",
+  "m.dup_photos": "Fotoğraflarınız saklanmadı — lütfen yeniden seçin.",
+  "m.easy_already": "Zaten bildirildi. Bakım bu makineden haberdar.",
+  "m.ai_showing": "En yüksek riskliler gösteriliyor",
+  "m.ai_of": "/",
+  "m.ai_machines_ranked": "makine sıralandı. Geri kalanı için makine kaydını kullanın.",
+  "m.easy_voice_unsupported": "Ses kaydı desteklenmiyor",
+  "m.easy_voice_recording": "● Kaydediliyor… durdurmak için dokunun",
+  "m.easy_voice_done": "✓ Ses kaydedildi (yeniden için dokunun)",
+  "m.easy_voice_blocked": "Mikrofon engellendi",
+  "m.easy_send_failed": "Gönderilemedi. Lütfen tekrar deneyin."
 }

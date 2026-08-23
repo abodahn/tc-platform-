@@ -91,6 +91,72 @@ MESSAGES = {
 }
 
 
+# The DOAM-mandatory fields, by the label eng_justification.REQUIRED_FIELDS gives
+# them. These are not sentences — they are the names of the boxes still to fill
+# in, and they reach the reader twice: joined into "Still needed: ..." on the
+# report page, and again in the refusal when submitting. Left in English they
+# turned an otherwise Arabic refusal back into English at the only part that
+# says what to actually do.
+FIELD_LABELS = {
+    "alternatives considered": {
+        "ar": "البدائل التي جرى بحثها",
+        "tr": "değerlendirilen alternatifler",
+    },
+    "asset / machine": {
+        "ar": "الأصل / الماكينة",
+        "tr": "varlık / makine",
+    },
+    "criticality": {
+        "ar": "درجة الأهمية",
+        "tr": "kritiklik",
+    },
+    "description": {
+        "ar": "الوصف",
+        "tr": "açıklama",
+    },
+    "downtime or risk if not actioned": {
+        "ar": "التوقف أو الخطر إن لم يُنفَّذ",
+        "tr": "yapılmazsa duruş veya risk",
+    },
+    "quantity on hand": {
+        "ar": "الكمية الموجودة في المخزن",
+        "tr": "mevcut miktar",
+    },
+    "request type": {
+        "ar": "نوع الطلب",
+        "tr": "talep türü",
+    },
+    "root cause": {
+        "ar": "السبب الجذري",
+        "tr": "kök neden",
+    },
+    "store stock check": {
+        "ar": "التحقق من رصيد المخزن",
+        "tr": "depo stok kontrolü",
+    },
+}
+
+# Arabic separates a list with its own comma. Using "," there is the kind of
+# detail that makes a translated sentence still read as translated.
+_SEP = {"ar": "، ", "tr": ", ", "en": ", "}
+
+
+def labels(text, lang):
+    """The "still needed" field list, in `lang`.
+
+    Takes either the joined string the service returns ("root cause, criticality")
+    or a list of labels, and gives back a joined string with each label
+    translated. A label nobody has translated passes through in English rather
+    than disappearing out of the list — an incomplete list is worse than an
+    English one, because the reader would go and fill in the wrong boxes.
+    """
+    items = text if isinstance(text, (list, tuple)) else str(text or "").split(", ")
+    items = [i.strip() for i in items if str(i).strip()]
+    if lang in (None, "", "en"):
+        return ", ".join(items)
+    out = [(FIELD_LABELS.get(i, {}) or {}).get(lang) or i for i in items]
+    return _SEP.get(lang, ", ").join(out)
+
 def translate(text, lang):
     """`text` in `lang`, or the English original when there is no translation.
 

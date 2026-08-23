@@ -4029,5 +4029,19 @@
   "proc.stock_met": "Met from stock",
   "proc.stock_partial": "Partly met from stock",
   "proc.issued_qty": "issued from stock",
-  "proc.issue_undo": "Put back"
+  "proc.issue_undo": "Put back",
+  "m.dup_title": "This machine already has an open ticket.",
+  "m.dup_body": "Look at it first — if this is the same fault, add to that ticket instead of opening a second one.",
+  "m.dup_override": "This is a separate fault — create the ticket anyway",
+  "m.dup_override_note": "Leave this unticked and press Submit again to be stopped again.",
+  "m.dup_photos": "Your photos were not kept — please choose them again.",
+  "m.easy_already": "Already reported. Maintenance knows about this machine.",
+  "m.ai_showing": "Showing the highest-risk",
+  "m.ai_of": "of",
+  "m.ai_machines_ranked": "machines ranked. Use the machine registry to search the rest.",
+  "m.easy_voice_unsupported": "Voice not supported",
+  "m.easy_voice_recording": "● Recording… tap to stop",
+  "m.easy_voice_done": "✓ Voice recorded (tap to redo)",
+  "m.easy_voice_blocked": "Microphone blocked",
+  "m.easy_send_failed": "Could not send. Please try again."
 }

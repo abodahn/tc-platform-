@@ -19,9 +19,18 @@ moment somebody most needs to read the message.
 """
 import ast
 import io
+import json
 import re
 import sys
 from pathlib import Path
+
+# These print Arabic. A cp1252 console (Git Bash) raises
+# UnicodeEncodeError part-way through and every check below the
+# first Arabic line silently never runs.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 ROOT = Path(__file__).resolve().parents[2]
 ROUTES = ROOT / "app" / "routes" / "maintenance.py"
@@ -128,6 +137,59 @@ def run():
         translate("m_saved", "ar") == "m_saved")
     chk("an untranslated sentence still reaches the reader",
         translate("Some brand new message.", "ar") == "Some brand new message.")
+
+    print("\nthe DOAM field labels, which is what a refusal tells you to go and fix")
+    from app.maintenance.messages import FIELD_LABELS, labels
+    from app.maintenance.eng_justification import REQUIRED_FIELDS
+
+    # Asked of _missing() rather than assembled here. stock_on_hand is checked
+    # apart from REQUIRED_FIELDS (0 is an answer, blank is not), so its label
+    # lives only inside that function — retyping it here would let a rename ship
+    # English inside an Arabic refusal with this check still green.
+    from app.maintenance.eng_justification import _missing
+    all_blank = {col: None for col, _lbl in REQUIRED_FIELDS}
+    all_blank["stock_on_hand"] = None
+    required = set(_missing(all_blank))
+    chk("the labels come from the code that produces them",
+        len(required) == len(REQUIRED_FIELDS) + 1, sorted(required))
+
+    gap = sorted(required - set(FIELD_LABELS))
+    chk("every mandatory field's label is translated", not gap, gap)
+
+    dead = sorted(set(FIELD_LABELS) - required)
+    chk("and none has been orphaned by a rename", not dead, dead)
+
+    bad = [k for k, r in FIELD_LABELS.items()
+           if not (r.get("ar") or "").strip() or not (r.get("tr") or "").strip()
+           or r.get("ar") == k or r.get("tr") == k]
+    chk("none is blank or the English copied over", not bad, bad[:2])
+
+    joined = labels("root cause, criticality", "ar")
+    chk("the list is joined with the Arabic comma, not a Latin one",
+        "،" in joined and "," not in joined, joined)
+    chk("an English reader still gets the English list",
+        labels("root cause, criticality", "en") == "root cause, criticality")
+    chk("a label nobody translated stays in the list rather than vanishing",
+        "some new field" in labels("root cause, some new field", "ar"))
+    chk("a list can be passed as a list, which is how the report page has it",
+        labels(["root cause"], "tr") == FIELD_LABELS["root cause"]["tr"])
+
+    print("\nand every key the screens ask app.js to resolve")
+    dicts = {}
+    for lang in ("en", "ar", "tr"):
+        with io.open(str(ROOT / "app" / "static" / "i18n" / (lang + ".json")),
+                     encoding="utf-8") as fh:
+            dicts[lang] = json.load(fh)
+    absent = []
+    for path in sorted((ROOT / "app" / "templates" / "maintenance").glob("*.html")):
+        page = io.open(str(path), encoding="utf-8").read()
+        # literal keys only: a few are assembled in JS from a loop variable
+        for key in set(re.findall(r'data-i18n="([^"{}+]+)"', page)):
+            for lang in ("en", "ar", "tr"):
+                if key not in dicts[lang]:
+                    absent.append((path.name, key, lang))
+    chk("every data-i18n key in a maintenance template resolves in en, ar and tr",
+        not absent, "%d missing, e.g. %s" % (len(absent), absent[:2]) if absent else "")
 
     print("\n" + ("RESULT: ALL GREEN" if ok[0] else "RESULT: FAILURES ABOVE"))
     return ok[0]

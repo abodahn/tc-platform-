@@ -99,10 +99,19 @@
     </div>
   </div>
 
+  <div class="er-step" data-step="6">
+    <div class="er-done">
+      <div class="er-emoji">👍</div>
+      <div class="er-prompt" style="justify-content:center"><span data-i18n="m.easy_already">Already reported. Maintenance knows about this machine.</span><button class="er-spk flat" type="button" data-speak>🔊</button></div>
+      <div class="er-sub" style="text-align:center" id="erDupNo"></div>
+      <button class="er-submit" style="background:var(--tc-red);max-width:320px;margin:10px auto" type="button" onclick="location.reload()"><span data-i18n="m.easy_again">Report another</span></button>
+    </div>
+  </div>
+
   <div class="er-step" data-step="5">
     <div class="er-done">
       <div class="er-emoji">✅</div>
-      <div class="er-prompt" style="justify-content:center" data-i18n="m.easy_done">Sent! Thank you.</div>
+      <div class="er-prompt" style="justify-content:center"><span data-i18n="m.easy_done">Sent! Thank you.</span><button class="er-spk flat" type="button" data-speak>🔊</button></div>
       <button class="er-submit" style="background:var(--tc-red);max-width:320px;margin:10px auto" type="button" onclick="location.reload()"><span data-i18n="m.easy_again">Report another</span></button>
     </div>
   </div>
@@ -179,7 +188,14 @@
     steps.forEach(function (s) { s.classList.toggle("on", +s.dataset.step === n); });
     dots.forEach(function (d, i) { d.classList.toggle("on", i <= Math.min(n,4)); });
     window.scrollTo(0, 0);
-    if (talk !== false) { var sp = steps[n] && steps[n].querySelector(".er-prompt [data-i18n]"); if (sp) playLabel(sp); }
+    // by data-step, not by position: the screens are not in step order in the
+    // DOM, and steps[n] was reading one screen off (silently, since a missing
+    // label just means nothing is spoken — to a reader who relies on it).
+    if (talk !== false) {
+      var cur = document.querySelector('.er-step[data-step="' + n + '"]');
+      var sp = cur && cur.querySelector(".er-prompt [data-i18n]");
+      if (sp) playLabel(sp);
+    }
   }
   document.getElementById("erBack").addEventListener("click", function () {
     if (step <= 0) { location.href = FLOOR_URL; return; }
@@ -243,18 +259,25 @@
   });
 
   // voice note (optional)
+  // Text built in JS cannot carry data-i18n, so it resolves through app.js's
+  // key lookup instead. Falls back to the English when the dictionary has not
+  // loaded, rather than showing the reader a raw key.
+  function T(key, fallback) {
+    var v = window.tcT && window.tcT(key);
+    return (v && v !== key) ? v : fallback;
+  }
   var voiceBtn = document.getElementById("erVoiceBtn"), voiceLabel = document.getElementById("erVoiceLabel");
   var rec = null, chunks = [], recording = false;
   voiceBtn.addEventListener("click", function () {
-    if (!navigator.mediaDevices || !window.MediaRecorder) { voiceLabel.textContent = "Voice not supported"; return; }
+    if (!navigator.mediaDevices || !window.MediaRecorder) { voiceLabel.textContent = T("m.easy_voice_unsupported", "Voice not supported"); return; }
     if (!recording) {
       navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
         chunks = []; rec = new MediaRecorder(stream); recording = true;
-        voiceBtn.classList.add("done"); voiceLabel.textContent = "● Recording… tap to stop";
+        voiceBtn.classList.add("done"); voiceLabel.textContent = T("m.easy_voice_recording", "● Recording… tap to stop");
         rec.ondataavailable = function (e) { if (e.data.size) chunks.push(e.data); };
-        rec.onstop = function () { state.voice = new Blob(chunks, { type:"audio/webm" }); voiceLabel.textContent = "✓ Voice recorded (tap to redo)"; stream.getTracks().forEach(function (t){t.stop();}); recording = false; };
+        rec.onstop = function () { state.voice = new Blob(chunks, { type:"audio/webm" }); voiceLabel.textContent = T("m.easy_voice_done", "✓ Voice recorded (tap to redo)"); stream.getTracks().forEach(function (t){t.stop();}); recording = false; };
         rec.start();
-      }).catch(function () { voiceLabel.textContent = "Microphone blocked"; });
+      }).catch(function () { voiceLabel.textContent = T("m.easy_voice_blocked", "Microphone blocked"); });
     } else { rec.stop(); }
   });
 
@@ -272,12 +295,35 @@
     fd.append("severity", state.stopped ? "major" : "moderate");
     fd.append("requester", "{{ (cu.full_name or cu.username)|e }}");
     fd.append("shift", "A");
+    fd.append("source", "easy");
     fd.append("description", desc);
     if (state.photo) fd.append("photos", state.photo);
     if (state.voice) fd.append("photos", state.voice, "voice.webm");
     fetch(POST_URL, { method:"POST", body:fd, credentials:"same-origin" })
-      .then(function (r) { if (r.ok || r.redirected || r.status === 200 || r.status === 302) { show(5); } else { throw 0; } })
-      .catch(function () { submitBtn.disabled = false; alert("Could not send. Please try again."); });
+      .then(function (r) {
+        // 409 is the duplicate guard: this machine already has an open
+        // ticket. Nothing was created, so the green tick would be a lie —
+        // and this reader cannot read the flash that says so.
+        if (r.status === 409) {
+          return r.json().catch(function () { return {}; }).then(function (j) {
+            var el = document.getElementById("erDupNo");
+            if (el) el.textContent = j.ticket_no || "";
+            submitBtn.disabled = false;
+            show(6);
+          });
+        }
+        // 201 + a ticket number is the ONLY thing that means "created". A
+        // redirect answers 200 even when it landed on /login, and this
+        // screen cannot be allowed to say "sent" on a guess.
+        if (r.status === 201) {
+          return r.json().catch(function () { return {}; }).then(function (j) {
+            if (!j.ticket_no) { throw 0; }
+            show(5);
+          });
+        }
+        throw 0;
+      })
+      .catch(function () { submitBtn.disabled = false; alert(T("m.easy_send_failed", "Could not send. Please try again.")); });
   });
 })();
 </script>

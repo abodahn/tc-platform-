@@ -29,7 +29,8 @@ bp = Blueprint("maintenance", __name__, url_prefix="/maintenance")
 # helpers
 # --------------------------------------------------------------------------
 from flask import flash as _flask_flash                          # noqa: E402
-from app.maintenance.messages import translate as _translate_msg  # noqa: E402
+from app.maintenance.messages import (translate as _translate_msg,   # noqa: E402
+                                      labels as _translate_labels)
 
 
 def _msg(text):
@@ -41,6 +42,15 @@ def _msg(text):
     string, instead of a guess at which part of a finished sentence was fixed.
     """
     return _translate_msg(text, _lang())
+
+
+def _labels(text):
+    """The "still needed" field list in the reader's language.
+
+    The service names the blank fields in English because they are its own
+    column labels; this is where they become something a reader can act on.
+    """
+    return _translate_labels(text, _lang())
 
 
 def flash(message, category="message"):
@@ -346,6 +356,11 @@ def tickets():
 @login_required
 def ticket_new():
     _require("maint_ticket_create")
+    # Set when the duplicate guard refuses, so the form can come back with
+    # what was typed, name the ticket that is already open, and offer the
+    # override. Before this the refusal pointed at a checkbox that existed
+    # in the service and on no screen, and threw the typing away as well.
+    dup = None
     if request.method == "POST":
         f = request.form
         if not (f.get("description") or "").strip():
@@ -370,26 +385,50 @@ def ticket_new():
             data["allow_duplicate"] = f.get("allow_duplicate") == "on"
             tid, err = svc.create_ticket(data, _u(), request.remote_addr)
             if err and err.startswith("duplicate_open:"):
+                dup_no = err.split(":", 1)[1]
+                open_t = _one("SELECT id FROM mnt_tickets WHERE ticket_no=?", (dup_no,))
+                dup = {"no": dup_no, "id": open_t["id"] if open_t else None}
+                # The Easy Report posts by fetch() and reads any 200 as "sent".
+                # Re-rendering the form would show a floor worker who cannot
+                # read the flash a green tick for a ticket that was never
+                # created, so that path gets a status code it can act on.
+                if (f.get("source") or "") == "easy":
+                    return jsonify({"error": "duplicate_open",
+                                    "ticket_no": dup_no,
+                                    "ticket_id": dup["id"]}), 409
                 flash(_msg("This machine already has an open ticket (%s). Tick "
                            "'create anyway' if this is a separate fault.")
-                      % err.split(":", 1)[1], "error")
+                      % dup_no, "error")
             elif err:
                 flash("m_desc_required", "error")
             else:
                 svc.save_attachments(request.files.getlist("photos"), "ticket", tid, "issue", _u())
                 flash("m_ticket_created", "success")
+                if (f.get("source") or "") == "easy":
+                    # Same reason as the 409: this caller reads a status, not
+                    # a page. A redirect answers 200 whether it lands on the
+                    # ticket or on /login after a session expiry, and only one
+                    # of those created anything. 201 with the number is a fact
+                    # the screen can check before it shows a green tick.
+                    row = _one("SELECT ticket_no FROM mnt_tickets WHERE id=?", (tid,))
+                    return jsonify({"ticket_no": row["ticket_no"] if row else None,
+                                    "ticket_id": tid}), 201
                 return redirect(url_for("maintenance.ticket_detail", tid=tid))
     # The fleet is thousands of machines. The picker searches server-side
     # (/api/lookup/machines); only a first page goes into the HTML — as the
     # offline fallback, plus whatever ?machine= asked for so it shows selected.
     prefill = request.args.get("machine", "")
+    if request.method == "POST":
+        # come back on the machine that was chosen, not the one in the URL
+        prefill = request.form.get("machine_id") or prefill
     machines = list(_all("SELECT id,code,name,department,area,line_no FROM mnt_machines "
                          "WHERE is_active=1 ORDER BY code LIMIT 25"))
     if prefill.isdigit() and not any(str(m["id"]) == prefill for m in machines):
         machines = list(_all("SELECT id,code,name,department,area,line_no FROM mnt_machines "
                              "WHERE id=?", (int(prefill),))) + machines
     return render_template("maintenance/ticket_new.html", machines=machines, prefill=prefill,
-                           active="maint_new")
+                           form=(request.form if request.method == "POST" else {}),
+                           dup=dup, active="maint_new")
 
 
 @bp.route("/tickets/<int:tid>")
@@ -828,7 +867,8 @@ def justification_new():
             if request.form.get("submit_now"):
                 good, msg = ejr.submit(conn, ejr_id)
                 if not good and msg.startswith("incomplete"):
-                    flash(_msg("Saved as a draft. Still needed: %s") % msg.split(":", 1)[1], "warning")
+                    flash(_msg("Saved as a draft. Still needed: %s")
+                          % _labels(msg.split(":", 1)[1]), "warning")
                 elif good:
                     flash(_msg("Sent to Engineering for signature. %s") % ejr_no, "success")
             else:
@@ -855,12 +895,14 @@ def justification(jid):
             abort(404)
         row = dict(row)
         missing = ejr.missing_labels(conn, jid)
+        missing_text = _labels(missing)
         prs = conn.execute(
             "SELECT id, pr_no, title, status, total, currency FROM pr_requests "
             "WHERE ejr_id=? AND is_active=1 ORDER BY id DESC", (jid,)).fetchall()
     finally:
         conn.close()
     return render_template("maintenance/justification.html", r=row, missing=missing,
+                           missing_text=missing_text,
                            prs=[dict(p) for p in prs],
                            can_decide=_can("maint_approve"), active="maint_ejr")
 
@@ -878,7 +920,8 @@ def justification_submit(jid):
     if good:
         flash("Sent to Engineering for signature.", "success")
     elif msg.startswith("incomplete"):
-        flash(_msg("Cannot send yet. Still needed: %s") % msg.split(":", 1)[1], "error")
+        flash(_msg("Cannot send yet. Still needed: %s")
+              % _labels(msg.split(":", 1)[1]), "error")
     else:
         flash(_msg("Could not send this report (%s).") % msg, "error")
     return redirect(url_for("maintenance.justification", jid=jid))
