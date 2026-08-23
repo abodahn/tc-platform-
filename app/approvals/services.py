@@ -5962,3 +5962,85 @@ def visible_fields(conn=None):
     finally:
         if own:
             conn.close()
+
+
+def warehouse_revise(pr_id, qtys, stocks, user, ip=None):
+    """The warehouse rung corrects the QUANTITY and records what is on the shelf.
+
+    DOAM §4.1 makes Warehouse a demand rung: the question it answers is "is this
+    already in stock, and is the quantity right?". Answering it used to mean
+    approving a figure the store knew was wrong, or rejecting the whole request
+    to have one number changed. Now the store fixes it in place.
+
+    WHAT IT CANNOT TOUCH: price, supplier, and the item itself. Those belong to
+    Purchasing, and a warehouse edit must never move commercial value.
+
+    WHY IT IS REFUSED AFTER PRICING: once a request carries money, every rung
+    above reads a total. Changing a quantity then changes that total under
+    signatures already given, and can change which ladder the request should have
+    climbed. Before pricing the request is worth zero, so a quantity is just a
+    quantity. Returns (ok, msg).
+    """
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if (pr["status"] or "") != "pending":
+            return False, "not_pending"
+        if (_pr_field(pr, "pricing_status") or "unpriced") == "priced":
+            return False, "already_priced"
+        rung = conn.execute(
+            "SELECT id, stage FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr_id, pr["current_seq"])).fetchall()
+        if not any(r["stage"] == "warehouse" for r in rung):
+            return False, "not_warehouse_rung"
+        if not can_act_step(user, {"stage": "warehouse", "pr_id": pr_id}):
+            return False, "not_eligible"
+
+        changed = []
+        for row in conn.execute("SELECT id, item, qty, current_stock FROM pr_items "
+                                "WHERE pr_id=?", (pr_id,)).fetchall():
+            new_q = qtys.get(row["id"], qtys.get(str(row["id"])))
+            new_s = stocks.get(row["id"], stocks.get(str(row["id"])))
+            sets, args, note = [], [], []
+            if new_q is not None:
+                try:
+                    q = max(0.0, float(new_q))
+                except (TypeError, ValueError):
+                    q = None
+                if q is not None and abs(q - float(row["qty"] or 0)) > 1e-9:
+                    sets.append("qty=?")
+                    args.append(q)
+                    note.append("qty %g → %g" % (float(row["qty"] or 0), q))
+            if new_s is not None:
+                try:
+                    st = max(0.0, float(new_s))
+                except (TypeError, ValueError):
+                    st = None
+                if st is not None and abs(st - float(row["current_stock"] or 0)) > 1e-9:
+                    sets.append("current_stock=?")
+                    args.append(st)
+                    note.append("on hand %g → %g"
+                                % (float(row["current_stock"] or 0), st))
+            if sets:
+                conn.execute("UPDATE pr_items SET %s WHERE id=?" % ", ".join(sets),
+                             tuple(args) + (row["id"],))
+                changed.append("%s: %s" % (row["item"], "; ".join(note)))
+
+        if not changed:
+            return True, "unchanged"
+        # Every correction on the record, by line and by figure. A quantity that
+        # moved between the requester asking and the buyer ordering is exactly
+        # what an auditor asks about.
+        audit(conn, pr_id, (user or {}).get("username"), "warehouse_revised",
+              " | ".join(changed)[:2000], ip)
+        notify_users(conn, [pr["requester"]], "info",
+                     "Quantity corrected on %s" % (pr["pr_no"] or "your request"),
+                     "The warehouse checked stock and adjusted your request: "
+                     + " | ".join(changed)[:400],
+                     link="/procurement/pr/%d" % pr_id)
+        conn.commit()
+        return True, "revised"
+    finally:
+        conn.close()

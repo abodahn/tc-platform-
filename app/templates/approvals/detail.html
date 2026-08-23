@@ -212,6 +212,79 @@
 </div>
 {% endif %}
 
+<!-- Warehouse rung: check the shelf, correct the quantity -->
+{#- The same table the pricing gate uses, minus everything commercial. DOAM §4.1
+    makes Warehouse a DEMAND rung — "is this already in stock, and is the quantity
+    right?" — and answering it used to mean approving a figure the store knew was
+    wrong, or rejecting a whole request to have one number changed. -#}
+{% if wh_review %}
+<div class="panel accent mt-4">
+  <div class="panel-head"><h3>📦 <span data-i18n="proc.wh_gate">Warehouse — check stock and quantity</span></h3>
+    <span class="muted" style="font-size:12px" data-i18n="proc.wh_gate_hint">Correct the quantity if the shelf says otherwise, and record what is on hand. No prices and no supplier here — those are Purchasing's, and this request carries no value yet.</span></div>
+  <div class="panel-pad">
+    <form method="post" action="{{ url_for('approvals.warehouse_revise', pr_id=pr.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead><tr>
+          <th>#</th><th data-i18n="proc.item">Item</th>
+          <th data-i18n="proc.wh_qty">Quantity requested</th>
+          <th data-i18n="proc.wh_onhand">On hand</th>
+          <th></th>
+        </tr></thead>
+        <tbody>
+        {% for it in b['items'] %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td><div style="font-weight:600">{{ it.item }}</div>
+              {% if it.description and it.description != it.item %}
+              <div class="muted" style="font-size:12px">{{ it.description }}</div>
+              {% endif %}
+            </td>
+            <td><input type="number" name="whqty_{{ it.id }}" min="0" step="any"
+                       value="{{ it.qty }}" style="max-width:120px">
+              <span class="muted" style="font-size:12px">{{ it.unit }}</span></td>
+            <td><input type="number" name="whstock_{{ it.id }}" min="0" step="any"
+                       value="{{ it.current_stock or 0 }}" style="max-width:120px"
+                       id="whstock_{{ it.id }}"></td>
+            <td>
+              {#- The store should not have to leave this page, open the stores
+                  module, search, remember a number and come back. -#}
+              <button type="button" class="btn btn-ghost btn-sm js-wh-search"
+                      data-target="whstock_{{ it.id }}"
+                      data-item="{{ it.item }}"
+                      data-i18n="proc.wh_search">🔎 Search on WH</button>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <div class="mt-3">
+        <button class="btn btn-primary" type="submit" data-i18n="proc.wh_save">Save quantities</button>
+        <span class="muted" style="font-size:12px" data-i18n="proc.wh_save_hint">The requester is told what changed. You still sign the stage below.</span>
+      </div>
+    </form>
+  </div>
+</div>
+
+{#- Stock search, over the spare store AND the materials warehouse. -#}
+<div id="whDlg" class="panel" style="display:none;position:fixed;z-index:80;inset:8% 50% auto auto;
+     transform:translateX(50%);width:min(680px,92vw);max-height:76vh;overflow:auto;
+     box-shadow:0 18px 60px rgba(0,0,0,.28)">
+  <div class="panel-head">
+    <h3 data-i18n="proc.wh_dlg">Stock on hand</h3>
+    <button type="button" class="btn btn-ghost btn-sm" id="whDlgClose">✕</button>
+  </div>
+  <div class="panel-pad">
+    <input id="whDlgQ" autocomplete="off" placeholder="Search the stores…"
+           data-i18n-ph="proc.wh_dlg_ph">
+    <div class="muted mt-2" style="font-size:12px" data-i18n="proc.wh_dlg_hint">Free = on hand minus what is already promised to another order. Clicking a row copies the free figure into the line.</div>
+    <div id="whDlgBody" class="mt-2"></div>
+  </div>
+</div>
+{% endif %}
+
 <!-- Pricing gate: Purchasing enters the commercial value -->
 {% if needs_pricing %}
 <div class="panel accent mt-4">
@@ -383,6 +456,87 @@
     if (!b) return;
     var input = document.getElementById(b.dataset.t);
     if (input) { input.value = b.dataset.v; input.focus(); }
+  });
+})();
+
+/* --- Warehouse: search the stores without leaving the request ---------------
+   The store's question is "is this on the shelf?", and answering it used to mean
+   opening the stores module in another tab, searching, remembering a number and
+   coming back. This searches the spare store and the materials warehouse
+   together and drops the FREE figure straight onto the line — free being what is
+   on hand minus what another order has already been promised, which is the
+   difference between "we have 40" and "we have 40, 30 of them spoken for". */
+(function () {
+  var dlg = document.getElementById('whDlg');
+  if (!dlg) return;
+  var q = document.getElementById('whDlgQ');
+  var body = document.getElementById('whDlgBody');
+  var closeBtn = document.getElementById('whDlgClose');
+  var target = null, timer = null, req = null;
+
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"]/g, function (m) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m];
+    });
+  }
+
+  function render(rows) {
+    if (!rows.length) {
+      body.innerHTML = '<div class="muted" style="padding:10px">'
+        + esc(window.tcT ? tcT('proc.wh_dlg_none') : 'Nothing in the stores matches that.')
+        + '</div>';
+      return;
+    }
+    body.innerHTML = '<table class="tbl"><tbody>' + rows.map(function (r) {
+      return '<tr class="js-wh-row" data-free="' + r.free + '" style="cursor:pointer">'
+        + '<td><b>' + esc(r.label) + '</b><div class="muted" style="font-size:12px">'
+        + esc(r.source) + (r.where ? ' · ' + esc(r.where) : '') + '</div></td>'
+        + '<td style="text-align:right;font-variant-numeric:tabular-nums">'
+        + '<b>' + r.free + '</b> ' + esc(r.uom)
+        + '<div class="muted" style="font-size:12px">'
+        + r.on_hand + ' on hand · ' + r.reserved + ' reserved</div></td></tr>';
+    }).join('') + '</tbody></table>';
+  }
+
+  function search() {
+    if (req) { req.abort(); req = null; }
+    var ctrl = new AbortController(); req = ctrl;
+    body.innerHTML = '<div class="muted" style="padding:10px">…</div>';
+    fetch('/api/lookup/wh-stock?q=' + encodeURIComponent(q.value || ''),
+          { credentials: 'same-origin', signal: ctrl.signal })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (req === ctrl) { req = null; render(d.results || []); } })
+      .catch(function (e) { if (!e || e.name !== 'AbortError') body.innerHTML = ''; });
+  }
+
+  function openDlg(btn) {
+    target = document.getElementById(btn.dataset.target);
+    // Seed the search with the line's own words: the store is looking for THIS
+    // item, and making them retype it is the friction this box exists to remove.
+    q.value = btn.dataset.item || '';
+    dlg.style.display = '';
+    search();
+    q.focus();
+    q.select();
+  }
+  function closeDlg() { dlg.style.display = 'none'; target = null; }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('.js-wh-search');
+    if (btn) { e.preventDefault(); return openDlg(btn); }
+    if (e.target === closeBtn) return closeDlg();
+    var row = e.target.closest && e.target.closest('.js-wh-row');
+    if (row && target) {
+      target.value = row.dataset.free;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      closeDlg();
+    }
+  });
+  q.addEventListener('input', function () {
+    clearTimeout(timer); timer = setTimeout(search, 180);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && dlg.style.display !== 'none') closeDlg();
   });
 })();
 </script>

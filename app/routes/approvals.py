@@ -560,6 +560,38 @@ def item_request_reject(req_id):
     return redirect(url_for("approvals.item_requests"))
 
 
+@bp.route("/pr/<int:pr_id>/warehouse", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def warehouse_revise(pr_id):
+    """The warehouse rung corrects quantities and records stock on hand."""
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    f = request.form
+    qtys, stocks = {}, {}
+    for it in bundle["items"]:
+        q = f.get("whqty_%s" % it["id"])
+        st = f.get("whstock_%s" % it["id"])
+        if q is not None and str(q).strip() != "":
+            qtys[it["id"]] = q
+        if st is not None and str(st).strip() != "":
+            stocks[it["id"]] = st
+    ok, msg = svc.warehouse_revise(pr_id, qtys, stocks, _u(), ip=_ip())
+    flash({"revised": "Saved. The requester has been told what changed.",
+           "unchanged": "Nothing was changed.",
+           "already_priced": "This request already carries prices, so a quantity "
+                             "cannot be changed here — it would move a total that "
+                             "people have already signed. Reject it back instead.",
+           "not_warehouse_rung": "The request is not on the warehouse stage.",
+           "not_eligible": "You are not one of the people who signs the warehouse "
+                           "stage on this request.",
+           "not_pending": "This request is not circulating.",
+           "not_found": "That request no longer exists."}.get(msg, msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
 # --------------------------------------------------------------------------
 # Off-catalogue lines — text somebody typed that is not an item yet.
 # The report told you it happened; this is where you do something about it.
@@ -1080,6 +1112,12 @@ def detail(pr_id):
                            can_advance=any(svc.can_act(user, s)
                                            for s in ("finance", "cfo", "ceo")),
                            needs_pricing=needs_pricing, show_commercial=show_commercial,
+                           # The warehouse rung may correct quantities, but only
+                           # while the request is still worth nothing — after
+                           # pricing a quantity moves a signed total.
+                           wh_review=bool(actionable
+                                          and actionable.get("stage") == "warehouse"
+                                          and not is_priced),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            rfq_min=C.RFQ_QUOTE_MIN, rfq_threshold=C.RFQ_VALUE_THRESHOLD,
                            # Who to ask for a price, defaulted to the vendors the

@@ -4012,5 +4012,16 @@
   "proc.rf_mtype_hint": "Önce tipi seçin — aşağıdaki liste yalnızca o tipteki makineleri gösterir.",
   "proc.rf_pick_l": "Hangisi",
   "proc.rf_free_l": "Ne için",
-  "proc.rf_free_ph": "Bu talebin ne için olduğunu yazın"
+  "proc.rf_free_ph": "Bu talebin ne için olduğunu yazın",
+  "proc.wh_gate": "Depo — stok ve miktar kontrolü",
+  "proc.wh_gate_hint": "Raf başka bir şey söylüyorsa miktarı düzeltin ve eldeki miktarı kaydedin. Burada fiyat ve tedarikçi yok — onlar Satın Alma'nın işi ve bu talep henüz bir değer taşımıyor.",
+  "proc.wh_qty": "İstenen miktar",
+  "proc.wh_onhand": "Elde",
+  "proc.wh_search": "Depoda ara",
+  "proc.wh_save": "Miktarları kaydet",
+  "proc.wh_save_hint": "Talep edene neyin değiştiği bildirilir. Aşağıdaki aşamayı yine de imzalarsınız.",
+  "proc.wh_dlg": "Eldeki stok",
+  "proc.wh_dlg_ph": "Depolarda ara…",
+  "proc.wh_dlg_hint": "Serbest = eldeki miktar eksi başka bir siparişe söz verilmiş olan. Bir satıra tıklamak serbest miktarı satıra kopyalar.",
+  "proc.wh_dlg_none": "Depolarda bununla eşleşen bir şey yok."
 }

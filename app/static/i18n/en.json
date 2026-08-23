@@ -4012,5 +4012,16 @@
   "proc.rf_mtype_hint": "Pick the type first — the list below then shows only machines of that type.",
   "proc.rf_pick_l": "Which one",
   "proc.rf_free_l": "What is it for",
-  "proc.rf_free_ph": "Say what this request is for"
+  "proc.rf_free_ph": "Say what this request is for",
+  "proc.wh_gate": "Warehouse — check stock and quantity",
+  "proc.wh_gate_hint": "Correct the quantity if the shelf says otherwise, and record what is on hand. No prices and no supplier here — those are Purchasing's, and this request carries no value yet.",
+  "proc.wh_qty": "Quantity requested",
+  "proc.wh_onhand": "On hand",
+  "proc.wh_search": "Search on WH",
+  "proc.wh_save": "Save quantities",
+  "proc.wh_save_hint": "The requester is told what changed. You still sign the stage below.",
+  "proc.wh_dlg": "Stock on hand",
+  "proc.wh_dlg_ph": "Search the stores…",
+  "proc.wh_dlg_hint": "Free = on hand minus what is already promised to another order. Clicking a row copies the free figure into the line.",
+  "proc.wh_dlg_none": "Nothing in the stores matches that."
 }

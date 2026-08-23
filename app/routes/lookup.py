@@ -209,6 +209,54 @@ def request_for():
     return jsonify({"results": out[:LIMIT]})
 
 
+@bp.route("/wh-stock")
+@login_required
+def wh_stock():
+    """What the stores actually hold — spares and materials in one search.
+
+    For the warehouse rung, whose whole job is "is this already on the shelf?".
+    Two registers answer that and neither is the procurement catalogue: the
+    maintenance spare store and the materials warehouse. Both carry stock_qty,
+    what is reserved, where it sits, and the unit it is counted in — which is the
+    difference between "we have 40" and "we have 40 metres, 30 of them promised
+    to another order".
+    """
+    _guard("proc_view")
+    q = (request.args.get("q") or "").strip()
+    like = "%" + q.lower() + "%"
+    out = []
+    conn = get_db()
+    try:
+        for table, src in (("mnt_spare_parts", "spare"), ("wh_materials", "material")):
+            try:
+                rows = conn.execute(
+                    "SELECT code, name, COALESCE(uom,'') AS uom, "
+                    "       COALESCE(stock_qty,0) AS on_hand, "
+                    "       COALESCE(reserved_qty,0) AS reserved, "
+                    "       COALESCE(warehouse,'') AS wh, COALESCE(bin,'') AS bin "
+                    "FROM %s WHERE is_active=1 "
+                    "AND (? = '' OR LOWER(code) LIKE ? OR LOWER(name) LIKE ?) "
+                    "ORDER BY name LIMIT ?" % table,
+                    (q.lower(), like, like, LIMIT)).fetchall()
+            except Exception:
+                continue            # module not installed: search what else there is
+            for r in rows:
+                free = float(r["on_hand"] or 0) - float(r["reserved"] or 0)
+                out.append({
+                    "value": r["code"], "label": "%s · %s" % (r["code"], r["name"] or ""),
+                    "source": src, "uom": r["uom"],
+                    "on_hand": float(r["on_hand"] or 0),
+                    "reserved": float(r["reserved"] or 0),
+                    "free": free,
+                    "where": (" / ".join(x for x in (r["wh"], r["bin"]) if x)) or "",
+                })
+    finally:
+        conn.close()
+    # Most stock first: a storekeeper checking availability wants what is there.
+    out.sort(key=lambda x: -x["free"])
+    return jsonify({"results": out[:LIMIT]})
+
+
 @bp.route("/<kind>")
 @login_required
 def lookup(kind):
