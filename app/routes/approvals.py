@@ -10,7 +10,8 @@ import base64
 import io
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
-                   abort, flash, jsonify, send_file, current_app)
+                   abort, jsonify, send_file, current_app)
+from flask import flash as _flask_flash
 
 from app.auth import login_required, permission_required, current_user, user_can
 # Module scope on purpose. This module used to import get_db inside each
@@ -18,6 +19,30 @@ from app.auth import login_required, permission_required, current_user, user_can
 # NameError went into a bare `except` and the feature silently reported
 # "nothing to show". One import here is the fix that a third caller cannot undo.
 from app.db import get_db
+from app.approvals.messages import translate as _translate_msg
+
+
+def flash(message, category="message"):
+    """Flash a message in the reader's own language.
+
+    Every message in this module leaves through here, so translating at this one
+    point beats threading a language through ninety-three call sites — and beats
+    giving each message a key and rewriting all of them, which would have been a
+    very wide diff through the route of every action in the module in order to
+    change no behaviour at all.
+
+    An untranslated string passes through unchanged, so a message added tomorrow
+    still works in English while it waits for its Arabic and Turkish. It does not
+    wait SILENTLY: tests_messages_i18n.py fails on any user-facing string in this
+    file with no entry in app/approvals/messages.py.
+    """
+    try:
+        lang = (current_user() or {}).get("lang_pref") or "en"
+    except Exception:
+        lang = "en"
+    return _flask_flash(_translate_msg(message, lang), category)
+
+
 from app.approvals import services as svc
 from app.approvals import pdf as pdfgen
 from app.approvals import constants as C
