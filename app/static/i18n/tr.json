@@ -3999,5 +3999,7 @@
   "offc.show_decided": "Reddedilenleri göster",
   "offc.nav": "Katalog dışı satırlar",
   "offc.link": "Bu kaleme bağla",
-  "offc.match": "Zaten katalogda"
+  "offc.match": "Zaten katalogda",
+  "proc.line_vendor": "Bu satırın tedarikçisi",
+  "proc.line_vendor_ph": "Talebin tedarikçisini kullanmak için boş bırakın"
 }

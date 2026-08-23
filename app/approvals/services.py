@@ -1788,8 +1788,15 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     stamp_step_actions(conn, pr_id)
 
 
-def price_pr(pr_id, prices, meta, user, ip=None):
+def price_pr(pr_id, prices, meta, user, ip=None, vendors=None):
     """Purchasing enters commercial pricing for a request — the pricing gate.
+
+    `vendors` maps pr_items.id -> the supplier for THAT line. It is set here
+    rather than on the request form because naming a supplier is a sourcing
+    decision, not a statement of need — the requester says what they want, and
+    Purchasing decide who supplies it at the same moment they record what that
+    supplier charges. A blank leaves the line on the request's header vendor,
+    which is how every request raised before per-line vendors still behaves.
 
     `prices` maps pr_items.id -> unit_price; `meta` may carry tax_rate,
     payment_condition, vendor and currency (all Purchasing-owned). The line
@@ -1837,6 +1844,15 @@ def price_pr(pr_id, prices, meta, user, ip=None):
             est = round(float(it["qty"] or 0) * up, 2)
             conn.execute("UPDATE pr_items SET unit_price=?, est_cost=? WHERE id=?",
                          (up, est, it["id"]))
+            # The supplier for this line, if Purchasing named one. A key that was
+            # not posted at all leaves the line alone; a key posted BLANK clears
+            # it back to the header vendor, which is how a buyer un-splits a
+            # request they had split across suppliers.
+            if vendors:
+                lv = vendors.get(it["id"], vendors.get(str(it["id"])))
+                if lv is not None:
+                    conn.execute("UPDATE pr_items SET vendor=? WHERE id=?",
+                                 (str(lv).strip()[:120] or None, it["id"]))
             total += est
         total = round(total, 2)
 

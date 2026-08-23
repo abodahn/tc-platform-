@@ -348,6 +348,12 @@ def _parse_items(f, can_price=False, can_buy=False):
             # Unit survives one way: a line PICKED from the catalogue carries the
             # catalogue's own unit, which is master data rather than the
             # requester's opinion. services.py resolves that from item_id.
+            # Locked for EVERYONE on a request form, buyer included. A request
+            # says what is needed and how many; the unit comes from the
+            # catalogue when the line was picked, and the supplier is chosen at
+            # SOURCING, on the request page, once there is something to source.
+            # can_buy is still passed because tests and the API call this
+            # directly, and the buyer's own sourcing screen posts through it.
             "unit": (units[i] if i < len(units) else "Pcs") if can_buy else "",
             "qty": qtys[i] if i < len(qtys) else 0,
             "current_stock": (stocks[i] if i < len(stocks) else 0) if can_buy else 0,
@@ -782,8 +788,8 @@ def catalogue_import():
 def create():
     can_price = _can_price()
     header = _parse_header(request.form, can_price)
-    items = _parse_items(request.form, can_price,
-                         can_buy=user_can("proc_purchasing") or user_can("proc_admin"))
+    # Nobody states unit, stock or supplier on a REQUEST form.
+    items = _parse_items(request.form, can_price, can_buy=False)
     # Refused before anything is written: a request stored with a guessed
     # expenditure type is already on the wrong ladder.
     bad_kind = _kind_refusal(header)
@@ -886,8 +892,8 @@ def edit_save(pr_id):
         abort(403)
     can_price = _can_price()
     header = _parse_header(request.form, can_price, existing=bundle["pr"])
-    items = _parse_items(request.form, can_price,
-                         can_buy=user_can("proc_purchasing") or user_can("proc_admin"))
+    # Nobody states unit, stock or supplier on a REQUEST form.
+    items = _parse_items(request.form, can_price, can_buy=False)
     # Same refusal on the re-file after a rejection, which is where a CAPEX
     # request would otherwise be downgraded on its way back through.
     bad_kind = _kind_refusal(header)
@@ -1021,6 +1027,11 @@ def detail(pr_id):
     show_commercial = is_priced or can_purchasing
     return render_template("approvals/detail.html", active="proc_list",
                            fields=svc.visible_fields(),
+                           # Approved suppliers, for the per-line supplier boxes
+                           # at the pricing gate. Free text is still allowed —
+                           # a select cannot hold a supplier not in its options,
+                           # and vendor_approved() is the real control.
+                           vendors=svc.list_vendors(),
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
                            act_why=act_why, act_sign=act_sign,
                            l2_domain=l2_dom, l2_note=l2_note,
@@ -1483,12 +1494,21 @@ def price(pr_id):
         raw = f.get("price_%s" % it["id"])
         if raw is not None and str(raw).strip() != "":
             prices[it["id"]] = raw
+    # The supplier per LINE is set here, not on the request form. A requester
+    # states what is needed; who supplies it is a sourcing decision, and this is
+    # the moment Purchasing make it — the same moment they put a price against
+    # the line, which is the price THAT supplier quoted.
+    vendors = {}
+    for it in bundle["items"]:
+        raw = f.get("linevendor_%s" % it["id"])
+        if raw is not None:
+            vendors[it["id"]] = str(raw).strip()[:120]
     meta = {"tax_rate": f.get("tax_rate", "").strip(),
             "payment_condition": f.get("payment_condition", "").strip(),
             "vendor": f.get("vendor", "").strip(),
             "currency": f.get("currency", "").strip(),
             "fx_rate": f.get("fx_rate", "").strip()}   # EGP-equivalent rate for non-EGP PRs
-    ok, msg = svc.price_pr(pr_id, prices, meta, _u(), ip=_ip())
+    ok, msg = svc.price_pr(pr_id, prices, meta, _u(), ip=_ip(), vendors=vendors)
     flash("Pricing saved — the request now carries its commercial value and any "
           "value-based approvals have joined the ladder." if ok
           else {"locked": "This request can no longer be priced.",

@@ -228,13 +228,20 @@
       <div class="muted" style="font-size:12px;padding-bottom:8px" data-i18n="mr.local_hint">
         Local market first: research prioritises suppliers inside your radius, then national / online options.</div>
     </div>
+    <datalist id="vlistAll">{% for v in (vendors or []) %}<option value="{{ v.name if v.name is defined else v }}"></option>{% endfor %}</datalist>
     <form method="post" action="{{ url_for('approvals.price', pr_id=pr.id) }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <div style="overflow-x:auto">
       <table class="tbl">
         <thead><tr>
           <th>#</th><th data-i18n="proc.item">Item</th>
-          <th data-i18n="proc.qty">Qty</th><th data-i18n="proc.unit_price">Unit price</th>
+          <th data-i18n="proc.qty">Qty</th>
+          {#- Sourcing happens HERE, not on the request form: a requester states
+              what is needed, Purchasing decide who supplies it at the same
+              moment they record what that supplier charges. Blank leaves the
+              line on the request's header vendor. -#}
+          <th data-i18n="proc.line_vendor">Supplier for this line</th>
+          <th data-i18n="proc.unit_price">Unit price</th>
         </tr></thead>
         <tbody>
         {% for it in b['items'] %}
@@ -257,6 +264,12 @@
                 {% endif %}
             </td>
             <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}</td>
+            <td>
+              <input name="linevendor_{{ it.id }}" list="vlistAll" autocomplete="off"
+                     value="{{ it.vendor or '' }}" style="min-width:150px"
+                     placeholder="{{ pr.vendor or '' }}"
+                     data-i18n-ph="proc.line_vendor_ph">
+            </td>
             <td>
               <div style="display:flex;gap:6px;align-items:center">
                 <input type="number" name="price_{{ it.id }}" id="price_{{ it.id }}" min="0" step="any"

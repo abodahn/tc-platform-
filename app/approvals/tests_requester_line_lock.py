@@ -1,22 +1,32 @@
-"""A requester says WHAT and HOW MANY. Nothing else on the line is theirs.
+"""A request form says WHAT and HOW MANY. Nothing else on the line is set there.
 
-Unit of measure, stock on hand and the supplier are commercial and warehouse
-facts the floor is not placed to assert — asking for them produced guesses that
-Purchasing then had to undo, and a wrong unit on a purchase order is a real
-ordering error. So on a requester's line the item picker, the description and the
-quantity stay open, and unit, current stock and vendor are locked.
+A request line carries the item, a description and a quantity. Unit of measure,
+stock on hand and the supplier are NOT set there — by anyone, including a buyer
+and a super admin. They are commercial and warehouse facts, and a request form is
+where a need is stated, not where sourcing is decided. Asking for them produced
+guesses Purchasing then had to undo, and a wrong unit on a purchase order is a
+real ordering error rather than a cosmetic one.
+
+Those three move to where the knowledge is:
+
+  * UNIT comes from the catalogue when the line was picked — master data, not
+    anybody's opinion. A free-text line falls back to "Pcs" until corrected.
+  * SUPPLIER is chosen at the PRICING GATE, on the request page, at the same
+    moment Purchasing record what that supplier charges. Section 3 proves it.
+  * STOCK ON HAND belongs to the warehouse rung, which reads it from the shelf.
 
 THE SCREEN IS THE COURTESY; THE PARSER IS THE CONTROL. The three boxes are greyed
-so nobody wastes time typing into them, but the lock that matters is server-side
-in _parse_items: a hand-crafted POST carrying a unit, a stock figure or a
-supplier has them dropped, exactly as unit_price has always been dropped.
+so nobody wastes time typing into them, but the lock that matters is server-side:
+the request routes call _parse_items with can_buy=False for everybody, so a
+hand-crafted POST carrying a unit, a stock figure or a supplier has them dropped,
+exactly as unit_price has always been dropped.
 
 Two traps this file exists to hold:
 
-  * The lock is keyed on CAN_BUY, not can_price. _can_price() is hardcoded False
-    for EVERYONE — a governance rule that nobody prices a request at creation
-    time, not even a super admin — so keying on it would have greyed these boxes
-    for Purchasing too.
+  * NOT keyed on can_price. That was the obvious flag and it is wrong:
+    _can_price() is hardcoded False for EVERYONE — a governance rule that nobody
+    prices a request at creation time, not even a super admin — so a lock built
+    on it would look right while meaning something else entirely.
   * The boxes are `readonly`, never `disabled`. A disabled field posts nothing,
     and the line editor reads its rows back as PARALLEL ARRAYS, so one skipped
     value would shift every field on every line below it onto the wrong row.
@@ -90,10 +100,13 @@ def run():
         m = re.search(r"var %s\s*=\s*(\w+)" % name, html)
         return m.group(1) if m else "MISSING"
 
+    # The three boxes are locked for EVERY user on a request form now, buyer and
+    # super admin included: a request form states a need, and sourcing is a
+    # different decision taken at a different moment.
     chk("requester  CAN_BUY is false", flag(hr, "CAN_BUY") == "false",
         flag(hr, "CAN_BUY"))
-    chk("purchasing CAN_BUY is true", flag(hb, "CAN_BUY") == "true",
-        flag(hb, "CAN_BUY"))
+    chk("purchasing CAN_BUY is true (the flag still distinguishes them)",
+        flag(hb, "CAN_BUY") == "true", flag(hb, "CAN_BUY"))
     chk("can_price stays false for BOTH — it is a governance rule, not a role",
         flag(hr, "CAN_PRICE") == "false" and flag(hb, "CAN_PRICE") == "false",
         (flag(hr, "CAN_PRICE"), flag(hb, "CAN_PRICE")))
@@ -157,10 +170,47 @@ def run():
             "SELECT unit, current_stock, vendor FROM pr_items ORDER BY id DESC LIMIT 1"
         ).fetchone())
         conn.close()
-    chk("the buyer's unit is kept", b["unit"] == "Kg", b["unit"])
-    chk("the buyer's stock figure is kept", float(b["current_stock"]) == 12.0,
-        b["current_stock"])
-    chk("the buyer's vendor is kept", b["vendor"] == "Real Vendor", b["vendor"])
+    # The REQUEST FORM locks these for everybody, the buyer included. A request
+    # form states a need; it is not where sourcing happens, and a buyer who fills
+    # it in there is guessing a supplier before anyone has quoted.
+    chk("even the BUYER cannot set a unit on a request form",
+        b["unit"] in ("", "Pcs"), "%r (posted 'Kg')" % b["unit"])
+    chk("nor a stock figure", float(b["current_stock"] or 0) == 0,
+        "%r (posted 12)" % b["current_stock"])
+    chk("nor a line supplier", not (b["vendor"] or "").strip()
+        or b["vendor"] != "Real Vendor", "%r (posted 'Real Vendor')" % b["vendor"])
+
+    # ...they set the supplier at the PRICING GATE, which is the moment they
+    # choose one, and the same moment they record what that supplier charges.
+    print("\nthe buyer sets the line's supplier at the SOURCING gate instead")
+    with app.app_context():
+        from app.db import get_db
+        conn = get_db()
+        conn.execute("INSERT OR IGNORE INTO proc_vendors (name,is_active) "
+                     "VALUES ('Real Vendor',1)")
+        conn.commit()
+        pr_id = conn.execute("SELECT id FROM pr_requests ORDER BY id DESC LIMIT 1"
+                             ).fetchone()["id"]
+        line = conn.execute("SELECT id FROM pr_items WHERE pr_id=? LIMIT 1",
+                            (pr_id,)).fetchone()["id"]
+        conn.close()
+    page = buy.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
+    chk("the request page offers a supplier box for the line",
+        ("linevendor_%d" % line) in page)
+    tokp = re.search(r'name="_csrf" value="([^"]+)"', page).group(1)
+    buy.post("/procurement/pr/%d/price" % pr_id, data={
+        "price_%d" % line: "12", "linevendor_%d" % line: "Real Vendor",
+        "currency": "EGP", "_csrf": tokp})
+    with app.app_context():
+        from app.db import get_db
+        conn = get_db()
+        after = dict(conn.execute(
+            "SELECT vendor, unit_price FROM pr_items WHERE id=?", (line,)).fetchone())
+        conn.close()
+    chk("and setting it there works", after["vendor"] == "Real Vendor",
+        after["vendor"])
+    chk("alongside the price that supplier quoted",
+        float(after["unit_price"]) == 12.0, after["unit_price"])
 
     # ---- 4. a PICKED line takes the catalogue's own unit ------------------
     print("\na line picked from the catalogue carries the catalogue's unit")

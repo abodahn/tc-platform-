@@ -3999,5 +3999,7 @@
   "offc.show_decided": "Show rejected",
   "offc.nav": "Off-catalogue lines",
   "offc.link": "Link to this item",
-  "offc.match": "Already in the catalogue"
+  "offc.match": "Already in the catalogue",
+  "proc.line_vendor": "Supplier for this line",
+  "proc.line_vendor_ph": "Leave blank to use the request's supplier"
 }

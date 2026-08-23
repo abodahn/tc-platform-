@@ -270,23 +270,16 @@
       // readonly, never disabled: a disabled field posts nothing, and these rows
       // are read back as PARALLEL ARRAYS, so one skipped value would shift every
       // field on every line below it onto the wrong row.
-      + (CAN_BUY
-          ? '<select name="unit[]">'+unitOpts()+'</select>'
-          : '<input name="unit[]" class="li-locked" readonly tabindex="-1" '
-            + 'title="' + LOCK_HINT + '" placeholder="—">')
+      + '<input name="unit[]" class="li-locked" readonly tabindex="-1" '
+        + 'title="' + LOCK_HINT + '" placeholder="—">'
       + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
-      + (CAN_BUY
-          ? '<input name="current_stock[]" type="number" min="0" step="any" value="0">'
-          : '<input name="current_stock[]" class="li-locked" readonly tabindex="-1" '
-            + 'title="' + LOCK_HINT + '" value="0">')
+      + '<input name="current_stock[]" class="li-locked" readonly tabindex="-1" '
+        + 'title="' + LOCK_HINT + '" value="0">'
       // Free text backed by the supplier list (same idiom as the SO / forecast
       // fields above) — a select cannot hold a supplier that is not in its
       // options, and these rows are cloned and re-filled from saved drafts.
-      + (CAN_BUY
-          ? '<input name="vendor[]" list="vendorList" autocomplete="off" '
-            + 'placeholder="Vendor" data-i18n-ph="proc.vendor_l">'
-          : '<input name="vendor[]" class="li-locked" readonly tabindex="-1" '
-            + 'title="' + LOCK_HINT + '" placeholder="—">')
+      + '<input name="vendor[]" class="li-locked" readonly tabindex="-1" '
+        + 'title="' + LOCK_HINT + '" placeholder="—">'
       + priceCells
       + '<button type="button" class="li-del" title="Remove">✕</button>'
       + '</div>';

@@ -39,3 +39,6 @@ platform.db.*
 
 # Beta server console capture — local diagnostics, never committed.
 beta-server*.log
+
+# Rendered page snapshots used to show a screen in chat. Never committed.
+_preview/
