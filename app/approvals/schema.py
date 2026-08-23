@@ -282,6 +282,19 @@ CREATE TABLE IF NOT EXISTS proc_item_requests (
     item_id INTEGER                   -- proc_items.id created on approval
 );
 CREATE INDEX IF NOT EXISTS ix_proc_item_req ON proc_item_requests(status, id);
+
+-- A decision about a piece of text somebody typed on a request line that is not
+-- in the catalogue: added (with the Optima code) or rejected (with the reason).
+-- Keyed by the NORMALISED text rather than by a line id, because the same words
+-- get typed on many requests and the decision is about the words, not about one
+-- line. Absent = still waiting, which is why there is no 'pending' row.
+CREATE TABLE IF NOT EXISTS proc_off_catalogue (
+    text_key   TEXT PRIMARY KEY,
+    decision   TEXT NOT NULL,       -- added | rejected
+    note       TEXT,
+    decided_by TEXT,
+    decided_at TEXT
+);
 """
 
 # Columns added to pr_steps after first release — applied as idempotent ALTERs

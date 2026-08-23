@@ -79,8 +79,18 @@ def get_item(conn, item_id):
 
 
 def item_by_code(conn, code):
-    r = conn.execute("SELECT * FROM proc_items WHERE code=?",
-                     (_clean(code, 60),)).fetchone()
+    """The row holding this code, IGNORING CASE, or None.
+
+    The UNIQUE on proc_items.code is case-SENSITIVE, so "AB-100" and "ab-100" are
+    two rows to the database and one part to a human. Matching exactly here meant
+    every door that guards on this function — adding by hand, renaming a code,
+    adding from an off-catalogue line — would happily create the second row. The
+    bulk importer and the new-item queue already match case-insensitively; this
+    makes the third and fourth doors agree with them.
+    """
+    code = _clean(code, 60)
+    r = conn.execute("SELECT * FROM proc_items WHERE code=? OR LOWER(code)=LOWER(?)",
+                     (code, code)).fetchone()
     return dict(r) if r else None
 
 

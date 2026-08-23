@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Off-catalogue lines{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="proc.settings_eyebrow">Procurement</div>
+    <h1 data-i18n="offc.title">Typed, not in the catalogue</h1>
+    <div class="sub" data-i18n="offc.sub">Text people typed on a request line that matches no catalogue item. Add it with the code Optima issued, or reject it and say which code to use instead. Until one of those happens the same text gets typed again next month.</div>
+  </div>
+  <div class="flex gap wrap">
+    <a class="btn btn-ghost btn-sm"
+       href="{{ url_for('approvals.off_catalogue', all='0' if show_all else '1') }}"
+       data-i18n="offc.show_decided">Show rejected</a>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h3 data-i18n="offc.title">Typed, not in the catalogue</h3>
+    <span class="tag">{{ rows|length }}</span>
+  </div>
+  <div class="panel-pad">
+    {% if not rows %}
+      <div class="muted" data-i18n="offc.empty">Nothing waiting. Every line on every request is linked to a catalogue item.</div>
+    {% else %}
+    <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th data-i18n="offc.text">What was typed</th>
+            <th data-i18n="offc.lines">Lines</th>
+            <th data-i18n="offc.requests">Requests</th>
+            <th data-i18n="offc.qty">Total quantity</th>
+            <th data-i18n="offc.last_seen">Last typed</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>
+              <b>{{ r.item_text }}</b>
+              <div class="muted" style="font-size:12px">
+                <span data-i18n="offc.who">Typed by</span> {{ r.who or '—' }}{% if r.unit %} · {{ r.unit }}{% endif %}
+              </div>
+              {% if r.decision %}
+              <div class="mt-2">
+                <span class="badge b-pending" data-i18n="offc.decided">Decided</span>
+                <span class="muted" style="font-size:12px">{{ r.decision.decision }} · {{ r.decision.note }}
+                  · {{ r.decision.decided_by }} {{ (r.decision.decided_at or '')[:10] }}</span>
+              </div>
+              {% endif %}
+            </td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.lines }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">{{ r.requests }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(r.qty or 0) }}</td>
+            <td class="muted" style="white-space:nowrap">{{ (r.last_seen or '')[:10] }}</td>
+            <td>
+              {% if r.decision %}
+              <form method="post" action="{{ url_for('approvals.off_catalogue_reopen') }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="text" value="{{ r.item_text }}">
+                <button class="btn btn-ghost btn-sm" type="submit">Reopen</button>
+              </form>
+              {% else %}
+              {#- Add: the Optima code, plus the unit and category Purchasing are
+                  the ones placed to decide. The typed text becomes the name. -#}
+              <form method="post" action="{{ url_for('approvals.off_catalogue_add') }}"
+                    class="flex gap wrap" style="gap:6px;align-items:end">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="text" value="{{ r.item_text }}">
+                <div class="field" style="margin:0;min-width:150px">
+                  <label><span data-i18n="offc.code">Optima code</span> *</label>
+                  <input name="code" maxlength="60" required autocomplete="off"
+                         placeholder="e.g. Spa-Sew-F-616-88">
+                </div>
+                <div class="field" style="margin:0;min-width:80px">
+                  <label data-i18n="offc.unit">Unit</label>
+                  <input name="unit" list="offUnits" maxlength="40" autocomplete="off"
+                         value="{{ r.unit or '' }}" placeholder="Pcs">
+                </div>
+                <div class="field" style="margin:0;min-width:120px">
+                  <label data-i18n="offc.category">Category</label>
+                  <input name="category_name" list="offCats" maxlength="120" autocomplete="off">
+                </div>
+                <button class="btn btn-primary btn-sm" type="submit" data-i18n="offc.add">Add to catalogue</button>
+              </form>
+              <form method="post" action="{{ url_for('approvals.off_catalogue_reject') }}"
+                    class="flex gap wrap mt-2" style="gap:6px;align-items:end">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="text" value="{{ r.item_text }}">
+                <div class="field" style="margin:0;min-width:220px">
+                  <label><span data-i18n="offc.reason">Why not, and what to use instead</span> *</label>
+                  <input name="note" maxlength="2000" required autocomplete="off">
+                </div>
+                <button class="btn btn-ghost btn-sm" type="submit" data-i18n="offc.reject">Reject</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <datalist id="offUnits">
+      <option value="Pcs"></option><option value="Kg"></option><option value="Mtr"></option>
+      <option value="Ltr"></option><option value="Box"></option><option value="Set"></option>
+      <option value="Roll"></option><option value="Yrd"></option>
+    </datalist>
+    <datalist id="offCats">{% for c in cats %}<option value="{{ c }}"></option>{% endfor %}</datalist>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

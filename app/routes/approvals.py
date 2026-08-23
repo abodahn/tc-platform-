@@ -495,6 +495,71 @@ def item_request_reject(req_id):
 
 
 # --------------------------------------------------------------------------
+# Off-catalogue lines — text somebody typed that is not an item yet.
+# The report told you it happened; this is where you do something about it.
+# --------------------------------------------------------------------------
+@bp.route("/off-catalogue", methods=["GET"])
+@login_required
+@permission_required("proc_purchasing")
+def off_catalogue():
+    from app.db import get_db
+    from app.approvals import off_catalogue as OC
+    show_all = request.args.get("all") == "1"
+    conn = get_db()
+    try:
+        rows = OC.pending(conn, include_decided=show_all)
+        cats = [r["c"] for r in conn.execute(
+            "SELECT DISTINCT category_name AS c FROM proc_items "
+            "WHERE COALESCE(category_name,'') <> '' ORDER BY c").fetchall()]
+    finally:
+        conn.close()
+    return render_template("approvals/off_catalogue.html", active="procurement",
+                           rows=rows, cats=cats, show_all=show_all)
+
+
+@bp.route("/off-catalogue/add", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def off_catalogue_add():
+    from app.approvals import off_catalogue as OC
+    f = request.form
+    ok, msg, linked = OC.add_to_catalogue(
+        f.get("text"), f.get("code"), _u(), unit=f.get("unit", ""),
+        category_name=f.get("category_name", ""), ip=_ip())
+    flash(("Added. %d request line(s) now point at it." % linked) if ok else
+          {"code_required": "Type the Optima code before adding.",
+           "duplicate_code": "That code is already in the catalogue.",
+           "no_text": "Nothing to add.",
+           "name_required": "That line has no text to use as a name."}.get(msg, msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.off_catalogue"))
+
+
+@bp.route("/off-catalogue/reject", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def off_catalogue_reject():
+    from app.approvals import off_catalogue as OC
+    f = request.form
+    ok, msg = OC.reject(f.get("text"), f.get("note"), _u(), ip=_ip())
+    flash("Recorded. The people who typed it have been told." if ok else
+          {"note_required": "Say why, and which code to use instead.",
+           "no_text": "Nothing to reject."}.get(msg, msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.off_catalogue", all=request.form.get("all")))
+
+
+@bp.route("/off-catalogue/reopen", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def off_catalogue_reopen():
+    from app.approvals import off_catalogue as OC
+    OC.reopen(request.form.get("text"), _u(), ip=_ip())
+    flash("Back in the queue.", "success")
+    return redirect(url_for("approvals.off_catalogue", all="1"))
+
+
+# --------------------------------------------------------------------------
 # Item master — the store's door. Browse, add, edit, retire, one row at a time.
 # The bulk import below is a different door for a different job.
 # --------------------------------------------------------------------------
