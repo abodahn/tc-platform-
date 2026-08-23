@@ -245,7 +245,13 @@ def _parse_header(f, can_price=False, existing=None):
     _kind, _kind_ok = C.normalise_expenditure_kind(_kind_raw)
     h = {
         "title": f.get("title", "").strip(),
-        "request_for": f.get("request_for", "").strip(),
+        # "Request for" is answered in one of two boxes depending on the kind
+        # chosen above it — a picked machine/line/area, or free text for
+        # something no register holds. Exactly one is enabled at a time, so
+        # taking whichever arrived is unambiguous.
+        "request_for": (f.get("request_for", "").strip()
+                        or f.get("request_for_free", "").strip()),
+        "request_for_kind": f.get("request_for_kind", "").strip()[:20],
         "department": f.get("department", "").strip(),
         "request_date": f.get("request_date", "").strip(),
         "currency": f.get("currency", "EGP"),

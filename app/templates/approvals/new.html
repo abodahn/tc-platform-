@@ -40,19 +40,56 @@
             the purchase is being made, which is what an approver reads first. -#}
         <div class="field"><label data-i18n="proc.title_l">Reason *</label>
           <input name="title" required autocomplete="off" data-ac data-polish="title" value="{{ prefill.title or '' }}" placeholder="e.g. Repair forklift battery"></div>
-        {#- A searchable list, not a free box with a placeholder. The plant has
-            5,000 machines and a handful of lines; typing the name from memory is
-            how the same asset ends up spelled four ways. The <select> is the
-            form control (tc-combobox keeps it in sync), data-src searches the
-            registers server-side, and the value stored is still the TEXT — the
-            column is free text, and a requester whose asset is in no register
-            must still be able to say what it is. -#}
-        <div class="field"><label data-i18n="proc.request_for_l">Request for</label>
-          <select name="request_for" data-search data-src="/api/lookup/request-for"
-                  data-free="1">
+        {#- WHAT the request is for, in two or three steps rather than one box.
+            The plant has 5,108 machines: a single searchable list is still a
+            list of five thousand things, and typing the name from memory is how
+            one machine ends up spelled four ways. So the kind comes first, and
+            what it reveals depends on the answer — for a machine, the 154 types
+            narrow it before the machine itself is chosen.
+
+            The specific answer still lands in request_for as TEXT (the column is
+            free text, not a foreign key) and data-free keeps a typed value that
+            no register holds — a machine nobody has registered yet, an area the
+            plant calls by a nickname. request_for_kind records which register it
+            came from, so a report can group by it without parsing text apart. -#}
+        <div class="field"><label data-i18n="proc.rf_kind_l">Request for</label>
+          <select name="request_for_kind" id="rfKind">
+            <option value="" data-i18n="proc.rf_kind_none">— not specific —</option>
+            <option value="machine" {{ 'selected' if prefill.request_for_kind == 'machine' }} data-i18n="proc.rf_machine">Machine</option>
+            <option value="line" {{ 'selected' if prefill.request_for_kind == 'line' }} data-i18n="proc.rf_line">Production line</option>
+            <option value="area" {{ 'selected' if prefill.request_for_kind == 'area' }} data-i18n="proc.rf_area">Area</option>
+            <option value="other" {{ 'selected' if prefill.request_for_kind == 'other' }} data-i18n="proc.rf_other">Something else</option>
+          </select></div>
+
+        {#- Step two, shown only for a machine: narrow 5,108 down by type. -#}
+        <div class="field" id="rfTypeWrap" style="display:none">
+          <label data-i18n="proc.rf_mtype_l">Machine type</label>
+          <select name="request_for_type" id="rfType" data-search
+                  data-src="/api/lookup/request-for?kind=machine_type" data-free>
+            <option value=""></option>
+            {% if prefill.request_for_type %}<option value="{{ prefill.request_for_type }}" selected>{{ prefill.request_for_type }}</option>{% endif %}
+          </select>
+          <span class="muted" style="font-size:12px" data-i18n="proc.rf_mtype_hint">Pick the type first — the list below then shows only machines of that type.</span>
+        </div>
+
+        {#- Step three: the thing itself. Its data-src is rewritten as the answers
+            above change, and the combobox reads that attribute at fetch time. -#}
+        <div class="field" id="rfPickWrap" style="display:none">
+          <label id="rfPickLabel" data-i18n="proc.rf_pick_l">Which one</label>
+          <select name="request_for" id="rfPick" data-search
+                  data-src="/api/lookup/request-for?kind=machine" data-free>
             <option value=""></option>
             {% if prefill.request_for %}<option value="{{ prefill.request_for }}" selected>{{ prefill.request_for }}</option>{% endif %}
-          </select></div>
+          </select>
+        </div>
+
+        {#- "Something else": a plain box, because the registers do not hold it. -#}
+        <div class="field" id="rfFreeWrap" style="display:none">
+          <label data-i18n="proc.rf_free_l">What is it for</label>
+          <input name="request_for_free" id="rfFree" autocomplete="off" data-ac
+                 value="{{ prefill.request_for if prefill.request_for_kind == 'other' else '' }}"
+                 placeholder="Say what this request is for" data-i18n-ph="proc.rf_free_ph">
+        </div>
         {#- The five optional fields below are switched on and off in
             Procurement -> Settings. `fields` defaults every one to visible, so a
             site that never touches the switches sees the form unchanged. A
@@ -334,6 +371,63 @@
       recalc();
     }
   });
+  /* --- "Request for": kind -> (machine type) -> the thing itself ------------
+     The combobox reads data-src at FETCH time, so a dependent list is only a
+     matter of rewriting that attribute when the answer above it changes. The
+     three wrappers are shown and hidden rather than re-rendered per kind: people
+     change their mind, and re-rendering would throw away what they already
+     picked. */
+  (function () {
+    var kind = document.getElementById('rfKind');
+    if (!kind) return;
+    var typeWrap = document.getElementById('rfTypeWrap');
+    var pickWrap = document.getElementById('rfPickWrap');
+    var freeWrap = document.getElementById('rfFreeWrap');
+    var type = document.getElementById('rfType');
+    var pick = document.getElementById('rfPick');
+    var free = document.getElementById('rfFree');
+    var label = document.getElementById('rfPickLabel');
+
+    function srcFor(k) {
+      if (k === 'machine') {
+        var t = (type && type.value) ? '&type=' + encodeURIComponent(type.value) : '';
+        return '/api/lookup/request-for?kind=machine' + t;
+      }
+      return '/api/lookup/request-for?kind=' + (k === 'line' ? 'line' : 'area');
+    }
+
+    function apply(resetPick) {
+      var k = kind.value;
+      typeWrap.style.display = (k === 'machine') ? '' : 'none';
+      pickWrap.style.display = (k === 'machine' || k === 'line' || k === 'area') ? '' : 'none';
+      freeWrap.style.display = (k === 'other') ? '' : 'none';
+      if (label && window.tcT) {
+        label.textContent = k === 'line' ? tcT('proc.rf_line')
+                          : k === 'area' ? tcT('proc.rf_area')
+                          : tcT('proc.rf_pick_l');
+      }
+      if (pick) {
+        pick.dataset.src = srcFor(k);
+        // Clear on a KIND change — a machine is not an area — but never on the
+        // first render, or opening an existing request would lose what it is for.
+        if (resetPick) { pick.innerHTML = '<option value=""></option>'; pick.value = ''; }
+        // Only ONE field may carry the answer, or the form posts request_for twice.
+        pick.disabled = (k === 'other' || k === '');
+      }
+      if (free) free.disabled = (k !== 'other');
+      if (window.tcCombobox && window.tcCombobox.scan) window.tcCombobox.scan(document);
+    }
+
+    kind.addEventListener('change', function () { apply(true); });
+    if (type) type.addEventListener('change', function () {
+      pick.dataset.src = srcFor('machine');
+      pick.innerHTML = '<option value=""></option>';
+      pick.value = '';
+      if (window.tcCombobox && window.tcCombobox.scan) window.tcCombobox.scan(document);
+    });
+    apply(false);
+  })();
+
   document.getElementById('addRow').addEventListener('click', addRow);
   var curSel = document.querySelector('select[name=currency]');
   var deptSelEl = document.getElementById('deptSel');

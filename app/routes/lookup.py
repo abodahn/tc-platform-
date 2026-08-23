@@ -137,6 +137,8 @@ def request_for():
     """
     _guard("proc_create")
     q = (request.args.get("q") or "").strip()
+    kind = (request.args.get("kind") or "").strip().lower()
+    mtype = (request.args.get("type") or "").strip()
     like = "%" + q.lower() + "%"
     out, seen = [], set()
 
@@ -148,27 +150,60 @@ def request_for():
 
     conn = get_db()
     try:
-        # Machines first: most requests are raised against one, and a plant with
-        # 5,000 of them is exactly why this box needed a search instead of a list.
-        try:
-            rows = conn.execute(
-                "SELECT code, name, COALESCE(area,'') AS area FROM mnt_machines "
-                "WHERE is_active=1 AND (? = '' OR LOWER(code) LIKE ? OR "
-                "LOWER(name) LIKE ? OR LOWER(COALESCE(area,'')) LIKE ?) "
-                "ORDER BY code LIMIT ?", (q.lower(), like, like, like, LIMIT)).fetchall()
-            for r in rows:
-                add("%s · %s" % (r["code"], r["name"] or ""), r["area"])
-        except Exception:
-            pass                    # module not installed: offer what else there is
-        try:
-            rows = conn.execute(
-                "SELECT name, COALESCE(area,'') AS area FROM production_lines "
-                "WHERE (? = '' OR LOWER(name) LIKE ? OR LOWER(COALESCE(area,'')) LIKE ?) "
-                "ORDER BY name LIMIT ?", (q.lower(), like, like, LIMIT)).fetchall()
-            for r in rows:
-                add(r["name"], r["area"])
-        except Exception:
-            pass
+        # MACHINE TYPE — the first step of the cascade. 5,108 machines is too many
+        # to scroll even with a search, but they fall into 154 types, and a person
+        # who wants an overlock knows that before they know which overlock.
+        if kind == "machine_type":
+            try:
+                rows = conn.execute(
+                    "SELECT type, COUNT(*) AS n FROM mnt_machines "
+                    "WHERE is_active=1 AND COALESCE(type,'') <> '' "
+                    "AND (? = '' OR LOWER(type) LIKE ?) "
+                    "GROUP BY type ORDER BY n DESC, type LIMIT ?",
+                    (q.lower(), like, LIMIT)).fetchall()
+                for r in rows:
+                    add(r["type"], "%d" % r["n"])
+            except Exception:
+                pass
+        elif kind == "machine":
+            try:
+                where, params = ["is_active=1"], []
+                if mtype:
+                    where.append("type = ?")
+                    params.append(mtype)
+                if q:
+                    where.append("(LOWER(code) LIKE ? OR LOWER(name) LIKE ? "
+                                 "OR LOWER(COALESCE(brand,'')) LIKE ? "
+                                 "OR LOWER(COALESCE(model,'')) LIKE ?)")
+                    params += [like] * 4
+                rows = conn.execute(
+                    "SELECT code, name, COALESCE(area,'') AS area FROM mnt_machines "
+                    "WHERE " + " AND ".join(where) + " ORDER BY code LIMIT ?",
+                    tuple(params) + (LIMIT,)).fetchall()
+                for r in rows:
+                    add("%s · %s" % (r["code"], r["name"] or ""), r["area"])
+            except Exception:
+                pass
+        elif kind == "line":
+            try:
+                rows = conn.execute(
+                    "SELECT name, COALESCE(area,'') AS area FROM production_lines "
+                    "WHERE (? = '' OR LOWER(name) LIKE ?) ORDER BY name LIMIT ?",
+                    (q.lower(), like, LIMIT)).fetchall()
+                for r in rows:
+                    add(r["name"], r["area"])
+            except Exception:
+                pass
+        elif kind == "area":
+            try:
+                rows = conn.execute(
+                    "SELECT DISTINCT area FROM mnt_machines "
+                    "WHERE COALESCE(area,'') <> '' AND (? = '' OR LOWER(area) LIKE ?) "
+                    "ORDER BY area LIMIT ?", (q.lower(), like, LIMIT)).fetchall()
+                for r in rows:
+                    add(r["area"], "")
+            except Exception:
+                pass
     finally:
         conn.close()
     return jsonify({"results": out[:LIMIT]})

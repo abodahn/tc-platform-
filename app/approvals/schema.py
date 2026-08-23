@@ -329,6 +329,11 @@ _STEP_MIGRATIONS = [
 # Columns added to pr_requests after first release (tax + goods receipt + PO email
 # + payment tracking).
 _PR_MIGRATIONS = [
+    # WHAT KIND of thing the request is for — machine, production line, area, or
+    # something the registers do not hold. request_for keeps the specific answer
+    # (the machine, the line); this records which register it came from, so a
+    # report can group by it without parsing the text back apart.
+    ("request_for_kind", "ALTER TABLE pr_requests ADD COLUMN request_for_kind TEXT"),
     ("tax_rate", "ALTER TABLE pr_requests ADD COLUMN tax_rate REAL DEFAULT 0"),
     ("received_at", "ALTER TABLE pr_requests ADD COLUMN received_at TEXT"),
     ("received_by", "ALTER TABLE pr_requests ADD COLUMN received_by TEXT"),

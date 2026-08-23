@@ -4001,5 +4001,16 @@
   "offc.link": "ربط بهذا الصنف",
   "offc.match": "موجود بالفعل في الكتالوج",
   "proc.line_vendor": "مورّد هذا السطر",
-  "proc.line_vendor_ph": "اتركه فارغًا لاستخدام مورّد الطلب"
+  "proc.line_vendor_ph": "اتركه فارغًا لاستخدام مورّد الطلب",
+  "proc.rf_kind_l": "الطلب لـ",
+  "proc.rf_kind_none": "— غير محدد —",
+  "proc.rf_machine": "ماكينة",
+  "proc.rf_line": "خط إنتاج",
+  "proc.rf_area": "منطقة",
+  "proc.rf_other": "شيء آخر",
+  "proc.rf_mtype_l": "نوع الماكينة",
+  "proc.rf_mtype_hint": "اختر النوع أولاً — وعندها تظهر في القائمة أدناه ماكينات هذا النوع فقط.",
+  "proc.rf_pick_l": "أي واحدة",
+  "proc.rf_free_l": "الطلب من أجل ماذا",
+  "proc.rf_free_ph": "اذكر سبب هذا الطلب"
 }

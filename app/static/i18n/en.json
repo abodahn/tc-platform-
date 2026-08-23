@@ -4001,5 +4001,16 @@
   "offc.link": "Link to this item",
   "offc.match": "Already in the catalogue",
   "proc.line_vendor": "Supplier for this line",
-  "proc.line_vendor_ph": "Leave blank to use the request's supplier"
+  "proc.line_vendor_ph": "Leave blank to use the request's supplier",
+  "proc.rf_kind_l": "Request for",
+  "proc.rf_kind_none": "— not specific —",
+  "proc.rf_machine": "Machine",
+  "proc.rf_line": "Production line",
+  "proc.rf_area": "Area",
+  "proc.rf_other": "Something else",
+  "proc.rf_mtype_l": "Machine type",
+  "proc.rf_mtype_hint": "Pick the type first — the list below then shows only machines of that type.",
+  "proc.rf_pick_l": "Which one",
+  "proc.rf_free_l": "What is it for",
+  "proc.rf_free_ph": "Say what this request is for"
 }

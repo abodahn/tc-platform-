@@ -4001,5 +4001,16 @@
   "offc.link": "Bu kaleme bağla",
   "offc.match": "Zaten katalogda",
   "proc.line_vendor": "Bu satırın tedarikçisi",
-  "proc.line_vendor_ph": "Talebin tedarikçisini kullanmak için boş bırakın"
+  "proc.line_vendor_ph": "Talebin tedarikçisini kullanmak için boş bırakın",
+  "proc.rf_kind_l": "Talep konusu",
+  "proc.rf_kind_none": "— belirtilmemiş —",
+  "proc.rf_machine": "Makine",
+  "proc.rf_line": "Üretim hattı",
+  "proc.rf_area": "Alan",
+  "proc.rf_other": "Başka bir şey",
+  "proc.rf_mtype_l": "Makine tipi",
+  "proc.rf_mtype_hint": "Önce tipi seçin — aşağıdaki liste yalnızca o tipteki makineleri gösterir.",
+  "proc.rf_pick_l": "Hangisi",
+  "proc.rf_free_l": "Ne için",
+  "proc.rf_free_ph": "Bu talebin ne için olduğunu yazın"
 }

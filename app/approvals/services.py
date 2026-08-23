@@ -1076,12 +1076,14 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
         uname = user.get("username") if user else "system"
         cur = conn.execute(
             """INSERT INTO pr_requests
-               (pr_no, title, request_for, requester, requester_name, requester_user_id,
+               (pr_no, title, request_for, request_for_kind, requester,
+                requester_name, requester_user_id,
                 department, request_date, currency, vendor, payment_condition,
                 delivery_condition, req_del_date, asset_code, total, status,
                 current_seq, notes, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (None, header.get("title"), header.get("request_for"), uname,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (None, header.get("title"), header.get("request_for"),
+             header.get("request_for_kind"), uname,
              user.get("full_name") or uname if user else uname,
              user.get("id") if user else None,
              header.get("department"), header.get("request_date") or now[:10],
@@ -1196,11 +1198,13 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
                   f"Expenditure type changed from {_was.upper()} to {kind.upper()} — "
                   f"this changes which DOAM ladder the request routes on.", ip)
         conn.execute(
-            """UPDATE pr_requests SET title=?, request_for=?, department=?, currency=?,
+            """UPDATE pr_requests SET title=?, request_for=?, request_for_kind=?,
+               department=?, currency=?,
                vendor=?, payment_condition=?, delivery_condition=?, req_del_date=?,
                asset_code=?, notes=?, tax_rate=?, expenditure_kind=?, so_no=?,
                cost_center=?, forecast_ref=?, total=? WHERE id=?""",
-            (header.get("title"), header.get("request_for"), header.get("department"),
+            (header.get("title"), header.get("request_for"),
+             header.get("request_for_kind"), header.get("department"),
              header.get("currency") or "EGP", header.get("vendor"),
              pay_cond, header.get("delivery_condition"),
              header.get("req_del_date"), header.get("asset_code"), header.get("notes"),
