@@ -30,7 +30,8 @@ bp = Blueprint("maintenance", __name__, url_prefix="/maintenance")
 # --------------------------------------------------------------------------
 from flask import flash as _flask_flash                          # noqa: E402
 from app.maintenance.messages import (translate as _translate_msg,   # noqa: E402
-                                      labels as _translate_labels)
+                                      labels as _translate_labels,
+                                      reason as _code_reason)
 
 
 def _msg(text):
@@ -42,6 +43,18 @@ def _msg(text):
     string, instead of a guess at which part of a finished sentence was fixed.
     """
     return _translate_msg(text, _lang())
+
+
+def _why(code, fallback_template):
+    """What a refusal CODE means, in the reader's language.
+
+    Falls back to the template with the code in it when nobody has written a
+    sentence for that code yet — an unexplained code on screen is bad, but a
+    refusal that names nothing at all is worse, and a new code should be
+    visible rather than quietly absorbed.
+    """
+    said = _code_reason(code, _lang())
+    return said or (_msg(fallback_template) % code)
 
 
 def _labels(text):
@@ -923,7 +936,7 @@ def justification_submit(jid):
         flash(_msg("Cannot send yet. Still needed: %s")
               % _labels(msg.split(":", 1)[1]), "error")
     else:
-        flash(_msg("Could not send this report (%s).") % msg, "error")
+        flash(_why(msg, "Could not send this report (%s)."), "error")
     return redirect(url_for("maintenance.justification", jid=jid))
 
 
@@ -946,15 +959,12 @@ def justification_decide(jid):
         conn.close()
     if good:
         flash("Report approved." if approve else "Report rejected.", "success")
-    elif msg == "self_approval_blocked":
-        # DOAM §3.4 — no person may approve a transaction that names them as
-        # requestor. Said plainly, because "forbidden" would look like a bug.
-        flash("You raised this report, so you cannot also sign it. "
-              "Segregation of duties applies.", "error")
-    elif msg == "not_pending":
-        flash("This report is not waiting for a signature.", "error")
     else:
-        flash(_msg("Could not record that decision (%s).") % msg, "error")
+        # Every refusal code resolves through one table now. These two used to
+        # have their own branch AND an entry in CODE_REASONS, and the two Arabic
+        # versions of the segregation-of-duties refusal had already drifted apart
+        # — one carried the DOAM §3.4 clause, one did not.
+        flash(_why(msg, "Could not record that decision (%s)."), "error")
     return redirect(url_for("maintenance.justification", jid=jid))
 
 

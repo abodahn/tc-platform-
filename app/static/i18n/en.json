@@ -4043,5 +4043,17 @@
   "m.easy_voice_recording": "● Recording… tap to stop",
   "m.easy_voice_done": "✓ Voice recorded (tap to redo)",
   "m.easy_voice_blocked": "Microphone blocked",
-  "m.easy_send_failed": "Could not send. Please try again."
+  "m.easy_send_failed": "Could not send. Please try again.",
+  "m.ai_need_desc": "Describe the fault first.",
+  "m.ai_analysing": "Garamento is analysing…",
+  "m.ai_retry_later": "Could not analyse right now.",
+  "m.ai_likely_causes": "Likely causes:",
+  "m.ai_suggested_parts": "Suggested parts:",
+  "m.ai_apply_priority": "Apply priority:",
+  "m.ai_priority_set": "Priority set to",
+  "mwf.setting.dup_guard_note": "On: a second ticket on a machine that already has one open is refused, and the reporter is shown the open ticket. They may still tick 'create anyway' if it is a separate fault, and that override is written to the audit trail naming both tickets. Off: nothing is checked and no override is recorded.",
+  "m.ai_err_offline": "AI triage is offline — no OpenRouter API key configured.",
+  "m.ai_err_http": "Could not reach the triage service.",
+  "m.ai_err_unknown": "Something went wrong during triage.",
+  "m.ai_err_empty": "Describe the fault first."
 }

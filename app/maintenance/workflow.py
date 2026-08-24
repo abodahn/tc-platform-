@@ -919,6 +919,27 @@ def role_labels():
             for rk in MAINT_ROLE_PERMS}
 
 
+# A sentence about what a setting DOES, for the settings that change who may
+# do what. Not every knob needs one — an SLA factor explains itself — but a
+# control that gates or permits an action has to say what On and Off mean,
+# because the label alone reads the same either way. The i18n key carries the
+# translation; the English here is the fallback the template renders.
+SETTING_NOTES = {
+    "ejr_gate": ("mwf.setting.ejr_gate_note",
+                 "DOAM §6 requires this. On: Procurement cannot sign off any "
+                 "spares, MRO or maintenance-department requisition without an "
+                 "Engineering-Head-approved justification report — automatic "
+                 "min/max reorders stay exempt. Ships off so switching it on is a "
+                 "deliberate decision."),
+    "duplicate_ticket_guard": ("mwf.setting.dup_guard_note",
+                 "On: a second ticket on a machine that already has one open is "
+                 "refused, and the reporter is shown the open ticket. They may "
+                 "still tick 'create anyway' if it is a separate fault, and that "
+                 "override is written to the audit trail naming both tickets. Off: "
+                 "nothing is checked and no override is recorded."),
+}
+
+
 def page_data(conn, lang="en"):
     """Everything /maintenance/workflow renders, resolved override -> default.
     `lang` is the reader's users.lang_pref: it selects which language column the
@@ -1011,6 +1032,7 @@ def page_data(conn, lang="en"):
             "key": key, "kind": kind, "default": default, "value": eff,
             "raw": _raw(conn, key), "overridden": eff != default,
             "source": src, "reader": reader,
+            "note": SETTING_NOTES.get(key),
         })
 
     # Effective ladder for a worked example, so the page proves what it claims.

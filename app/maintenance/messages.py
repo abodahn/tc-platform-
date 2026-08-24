@@ -80,14 +80,6 @@ MESSAGES = {
         "ar": "لهذه الماكينة تذكرة مفتوحة بالفعل (%s). إن كان هذا عطلاً آخر، فعلّم «إنشاء على أي حال».",
         "tr": "Bu makinenin zaten açık bir talebi var (%s). Bu ayrı bir arızaysa «yine de oluştur» kutusunu işaretleyin.",
     },
-    "This report is not waiting for a signature.": {
-        "ar": "هذا التقرير ليس في انتظار توقيع.",
-        "tr": "Bu rapor imza beklemiyor.",
-    },
-    "You raised this report, so you cannot also sign it. Segregation of duties applies.": {
-        "ar": "أنت من كتب هذا التقرير، فلا يمكنك توقيعه. يجب الفصل بين من يطلب ومن يوقّع.",
-        "tr": "Bu raporu siz açtınız, bu yüzden imzalayamazsınız. Görevler ayrılığı gereği.",
-    },
 }
 
 
@@ -156,6 +148,56 @@ def labels(text, lang):
         return ", ".join(items)
     out = [(FIELD_LABELS.get(i, {}) or {}).get(lang) or i for i in items]
     return _SEP.get(lang, ", ").join(out)
+
+# The service answers a refusal with a CODE — "already_submitted", "not_pending"
+# — because a code is what the callers branch on. The two routes that had no
+# branch for a given code printed it raw inside an otherwise translated
+# sentence: «تعذّر إرسال هذا التقرير (already_submitted).» An Arabic reader got a
+# fluent sentence ending in an English identifier that told them nothing about
+# what to do. These are the sentences those codes mean.
+CODE_REASONS = {
+    "already_submitted": {
+        "en": "This report has already been sent for signature.",
+        "ar": "سبق إرسال هذا التقرير للتوقيع.",
+        "tr": "Bu rapor imza için zaten gönderildi.",
+    },
+    "incomplete": {
+        "en": "Some required fields are still blank.",
+        "ar": "ما زالت بعض الحقول المطلوبة فارغة.",
+        "tr": "Bazı zorunlu alanlar hâlâ boş.",
+    },
+    "not_found": {
+        "en": "That report no longer exists.",
+        "ar": "لم يعد هذا التقرير موجوداً.",
+        "tr": "Bu rapor artık mevcut değil.",
+    },
+    "not_pending": {
+        "en": "This report is not waiting for a signature.",
+        "ar": "هذا التقرير ليس في انتظار توقيع.",
+        "tr": "Bu rapor imza beklemiyor.",
+    },
+    # DOAM §3.4 — no person may approve a transaction that names them as
+    # requestor. The rule is named, because "you cannot" alone reads as a bug.
+    "self_approval_blocked": {
+        "en": "You raised this report, so you cannot also sign it. Segregation of duties applies.",
+        "ar": "أنت من كتب هذا التقرير، فلا يمكنك توقيعه. يجب الفصل بين من يطلب ومن يوقّع.",
+        "tr": "Bu raporu siz açtınız, bu yüzden imzalayamazsınız. Görevler ayrılığı gereği.",
+    },
+}
+
+
+def reason(code, lang):
+    """The sentence a refusal code means, or None if this code has none.
+
+    None rather than the code itself, so the caller keeps its "(%s)" fallback: a
+    code nobody has written a sentence for should still reach the screen. Silently
+    swallowing it would turn a new refusal into a message that says nothing at
+    all, which is worse than one that says something only IT understands.
+    """
+    row = CODE_REASONS.get(str(code or "").split(":", 1)[0].strip())
+    if not row:
+        return None
+    return row.get(lang or "en") or row.get("en")
 
 def translate(text, lang):
     """`text` in `lang`, or the English original when there is no translation.

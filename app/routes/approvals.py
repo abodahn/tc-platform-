@@ -22,6 +22,11 @@ from app.db import get_db
 from app.approvals.messages import translate as _translate_msg
 
 
+def _code(msg):
+    """The bare refusal code, without the detail a colon may carry."""
+    return str(msg or "").split(":", 1)[0].strip()
+
+
 def flash(message, category="message"):
     """Flash a message in the reader's own language.
 
@@ -1634,7 +1639,34 @@ def approve(pr_id):
                "business_case_required": "Above 10,000,000 EGP the DOAM requires a written "
                                          "business case alongside Board approval. Record it "
                                          "before signing.",
-               "no_active_step": "No active approval step."}.get(msg, f"Could not approve ({msg})."),
+               "no_active_step": "No active approval step.",
+               # The DOAM §6 gate answers with the maintenance module's codes.
+               # Without these three they reached the buyer raw, inside an
+               # otherwise translated sentence: "Could not approve
+               # (ejr_incomplete:root cause, criticality)."
+               "ejr_missing": "This request has no signed engineering justification. "
+                              "Cite an Engineering-Head-approved report before "
+                              "approving.",
+               "ejr_not_approved": "That report is not signed yet. Engineering must "
+                                   "approve it before Procurement can accept the "
+                                   "request.",
+               # Fail-closed: the gate could not be evaluated, so nothing is
+               # approved. The exception class rides along in the generic tail for
+               # IT; the sentence tells the buyer what to do about it.
+               "ejr_check_failed": "The engineering justification could not be checked, "
+                                   "so this request cannot be approved yet. Report this "
+                                   "to IT.",
+               "ejr_rejected": "Engineering rejected the justification report for this "
+                               "request. It has to be corrected and signed before "
+                               "Procurement can accept the request.",
+               # No field list here on purpose: the report page already names the
+               # blank fields, in the reader's language, and a list assembled here
+               # would have to be translated AFTER the %s substitution — which is
+               # the one thing the flash shim cannot do.
+               "ejr_incomplete": "The engineering justification report is not finished, "
+                                 "so it cannot be relied on. Open the report to see "
+                                 "what is still needed.",
+               }.get(_code(msg), f"Could not approve ({msg})."),
               "error")
     else:
         flash({"advanced": "Approved — routed to the next approver.",

@@ -6,9 +6,13 @@ sentences, because they carry a value — a ticket number, a report reference, a
 exception name — and t() in app.js is an exact lookup, so a key with a value
 stuck on the end resolves to nothing at all.
 
-Those fifteen are translated on the server now. This file is what stops a
-sixteenth from shipping English-only: it pulls every flash() literal out of the
-routes and fails when one has no entry in app/maintenance/messages.py.
+Those are translated on the server now — thirteen still written inline in the
+routes, and five more that the service answers as a CODE ("already_submitted"),
+which used to be printed raw inside an otherwise Arabic sentence. This file is
+what stops the next one shipping English-only: it pulls every flash() literal
+out of the routes, and every refusal code out of the service, and fails when one
+has no entry in app/maintenance/messages.py or in the procurement route that
+answers it.
 
 It also guards the mechanism itself. A message with a value must be translated
 as a TEMPLATE and formatted afterwards, so an entry whose English carries %s
@@ -60,6 +64,10 @@ def flash_literals(path):
             name = getattr(n.func, "id", None)
             if name == "_msg" and n.args:                    # _msg("...") % v
                 return text(n.args[0])
+            # _why(code, "template (%s)") — the template is the fallback shown
+            # when a code has no sentence, so it still needs translating.
+            if name == "_why" and len(n.args) > 1:
+                return text(n.args[1])
         return None
 
     class V(ast.NodeVisitor):
@@ -91,7 +99,10 @@ def run():
 
     msgs = flash_literals(ROUTES)
     print("the maintenance routes flash %d English sentences" % len(msgs))
-    chk("there are messages to check at all", len(msgs) >= 14, len(msgs))
+    # 13, not 14: two refusals moved out of the routes into CODE_REASONS, which
+    # has its own section below. The floor is here to catch the extractor
+    # silently matching nothing, not to pin an exact count.
+    chk("there are messages to check at all", len(msgs) >= 13, len(msgs))
 
     missing = sorted(m for m in msgs if m not in MESSAGES)
     chk("every one has an Arabic and Turkish entry", not missing,
@@ -174,6 +185,55 @@ def run():
     chk("a list can be passed as a list, which is how the report page has it",
         labels(["root cause"], "tr") == FIELD_LABELS["root cause"]["tr"])
 
+    print("\nthe refusal codes, which used to reach the screen raw")
+    from app.maintenance.messages import CODE_REASONS, reason
+    from app.maintenance import eng_justification as ejr
+
+    # Every code the service can answer with, taken from its own source rather
+    # than listed here — a new `return False, "..."` should show up as a gap.
+    src = io.open(str(ROOT / "app" / "maintenance" / "eng_justification.py"),
+                  encoding="utf-8").read()
+    produced = {c.split(":")[0] for c in re.findall(r'return False, "([a-z_:]+)"', src)}
+    # Not refusals a person reads: these two answer "is a report required here?",
+    # and the caller branches on them without ever showing them.
+    produced -= {"min_max_replenishment", "not_mro"}
+
+    # The DOAM §6 gate's codes surface in PROCUREMENT — a buyer approving a
+    # spares request — so their sentences live in that route's refusal map.
+    # Read from the source rather than duplicated here: either module explaining
+    # a code is enough, neither explaining it is the defect.
+    proc = io.open(str(ROOT / "app" / "routes" / "approvals.py"), encoding="utf-8").read()
+    # Bounded to approve()'s refusal dict. Scanning the whole file matched 90
+    # keys — `accept`, `bad_field`, `already_priced` — so a future code that
+    # happened to share one of those names would have passed with no sentence
+    # anywhere, and the check would have read as coverage it did not have.
+    start = proc.index('flash({"forbidden"')
+    block = proc[start:proc.index('"error")', start)]
+    proc_codes = set(re.findall(r'"([a-z_]+)":\s*"', block))
+    chk("the procurement refusal dict was found and looks like itself",
+        "forbidden" in proc_codes and "self_approval" in proc_codes and len(proc_codes) < 30,
+        len(proc_codes))
+    gap = sorted(produced - set(CODE_REASONS) - proc_codes)
+    chk("every refusal code the service can return has a sentence somewhere",
+        not gap, gap)
+
+    blank = [c for c, r in CODE_REASONS.items()
+             if not all((r.get(l) or "").strip() for l in ("en", "ar", "tr"))]
+    chk("each is written in all three languages", not blank, blank[:2])
+
+    echoed = [c for c, r in CODE_REASONS.items()
+              if c in (r.get("ar", "") + r.get("tr", ""))]
+    chk("and none of them just prints the code back", not echoed, echoed[:2])
+
+    chk("an Arabic reader gets the reason, not the code",
+        reason("already_submitted", "ar") == CODE_REASONS["already_submitted"]["ar"])
+    chk("a code with a detail suffix still resolves",
+        reason("incomplete:root cause", "en") == CODE_REASONS["incomplete"]["en"])
+    # None, not the code: the route keeps its "(%s)" fallback so a code nobody has
+    # explained yet still reaches the screen instead of vanishing.
+    chk("an unknown code returns None so the caller can still surface it",
+        reason("some_brand_new_code", "ar") is None)
+
     print("\nand every key the screens ask app.js to resolve")
     dicts = {}
     for lang in ("en", "ar", "tr"):
@@ -183,8 +243,16 @@ def run():
     absent = []
     for path in sorted((ROOT / "app" / "templates" / "maintenance").glob("*.html")):
         page = io.open(str(path), encoding="utf-8").read()
-        # literal keys only: a few are assembled in JS from a loop variable
-        for key in set(re.findall(r'data-i18n="([^"{}+]+)"', page)):
+        # Two ways a key reaches app.js: a data-i18n attribute, and T('key', …)
+        # for text built in JS, which cannot carry an attribute. Scanning only
+        # the attributes left every T() key unverified — deleting one from
+        # ar.json kept all 57 modules green while an Arabic reader got English,
+        # which is the exact regression these keys were added to prevent.
+        # Literal keys only. The T() branch requires the closing quote AND the
+        # comma, so a key assembled at runtime — T('m.ai_err_' + code) — is not
+        # mistaken for a key called "m.ai_err_", which no dictionary can hold.
+        for key in set(re.findall(r'data-i18n="([^"{}+]+)"', page)
+                       + re.findall(r"\bT\('([^'{}+]+)'\s*,", page)):
             for lang in ("en", "ar", "tr"):
                 if key not in dicts[lang]:
                     absent.append((path.name, key, lang))

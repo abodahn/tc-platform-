@@ -731,6 +731,22 @@ MESSAGES = {
         "ar": "لا يمكنك اعتماد طلبك بنفسك. تقديمك للطلب هو توقيعك.",
         "tr": "Kendi talebinizi onaylayamazsınız. Talebi açmanız zaten sizin imzanız.",
     },
+    "Engineering rejected the justification report for this request. It has to be corrected and signed before Procurement can accept the request.": {
+        "ar": "رفضت الإدارة الهندسية تقرير التبرير لهذا الطلب. يجب تصحيحه وتوقيعه قبل أن يمكن للمشتريات قبول الطلب.",
+        "tr": "Mühendislik bu talebin gerekçe raporunu reddetti. Satınalmanın talebi kabul edebilmesi için düzeltilip imzalanması gerekir.",
+    },
+    "The engineering justification report is not finished, so it cannot be relied on. Open the report to see what is still needed.": {
+        "ar": "تقرير التبرير الهندسي غير مكتمل، فلا يمكن الاعتماد عليه. افتح التقرير لترى ما زال مطلوباً.",
+        "tr": "Mühendislik gerekçe raporu tamamlanmamış, bu yüzden esas alınamaz. Neyin eksik olduğunu görmek için raporu açın.",
+    },
+    "This request has no signed engineering justification. Cite an Engineering-Head-approved report before approving.": {
+        "ar": "لا يوجد لهذا الطلب تبرير هندسي موقّع. أرفق تقريراً معتمداً من مدير الإدارة الهندسية قبل الاعتماد.",
+        "tr": "Bu talebin imzalı bir mühendislik gerekçesi yok. Onaylamadan önce Mühendislik Müdürü tarafından onaylanmış bir rapor belirtin.",
+    },
+    "The engineering justification could not be checked, so this request cannot be approved yet. Report this to IT.": {
+        "ar": "تعذّر التحقق من التبرير الهندسي، لذا لا يمكن اعتماد هذا الطلب الآن. أبلغ قسم تقنية المعلومات.",
+        "tr": "Mühendislik gerekçesi kontrol edilemedi, bu yüzden bu talep şimdilik onaylanamaz. Bilgi İşlem'e bildirin.",
+    },
 }
 
 
@@ -761,7 +777,11 @@ def translate(text, lang):
     # Longest first: "Item %s added." must not be matched by a shorter prefix
     # that happens to share its opening words.
     for src in sorted(MESSAGES, key=len, reverse=True):
-        if s.startswith(src[:40]) and len(src) >= 20:
+        # The length floor stops a short fragment matching half the file. An entry
+        # ending in "(" is already unambiguous, and requiring 20 characters left
+        # eight of them dead — "Could not approve (" is nineteen, so every refusal
+        # that fell through to it reached an Arabic reader in English.
+        if s.startswith(src[:40]) and (len(src) >= 20 or src.rstrip().endswith("(")):
             tail = s[len(src):] if s.startswith(src) else ""
             return (MESSAGES[src].get(lang) or s) + tail
     return text

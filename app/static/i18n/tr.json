@@ -4043,5 +4043,17 @@
   "m.easy_voice_recording": "● Kaydediliyor… durdurmak için dokunun",
   "m.easy_voice_done": "✓ Ses kaydedildi (yeniden için dokunun)",
   "m.easy_voice_blocked": "Mikrofon engellendi",
-  "m.easy_send_failed": "Gönderilemedi. Lütfen tekrar deneyin."
+  "m.easy_send_failed": "Gönderilemedi. Lütfen tekrar deneyin.",
+  "m.ai_need_desc": "Önce arızayı yazın.",
+  "m.ai_analysing": "Garamento analiz ediyor…",
+  "m.ai_retry_later": "Şu anda analiz edilemedi.",
+  "m.ai_likely_causes": "Olası nedenler:",
+  "m.ai_suggested_parts": "Önerilen parçalar:",
+  "m.ai_apply_priority": "Önceliği uygula:",
+  "m.ai_priority_set": "Öncelik şuna ayarlandı:",
+  "mwf.setting.dup_guard_note": "Açık: zaten açık talebi olan bir makine için ikinci talep reddedilir ve bildirene açık talep gösterilir. Ayrı bir arızaysa «yine de oluştur» kutusunu işaretleyebilir; bu geçersiz kılma her iki talebin numarasıyla denetim kaydına yazılır. Kapalı: hiçbir kontrol yapılmaz ve geçersiz kılma kaydedilmez.",
+  "m.ai_err_offline": "Yapay zekâ ön değerlendirmesi kapalı — OpenRouter anahtarı tanımlı değil.",
+  "m.ai_err_http": "Ön değerlendirme servisine ulaşılamadı.",
+  "m.ai_err_unknown": "Ön değerlendirme sırasında bir hata oluştu.",
+  "m.ai_err_empty": "Önce arızayı yazın."
 }

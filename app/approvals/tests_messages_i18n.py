@@ -28,6 +28,13 @@ import re
 import sys
 from pathlib import Path
 
+# This prints Arabic. On a cp1252 console (Git Bash) the first Arabic line raises
+# UnicodeEncodeError and every check below it silently never runs.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 ROOT = Path(__file__).resolve().parents[2]
 ROUTES = ROOT / "app" / "routes" / "approvals.py"
 
