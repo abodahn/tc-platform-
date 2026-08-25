@@ -50,7 +50,9 @@ def _shell(lang, heading, body_html, cta_label=None, cta_url=None, footnote=None
   <h1 style="margin:0 0 12px;font-size:20px;color:{INK}">{escape(heading)}</h1>
   <table role="presentation" width="100%"><tr><td align="{align}" style="font-size:14.5px;line-height:1.65;color:{INK}">
   {body_html}
-  </td></tr></table>
+  </td></tr>
+  {cta}
+  </table>
   {fn}
 </td></tr>
 <tr><td style="padding:16px 28px;border-top:1px solid {LINE};color:{MUTED};font-size:12px" align="{align}">
