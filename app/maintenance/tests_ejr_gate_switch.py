@@ -7,7 +7,14 @@ flipped through workflow.set_setting, NOT raw SQL, because "the row can be
 hand-typed into SQLite" was exactly the previous defect.
 """
 import os
+import sys
 import tempfile
+
+# Run directly (python app/.../tests_x.py) the repo root is NOT on the path,
+# so `import config` fails before any check runs. Every sibling module does
+# this for itself rather than relying on the caller setting PYTHONPATH.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))))
 
 
 def _app():

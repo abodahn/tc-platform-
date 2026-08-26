@@ -15,7 +15,7 @@ from config import Config
 from app.db import get_db
 from app.tabular import read_grid, TableError, ACCEPT, to_number
 from app.auth import login_required, current_user
-from app.security import has_permission
+from app.security import user_has_permission
 from app.maintenance import services as svc
 from app.maintenance import constants as C
 from app.maintenance import ai as ai_engine
@@ -89,12 +89,20 @@ def _u():
 
 
 def _require(perm):
-    if not has_permission(_u()["role"], perm):
+    if not _can(perm):
         abort(403)
 
 
 def _can(perm):
-    return has_permission(_u()["role"], perm)
+    """Role permissions PLUS the extras granted on the user record.
+
+    This used to read has_permission(role, perm), which ignores
+    users.extra_perms. The sidebar and Procurement both honour extras, so
+    granting somebody maint_admin as an extra permission put the menu item
+    in front of them and a 403 behind it — the module looked broken to the
+    one person an admin had deliberately given access to.
+    """
+    return user_has_permission(_u(), perm)
 
 
 def _db():
@@ -2102,9 +2110,13 @@ def workflow():
         # The stored prose is picked SERVER-SIDE for this reader's language; static
         # labels stay data-i18n and are swapped client-side from the same lang_pref.
         d = wf.page_data(conn, lang=(_u().get("lang_pref") or "en"))
+        # who changed a rule, and when. Written since the page was built,
+        # readable by nothing until now.
+        changes = wf.change_log(conn)
     finally:
         conn.close()
-    return render_template("maintenance/workflow.html", d=d, wf=wf, active="maint_workflow")
+    return render_template("maintenance/workflow.html", d=d, wf=wf, changes=changes,
+                           active="maint_workflow")
 
 
 @bp.route("/workflow/setting", methods=["POST"])

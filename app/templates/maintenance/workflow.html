@@ -89,7 +89,7 @@
 <div class="sf-kpis">
   <div class="sf-kpi"><div class="v">{{ d.statuses|length }}</div><div class="l" data-i18n="mwf.kpi.statuses">Lifecycle statuses</div></div>
   <div class="sf-kpi"><div class="v">{{ d.counts.rungs }}</div><div class="l" data-i18n="mwf.kpi.rungs">Approval rungs</div></div>
-  <div class="sf-kpi"><div class="v">{{ '%g'|format(d.threshold) }}</div><div class="l" data-i18n="mwf.kpi.threshold">Critical-ladder value threshold</div></div>
+  <div class="sf-kpi"><div class="v">{{ '%g'|format(d.threshold) }} <span style="font-size:.55em;opacity:.75">{{ d.currency }}</span></div><div class="l" data-i18n="mwf.kpi.threshold">Critical-ladder value threshold</div></div>
   <div class="sf-kpi {{ 'pb-kpi-a' if d.counts.overrides else 'pb-kpi-g' }}"><div class="v">{{ d.counts.overrides }}</div><div class="l" data-i18n="mwf.kpi.overrides">Admin overrides in force</div></div>
 </div>
 
@@ -252,4 +252,36 @@
     <div class="muted mt-2" style="font-size:12px" data-i18n="mwf.settings.readonly">Read-only by design: the lifecycle statuses and the allowed moves between them, the atomic stock reservation, the 3-step issue-and-confirm sequence, and the escalation/quantity columns of the approval matrix.</div>
   </div>
 </div>
+{# Governance changes were audited from the day this page shipped and read by
+   nothing, so "who switched the engineering gate on?" had no answer. A RESET
+   deletes its override row, which makes the audit entry the ONLY record. #}
+{% if changes %}
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="mwf.changelog">Change log</h3>
+    <div class="sub muted" style="font-size:12.5px" data-i18n="mwf.changelog_sub">The last 25 changes to the rules on this page.</div></div>
+  <div class="panel-pad" style="padding:0">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="mwf.cl_when">When</th>
+        <th data-i18n="mwf.cl_what">What</th>
+        <th data-i18n="mwf.cl_change">Change</th>
+        <th data-i18n="mwf.cl_who">Who</th>
+      </tr></thead>
+      <tbody>
+      {% for c in changes %}
+        <tr>
+          <td class="muted" style="white-space:nowrap;font-size:12.5px">{{ c.created_at }}</td>
+          <td><b>{{ c.subject }}</b><div class="muted" style="font-size:11.5px">{{ c.entity_type }}</div></td>
+          <td>
+            {% if c.is_reset %}<span class="badge b-navy" data-i18n="mwf.cl_reset">Reset to default</span>
+            {% else %}<code>{{ c.old_value if c.old_value is not none else "—" }}</code> → <code>{{ c.new_value }}</code>{% endif %}
+          </td>
+          <td class="muted" style="font-size:12.5px">{{ c.username }}{% if c.role %} · {{ c.role }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

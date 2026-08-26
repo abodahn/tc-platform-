@@ -18,6 +18,7 @@ from flask import request
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import Config
+from app.accounts import mail_reasons
 from app.db import get_db, utcnow, log_audit
 from . import constants as C
 from . import emails
@@ -122,6 +123,36 @@ def base_url():
 # ==========================================================================
 # Audit
 # ==========================================================================
+def mail(to_email, built, event, target_id=None, meta=None):
+    """Send, and record what actually happened. Returns (ok, reason).
+
+    Every account email goes through here so the audit trail can answer the
+    one question support is always asked: "they signed up and got nothing —
+    why?" Before this, the send was wrapped in a bare except and the event was
+    written as sent regardless, so the log said an email had gone out at the
+    moment it had not.
+
+    Never raises: an email that cannot be sent must not roll back the account
+    change that triggered it. The failure is recorded instead of thrown.
+    """
+    reason, ok = None, False
+    if not Config.SMTP_HOST:
+        reason = "smtp_not_configured"
+    else:
+        try:
+            ok = bool(emails.send(to_email, built))
+            if not ok:
+                # send_html_to swallows the exception and returns False, so the
+                # cause is in the app log; this at least says it was refused.
+                reason = "smtp_refused"
+        except Exception as exc:  # noqa: BLE001
+            reason = type(exc).__name__
+    audit(event, target_id=target_id, target_ref=to_email,
+          result="ok" if ok else (reason or "failed"),
+          meta=dict(meta or {}, delivered=ok))
+    return ok, reason
+
+
 def audit(event, actor=None, target_id=None, target_ref=None, result="ok", meta=None):
     conn = get_db()
     try:
@@ -441,12 +472,9 @@ def register(form):
         conn.close()
 
     url = f"{base_url()}/verify-email?token={raw}"
-    try:
-        emails.send(email, emails.verify_email({"full_name": name}, url, lang))
-    except Exception:  # noqa: BLE001
-        pass
     audit(C.AuthEvent.REGISTER, target_id=uid, target_ref=email, result="ok", meta={"mode": mode})
-    audit(C.AuthEvent.VERIFY_SENT, target_id=uid, target_ref=email)
+    mail(email, emails.verify_email({"full_name": name}, url, lang),
+         C.AuthEvent.VERIFY_SENT, target_id=uid, meta={"mode": mode})
     return True, {}, "acc.msg.registration_submitted"
 
 
@@ -704,6 +732,34 @@ def list_registrations(status=None, q=None, limit=500):
         conn.close()
 
 
+def registration_mail_log(limit=200, only_problems=False, q=None):
+    """Recent registration/verification attempts and whether an email went out.
+
+    Reads auth_events rather than the users table, because the interesting rows
+    are the ones that created NO user: a duplicate address, an invite-only
+    refusal. Those are invisible in a list of accounts, which is exactly why
+    "they signed up and nothing happened" has been unanswerable.
+    """
+    conn = get_db()
+    try:
+        sql = ("SELECT id, event, target_ref, target_user_id, result, ip, created_at "
+               "FROM auth_events WHERE event IN (?,?,?,?)")
+        p = [C.AuthEvent.REGISTER, C.AuthEvent.VERIFY_SENT,
+             C.AuthEvent.RESEND_VERIFY, C.AuthEvent.RATE_LIMITED]
+        if only_problems:
+            sql += " AND result != ?"; p.append("ok")
+        if q:
+            sql += " AND LOWER(target_ref) LIKE ?"; p.append("%%%s%%" % q.strip().lower())
+        sql += " ORDER BY id DESC LIMIT ?"; p.append(limit)
+        rows = [dict(r) for r in conn.execute(sql, p).fetchall()]
+    finally:
+        conn.close()
+    for r in rows:
+        r["label"], r["meaning"], r["todo"] = mail_reasons.explain(r["result"])
+        r["delivered"] = mail_reasons.delivered(r["result"])
+    return rows
+
+
 def status_counts():
     conn = get_db()
     try:
@@ -760,11 +816,9 @@ def approve(admin, uid, role=None, scope_department=None, scope_section=None):
         conn.commit()
     finally:
         conn.close()
-    try:
-        emails.send(u["email"], emails.approved(u, f"{base_url()}/login", u.get("lang_pref") or "en"))
-    except Exception:  # noqa: BLE001
-        pass
     audit(C.AuthEvent.APPROVE, actor=admin, target_id=uid, target_ref=u["email"], meta={"role": role})
+    mail(u["email"], emails.approved(u, f"{base_url()}/login", u.get("lang_pref") or "en"),
+         C.AuthEvent.APPROVE, target_id=uid, meta={"stage": "approved_notice"})
     audit(C.AuthEvent.ROLE_ASSIGN, actor=admin, target_id=uid,
           meta={"role": role, "dept": scope_department, "section": scope_section})
     return True, None

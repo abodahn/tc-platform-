@@ -654,6 +654,17 @@ def critical_default(conn):
     return CRITICAL_COST_DEFAULT
 
 
+def currency(conn, default="TRY"):
+    """The unit the spare-part money figures are in.
+
+    Stored in mnt_settings and, until now, read by nothing — so the critical
+    threshold rendered as a bare number that could have been anything. This
+    does not decide what the currency SHOULD be; it surfaces what is set.
+    """
+    v = (_raw(conn, "currency") or "").strip()
+    return v or default
+
+
 def critical_threshold(conn):
     """Request value at/above which the critical ladder is used."""
     v = num_override(conn, "critical_cost_threshold")
@@ -797,6 +808,35 @@ _TEXT_TABLES = {
 
 
 # --- writes (audited) ------------------------------------------------------
+# The entity types set_setting/set_text write under. Kept beside the writers so
+# a new governance surface cannot be added without this list being in view.
+GOVERNANCE_ENTITIES = ("mnt_setting", "mnt_status", "mnt_role", "mnt_stage", "mnt_doc")
+
+
+def change_log(conn, limit=25):
+    """Recent changes to the rules on this page: what, who, when, from -> to.
+
+    Reads mnt_audit rather than a settings table, because a RESET leaves no row
+    behind — the only record that it happened is the audit entry.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT action, entity_type, old_value, new_value, comment, username, "
+            "role, created_at FROM mnt_audit WHERE entity_type IN (%s) "
+            "ORDER BY id DESC LIMIT ?" % ",".join("?" * len(GOVERNANCE_ENTITIES)),
+            (*GOVERNANCE_ENTITIES, limit)).fetchall()
+    except Exception:  # noqa: BLE001
+        return []                       # table not ready -> no panel, not a 500
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["is_reset"] = str(d.get("action") or "").endswith("_reset")
+        # comment carries the setting key / status / role the change was about
+        d["subject"] = d.get("comment") or d.get("entity_type")
+        out.append(d)
+    return out
+
+
 def _write_audit(conn, user, action, entity_type, old, new, comment):
     from app.maintenance.services import audit          # lazy: avoid import cycle
     audit(conn, user, action, entity_type, 0, old, new, comment)
@@ -1037,6 +1077,7 @@ def page_data(conn, lang="en"):
 
     # Effective ladder for a worked example, so the page proves what it claims.
     return {
+        "currency": currency(conn),
         "settings": settings_out, "ladder": ladder, "statuses": statuses,
         "roles": roles_out, "docs": docs,
         "lang": lang, "role_labels": labels,

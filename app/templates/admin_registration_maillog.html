@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Registration email log{% endblock %}
+{% block content %}
+{#
+  The applicant is told nothing when a registration produces no email — that is
+  deliberate, and it must stay that way, or an address could be tested to find
+  out who has an account here. This screen is the other half of that bargain:
+  the administrator, and only the administrator, sees the real reason.
+#}
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="acc.admin.eyebrow">Administration · Accounts</div>
+    <h1 data-i18n="acc.maillog.title">Why a registration got no email</h1>
+    <div class="sub" data-i18n="acc.maillog.sub">Someone signed up and heard nothing back. This says what actually happened.</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.registrations') }}" data-i18n="acc.maillog.back">Registrations</a>
+</div>
+
+<div class="panel mt-3">
+  <div class="panel-pad" style="padding:14px 18px">
+    <div class="muted" style="font-size:12.5px;max-width:78ch" data-i18n="acc.maillog.why">
+      A person who signs up always sees the same confirmation, whether the account
+      was created or the address was already registered. That is on purpose: a
+      different answer would let anyone discover who works here by trying
+      addresses. It also means "I signed up and got nothing" cannot be answered
+      from the screens the applicant sees — so it is answered here.
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-3">
+  <form method="get" class="panel-pad flex gap center wrap">
+    <input name="q" value="{{ q }}" placeholder="Email address…" style="min-width:240px"
+           data-i18n-ph="acc.maillog.search">
+    <select name="filter" onchange="this.form.submit()">
+      <option value="problems" {{ 'selected' if only_problems }} data-i18n="acc.maillog.only_problems">Only the ones that got nothing</option>
+      <option value="all" {{ 'selected' if not only_problems }} data-i18n="acc.maillog.show_all">Everything, including sent</option>
+    </select>
+    <button class="btn btn-primary btn-sm" data-i18n="acc.admin.filter">Filter</button>
+  </form>
+
+  <div class="panel-pad" style="padding:0">
+    {% if rows %}
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="acc.maillog.when">When</th>
+        <th data-i18n="acc.maillog.address">Address</th>
+        <th data-i18n="acc.maillog.what">What happened</th>
+        <th data-i18n="acc.maillog.todo">What to do</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td class="muted" style="white-space:nowrap;font-size:12.5px">{{ r.created_at }}</td>
+          <td>
+            {% if r.target_user_id %}
+              <a href="{{ url_for('admin.registration_detail', uid=r.target_user_id) }}">{{ r.target_ref }}</a>
+            {% else %}
+              {{ r.target_ref or '—' }}
+            {% endif %}
+            {# no account row exists for a duplicate or an invite refusal, which
+               is exactly why those are invisible on the registrations list #}
+            <div class="muted" style="font-size:11.5px">{{ r.event }}{% if r.ip %} · {{ r.ip }}{% endif %}</div>
+          </td>
+          <td style="max-width:46ch">
+            <span class="badge {{ 'b-ok' if r.delivered else 'b-warning' }}">{{ r.label }}</span>
+            <div class="muted" style="font-size:12.5px;margin-top:4px">{{ r.meaning }}</div>
+          </td>
+          <td class="muted" style="font-size:12.5px;max-width:40ch">{{ r.todo or '—' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="panel-pad">
+      <div class="muted" data-i18n="acc.maillog.none">
+        No registration in the log failed to send. If somebody is still waiting for
+        an email, check that the address they used is the one they expect — and
+        that it is not already registered.
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

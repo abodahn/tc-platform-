@@ -7,7 +7,10 @@
     <h1 data-i18n="acc.admin.title">Account Registrations</h1>
     <div class="sub" data-i18n="acc.admin.sub">Review, approve and manage user registrations.</div>
   </div>
+  <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.registration_mail_log') }}" data-i18n="acc.maillog.link">Why did someone get no email?</a>
   <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.registrations_export', status=status, q=q) }}" data-i18n="acc.admin.export">Export CSV</a>
+  </div>
 </div>
 
 <div class="sf-kpis">

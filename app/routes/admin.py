@@ -73,6 +73,22 @@ def registrations():
                            AccountStatus=AccountStatus)
 
 
+@bp.route("/registrations/email-log")
+@permission_required("users_view")
+def registration_mail_log():
+    """Why a registration produced no email.
+
+    The applicant is told nothing — deliberately, so an address cannot be
+    tested to find out who has an account. This is the other half of that: an
+    administrator can see the real reason, behind users_view.
+    """
+    only_problems = request.args.get("filter", "problems") != "all"
+    q = (request.args.get("q") or "").strip() or None
+    rows = accsvc.registration_mail_log(only_problems=only_problems, q=q)
+    return render_template("admin_registration_maillog.html", active="registrations",
+                           rows=rows, only_problems=only_problems, q=q or "")
+
+
 @bp.route("/registrations/<int:uid>")
 @permission_required("users_view")
 def registration_detail(uid):
