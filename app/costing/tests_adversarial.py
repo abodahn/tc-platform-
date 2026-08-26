@@ -504,7 +504,11 @@ head("templates parse + i18n keys")
 import re                                              # noqa: E402
 from jinja2 import Environment, FileSystemLoader       # noqa: E402
 
-ROOT = Path(r"D:\TC platform\tc-platform-render")
+# The repo THIS file lives in, not a hardcoded sibling worktree. It used to be
+# the absolute path of tc-platform-render, so running this from beta validated
+# the render mirror's templates and reported the answer as beta's — misleading
+# precisely when the two diverge, which is the only time it matters.
+ROOT = Path(__file__).resolve().parents[2]
 env = Environment(loader=FileSystemLoader(str(ROOT / "app" / "templates")))
 tpl_dir = ROOT / "app" / "templates" / "costing"
 keys = set()
@@ -528,11 +532,21 @@ assert not bad, "data-i18n element with child markup (app.js would wipe it): %r"
 ok("no data-i18n element wraps child markup (app.js sets textContent)")
 
 from app.costing.constants import I18N                 # noqa: E402
+import io as _io, json as _json                        # noqa: E402
 dyn = {k for k in keys if "{{" in k}
 static_keys = keys - dyn
-missing = sorted(static_keys - set(I18N))
+# A key is fine if it is in this module's own map OR already shipped in
+# app/static/i18n — which is where they end up once merged. Asserting only
+# against the module map made every merged key look like a missing one: all 21
+# it reported were present in en/ar/tr and rendering correctly on screen.
+_shipped = {}
+for _l in ("en", "ar", "tr"):
+    with _io.open(str(ROOT / "app" / "static" / "i18n" / ("%s.json" % _l)), encoding="utf-8") as _fh:
+        _shipped[_l] = _json.load(_fh)
+missing = sorted(k for k in static_keys
+                 if k not in I18N and not all(k in _shipped[l] for l in ("en", "ar", "tr")))
 assert not missing, "keys that would render RAW on screen: %r" % missing
-ok("all %d static data-i18n keys are in the i18n map" % len(static_keys))
+ok("all %d static data-i18n keys resolve (module map or shipped dictionary)" % len(static_keys))
 for pre, vals in (("cst.cat.", ["material", "cm", "overhead", "freight", "duty", "other"]),
                   ("cst.kind.", ["fabric", "trim", "other"]),
                   ("cst.basis.", ["issued", "procured", "manual", "none"])):

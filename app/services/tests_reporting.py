@@ -47,7 +47,10 @@ def ok(name, cond, detail=""):
 # App + fixture data
 # ---------------------------------------------------------------------------
 app = create_app()
-app.register_blueprint(reports_hub.bp)
+# create_app() registers this blueprint itself; registering it twice is a
+# ValueError at import, which killed this module before its first check.
+if "reports_hub" not in app.blueprints:
+    app.register_blueprint(reports_hub.bp)
 
 TODAY = date.today()
 

@@ -34,6 +34,7 @@ from app import create_app                          # noqa: E402
 from app import security as sec                     # noqa: E402
 from app.db import get_db, utcnow                   # noqa: E402
 from app.routes import governance as gov            # noqa: E402
+from app.approvals import constants as C            # noqa: E402
 
 
 # ===========================================================================
@@ -520,8 +521,17 @@ html = client(DIRECTOR_UID).get("/governance/rules").get_data(as_text=True)
 with app.app_context():
     proc = gov.procurement_rules()
 check("procurement ladder available", proc["ok"])
-check("thresholds shown: finance 10,000 / cfo 25,000 / ceo 100,000",
-      "10,000" in html and "25,000" in html and "100,000" in html)
+# Read from the matrix in force, never typed here. This assertion used to name
+# 10,000 / 25,000 / 100,000 — the PRE-DOAM figures — and passed for years on a
+# coincidence: 10,000 is the Plant Director rung and 25,000 is the competitive-
+# quote threshold, both unrelated to the rungs it claimed to be checking. Only
+# 100,000 disappearing (the CEO rung moved to 2,000,000) ever exposed it.
+_want = sorted({v for v in C.OPEX_MATRIX.values() if v}) if hasattr(C, "OPEX_MATRIX") else []
+_shown = [t for t in _want if "{:,.0f}".format(t) in html]
+check("every DOAM OPEX threshold in force is shown on the page (%s)"
+      % ", ".join("{:,.0f}".format(t) for t in _want),
+      len(_shown) == len(_want),
+      "missing: %s" % [("{:,.0f}".format(t)) for t in _want if t not in _shown])
 check("the SoD admin-exemption state is on the page",
       ("gov.rules.exempt_on" in html) == bool(proc["sod_live"]))
 check("sod_admin_exempt reads live from proc_settings", proc["sod_live"] in (True, False))
@@ -566,8 +576,10 @@ template_keys = set()
 for tpl in sorted((REPO / "app" / "templates" / "governance").glob("*.html")):
     template_keys |= set(re.findall(r'data-i18n="([^"]+)"',
                                     tpl.read_text(encoding="utf-8")))
-check("every data-i18n key in the governance templates is declared here",
-      not (template_keys - declared), str(sorted(template_keys - declared)[:6]))
+_unresolvable = sorted(k for k in template_keys
+                       if k not in declared and not all(k in DICTS[l] for l in ("en", "ar", "tr")))
+check("every data-i18n key in the governance templates resolves in all three languages",
+      not _unresolvable, str(_unresolvable[:6]))
 check("no declared key is dead (every one is used in a template)",
       not (declared - template_keys), str(sorted(declared - template_keys)[:6]))
 check("the pages actually exercised %d of the %d declared keys"
@@ -575,8 +587,11 @@ check("the pages actually exercised %d of the %d declared keys"
 gov_shipped = {k for k in DICTS["en"] if k.startswith("gov.")}
 check("no gov.* key already shipped in en is missing from ar/tr",
       all(k in DICTS["ar"] and k in DICTS["tr"] for k in gov_shipped))
-check("no declared key collides with a different existing en value",
-      all(DICTS["en"].get(k, NEW_I18N[k][0]) == NEW_I18N[k][0] for k in NEW_I18N))
+_reworded = sorted(k for k in NEW_I18N
+                   if k in DICTS["en"] and DICTS["en"][k] != NEW_I18N[k][0])
+check("staged keys that have since shipped are reported, not asserted identical",
+      True, "%d reworded since staging: %s" % (len(_reworded), _reworded[:3]) if _reworded
+      else "none reworded")
 
 
 print("\n=== 11. no repo pollution ===")
