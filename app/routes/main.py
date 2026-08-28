@@ -990,7 +990,10 @@ def mark_notifications_read():
     try:
         me = (current_user() or {}).get("username")
         if nid:
-            conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (nid,))
+            # Scoped to the reader. Without this any signed-in account could clear
+            # the CFO's "request to sign" by guessing an id.
+            conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ? "
+                         "AND (target_user IS NULL OR target_user = ?)", (nid, me))
         else:
             conn.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0 "
                          "AND (target_user IS NULL OR target_user = ?)", (me,))
@@ -1109,8 +1112,9 @@ def search():
             like = "%" + q + "%"
             for it in conn.execute(
                     "SELECT id, code, name, unit, active FROM proc_items "
-                    "WHERE code LIKE ? OR name LIKE ? "
-                    "ORDER BY CASE WHEN code LIKE ? THEN 0 ELSE 1 END, active DESC, code "
+                    "WHERE LOWER(code) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?) "
+                    "ORDER BY CASE WHEN LOWER(code) LIKE LOWER(?) THEN 0 ELSE 1 END, "
+                    "active DESC, code "
                     "LIMIT 20", (like, like, q + "%")):
                 results.append({
                     "type": "item",

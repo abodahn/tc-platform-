@@ -148,8 +148,13 @@ def available_qty(conn, spare_id):
 
 def _reserve(conn, spare_id, qty):
     """Add/release a reservation (qty may be negative to release)."""
-    conn.execute("UPDATE mnt_spare_parts SET reserved_qty=MAX(0, COALESCE(reserved_qty,0)+?) "
-                 "WHERE id=?", (qty, spare_id))
+    # CASE, not SQLite's two-argument MAX(0,...) — PostgreSQL's max() is an aggregate
+    # and rejects it, so on Render this statement raised and every reservation was
+    # lost. app/warehouse/services.py::_release carries the same fix.
+    conn.execute(
+        "UPDATE mnt_spare_parts SET reserved_qty = CASE "
+        "WHEN COALESCE(reserved_qty,0)+? < 0 THEN 0 "
+        "ELSE COALESCE(reserved_qty,0)+? END WHERE id=?", (qty, qty, spare_id))
 
 
 def _move_stock(conn, spare_id, mtype, qty, user, ticket_id=None, request_id=None,

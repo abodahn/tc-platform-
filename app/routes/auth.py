@@ -91,8 +91,10 @@ def login():
             g.pop("user", None)
             svc.on_login_success(row["id"])
             log_audit(row["username"], "login", "Successful login", request.remote_addr or "")
-            # Only allow internal redirects
-            if not nxt.startswith("/"):
+            # Only allow internal redirects. "//evil.com" and "/\evil.com" both
+            # start with "/" and both leave the site, so a prefix test alone is not
+            # enough — the second character decides it.
+            if not nxt.startswith("/") or nxt[:2] in ("//", "/\\"):
                 nxt = url_for("main.dashboard")
             return redirect(nxt)
 

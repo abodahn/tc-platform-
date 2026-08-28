@@ -18,10 +18,17 @@ why these checks assert the EGP and foreign cases produce the SAME outcome
 rather than merely asserting the foreign one is non-zero.
 """
 import os
+import sys
 import tempfile
+from pathlib import Path
 
 
 def _app():
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran. Every sibling module
+    # does this; this one was missing it.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "fx.db")
     os.environ.pop("DATABASE_URL", None)

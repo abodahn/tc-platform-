@@ -451,7 +451,8 @@ def api_spares():
         like = f"%{q}%"
         rows = conn.execute(
             "SELECT id, code, name, uom, stock_qty, reserved_qty, reorder_level "
-            "FROM mnt_spare_parts WHERE is_active=1 AND (code LIKE ? OR name LIKE ?) "
+            "FROM mnt_spare_parts WHERE is_active=1 AND "
+            "(LOWER(code) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?)) "
             "ORDER BY code LIMIT 10", (like, like)).fetchall()
     except Exception:
         rows = []

@@ -4324,7 +4324,10 @@ def search_items(q, category=None, limit=_ITEM_PAGE, offset=0):
     if q:
         # code matches from the START (it is an opaque key people type in full);
         # name matches anywhere, which is how a human searches a description.
-        where.append("(code LIKE ? OR name LIKE ?)")
+        # LOWER() on both sides: SQLite's LIKE ignores ASCII case, PostgreSQL's
+        # does not, so in production "needle" matched nothing in a catalogue whose
+        # rows are overwhelmingly mixed case.
+        where.append("(LOWER(code) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?))")
         params += [q + "%", "%" + q + "%"]
     if cat:
         where.append("category_code=?")
@@ -4813,7 +4816,13 @@ def set_budget(department, amount, period=None, currency="EGP", user=None):
 # the request being weighed against it MUST be the same kind of number — summing
 # raw `total` counted a 100 USD @ 50 commitment as 100 EGP, i.e. a fiftieth of
 # itself, and compared an ex-VAT sum against a tax-inclusive request.
-_EGP_GROSS_SQL = ("COALESCE(total,0) * COALESCE(NULLIF(fx_rate,0),1) "
+# The currency test is the half egp_commitment() has and this twin did not. fx_rate
+# is NOT cleared when a request is repriced back to EGP (see reports.py), so an EGP
+# row can carry a leftover 48 — and 2,000 EGP was summed into `spent` as 96,000.
+# Latent only while every rate is still 1.0.
+_EGP_GROSS_SQL = ("COALESCE(total,0) "
+                  "* (CASE WHEN UPPER(COALESCE(currency,'EGP')) = 'EGP' THEN 1 "
+                  "ELSE COALESCE(NULLIF(fx_rate,0),1) END) "
                   "* (1 + COALESCE(tax_rate,0)/100.0)")
 
 

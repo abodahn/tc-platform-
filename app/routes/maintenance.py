@@ -668,6 +668,12 @@ def ticket_attach(tid):
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
 
 
+# Rendered in the browser only if the stored type is one of these. Deliberately
+# raster-only: image/svg+xml is a script container, not a picture.
+INLINE_ATTACHMENT_TYPES = frozenset(
+    ("image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp"))
+
+
 @bp.route("/attachment/<int:aid>")
 @login_required
 def attachment(aid):
@@ -678,7 +684,16 @@ def attachment(aid):
     path = Config.UPLOAD_DIR / "maintenance" / a["filename"]
     if not path.exists():
         abort(404)
-    return send_file(str(path), mimetype=a["content_type"] or "application/octet-stream",
+    # The stored content_type is whatever the UPLOADER's browser claimed. Echoing it
+    # back let an .html or .svg attachment run script on this origin, carrying the
+    # viewer's session — stored XSS behind nothing but maint_view. Raster images keep
+    # rendering inline (the ticket photos are <img> tags); everything else, SVG and
+    # PDF included, is downloaded rather than rendered.
+    ct = (a["content_type"] or "").split(";")[0].strip().lower()
+    inline = ct in INLINE_ATTACHMENT_TYPES
+    return send_file(str(path),
+                     mimetype=ct if inline else "application/octet-stream",
+                     as_attachment=not inline,
                      download_name=a["original_name"] or a["filename"])
 
 
