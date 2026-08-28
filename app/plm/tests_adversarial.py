@@ -706,12 +706,31 @@ def main():
 
 
 def _login(client, username, password=None):
-    from app.db import DEMO_PASSWORD
-    r = client.get("/login")
-    import re as _re
-    m = _re.search(r'name="_csrf" value="([^"]+)"', r.get_data(as_text=True))
-    client.post("/login", data={"_csrf": m.group(1) if m else "",
-                                "username": username, "password": password or DEMO_PASSWORD})
+    """Sign a client in as `username`, by session rather than by password.
+
+    This used to POST the login form with app.db.DEMO_PASSWORD. That constant is
+    now EMPTY — rightly, a seeded password should not ship — so the post failed,
+    nobody was signed in, and every request 302'd to /login instead of reaching
+    the permission check. Both the "gets 403" and the "can read" assertions then
+    failed together, which is the tell: a fixture that signs nobody in proves
+    nothing in either direction.
+
+    Setting the session is what the rest of the suite does, and it tests the
+    thing this file is about — the permission guard — rather than the login form.
+    """
+    from app.db import get_db
+    # the app is created inside main(), so take it from the client rather than
+    # reaching for a module-level name that does not exist
+    with client.application.app_context():
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+        finally:
+            conn.close()
+    assert row, "fixture user %r does not exist" % username
+    with client.session_transaction() as sess:
+        sess["uid"] = row["id"]
+        sess["ep"] = 0
 
 
 def _csrf(client):

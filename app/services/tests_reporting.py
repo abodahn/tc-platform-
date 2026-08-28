@@ -34,7 +34,9 @@ from app.db import get_db                                # noqa: E402
 from app.routes import reports_hub                       # noqa: E402
 from app.services import reporting as R                  # noqa: E402
 
-REPO = Path(r"D:\TC platform\tc-platform-render")
+# The repo THIS file lives in, not a hardcoded sibling worktree — running from
+# beta used to validate the render mirror and report the answer as beta's.
+REPO = Path(__file__).resolve().parents[2]
 PASS, FAIL = [], []
 
 
@@ -515,8 +517,14 @@ for k in sorted(keys):
 ok(f"every data-i18n key ({len(keys)}) resolves in en+ar+tr (shipped or declared)",
    not missing, str(missing))
 
-clash = [k for k in NEW_KEYS if k in dicts["en"]]
-ok("no declared key collides with a shipped one", not clash, str(clash))
+# A declared key that has SHIPPED is a merge that happened, not a collision —
+# staging is where these start, app/static/i18n is where they end up. What would
+# be a real collision is the same key shipped under a DIFFERENT meaning, so that
+# is what this reports.
+reworded = [k for k in NEW_KEYS
+            if k in dicts["en"] and dicts["en"][k] != NEW_KEYS[k].get("en")]
+ok("declared keys that shipped did not change meaning (%d reworded)" % len(reworded),
+   not reworded, str(reworded[:6]))
 ok("every declared key has all three languages",
    all(all(NEW_KEYS[k].get(l) for l in ("en", "ar", "tr")) for k in NEW_KEYS))
 

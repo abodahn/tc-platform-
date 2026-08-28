@@ -18,7 +18,9 @@ import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
-REPO = r"D:\TC platform\tc-platform-render"
+# The repo THIS file lives in, not a hardcoded sibling worktree — running from
+# beta used to validate the render mirror and report the answer as beta's.
+REPO = str(Path(__file__).resolve().parents[2])
 TMP = Path(tempfile.mkdtemp(prefix="plnadv_"))
 os.chdir(TMP)
 sys.path.insert(0, REPO)
@@ -813,15 +815,33 @@ if MAP.exists():
     m = json.loads(MAP.read_text(encoding="utf-8"))
     # same temp dump section 14 wrote — the repo is not scratch space
     need = set(_dump.read_text(encoding="utf-8").split()) | NEW_KEYS
+    # A key is fine if it is in this module's staging map OR already shipped in
+    # app/static/i18n, which is where these end up once merged. Judging only
+    # against the staging map made keys that had shipped — and were rendering
+    # correctly in all three languages — look missing.
+    _shipped = {}
+    for _l in ("en", "ar", "tr"):
+        _p = Path(REPO) / "app" / "static" / "i18n" / f"{_l}.json"
+        _shipped[_l] = json.loads(_p.read_text(encoding="utf-8")) if _p.exists() else {}
     for lang in ("en", "ar", "tr"):
-        missing = sorted(need - set(m.get(lang, {})))
+        missing = sorted(k for k in need
+                         if k not in m.get(lang, {}) and k not in _shipped[lang])
         check(f"{lang}: keys missing from the map", missing, [])
     # 'SMV' and '#' are the same token in Turkish — everything else must be translated
     SAME_OK = {"pln.field.smv", "pln.field.seq"}
+    # Only keys this staging map actually holds. For a key that has shipped, both
+    # sides of the comparison are None — and None == None flagged every one of
+    # them as "an English copy", which is the opposite of what it looked like.
     check("ar is not an English copy",
-          sorted(k for k in need if m["ar"].get(k) == m["en"].get(k)), [])
+          sorted(k for k in need
+                 if k in m["ar"] and m["ar"].get(k) == m["en"].get(k)), [])
     check("tr is not an English copy",
-          sorted(k for k in need - SAME_OK if m["tr"].get(k) == m["en"].get(k)), [])
+          sorted(k for k in need - SAME_OK
+                 if k in m["tr"] and m["tr"].get(k) == m["en"].get(k)), [])
+    # ...and the shipped ones are judged where they live
+    _copy = sorted(k for k in need
+                   if k in _shipped["ar"] and _shipped["ar"][k] == _shipped["en"].get(k))
+    check("no shipped key is an English copy in ar", _copy, [])
 
 print("\n" + "=" * 62)
 if FAILS:
