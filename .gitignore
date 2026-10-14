@@ -1,5 +1,7 @@
 # TC Platform
 .env
+.env.*
+!.env.example
 .secret_key
 /logs/
 *.db

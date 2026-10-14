@@ -31,6 +31,156 @@ next is not worth translating carefully.
 # module docstring for why, and tests_messages_i18n.py for the check that keeps
 # that choice honest.
 MESSAGES = {
+    # --- Hold, Resume and Send back (spec: hold & reject options) -----------
+    "Put on hold. It stays in the queue and nobody can sign it until it is resumed — the requester has been told why.": {
+        "ar": "تم التعليق. يبقى الطلب في قائمة الانتظار ولا يستطيع أحد التوقيع عليه حتى يُستأنف — وقد أُبلغ مقدّم الطلب بالسبب.",
+        "tr": "Beklemeye alındı. Kuyrukta kalır ve devam ettirilene kadar kimse imzalayamaz — talep edene nedeni bildirildi.",
+    },
+    "Say why it is on hold. A request parked with no reason cannot be told apart from one forgotten.": {
+        "ar": "اكتب سبب التعليق. الطلب الموقوف بلا سبب لا يمكن تمييزه عن طلب منسيّ.",
+        "tr": "Neden beklemede olduğunu yazın. Gerekçesiz bekletilen bir talep, unutulmuş bir talepten ayırt edilemez.",
+    },
+    "This request is already on hold.": {
+        "ar": "هذا الطلب معلّق بالفعل.",
+        "tr": "Bu talep zaten beklemede.",
+    },
+    "This request is not on hold.": {
+        "ar": "هذا الطلب ليس معلّقًا.",
+        "tr": "Bu talep beklemede değil.",
+    },
+    "Only somebody who could sign this rung can hold it.": {
+        "ar": "لا يستطيع تعليق هذه المرحلة إلا من يملك التوقيع عليها.",
+        "tr": "Bu basamağı yalnızca onu imzalayabilecek biri bekletebilir.",
+    },
+    "Only somebody who could sign this rung can resume it.": {
+        "ar": "لا يستطيع استئناف هذه المرحلة إلا من يملك التوقيع عليها.",
+        "tr": "Bu basamağı yalnızca onu imzalayabilecek biri devam ettirebilir.",
+    },
+    "Only a circulating request can be held.": {
+        "ar": "لا يمكن تعليق إلا طلب قيد التداول.",
+        "tr": "Yalnızca dolaşımdaki bir talep bekletilebilir.",
+    },
+    "Hold lifted — the approvals are moving again.": {
+        "ar": "رُفع التعليق — واستأنفت الموافقات حركتها.",
+        "tr": "Bekleme kaldırıldı — onaylar yeniden ilerliyor.",
+    },
+    "Could not hold it (%s).": {
+        "ar": "تعذّر التعليق (%s).",
+        "tr": "Bekletilemedi (%s).",
+    },
+    "Could not resume it (%s).": {
+        "ar": "تعذّر الاستئناف (%s).",
+        "tr": "Devam ettirilemedi (%s).",
+    },
+    "Sent back to %s. Every signature from there up has been withdrawn and the people who gave them have been told.": {
+        "ar": "أُرجع الطلب إلى %s. وسُحبت كل التوقيعات من تلك المرحلة فما فوق، وأُبلغ أصحابها.",
+        "tr": "%s adımına geri gönderildi. O adımdan yukarıdaki tüm imzalar geri alındı ve imzalayanlara bildirildi.",
+    },
+    "Say why it is going back. The rung receiving it needs to know what to look at.": {
+        "ar": "اكتب سبب الإرجاع. المرحلة التي سيعود إليها تحتاج أن تعرف ما الذي تراجعه.",
+        "tr": "Neden geri gönderildiğini yazın. Talebi alacak basamağın neye bakacağını bilmesi gerekir.",
+    },
+    "A request can only go BACKWARDS. Sending it forward would skip the rungs in between.": {
+        "ar": "لا يمكن للطلب أن يتحرّك إلا إلى الخلف. فإرساله إلى الأمام يعني تخطّي المراحل التي بينهما.",
+        "tr": "Bir talep yalnızca GERİYE gidebilir. İleri göndermek, aradaki basamakları atlamak olurdu.",
+    },
+    "That rung is not on this request's ladder.": {
+        "ar": "هذه المرحلة ليست ضمن سلم موافقات هذا الطلب.",
+        "tr": "Bu basamak, bu talebin onay merdiveninde yok.",
+    },
+    "Only somebody who could sign the live rung can send it back.": {
+        "ar": "لا يستطيع إرجاع الطلب إلا من يملك التوقيع على المرحلة الحالية.",
+        "tr": "Talebi yalnızca mevcut basamağı imzalayabilecek biri geri gönderebilir.",
+    },
+    "Choose a rung to send it back to.": {
+        "ar": "اختر المرحلة التي سيُرجَع إليها الطلب.",
+        "tr": "Geri gönderilecek basamağı seçin.",
+    },
+    "Could not send it back (%s).": {
+        "ar": "تعذّر الإرجاع (%s).",
+        "tr": "Geri gönderilemedi (%s).",
+    },
+    # --- order dispatched (spec: PO status) --------------------------------
+    "Marked as on the way — the requester has been told.": {
+        "ar": "تم تحديدها كـ«في الطريق» — وأُبلغ مقدّم الطلب.",
+        "tr": "Yolda olarak işaretlendi — talep eden bilgilendirildi.",
+    },
+    "Only an order that is still on order can be marked as dispatched.": {
+        "ar": "لا يمكن تحديد الشحن إلا لأمر شراء ما زال في حالة «تم إصدار الأمر».",
+        "tr": "Yalnızca hâlâ siparişte olan bir emir gönderildi olarak işaretlenebilir.",
+    },
+    "Could not update (%s).": {
+        "ar": "تعذّر التحديث (%s).",
+        "tr": "Güncellenemedi (%s).",
+    },
+    # --- segregation of duties on the pricing gate -------------------------
+    "You raised this request, so you cannot price it. The price decides which approvals it needs, and nobody sets their own threshold. Another buyer — or a procurement admin — enters it.": {
+        "ar": "أنت من قدّم هذا الطلب، لذا لا يمكنك تسعيره. السعر هو ما يحدّد الموافقات المطلوبة، ولا يضع أحد حدّ صلاحيته بنفسه. يُدخله مشترٍ آخر أو مسؤول المشتريات.",
+        "tr": "Bu talebi siz açtınız, bu yüzden fiyatlandıramazsınız. Fiyat, hangi onayların gerektiğini belirler ve kimse kendi eşiğini kendisi koyamaz. Başka bir satın almacı veya bir satın alma yöneticisi girer.",
+    },
+    "The warehouse has not checked this request yet. Pricing it now would lock the quantity before the store has confirmed what is on the shelf. It can be priced once it reaches the Purchasing rung.": {
+        "ar": "لم يراجع المخزن هذا الطلب بعد. تسعيره الآن يُثبّت الكمية قبل أن يؤكّد المخزن ما هو متاح على الرف. يمكن تسعيره عند وصوله إلى مرحلة المشتريات.",
+        "tr": "Depo bu talebi henüz kontrol etmedi. Şimdi fiyatlandırmak, depo rafta ne olduğunu teyit etmeden miktarı kilitler. Talep Satın Alma basamağına ulaştığında fiyatlandırılabilir.",
+    },
+    # --- RFQ and quotation editing (spec §4, §5) ---------------------------
+    "Request for quotation updated.": {
+        "ar": "تم تحديث طلب عرض السعر.",
+        "tr": "Teklif talebi güncellendi.",
+    },
+    "Quotation updated.": {
+        "ar": "تم تحديث عرض السعر.",
+        "tr": "Teklif güncellendi.",
+    },
+    "Quotation removed.": {
+        "ar": "تم حذف عرض السعر.",
+        "tr": "Teklif kaldırıldı.",
+    },
+    "No change.": {
+        "ar": "لا يوجد تغيير.",
+        "tr": "Değişiklik yok.",
+    },
+    "Could not update the RFQ (%s).": {
+        "ar": "تعذّر تحديث طلب عرض السعر (%s).",
+        "tr": "Teklif talebi güncellenemedi (%s).",
+    },
+    "Could not update the quotation (%s).": {
+        "ar": "تعذّر تحديث عرض السعر (%s).",
+        "tr": "Teklif güncellenemedi (%s).",
+    },
+    "Could not remove the quotation (%s).": {
+        "ar": "تعذّر حذف عرض السعر (%s).",
+        "tr": "Teklif kaldırılamadı (%s).",
+    },
+    # The refusal texts behind those, which reach the reader through the same
+    # flash() but as dictionary values, so the static collector cannot see them.
+    "This RFQ has already been answered. Remove the quotation against it first, or issue a new RFQ.": {
+        "ar": "تم الرد على طلب عرض السعر هذا. احذف عرض السعر المقدَّم عليه أولًا، أو أصدر طلبًا جديدًا.",
+        "tr": "Bu teklif talebi yanıtlanmış. Önce buna gelen teklifi kaldırın veya yeni bir talep açın.",
+    },
+    "An RFQ has to ask for at least one line.": {
+        "ar": "يجب أن يتضمن طلب عرض السعر بندًا واحدًا على الأقل.",
+        "tr": "Bir teklif talebi en az bir satır istemelidir.",
+    },
+    "Request for quotation not found.": {
+        "ar": "طلب عرض السعر غير موجود.",
+        "tr": "Teklif talebi bulunamadı.",
+    },
+    "This is the chosen quotation. Choose another one first, then edit or remove this.": {
+        "ar": "هذا هو عرض السعر المعتمد. اختر عرضًا آخر أولًا، ثم عدّل هذا أو احذفه.",
+        "tr": "Bu, seçilmiş tekliftir. Önce başka bir teklif seçin, sonra bunu düzenleyin veya kaldırın.",
+    },
+    "Enter the quoted amount as a positive number.": {
+        "ar": "اكتب قيمة عرض السعر كرقم موجب.",
+        "tr": "Teklif tutarını pozitif bir sayı olarak girin.",
+    },
+    "Quotation not found.": {
+        "ar": "عرض السعر غير موجود.",
+        "tr": "Teklif bulunamadı.",
+    },
+    "Could not reach the quotations table.": {
+        "ar": "تعذّر الوصول إلى جدول عروض الأسعار.",
+        "tr": "Teklifler tablosuna erişilemedi.",
+    },
     "A justification is required to waive competitive quotes.": {
         "ar": "يجب كتابة مبرّر للاستغناء عن عروض الأسعار التنافسية.",
         "tr": "Rekabetçi tekliflerden vazgeçmek için gerekçe yazmanız gerekir.",

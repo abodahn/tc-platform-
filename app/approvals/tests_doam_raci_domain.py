@@ -195,12 +195,19 @@ def run():
         # =================================================================
         print("--- (A) DOAM Table 5: what each signature actually is ---")
 
-        # The ladder that request (a) ended up with: two rungs verifying, the
-        # top rung committing. Nobody was added, nobody was reordered.
+        # The ladder that request (a) ended up with: three rungs verifying, the
+        # top rung committing. Nobody was reordered.
+        #
+        # The Warehouse MANAGER rung was added on instruction (2026-10-13),
+        # always on, directly above the store. It is a Review like the store and
+        # the buyer below it — the property under test is unchanged and is the
+        # whole point of this assertion: the TOP rung is the Approve and every
+        # rung beneath it is a Review, however many of them there are.
         conn = get_db(); aa = _acts(conn, a); conn.close()
-        assert [s for s, _ in aa] == ["warehouse", "purchasing", "factory_manager"], aa
-        assert aa == [("warehouse", "review"), ("purchasing", "review"),
-                      ("factory_manager", "approve")], (
+        assert [s for s, _ in aa] == ["warehouse", "warehouse_manager",
+                                      "purchasing", "factory_manager"], aa
+        assert aa == [("warehouse", "review"), ("warehouse_manager", "review"),
+                      ("purchasing", "review"), ("factory_manager", "approve")], (
             "the top rung of the value ladder is the Approve and every rung below "
             "it a Review: %s" % aa)
 
@@ -210,7 +217,11 @@ def run():
         # purchasing rung can be signed, so no rung is signed under a stale letter.)
         h, _ = unpriced("Letter shift", "IT", "Monitor")
         conn = get_db(); before = _acts(conn, h); conn.close()
-        assert before == [("warehouse", "review"), ("purchasing", "approve")], before
+        # The Warehouse Manager rung (added 2026-10-13, always on) sits between
+        # the store and the buyer. Purchasing is still the Approve; the rung
+        # count below it is not what this assertion is about.
+        assert before == [("warehouse", "review"), ("warehouse_manager", "review"),
+                          ("purchasing", "approve")], before
         price(h, 30000)
         conn = get_db(); after = _acts(conn, h); conn.close()
         assert ("purchasing", "review") in after, (
@@ -277,19 +288,32 @@ def run():
             "SELECT seq, stage FROM pr_steps WHERE pr_id=? ORDER BY seq, id",
             (i,)).fetchall()]
         conn.close()
+        # The Warehouse Manager rung (2026-10-13) sits at seq 2, always on. What
+        # this asserts is that the sequence is DENSE and in ladder order — no
+        # gaps, no reordering — which the extra rung does not change.
         assert shape == list(enumerate(
-            ["warehouse", "purchasing", "factory_manager", "scd", "cfo"],
+            ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
+             "scd", "cfo"],
             start=1)), shape
 
         # ---- the audit trail: a Review is visibly a different event ----------
+        # The store rung and the manager rung are different signatures now
+        # (2026-10-13), held by different roles on purpose — one person walking
+        # both is exactly what the split exists to prevent.
+        sk = _mkuser_ctx(get_db, "sk_rev", "storekeeper")
         wh = _mkuser_ctx(get_db, "wh_rev", "warehouse_manager")
         pm = _mkuser_ctx(get_db, "pm_app", "purchasing_manager")
         j, _ = unpriced("Trail", "IT", "Keyboard")
         price(j, 5000)
         conn = get_db(); aj = _acts(conn, j); conn.close()
-        assert aj == [("warehouse", "review"), ("purchasing", "approve")], aj
+        # +warehouse_manager: the rung added 2026-10-13, always on, a Review
+        # like the store beneath it. Purchasing is still the Approve.
+        assert aj == [("warehouse", "review"), ("warehouse_manager", "review"),
+                      ("purchasing", "approve")], aj
         svc.add_quote(j, {"vendor": "Quote Vendor", "amount": 5000}, buyer)  # §4.3 band 1
-        okk, msg = svc.act_on_step(j, wh, "approve")
+        okk, msg = svc.act_on_step(j, sk, "approve")      # store rung
+        assert okk, msg
+        okk, msg = svc.act_on_step(j, wh, "approve")      # Warehouse Manager rung
         assert okk, msg
         okk, msg = svc.act_on_step(j, pm, "approve")
         assert okk, msg
@@ -311,12 +335,15 @@ def run():
             "SELECT stage, action FROM pr_sign_events WHERE pr_id=? ORDER BY id",
             (j,)).fetchall()]
         conn.close()
-        assert sev == [("warehouse", "review"), ("purchasing", "approve")], sev
+        # +warehouse_manager: the rung added 2026-10-13, always on, a Review
+        # like the store beneath it. Purchasing is still the Approve.
+        assert sev == [("warehouse", "review"), ("warehouse_manager", "review"),
+                      ("purchasing", "approve")], sev
 
         # ---- the case the trail must NOT relabel: a rejection stays a rejection
         k, _ = unpriced("Bounce", "IT", "Mouse")
         price(k, 5000)
-        okk, msg = svc.act_on_step(k, wh, "reject", "not needed")
+        okk, msg = svc.act_on_step(k, sk, "reject", "not needed")
         assert okk, msg
         conn = get_db(); evk = _events(conn, k); conn.close()
         assert "rejected" in [ac for ac, _ in evk], evk

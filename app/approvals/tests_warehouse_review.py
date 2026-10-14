@@ -146,24 +146,37 @@ def run():
         any(n["target_user"] == "wr_req" for n in note),
         [n["target_user"] for n in note])
 
-    # ---- 3. THE RULE: not after the request carries money ------------------
-    print("\nbut never once the request carries a price")
+    # ---- 3. and still allowed once it carries money ------------------------
+    print("\nand still allowed once the request carries a price")
     with app.app_context():
         from app.approvals import services as svc
         svc.price_pr(pid, {line: 250}, {}, signer["purchasing"])
         ok, msg = svc.warehouse_revise(pid, {line: 99}, {}, signer["warehouse"])
-    chk("a priced request refuses a quantity change",
-        not ok and msg == "already_priced", msg)
+    # REVERSED 2026-10-13. A priced request used to REFUSE a quantity change, to
+    # keep the total from moving under signatures already given. That refusal was
+    # a hole, not a control: a buyer who priced a request the moment it was
+    # raised removed the store's ability to correct the quantity at all, and the
+    # warehouse rung — whose whole job is "is this the right quantity" — became a
+    # rubber stamp. PR-2026-000035 is exactly that.
+    #
+    # The correction is now allowed and the consequence is PAID instead of
+    # avoided: the total is recomputed and the value ladder rebuilt, so a bigger
+    # quantity collects the approvers its new value requires.
+    chk("a priced request still accepts a quantity correction", ok, msg)
     with app.app_context():
         from app.db import get_db
         conn = get_db()
         q = conn.execute("SELECT qty FROM pr_items WHERE id=?", (line,)).fetchone()["qty"]
+        tot = conn.execute("SELECT total FROM pr_requests WHERE id=?",
+                           (pid,)).fetchone()["total"]
         conn.close()
-    chk("and the quantity really did not move", float(q) == 4.0, q)
+    chk("and the quantity really did move", float(q) == 99.0, q)
+    chk("...and the total was recomputed from it, not left stale",
+        round(float(tot or 0), 2) == round(99 * 250.0, 2), tot)
 
     h2 = store.get("/procurement/pr/%d" % pid).get_data(as_text=True)
-    chk("the panel is no longer drawn either",
-        'name="whqty_%d"' % line not in h2)
+    chk("the panel is still drawn, because the rung can still act",
+        'name="whqty_%d"' % line in h2)
 
     # ---- 4. somebody else's rung cannot use it ----------------------------
     # On a FRESH, unpriced request. Refusing the finance user on the PRICED one

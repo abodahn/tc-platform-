@@ -10,12 +10,18 @@ UI-created request is always submitted with total = 0 and priced later at the
 pricing gate, so a control proved by handing the service layer a price is a
 control that cannot fire in production. Nothing below injects a price.
 """
+import sys
+from pathlib import Path
 import os
 import tempfile
 from datetime import datetime, timedelta
 
 
 def _app():
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "retention.db")
     os.environ.pop("DATABASE_URL", None)
@@ -364,7 +370,10 @@ def run():
         after_pur = _stages(conn, rp)
         conn.close()
         assert dev_rp["memo"] and dev_rp["quotes"], dev_rp
-        above = [st for st in after_pur if st not in ("warehouse", "purchasing")]
+        # Derived from DEMAND_STAGES rather than naming rungs: the demand set
+        # gained the Warehouse Manager on 2026-10-13, which leaked into "above"
+        # and sent the walk past the rung this case is actually about.
+        above = [st for st in after_pur if st not in C.DEMAND_STAGES]
         assert above, "re-pricing added no rung above Purchasing: %s" % after_pur
         nxt = walk_to(rp, above[0])
         ok, msg = svc.act_on_step(rp, nxt, "approve")

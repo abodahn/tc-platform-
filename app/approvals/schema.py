@@ -329,6 +329,22 @@ _STEP_MIGRATIONS = [
 # Columns added to pr_requests after first release (tax + goods receipt + PO email
 # + payment tracking).
 _PR_MIGRATIONS = [
+    # How badly the plant needs this. Three levels, defaulting to the quiet one:
+    # a field that starts at "urgent" teaches everybody to ignore it. It carries
+    # NO authority — it does not shorten a ladder, skip a rung or change a
+    # threshold, and must not, or every request would arrive top urgent.
+    ("priority", "ALTER TABLE pr_requests ADD COLUMN priority TEXT DEFAULT 'normal'"),
+    # Local purchase or an import. It changes nothing about who signs — it is a
+    # commercial fact about the order that Purchasing needs on the PO and that
+    # Finance needs when the invoice and the customs paperwork arrive.
+    ("order_type", "ALTER TABLE pr_requests ADD COLUMN order_type TEXT DEFAULT 'local'"),
+    # ON HOLD. Not a status: the spec asks that a held request "remain pending
+    # until the issue is resolved", and it does — status stays 'pending', so it
+    # is still in everybody's queue and still counted as outstanding work. What
+    # changes is that no rung can be signed while the reason is unanswered.
+    ("hold_reason", "ALTER TABLE pr_requests ADD COLUMN hold_reason TEXT"),
+    ("held_by", "ALTER TABLE pr_requests ADD COLUMN held_by TEXT"),
+    ("held_at", "ALTER TABLE pr_requests ADD COLUMN held_at TEXT"),
     # WHAT KIND of thing the request is for — machine, production line, area, or
     # something the registers do not hold. request_for keeps the specific answer
     # (the machine, the line); this records which register it came from, so a
@@ -589,6 +605,23 @@ CREATE TABLE IF NOT EXISTS pr_rfqs (
     notes TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_pr_rfqs_pr ON pr_rfqs(pr_id);
+
+-- Lines DROPPED from one RFQ. An RFQ carried no item list at all: it implicitly
+-- asked every vendor to price every line on the request, which is wrong the
+-- moment one supplier sells the fabric and another the needles.
+--
+-- Stored as EXCLUSIONS, not as a selection, so that every RFQ already issued
+-- keeps its present meaning with no backfill: no row here = the whole request,
+-- exactly as before. ON DELETE is not declared because SQLite does not enforce
+-- it by default here; rows are cleared with the RFQ in delete_rfq().
+CREATE TABLE IF NOT EXISTS pr_rfq_excluded (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rfq_id INTEGER NOT NULL,
+    pr_item_id INTEGER NOT NULL,
+    removed_by TEXT,
+    removed_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_rfq_excl ON pr_rfq_excluded(rfq_id, pr_item_id);
 """
 
 # Columns added to pr_quotes after first release: the RFQ a returned quotation
@@ -613,6 +646,22 @@ _MONEY_MIGRATIONS = [
 
 # Columns added to pr_items after first release (line-level receiving).
 _ITEM_MIGRATIONS = [
+    # The warehouse rung's own figures (spec §1 and §3). services.py computes
+    # each of these from order history, but the STORE is the authority: it can
+    # see a shelf, a damaged pallet and a supplier's promise, and the history
+    # cannot. A value saved here therefore WINS over the computed one; left
+    # empty, the computed figure shows instead. That is why they are stored and
+    # not derived — and why NULL is meaningful and 0 is not the same answer.
+    # Purchasing's own figure on the line (spec §2). Lead time existed only on
+    # a QUOTE, so a request priced without a formal quotation — which is most
+    # of them — had nowhere to record how long the supplier said it takes, and
+    # the PR PDF's LEAD Time column fell back to one value for the whole
+    # request however many suppliers it was split across.
+    ("lead_time_days", "ALTER TABLE pr_items ADD COLUMN lead_time_days REAL"),
+    ("stock_days", "ALTER TABLE pr_items ADD COLUMN stock_days REAL"),
+    ("pending_qty", "ALTER TABLE pr_items ADD COLUMN pending_qty REAL"),
+    ("last_stock", "ALTER TABLE pr_items ADD COLUMN last_stock REAL"),
+    ("eta", "ALTER TABLE pr_items ADD COLUMN eta TEXT"),
     ("received_qty", "ALTER TABLE pr_items ADD COLUMN received_qty REAL DEFAULT 0"),
     # How much of this line the store handed over off the shelf, and from which
     # stock row. Kept SEPARATE from qty: qty falls to what still has to be bought,

@@ -176,6 +176,26 @@ def bool_setting(conn, key):
     return bool((C.WORKFLOW_SETTINGS.get(key) or {}).get("default"))
 
 
+def live_matrix(conn, kind="opex"):
+    """{stage: amount} the ladder routes on NOW: the DOAM matrix with whatever
+    the admin saved on the governance screen applied, read per call like every
+    other knob so an edit takes effect on the next request without a restart."""
+    return C.matrix_for(kind, lambda key: num_setting(conn, key))
+
+
+def effective_thresholds(kind="opex"):
+    """The amounts in force, for a caller with no connection (the settings and
+    governance screens). Pre-DOAM the paper form's matrix is still the policy,
+    so the flag is honoured here rather than at each of the three call sites."""
+    if not C.DOAM_IN_FORCE and (kind or "opex").strip().lower() != "capex":
+        return {k: float(v) for k, v in C.ACTIVE_MATRIX.items()}
+    conn = get_db()
+    try:
+        return live_matrix(conn, kind)
+    finally:
+        conn.close()
+
+
 def stage_roles_map(conn=None):
     """{stage: set(role_keys)} — constants.STAGE_ROLES with any admin override
     from proc_stage_meta applied. `role` may hold a comma-separated list.
@@ -575,6 +595,202 @@ def _amount(item):
         return 0.0
 
 
+
+# --- purchase history on a request line (Procurement & Warehouse spec §1) ----
+# Committed = the same status set budget_status() counts as spend. A draft or a
+# rejected request is not an order and must not become somebody's "last order".
+_HISTORY_STATUSES = ("approved", "po_issued", "in_transit", "partially_received", "received", "closed")
+# Still owed by a supplier: ordered, not yet fully received.
+_PENDING_STATUSES = ("po_issued", "in_transit", "partially_received")
+_DEMAND_WINDOW_DAYS = 365
+
+
+def _line_key(row):
+    """What makes two lines the same part.
+
+    item_id when the line was picked from the catalogue, otherwise the typed
+    code folded to lower case -- the catalogue's own UNIQUE is case-sensitive
+    and the store's sheet has imported the same code in two cases before.
+    """
+    def g(k):
+        try:
+            return row.get(k) if isinstance(row, dict) else row[k]
+        except (KeyError, IndexError):
+            return None
+    iid = g("item_id")
+    if iid:
+        return ("id", int(iid))
+    code = (g("item") or "").strip().lower()
+    return ("code", code) if code else None
+
+
+def attach_item_history(conn, pr_id, items):
+    """Fill the purchase-history figures on each line of a request, in place.
+
+    last_order_qty, last_order_date and last_order_price are columns that have
+    existed since the first release, are PRINTED on the RFQ PDF, and that no
+    code has ever written -- so those three columns on that PDF have always come
+    out blank. They are computed here at read time rather than stored, because a
+    stored copy is wrong the moment the next order for the same part lands.
+
+    Also fills, for the warehouse rung:
+        pending_qty   still owed on orders already placed
+        eta           when the earliest of those is due, from the chosen quote's
+                      lead time
+        stock_days    how long current_stock lasts at the last year's demand
+
+    stock_days is None, not 0, when the part has no demand history: a part
+    ordered for the first time has unknown coverage, and printing "0 days" next
+    to it would read as "out of stock" on every new part the plant ever buys.
+    """
+    keys = {}
+    for it in items:
+        k = _line_key(it)
+        # setdefault, not assignment: these are real columns now, and a value
+        # the warehouse saved must survive this function.
+        it.setdefault("pending_qty", None)
+        it.setdefault("eta", None)
+        it.setdefault("stock_days", None)
+        it.setdefault("last_stock", None)
+        it.setdefault("lead_time_days", None)
+        if k:
+            keys.setdefault(k, []).append(it)
+    if not keys:
+        return items
+
+    ids = [v for (kind, v) in keys if kind == "id"]
+    codes = [v for (kind, v) in keys if kind == "code"]
+    where, args = [], []
+    if ids:
+        where.append("i.item_id IN (%s)" % ",".join("?" * len(ids)))
+        args += ids
+    if codes:
+        where.append("LOWER(COALESCE(i.item,'')) IN (%s)" % ",".join("?" * len(codes)))
+        args += codes
+    if not where:
+        return items
+    scope = "(" + " OR ".join(where) + ")"
+
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(days=_DEMAND_WINDOW_DAYS)).strftime("%Y-%m-%d")
+
+    rows = conn.execute(
+        "SELECT i.item_id, LOWER(COALESCE(i.item,'')) item, i.qty, i.received_qty, "
+        "       i.unit_price, r.status, r.po_sent_at, "
+        "       COALESCE(r.request_date, r.created_at) ordered_on "
+        "FROM pr_items i JOIN pr_requests r ON r.id = i.pr_id "
+        "WHERE r.is_active=1 AND i.pr_id <> ? AND " + scope +
+        " AND r.status IN (%s) ORDER BY ordered_on" % ",".join("?" * len(_HISTORY_STATUSES)),
+        [pr_id] + args + list(_HISTORY_STATUSES)).fetchall()
+
+    last, demand, pending, first_po = {}, {}, {}, {}
+    for r in rows:
+        k = _line_key(r)
+        if not k:
+            continue
+        last[k] = r                                   # ORDER BY date, so the last wins
+        if (r["ordered_on"] or "") >= cutoff:
+            demand[k] = demand.get(k, 0.0) + float(r["qty"] or 0)
+        if r["status"] in _PENDING_STATUSES:
+            owed = float(r["qty"] or 0) - float(r["received_qty"] or 0)
+            if owed > 0:
+                pending[k] = pending.get(k, 0.0) + owed
+                if k not in first_po and r["po_sent_at"]:
+                    first_po[k] = r["po_sent_at"]
+
+    # The description the WAREHOUSE maintains, not the one the requester typed.
+    # DOAM aside, this is what an RFQ must quote: the requester describes a need,
+    # the item master describes the part, and a vendor prices the part.
+    master = {}
+    if ids:
+        for r in conn.execute(
+                "SELECT id, code, name FROM proc_items WHERE id IN (%s)"
+                % ",".join("?" * len(ids)), ids).fetchall():
+            master[("id", int(r["id"]))] = (r["code"], r["name"])
+
+    # Spec §2 — the supplier on a purchase line, linked to the vendor master.
+    # pr_items.vendor is free text, so a line could name a supplier that is not
+    # on the master at all and nothing said so: vendor scoring, the approved-
+    # supplier check and the three-way match all key on the id. Resolved on read
+    # rather than migrated, so an existing line links the moment its supplier is
+    # added to the master. vendor_known=False is the buyer's cue, not an error.
+    names = {(it.get("vendor") or "").strip().lower() for it in items}
+    names.discard("")
+    vendors = {}
+    if names:
+        try:
+            for r in conn.execute(
+                    "SELECT id, name FROM proc_vendors WHERE LOWER(name) IN (%s)"
+                    % ",".join("?" * len(names)), list(names)).fetchall():
+                vendors[(r["name"] or "").strip().lower()] = r["id"]
+        except Exception:
+            conn.rollback()
+    for it in items:
+        v = (it.get("vendor") or "").strip().lower()
+        it["vendor_id"] = vendors.get(v)
+        it["vendor_known"] = bool(v) and v in vendors
+
+    for k, lines in keys.items():
+        prev = last.get(k)
+        mc, mn = master.get(k, (None, None))
+        rate = demand.get(k, 0.0) / _DEMAND_WINDOW_DAYS
+        eta = _eta_from(conn, k, first_po[k]) if k in first_po else None
+        for it in lines:
+            # A figure Purchasing typed on the line WINS over the computed one
+            # (spec §2). The history is a convenience, not an authority: the
+            # buyer may know the last price was negotiated, or carried freight,
+            # or came from a supplier the plant has since dropped. Filling only
+            # the empty fields is what makes that edit stick instead of being
+            # silently overwritten on the next page load.
+            if prev is not None:
+                # `is None`, not falsiness: a stored 0 is the buyer stating that
+                # the part cost nothing last time (a free replacement, a warranty
+                # swap), and `not 0` is True — which would have thrown that away
+                # and put the computed figure back on every page load.
+                if it.get("last_order_qty") is None:
+                    it["last_order_qty"] = float(prev["qty"] or 0)
+                if not it.get("last_order_date"):
+                    it["last_order_date"] = (prev["ordered_on"] or "")[:10]
+                if it.get("last_order_price") is None:
+                    it["last_order_price"] = float(prev["unit_price"] or 0) or None
+            # Same rule as the figures above: what the STORE saved on the line
+            # wins, and an empty column falls back to what the history computes.
+            # `is None` and not falsiness — a saved 0 is the store telling you
+            # the shelf is empty, which is a different statement from silence.
+            if it.get("pending_qty") is None:
+                it["pending_qty"] = round(pending.get(k, 0.0), 3)
+            if not it.get("eta"):
+                it["eta"] = eta
+            it["master_code"] = mc
+            it["master_description"] = mn
+            if it.get("stock_days") is None and rate > 0:
+                it["stock_days"] = int(float(it.get("current_stock") or 0) / rate)
+    return items
+
+
+def _eta_from(conn, key, po_sent_at):
+    """Due date of an order already placed: the chosen quote's lead time added to
+    the day the PO went out. No chosen quote with a lead time means no promise
+    was made, so there is no ETA to show -- better blank than invented."""
+    kind, val = key
+    sql = ("SELECT q.lead_time_days d FROM pr_quotes q "
+           "JOIN pr_items i ON i.pr_id = q.pr_id "
+           "WHERE q.is_chosen=1 AND q.lead_time_days IS NOT NULL AND " +
+           ("i.item_id=?" if kind == "id" else "LOWER(COALESCE(i.item,''))=?") +
+           " ORDER BY q.id DESC LIMIT 1")
+    try:
+        row = conn.execute(sql, (val,)).fetchone()
+    except Exception:
+        return None
+    if not row or not row["d"]:
+        return None
+    try:
+        base = datetime.strptime((po_sent_at or "")[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
+    return (base + timedelta(days=float(row["d"]))).strftime("%Y-%m-%d")
+
+
 def get_pr(pr_id):
     """Return the full PR bundle: header, items, steps, events, attachments meta."""
     conn = get_db()
@@ -638,6 +854,10 @@ def get_pr(pr_id):
             # the cap instead of reporting it. three_way_match reads the flag.
             log.warning("pr_returns unavailable for PR %s: %s", pr_id, exc)
             returns, returns_ok = [], False
+        # Inside the try on purpose: this reads pr_items/pr_quotes and the
+        # `finally` below closes the connection. Doing it after the return
+        # statement cost a second connection, which on Render is 333ms.
+        item_ds = attach_item_history(conn, pr_id, [dict(r) for r in items])
     finally:
         conn.close()
     pr_d = dict(pr)
@@ -666,7 +886,7 @@ def get_pr(pr_id):
     # page needs it to decide whether the split is WHY a director is missing;
     # computing it here costs nothing, where l2_domain_of() would open a second
     # connection and re-query the same two tables on every view.
-    return {"pr": pr_d, "items": [dict(r) for r in items], "steps": step_ds,
+    return {"pr": pr_d, "items": item_ds, "steps": step_ds,
             "l2_domain": C.l2_domain(pr_d.get("department"), pr_d.get("source_module"),
                                      any(_pr_field(r, "spare_id") for r in items)),
             "events": [dict(r) for r in events], "attachments": [dict(r) for r in atts],
@@ -674,6 +894,103 @@ def get_pr(pr_id):
             "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments],
             "grns": grns, "quarantine": quarantine, "returns": returns,
             "returns_ok": returns_ok, "pos": pos}
+
+
+
+# --- RFQ editing (Procurement & Warehouse spec §4) --------------------------
+def rfq_excluded(conn, rfq_id):
+    """pr_items.id dropped from this RFQ. Empty = the whole request, which is
+    what every RFQ issued before this feature means."""
+    try:
+        return {r["pr_item_id"] for r in conn.execute(
+            "SELECT pr_item_id FROM pr_rfq_excluded WHERE rfq_id=?", (rfq_id,)).fetchall()}
+    except Exception:
+        return set()                      # database predating the table
+
+
+def rfq_lines(conn, rfq_id, items):
+    """The lines one RFQ actually asks for, in request order."""
+    gone = rfq_excluded(conn, rfq_id)
+    return [it for it in items if it.get("id") not in gone]
+
+
+def update_rfq(rfq_id, vendor=None, reply_by=None, notes=None, keep_items=None,
+               user=None, ip=None):
+    """Correct an RFQ after it was issued, and choose which lines it asks for.
+
+    Locked once the RFQ has been answered: a quotation on file was priced
+    against a specific list of lines, and silently changing that list afterwards
+    would leave a comparison nobody could reproduce.
+
+    Returns (ok, msg).
+    """
+    conn = get_db()
+    try:
+        rfq = conn.execute("SELECT * FROM pr_rfqs WHERE id=?", (rfq_id,)).fetchone()
+        if not rfq:
+            return False, "not_found"
+        answered = conn.execute(
+            "SELECT COUNT(*) n FROM pr_quotes WHERE rfq_id=?", (rfq_id,)).fetchone()["n"]
+        if answered:
+            return False, "answered"
+        pr_id = rfq["pr_id"]
+        pr = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if pr and pr["status"] in ("approved", "po_issued", "in_transit",
+                                   "partially_received", "received", "closed", "cancelled"):
+            return False, "locked"
+
+        uname = (user or {}).get("username") or "system"
+        changed = []
+        sets, args = [], []
+        for col, val in (("vendor", vendor), ("reply_by", reply_by), ("notes", notes)):
+            if val is None:
+                continue
+            val = val.strip()
+            if (rfq[col] or "") != val:
+                sets.append("%s=?" % col)
+                args.append(val or None)
+                changed.append("%s: %s -> %s" % (col, rfq[col] or "—", val or "—"))
+        if sets:
+            conn.execute("UPDATE pr_rfqs SET %s WHERE id=?" % ", ".join(sets),
+                         args + [rfq_id])
+
+        if keep_items is not None:
+            valid = {r["id"] for r in conn.execute(
+                "SELECT id FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()}
+            # The form posts the lines that are TICKED (an unticked checkbox is
+            # simply absent), so what is stored — the exclusions — is everything
+            # else. Inverting here rather than in the route keeps the one place
+            # that knows the full line list as the one place that decides.
+            keep = {int(i) for i in keep_items if str(i).strip().isdigit()} & valid
+            want = valid - keep
+            if want == valid and valid:
+                # An RFQ that asks for nothing is not an RFQ. Refuse rather than
+                # issue a document a vendor cannot answer.
+                return False, "all_removed"
+            have = rfq_excluded(conn, rfq_id)
+            for iid in want - have:
+                conn.execute(
+                    "INSERT OR IGNORE INTO pr_rfq_excluded "
+                    "(rfq_id, pr_item_id, removed_by, removed_at) VALUES (?,?,?,?)",
+                    (rfq_id, iid, uname, _now()))
+            for iid in have - want:
+                conn.execute("DELETE FROM pr_rfq_excluded WHERE rfq_id=? AND pr_item_id=?",
+                             (rfq_id, iid))
+            if want != have:
+                changed.append("lines asked for: %d of %d" % (len(valid) - len(want), len(valid)))
+
+        if not changed:
+            return True, "no_change"
+        audit(conn, pr_id, uname, "rfq_edited",
+              "%s amended — %s" % (rfq["rfq_no"] or "RFQ", "; ".join(changed)), ip)
+        conn.commit()
+        return True, ""
+    except Exception as exc:                                      # noqa: BLE001
+        conn.rollback()
+        log.warning("update_rfq %s failed: %s", rfq_id, exc)
+        return False, "unavailable"
+    finally:
+        conn.close()
 
 
 def list_prs(status=None, requester=None, limit=500):
@@ -742,7 +1059,7 @@ def counts(user=None):
         data = {
             "total": c("SELECT COUNT(*) c FROM pr_requests WHERE is_active=1"),
             "pending": c("SELECT COUNT(*) c FROM pr_requests WHERE status='pending'"),
-            "approved": c("SELECT COUNT(*) c FROM pr_requests WHERE status IN ('approved','po_issued','closed')"),
+            "approved": c("SELECT COUNT(*) c FROM pr_requests WHERE status IN ('approved','po_issued','in_transit','closed')"),
             "rejected": c("SELECT COUNT(*) c FROM pr_requests WHERE status='rejected'"),
             "value_pending": c("SELECT COALESCE(SUM(total),0) c FROM pr_requests WHERE status='pending'"),
         }
@@ -828,7 +1145,7 @@ def dept_ladder(conn, department, total, kind="opex", pr_id=None):
     except (TypeError, ValueError):
         t = 0.0
     kind = (kind or "opex").strip().lower()
-    floor = build_ladder(t, kind)
+    floor = build_ladder(t, kind, live_matrix(conn, kind))
     if kind == "capex":
         return floor
     # Table 4 L2 split, applied to the FLOOR only: a department that has put the
@@ -947,13 +1264,20 @@ def set_dept_matrix(department, stage_rows, user=None):
         # this rule existed must not keep working either.
         given = {r["stage"]: float(r.get("threshold") or 0) for r in rows}
         weakened = []
-        for stage, floor_at in C.OPEX_MATRIX.items():
+        # The LIVE floor, not C.OPEX_MATRIX: an admin who moved a threshold on the
+        # governance screen moved the floor with it, and a department matrix must
+        # be measured against the policy in force rather than the shipped one.
+        for stage, floor_at in effective_thresholds("opex").items():
             if stage not in given:
                 weakened.append("%s is required by the DOAM and is not in the matrix"
                                 % stage_label(stage))
             elif given[stage] > floor_at:
-                weakened.append("{} starts at {:,.0f} in the DOAM but {:,.0f} here".format(
-                    stage_label(stage), floor_at, given[stage]))
+                # "company-wide", not "in the DOAM": the floor is now whatever
+                # number an admin has in force on the governance screen, which
+                # may be lower than the manual's.
+                weakened.append(
+                    "{} starts at {:,.0f} company-wide but {:,.0f} here".format(
+                        stage_label(stage), floor_at, given[stage]))
         if weakened:
             return False, "below_doam_floor: " + "; ".join(weakened)
     conn = get_db()
@@ -1080,8 +1404,8 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
                 requester_name, requester_user_id,
                 department, request_date, currency, vendor, payment_condition,
                 delivery_condition, req_del_date, asset_code, total, status,
-                current_seq, notes, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                current_seq, notes, created_at, priority, order_type)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (None, header.get("title"), header.get("request_for"),
              header.get("request_for_kind"), uname,
              user.get("full_name") or uname if user else uname,
@@ -1090,7 +1414,9 @@ def create_pr(header, items, user, ip=None, submit=True, priced=None):
              header.get("currency") or "EGP", header.get("vendor"),
              header.get("payment_condition"), header.get("delivery_condition"),
              header.get("req_del_date"), header.get("asset_code"),
-             total, "draft", 0, header.get("notes"), now))
+             total, "draft", 0, header.get("notes"), now,
+             C.normalise_priority(header.get("priority")),
+             C.normalise_order_type(header.get("order_type"))))
         pr_id = cur.lastrowid
         pr_no = doc_no("PR", pr_id)
         conn.execute("UPDATE pr_requests SET pr_no=? WHERE id=?", (pr_no, pr_id))
@@ -1202,7 +1528,8 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
                department=?, currency=?,
                vendor=?, payment_condition=?, delivery_condition=?, req_del_date=?,
                asset_code=?, notes=?, tax_rate=?, expenditure_kind=?, so_no=?,
-               cost_center=?, forecast_ref=?, total=? WHERE id=?""",
+               cost_center=?, forecast_ref=?, total=?, priority=?,
+               order_type=? WHERE id=?""",
             (header.get("title"), header.get("request_for"),
              header.get("request_for_kind"), header.get("department"),
              header.get("currency") or "EGP", header.get("vendor"),
@@ -1210,7 +1537,9 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
              header.get("req_del_date"), header.get("asset_code"), header.get("notes"),
              tax_rate, kind, header.get("so_no") or None,
              header.get("cost_center") or None,
-             header.get("forecast_ref") or None, total, pr_id))
+             header.get("forecast_ref") or None, total,
+             C.normalise_priority(header.get("priority")),
+             C.normalise_order_type(header.get("order_type")), pr_id))
         # An edit can flip OPEX -> CAPEX, which lengthens retention from 5 years
         # to 10. Extend it, NEVER shorten it: a record whose kind changes the
         # other way has already been kept under the longer promise, and quietly
@@ -1303,11 +1632,15 @@ def egp_commitment(pr):
 def fill_units_from_catalogue(conn, items):
     """Give every PICKED line the unit its catalogue row carries.
 
-    A requester states what they need and how many; the unit of measure is master
-    data, not their opinion, so the form locks it and _parse_items drops whatever
-    was posted. That leaves a line with no unit — and a blank unit used to become
-    a flat "Pcs", which on a line of fabric or dye is simply wrong and would be
-    ordered that way.
+    The requester may now state a unit (2026-10-14), because a line the catalogue
+    does not hold — five DAYS of contract labour, a rental by the MONTH — has
+    nothing to inherit from and used to be forced to "Pcs".
+
+    Where the catalogue DOES hold the line, it still wins outright: a picked
+    item's unit is master data, and the requester's choice is overwritten rather
+    than merely filled in behind it. That difference matters — filling only a
+    blank unit would have let anyone override master data simply by typing
+    something, which is the lock this function exists to support.
 
     So a line linked to a catalogue item takes THAT item's unit.
 
@@ -1321,7 +1654,9 @@ def fill_units_from_catalogue(conn, items):
     want = {}
     for it in items:
         iid = str(it.get("item_id") or "").strip()
-        if iid.isdigit() and not str(it.get("unit") or "").strip():
+        # No blank test: a PICKED line takes the catalogue's unit whatever was
+        # posted against it. Free-text lines keep what the requester typed.
+        if iid.isdigit():
             want.setdefault(int(iid), []).append(it)
     if not want:
         return items
@@ -1528,6 +1863,36 @@ def submit_pr(pr_id, user, ip=None):
                          f"eligible signer. Delegate the authority, add a second role "
                          f"holder, or sign as admin.",
                          link=_pr_link(pr_id))
+        # Two ADJACENT rungs that both escalate to the SAME role are one
+        # signature, not two, and asking for both is a deadlock: segregation of
+        # duties refuses the second from the person who gave the first, so the
+        # request stops there forever.
+        #
+        # It appeared the moment the Warehouse Manager rung was added above the
+        # store (2026-10-13): a site with one warehouse person who raises a
+        # request escalates BOTH of those rungs to the same superior. The later
+        # rung is absorbed into the earlier one — a second signature from the
+        # same individual is not independent review, which is the only reason
+        # the second rung exists.
+        _absorbed, _prev = set(), None
+        for _st in flat_stages:
+            _e = esc.get(_st)
+            if _e and _prev and _e[0] and _e[0] == _prev[0]:
+                _absorbed.add(_st)
+            else:
+                _prev = _e
+        if _absorbed:
+            rungs = [[s for s in rung if s not in _absorbed] for rung in rungs]
+            rungs = [r for r in rungs if r]
+            labels = ", ".join(stage_label(s) for s in sorted(_absorbed))
+            audit(conn, pr_id, user.get("username") if user else "system",
+                  "escalation_absorbed",
+                  f"{labels} was absorbed into the rung below it: both escalated "
+                  f"to the same person because the requester holds the normal "
+                  f"signing role for each. One individual signing twice is not a "
+                  f"second review, and segregation of duties would refuse it, "
+                  f"leaving the request unable to move.", ip)
+
         # clear any prior steps (resubmit after rejection)
         conn.execute("DELETE FROM pr_steps WHERE pr_id=?", (pr_id,))
         now = _now()
@@ -1792,7 +2157,32 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
     stamp_step_actions(conn, pr_id)
 
 
-def price_pr(pr_id, prices, meta, user, ip=None, vendors=None):
+def _refuse_self_commercial(pr, user, what):
+    """May this person perform a PURCHASING act on this request?
+
+    Not if they raised it. The ladder has always refused a requester their own
+    SIGNATURE; it never covered the commercial acts that decide what the
+    signature is even for — the price, the quotes that satisfy the competitive
+    rule, the waiver of that rule, the exchange rate the value routes on, and
+    the order itself. Each of those lets the requester set the conditions their
+    own request is judged by, which is the thing segregation of duties exists to
+    prevent.
+
+    An admin may still act, exactly as an admin may sign a stuck rung: a visible,
+    audited act by somebody who is not the requester.
+
+    Returns a refusal code, or None when it is allowed.
+    """
+    uname = (user or {}).get("username")
+    if not uname or pr["requester"] != uname:
+        return None
+    role = (user or {}).get("role") or ""
+    if role == "super_admin" or has_permission(role, "proc_admin"):
+        return None
+    log.info("refused self-%s on PR %s by %s", what, pr["id"] if "id" in pr.keys() else "?", uname)
+    return "self_%s" % what
+
+def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None):
     """Purchasing enters commercial pricing for a request — the pricing gate.
 
     `vendors` maps pr_items.id -> the supplier for THAT line. It is set here
@@ -1812,9 +2202,34 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None):
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] in ("approved", "po_issued", "partially_received",
-                             "received", "closed", "cancelled"):
+        if pr["status"] in ("approved", "po_issued", "in_transit",
+                             "partially_received", "received", "closed", "cancelled"):
             return False, "locked"
+
+        # --- segregation of duties on the PRICING GATE ------------------------
+        # Pricing is not a signature, so the self-approval rule never covered it
+        # — and pricing is the single most consequential commercial act in the
+        # module: it decides the value the whole ladder routes on. A buyer who
+        # raises a request and prices it himself has set his own threshold.
+        #
+        # An admin may still do it, exactly as an admin may sign a stuck rung;
+        # that is a visible, audited act by somebody who is not the requester.
+        _uname = (user or {}).get("username")
+        _role = (user or {}).get("role") or ""
+        _is_admin = _role == "super_admin" or has_permission(_role, "proc_admin")
+        if _uname and pr["requester"] == _uname and not _is_admin:
+            return False, "self_pricing"
+
+        # NOTE on the other half of this hole. Pricing early used to make the
+        # warehouse rung a rubber stamp, because warehouse_revise() refused to
+        # correct a quantity once a request carried money — so a buyer could
+        # neutralise the store simply by pricing on arrival.
+        #
+        # Blocking early pricing was the wrong fix: it reorders how every buyer
+        # works to defend a control that should defend itself. The right one is
+        # that the warehouse can correct a quantity WHENEVER, and the ladder is
+        # re-collected from the changed rung up. See warehouse_revise().
+
         # Foreign-currency guard (fail fast, before any write): a non-EGP PR must carry
         # a REAL exchange rate at pricing time. Otherwise egp_total() falls back to 1:1
         # and the entire value ladder (Finance/CFO/CEO) + the RFQ gate route on the raw
@@ -1857,6 +2272,24 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None):
                 if lv is not None:
                     conn.execute("UPDATE pr_items SET vendor=? WHERE id=?",
                                  (str(lv).strip()[:120] or None, it["id"]))
+            # Purchasing's own two figures on the line (spec §2): what this part
+            # cost the last time it was bought, and how long this supplier says
+            # it takes. Same blank-is-not-zero rule as the warehouse rung — a
+            # cleared box hands the figure back to the computed one, a typed 0 is
+            # a statement. A key not posted at all leaves the line untouched.
+            posted = (line_fields or {}).get(it["id"],
+                                             (line_fields or {}).get(str(it["id"]))) or {}
+            for col in ("last_order_price", "lead_time_days"):
+                if col not in posted:
+                    continue
+                val = _wh_value(posted.get(col), "num")
+                if val is _UNSET:
+                    continue
+                was = it[col] if col in it.keys() else None
+                if _wh_same(was, val):
+                    continue
+                conn.execute("UPDATE pr_items SET %s=? WHERE id=?" % col,
+                             (val, it["id"]))
             total += est
         total = round(total, 2)
 
@@ -1986,6 +2419,203 @@ def _at_or_past_pricing_gate(conn, pr_id, step):
         "LIMIT 1", (pr_id, PRICING_GATE_STAGE)).fetchone())
 
 
+
+
+def send_back(pr_id, to_seq, reason, user, ip=None):
+    """Send a request BACK to an earlier rung, with a reason.
+
+    The only way back used to be rejection, which tears the whole ladder down
+    and lands the request on the requester's desk — far too blunt when the
+    problem is that one rung below got something wrong. A quantity the store
+    mis-recorded does not need the Managing Director's signature collected
+    again from scratch; it needs the store to look at it again.
+
+    WHAT IT COSTS, paid rather than hidden: every signature from the chosen rung
+    UPWARD is withdrawn, including the sender's own. They were given on a request
+    that is now going to change. Rungs below the chosen one are untouched —
+    nothing about them is in question.
+
+    BACKWARDS ONLY. Sending a request "back" to a rung above the current one
+    would be a way to skip the rungs in between, which is the one thing the
+    ladder exists to prevent.
+
+    Returns (ok, msg).
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        return False, "reason_required"
+    try:
+        to_seq = int(to_seq)
+    except (TypeError, ValueError):
+        return False, "bad_target"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] != "pending":
+            return False, "not_pending"
+        here = pr["current_seq"] or 0
+        if to_seq >= here:
+            return False, "not_backwards"
+        if to_seq < 1:
+            return False, "bad_target"
+
+        cur = conn.execute(
+            "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr_id, here)).fetchall()
+        if not any(can_act_step(user, st) for st in cur):
+            return False, "forbidden"
+
+        target = conn.execute(
+            "SELECT stage FROM pr_steps WHERE pr_id=? AND seq=? LIMIT 1",
+            (pr_id, to_seq)).fetchone()
+        if not target:
+            return False, "no_such_rung"
+
+        reopened = conn.execute(
+            "SELECT id, seq, stage, approver_user FROM pr_steps WHERE pr_id=? AND seq >= ? "
+            "ORDER BY seq", (pr_id, to_seq)).fetchall()
+        conn.execute(
+            "UPDATE pr_steps SET status='pending', approver_user=NULL, "
+            "approver_role=NULL, acted_at=NULL, comment=NULL "
+            "WHERE pr_id=? AND seq >= ?", (pr_id, to_seq))
+        conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (to_seq, pr_id))
+
+        uname = (user or {}).get("username") or "system"
+        lost = [r for r in reopened if r["approver_user"]]
+        audit(conn, pr_id, uname, "sent_back",
+              "Sent back from %s to %s — %s%s"
+              % (stage_label(cur[0]["stage"]), stage_label(target["stage"]), reason,
+                 ("" if not lost else
+                  " | withdrawn: " + ", ".join("%s (%s)" % (stage_label(r["stage"]),
+                                                           r["approver_user"])
+                                               for r in lost))), ip)
+        notify_users(conn, [r["approver_user"] for r in lost if r["approver_user"]]
+                     + [pr["requester"]], "warning",
+                     "Sent back: %s" % (pr["pr_no"] or "a request"),
+                     "%s sent this back to %s: %s" % (uname, stage_label(target["stage"]),
+                                                      reason),
+                     link=_pr_link(pr_id))
+        conn.commit()
+        return True, stage_label(target["stage"])
+    finally:
+        conn.close()
+
+
+def rungs_behind(steps, current_seq):
+    """The rungs a request could be sent BACK to — everything below the live one.
+
+    Takes the bundle's own steps rather than opening a connection: get_pr() has
+    already read them, and the request page is the only caller. The chooser then
+    offers real rungs of THIS request rather than a generic ladder — a request
+    whose value never reached the CFO has no CFO rung to go back to.
+    """
+    try:
+        here = int(current_seq or 0)
+    except (TypeError, ValueError):
+        return []
+    out, seen = [], set()
+    for st in steps or []:
+        seq = st.get("seq") if isinstance(st, dict) else st["seq"]
+        if not seq or seq >= here or seq in seen:
+            continue
+        seen.add(seq)
+        stage = st.get("stage") if isinstance(st, dict) else st["stage"]
+        who = (st.get("approver_user") if isinstance(st, dict)
+               else st["approver_user"])
+        out.append({"seq": seq, "stage": stage, "label": stage_label(stage),
+                    "signed_by": who})
+    return sorted(out, key=lambda r: r["seq"])
+
+def hold_request(pr_id, reason, user, ip=None):
+    """Park a request without killing it.
+
+    Reject sends a request back to the requester and tears the ladder down; a
+    hold keeps everything exactly where it is while something is sorted out — a
+    specification query, a supplier who has gone quiet, a budget conversation.
+    Before this, an approver with a question had only two moves: reject work that
+    was not wrong, or sit on it silently. The second is worse, because the aging
+    report cannot tell a request somebody is thinking about from one nobody has
+    opened.
+
+    The REASON is mandatory, for the same reason a rejection's is: a request
+    parked with no explanation is indistinguishable from one forgotten.
+
+    Returns (ok, msg).
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        return False, "reason_required"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] != "pending":
+            return False, "not_pending"
+        if (_pr_field(pr, "hold_reason") or "").strip():
+            return False, "already_held"
+        # Only somebody who could have SIGNED this rung may hold it. Otherwise a
+        # hold is a way for anyone at all to freeze somebody else's request.
+        cur = conn.execute(
+            "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr_id, pr["current_seq"])).fetchall()
+        if not any(can_act_step(user, st) for st in cur):
+            return False, "forbidden"
+        uname = (user or {}).get("username") or "system"
+        conn.execute("UPDATE pr_requests SET hold_reason=?, held_by=?, held_at=? "
+                     "WHERE id=?", (reason[:1000], uname, _now(), pr_id))
+        audit(conn, pr_id, uname, "held",
+              "Put ON HOLD at %s — %s" % (stage_label(cur[0]["stage"]), reason), ip)
+        notify_users(conn, [pr["requester"]], "warning",
+                     "On hold: %s" % (pr["pr_no"] or "your request"),
+                     "%s put this on hold: %s" % (uname, reason),
+                     link=_pr_link(pr_id))
+        conn.commit()
+        return True, "held"
+    finally:
+        conn.close()
+
+
+def resume_request(pr_id, note, user, ip=None):
+    """Lift a hold and let the ladder move again.
+
+    Deliberately open to anyone who could sign the rung, not only to whoever
+    placed the hold: the person who parked it may be on leave, and a request
+    nobody can unstick is worse than one nobody paused. Who resumed it, and why,
+    is on the record.
+
+    Returns (ok, msg).
+    """
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        held = (_pr_field(pr, "hold_reason") or "").strip()
+        if not held:
+            return False, "not_held"
+        cur = conn.execute(
+            "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr_id, pr["current_seq"])).fetchall()
+        if not any(can_act_step(user, st) for st in cur):
+            return False, "forbidden"
+        uname = (user or {}).get("username") or "system"
+        conn.execute("UPDATE pr_requests SET hold_reason=NULL, held_by=NULL, "
+                     "held_at=NULL WHERE id=?", (pr_id,))
+        audit(conn, pr_id, uname, "resumed",
+              "Hold lifted — was: %s%s"
+              % (held, (" | " + note.strip()) if (note or "").strip() else ""), ip)
+        notify_users(conn, [pr["requester"]], "info",
+                     "Resumed: %s" % (pr["pr_no"] or "your request"),
+                     "%s lifted the hold and the approvals are moving again." % uname,
+                     link=_pr_link(pr_id))
+        conn.commit()
+        return True, "resumed"
+    finally:
+        conn.close()
+
 def act_on_step(pr_id, user, decision, comment=None, ip=None):
     """Approve or reject the PR's current pending step.
     decision in {'approve','reject'}. Returns (ok, msg)."""
@@ -2002,6 +2632,12 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         # row, not a retirement.
         if _pr_field(pr, "is_active", 1) == 0:
             return False, "retired"
+        # A held request is still pending and still in every queue — that is the
+        # point of a hold rather than a rejection — but nothing may be SIGNED
+        # while the reason is unanswered. Resume it first; that is a visible,
+        # audited act by a named person.
+        if (_pr_field(pr, "hold_reason") or "").strip():
+            return False, "on_hold"
         # current rung may hold several parallel steps; pick the one this user
         # is eligible for (a co-approver only acts on their own stage).
         cur_steps = conn.execute(
@@ -2507,8 +3143,13 @@ def set_fx(pr_id, rate, user, ip=None):
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] in ("approved", "po_issued", "partially_received",
-                            "received", "closed", "cancelled"):
+        # The rate decides the EGP figure every threshold is measured against:
+        # 1.0 on a USD order routes it at a fiftieth of its value.
+        _bad = _refuse_self_commercial(pr, user, "fx")
+        if _bad:
+            return False, _bad
+        if pr["status"] in ("approved", "po_issued", "in_transit",
+                            "partially_received", "received", "closed", "cancelled"):
             return False, "locked"
         conn.execute("UPDATE pr_requests SET fx_rate=? WHERE id=?", (rate, pr_id))
         uname = (user or {}).get("username")
@@ -2538,7 +3179,7 @@ def revise_po(pr_id, reason, user, ip=None):
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] not in ("po_issued", "partially_received"):
+        if pr["status"] not in ("po_issued", "in_transit", "partially_received"):
             return False, "not_revisable"
         items = conn.execute(
             "SELECT id, item, qty, unit_price, est_cost FROM pr_items "
@@ -2759,16 +3400,41 @@ def vendor_dues(conn=None):
             for r in rows if r["vendor"]}
 
 
-def resolve_quarantine(q_id, decision, user, ip=None):
-    """Decide a quarantined over-delivery: 'return' it to the supplier or 'accept'
-    it as a free issue.
+def tolerance_qty(ordered):
+    """The over-delivery a supplier may send without authorisation.
 
-    The two decisions EXECUTE differently, they are not one UPDATE with different
-    text. 'accept' keeps the goods, so they must land on the shelf — at zero unit
-    cost, since the PO is not re-opened and nobody is invoicing for them. Recording
-    'accept' and posting nothing left the quantity physically in the building and in
-    no stock record, permanently."""
-    if decision not in ("return", "accept"):
+    DOAM §7.3.3 — 5% of quantity. The clause is already the three-way match's
+    rule; an over-delivery is the same question asked at the gate instead of at
+    the invoice, so it gets the same number rather than a second one that could
+    drift away from it."""
+    try:
+        o = abs(float(ordered or 0))
+    except (TypeError, ValueError):
+        return 0.0
+    return o * C.MATCH_QTY_TOLERANCE_PCT / 100.0
+
+
+def resolve_quarantine(q_id, decision, user, ip=None):
+    """Decide a quarantined over-delivery.
+
+        return            send it back to the supplier
+        accept_tolerance  keep it and PAY for it, within DOAM §7.3.3 tolerance
+        accept            keep it as a FREE issue — no invoice, zero cost
+
+    The three EXECUTE differently; they are not one UPDATE with different text.
+
+    'accept_tolerance' is the one a buyer wants on an ordinary short over-ship:
+    the excess is inside the 5%-of-quantity tolerance the three-way match already
+    allows, so it joins received_qty and becomes payable like the rest of the
+    line. Beyond that tolerance it is REFUSED and stays quarantined — the clause
+    is the whole point, and a buyer waving through any quantity at full price is
+    exactly what quarantine exists to stop.
+
+    'accept' keeps the goods for nothing, so they must still land on the shelf —
+    at zero unit cost, since the PO is not re-opened and nobody is invoicing for
+    them. Recording it and posting nothing left the quantity physically in the
+    building and in no stock record, permanently."""
+    if decision not in ("return", "accept", "accept_tolerance"):
         return False, "bad_decision"
     conn = get_db()
     try:
@@ -2777,24 +3443,95 @@ def resolve_quarantine(q_id, decision, user, ip=None):
             return False, "not_found"
         if q["status"] != "quarantined":
             return False, "already_resolved"
+        allowed = tolerance_qty(q["ordered_qty"])
+        if decision == "accept_tolerance" and float(q["qty"] or 0) > allowed + 1e-9:
+            # Refused, not silently downgraded to a free issue: the buyer asked to
+            # PAY for this, and an excess beyond the clause needs authorising, not
+            # a different answer given quietly on their behalf.
+            return False, "over_tolerance:%g:%g" % (float(q["qty"] or 0), allowed)
         uname = (user or {}).get("username") or "system"
         conn.execute(
             "UPDATE pr_grn_quarantine SET status='resolved', resolution=?, "
             "resolved_by=?, resolved_at=? WHERE id=?", (decision, uname, _now(), q_id))
+        _how = {
+            "return": "returned to the supplier",
+            "accept": "accepted as a FREE issue, posted to stock at zero cost — "
+                      "not payable",
+            "accept_tolerance": "accepted WITHIN the DOAM §7.3.3 tolerance of "
+                                "%g (5%% of %g ordered) — posted to stock at the "
+                                "order price and payable on the invoice"
+                                % (allowed, float(q["ordered_qty"] or 0)),
+        }[decision]
         audit(conn, q["pr_id"], uname, "quarantine_resolved",
-              f"Over-delivery of {q['item']} ({q['qty']:g}) — {decision}"
-              + (" (free issue, posted to stock at zero cost)" if decision == "accept" else ""),
-              ip)
+              f"Over-delivery of {q['item']} ({q['qty']:g}) — {_how}", ip)
         conn.commit()
         pr_id, item_id, qty = q["pr_id"], q["item_id"], float(q["qty"] or 0)
     finally:
         conn.close()
     # Post-commit and best-effort, exactly like _post_bridge_receipt: a store that
     # will not take the free issue must not undo the decision.
-    if decision == "accept" and qty > 0:
-        _post_bridge_receipt(pr_id, {item_id: qty}, user, free=True)
+    if qty > 0 and decision in ("accept", "accept_tolerance"):
+        _post_bridge_receipt(pr_id, {item_id: qty},
+                             user, free=(decision == "accept"))
+    if decision == "accept_tolerance" and qty > 0:
+        # Payable means RECEIVED: the three-way match and the payable ceiling both
+        # read received_qty, so an excess kept and paid for has to be in it. Done
+        # here rather than in receive_items because the quantity is deliberately
+        # ABOVE the ordered figure, which that function caps.
+        conn = get_db()
+        try:
+            conn.execute("UPDATE pr_items SET received_qty = "
+                         "COALESCE(received_qty,0) + ? WHERE id=?", (qty, item_id))
+            conn.commit()
+        except Exception as exc:                                  # noqa: BLE001
+            conn.rollback()
+            log.warning("could not add accepted over-delivery to received_qty "
+                        "on item %s: %s", item_id, exc)
+        finally:
+            conn.close()
     return True, decision
 
+
+
+def mark_in_transit(pr_id, user, note=None, ip=None):
+    """The supplier has dispatched the order: ON ORDER -> ON THE WAY.
+
+    A status and nothing else. It moves no stock, touches no quantity and
+    commits no money — a buyer telling the plant that the lorry has left is not
+    a receipt, and must never be mistaken for one.
+
+    Only an order that is actually on order can be dispatched. Going back is
+    deliberately not offered here: if a delivery turns out not to have left,
+    that is a conversation with the supplier, not a status toggle.
+    """
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT status, pr_no FROM pr_requests WHERE id=?",
+                          (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] != "po_issued":
+            return False, "not_on_order"
+        conn.execute("UPDATE pr_requests SET status='in_transit' WHERE id=?", (pr_id,))
+        uname = (user or {}).get("username") or "system"
+        audit(conn, pr_id, uname, "marked_in_transit",
+              "Order dispatched by the supplier — on the way"
+              + (" (%s)" % note.strip() if (note or "").strip() else ""), ip)
+        notify_users(conn, [pr_requester(conn, pr_id)], "info",
+                     "On the way: %s" % (pr["pr_no"] or "your request"),
+                     "The supplier has dispatched this order."
+                     + (" %s" % note.strip() if (note or "").strip() else ""),
+                     link=_pr_link(pr_id))
+        conn.commit()
+        return True, "in_transit"
+    finally:
+        conn.close()
+
+
+def pr_requester(conn, pr_id):
+    row = conn.execute("SELECT requester FROM pr_requests WHERE id=?",
+                       (pr_id,)).fetchone()
+    return (row["requester"] if row else None) or ""
 
 def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
                   rejects=None, reject_reason=None):
@@ -2832,7 +3569,7 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
         # /warehouse/receive with no GRN and no quarantine. Outstanding is 0, so
         # the arithmetic below yields accepted=0 / over=everything and the whole
         # excess routes into quarantine without touching stock.
-        if pr["status"] not in ("po_issued", "approved", "partially_received", "received"):
+        if pr["status"] not in ("po_issued", "in_transit", "approved", "partially_received", "received"):
             return False, "not_receivable"
         items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
         now = _now()
@@ -2972,8 +3709,8 @@ def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64
         if not pr:
             return False, "not_found"
         # invoices only make sense once the request is an actual order
-        if pr["status"] not in ("approved", "po_issued", "partially_received",
-                                "received", "closed"):
+        if pr["status"] not in ("approved", "po_issued", "in_transit",
+                                "partially_received", "received", "closed"):
             return False, "not_invoicable"
         po, po_err = split_order(conn, pr, data.get("po_id"))
         if po_err:
@@ -3617,7 +4354,7 @@ def deviation_findings(conn, pr_id):
                     "SUM(COALESCE(i.qty,0) - COALESCE(i.received_qty,0)) AS q "
                     "FROM pr_items i JOIN pr_requests p ON p.id = i.pr_id "
                     "WHERE i.spare_id IN (%s) AND i.pr_id <> ? AND p.is_active=1 "
-                    "AND (p.status IN ('po_issued','partially_received') "
+                    "AND (p.status IN ('po_issued','in_transit','partially_received') "
                     "     OR (p.status IN ('pending','approved') AND i.pr_id < ?)) "
                     "GROUP BY i.spare_id" % ",".join("?" * len(sids_all)),
                     tuple(sids_all) + (pr_id, pr_id)).fetchall():
@@ -3836,7 +4573,7 @@ def authorize_advance(pr_id, pct, guarantee_ref, user, ip=None):
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] not in ("po_issued", "partially_received", "received"):
+        if pr["status"] not in ("po_issued", "in_transit", "partially_received", "received"):
             return False, "no_po"        # there is no PO value to advance against
         if not vendor_approved(conn, pr["vendor"]):
             return False, "vendor_not_approved"
@@ -3920,7 +4657,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] not in ("po_issued", "partially_received", "received", "closed"):
+        if pr["status"] not in ("po_issued", "in_transit", "partially_received", "received", "closed"):
             return False, "not_payable"
         amount = float(data.get("amount") or 0)
         if amount <= 0:
@@ -4039,7 +4776,7 @@ def close_pr(pr_id, user, ip=None):
         pr = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] not in ("received", "po_issued", "partially_received"):
+        if pr["status"] not in ("received", "po_issued", "in_transit", "partially_received"):
             return False, "not_closable"
         conn.execute("UPDATE pr_requests SET status='closed', closed_at=? WHERE id=?",
                      (_now(), pr_id))
@@ -4061,7 +4798,7 @@ def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
     if not bundle:
         return False, "not_found"
     pr = bundle["pr"]
-    if pr["status"] not in ("approved", "po_issued", "received", "closed"):
+    if pr["status"] not in ("approved", "po_issued", "in_transit", "received", "closed"):
         return False, "not_approved"
     pos = bundle.get("pos") or []
     if not pos:
@@ -4133,7 +4870,10 @@ def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
             return False, "already_received"     # goods in the door — close it, don't erase it
         uname = (user or {}).get("username")
         is_owner = uname and pr["requester"] == uname
-        if pr["status"] in ("approved", "po_issued"):
+        # An order already on the way is committed spend just as much as one only
+        # placed — more so, in fact, since the lorry has left. Cancelling it is
+        # an admin decision for exactly the same reason.
+        if pr["status"] in ("approved", "po_issued", "in_transit"):
             if not is_admin:
                 return False, "needs_admin"      # committed spend: admin decision only
         elif not (is_owner or is_purchasing or is_admin):
@@ -4482,8 +5222,8 @@ def issue_rfqs(pr_id, vendors, user, reply_by=None, notes=None, ip=None):
                           (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] in ("approved", "po_issued", "partially_received",
-                            "received", "closed", "cancelled"):
+        if pr["status"] in ("approved", "po_issued", "in_transit",
+                            "partially_received", "received", "closed", "cancelled"):
             return False, "locked"
         uname = (user or {}).get("username") or "system"
         now = _now()
@@ -4515,13 +5255,31 @@ def issue_rfqs(pr_id, vendors, user, reply_by=None, notes=None, ip=None):
 
 
 def rfqs_for(conn, pr_id):
-    """Every RFQ issued for a request. Empty on a database predating the table."""
+    """Every RFQ issued for a request. Empty on a database predating the table.
+
+    Each carries `excluded`: the pr_items.id this particular RFQ does NOT ask
+    for. One query for the whole request rather than one per RFQ, and an empty
+    set keeps every RFQ issued before §4 meaning what it meant — all lines.
+    """
     try:
-        return [dict(r) for r in conn.execute(
+        rows = [dict(r) for r in conn.execute(
             "SELECT * FROM pr_rfqs WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()]
     except Exception:
         conn.rollback()
         return []
+    if not rows:
+        return rows
+    drop = {}
+    try:
+        for r in conn.execute(
+                "SELECT x.rfq_id, x.pr_item_id FROM pr_rfq_excluded x "
+                "JOIN pr_rfqs q ON q.id = x.rfq_id WHERE q.pr_id=?", (pr_id,)).fetchall():
+            drop.setdefault(r["rfq_id"], set()).add(r["pr_item_id"])
+    except Exception:
+        conn.rollback()                 # database predating pr_rfq_excluded
+    for r in rows:
+        r["excluded"] = drop.get(r["id"], set())
+    return rows
 
 
 # --------------------------------------------------------------------------
@@ -4531,6 +5289,18 @@ def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=N
     conn = get_db()
     try:
         # The RFQ this quotation answers, when it answers one. Validated against
+        # A requester supplying the "competitive" quotes for their own request is
+        # the cheapest way past DOAM §4.3 there is: the RFQ gate counts suppliers,
+        # and it cannot tell a real three-vendor comparison from three names typed
+        # by the person who wants the purchase.
+        _pr = conn.execute("SELECT id, requester FROM pr_requests WHERE id=?",
+                           (pr_id,)).fetchone()
+        if not _pr:
+            return False, "not_found"
+        _bad = _refuse_self_commercial(_pr, user, "quote")
+        if _bad:
+            return False, _bad
+
         # THIS request, so a stray id cannot attach a quote to another PR's RFQ.
         # Unresolvable (bad id, or a database predating the table) -> no link,
         # and the INSERT below is then byte-for-byte the one that always ran.
@@ -4574,9 +5344,14 @@ def choose_quote(pr_id, quote_id, user, ip=None):
                          (quote_id, pr_id)).fetchone()
         if not q:
             return False, "not_found"
-        pr = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
-        if pr and pr["status"] in ("approved", "po_issued", "partially_received",
-                                   "received", "closed", "cancelled"):
+        pr = conn.execute("SELECT id, status, requester FROM pr_requests WHERE id=?",
+                          (pr_id,)).fetchone()
+        # Choosing which supplier wins, on your own request.
+        _bad = _refuse_self_commercial(pr, user, "quote_choice") if pr else None
+        if _bad:
+            return False, _bad
+        if pr and pr["status"] in ("approved", "po_issued", "in_transit",
+                                   "partially_received", "received", "closed", "cancelled"):
             return False, "locked"   # the vendor is fixed once the PR is approved
         conn.execute("UPDATE pr_quotes SET is_chosen=0 WHERE pr_id=?", (pr_id,))
         conn.execute("UPDATE pr_quotes SET is_chosen=1 WHERE id=?", (quote_id,))
@@ -4585,6 +5360,140 @@ def choose_quote(pr_id, quote_id, user, ip=None):
               f"Selected {q['vendor']} @ {q['amount']}", ip)
         conn.commit()
         return True, ""
+    finally:
+        conn.close()
+
+
+
+# --- supplier quotation editing (Procurement & Warehouse spec §5) -----------
+_QUOTE_EDITABLE = ("vendor", "amount", "currency", "lead_time_days", "warranty", "notes")
+
+
+def _vendor_id_for(conn, name):
+    """The vendors row this quotation belongs to, matched on name without case.
+
+    A quotation line that is not linked to a vendor is a price with nobody
+    behind it: vendor scoring, the approved-supplier check and the three-way
+    match all key on the id, and all three silently skipped a quote typed by
+    hand. NULL stays legal — a one-off supplier that is not on the master yet
+    should not block a price being recorded.
+    """
+    name = (name or "").strip()
+    if not name:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT id FROM proc_vendors WHERE LOWER(name)=LOWER(?) LIMIT 1",
+            (name,)).fetchone()
+        return row["id"] if row else None
+    except Exception:
+        return None
+
+
+def update_quote(quote_id, data, user=None, ip=None):
+    """Correct a supplier quotation already on file.
+
+    Locked once the quotation has been CHOSEN: the chosen price is what the
+    ladder routed on and what the PO was raised from, so editing it afterwards
+    would move a figure people have already signed against. Un-choose it first
+    — that is a visible act with its own audit line.
+
+    Returns (ok, msg).
+    """
+    conn = get_db()
+    try:
+        q = conn.execute("SELECT * FROM pr_quotes WHERE id=?", (quote_id,)).fetchone()
+        if not q:
+            return False, "not_found"
+        if q["is_chosen"]:
+            return False, "chosen"
+        pr = conn.execute("SELECT status FROM pr_requests WHERE id=?",
+                          (q["pr_id"],)).fetchone()
+        if pr and pr["status"] in ("approved", "po_issued", "in_transit",
+                                   "partially_received", "received", "closed", "cancelled"):
+            return False, "locked"
+
+        sets, args, changed = [], [], []
+        for col in _QUOTE_EDITABLE:
+            if col not in data:
+                continue
+            raw = data.get(col)
+            if col == "amount":
+                try:
+                    val = float(raw or 0)
+                except (TypeError, ValueError):
+                    return False, "bad_amount"
+                if val < 0:
+                    return False, "bad_amount"
+            elif col == "lead_time_days":
+                val = int(raw) if str(raw or "").strip().isdigit() else None
+            else:
+                val = (str(raw).strip() or None) if raw is not None else None
+            if (q[col] if col in q.keys() else None) == val:
+                continue
+            sets.append("%s=?" % col)
+            args.append(val)
+            changed.append("%s: %s -> %s" % (col, q[col] if col in q.keys() else "—", val))
+
+        if "vendor" in data:
+            vid = _vendor_id_for(conn, data.get("vendor"))
+            if vid != (q["vendor_id"] if "vendor_id" in q.keys() else None):
+                sets.append("vendor_id=?")
+                args.append(vid)
+        if not sets:
+            return True, "no_change"
+
+        conn.execute("UPDATE pr_quotes SET %s WHERE id=?" % ", ".join(sets),
+                     args + [quote_id])
+        audit(conn, q["pr_id"], (user or {}).get("username") or "system", "quote_edited",
+              "Quotation from %s amended — %s" % (q["vendor"] or "?", "; ".join(changed) or "vendor link"),
+              ip)
+        conn.commit()
+        return True, ""
+    except Exception as exc:                                      # noqa: BLE001
+        conn.rollback()
+        log.warning("update_quote %s failed: %s", quote_id, exc)
+        return False, "unavailable"
+    finally:
+        conn.close()
+
+
+def delete_quote(quote_id, user=None, ip=None):
+    """Remove a supplier quotation.
+
+    The chosen quotation cannot be removed for the same reason it cannot be
+    edited. Everything else is a price that was offered and is no longer on the
+    table, and the audit line keeps what it said.
+    """
+    conn = get_db()
+    try:
+        q = conn.execute("SELECT * FROM pr_quotes WHERE id=?", (quote_id,)).fetchone()
+        if not q:
+            return False, "not_found"
+        if q["is_chosen"]:
+            return False, "chosen"
+        pr = conn.execute("SELECT status FROM pr_requests WHERE id=?",
+                          (q["pr_id"],)).fetchone()
+        if pr and pr["status"] in ("approved", "po_issued", "in_transit",
+                                   "partially_received", "received", "closed", "cancelled"):
+            return False, "locked"
+        conn.execute("DELETE FROM pr_quotes WHERE id=?", (quote_id,))
+        # The RFQ it answered is unanswered again if nothing else replied to it.
+        rid = q["rfq_id"] if "rfq_id" in q.keys() else None
+        if rid:
+            left = conn.execute("SELECT COUNT(*) n FROM pr_quotes WHERE rfq_id=?",
+                                (rid,)).fetchone()["n"]
+            if not left:
+                conn.execute("UPDATE pr_rfqs SET status='sent' WHERE id=?", (rid,))
+        audit(conn, q["pr_id"], (user or {}).get("username") or "system", "quote_removed",
+              "Quotation from %s (%s %s) removed"
+              % (q["vendor"] or "?", q["amount"], q["currency"] or ""), ip)
+        conn.commit()
+        return True, ""
+    except Exception as exc:                                      # noqa: BLE001
+        conn.rollback()
+        log.warning("delete_quote %s failed: %s", quote_id, exc)
+        return False, "unavailable"
     finally:
         conn.close()
 
@@ -4751,8 +5660,13 @@ def set_single_source(pr_id, reason, user, ip=None):
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
-        if pr["status"] in ("approved", "po_issued", "partially_received",
-                            "received", "closed", "cancelled"):
+        # Waiving the competitive-quote rule ON YOUR OWN REQUEST is the cheapest
+        # way past DOAM §4.3 there is.
+        _bad = _refuse_self_commercial(pr, user, "single_source")
+        if _bad:
+            return False, _bad
+        if pr["status"] in ("approved", "po_issued", "in_transit",
+                            "partially_received", "received", "closed", "cancelled"):
             return False, "locked"   # sourcing is fixed once the PR is approved
         conn.execute("UPDATE pr_requests SET single_source_reason=? WHERE id=?",
                      (reason, pr_id))
@@ -4846,7 +5760,7 @@ def budget_status(department, period=None, extra=0.0, conn=None):
                          (department, period)).fetchone()
         spent = conn.execute(
             "SELECT COALESCE(SUM(" + _EGP_GROSS_SQL + "),0) s FROM pr_requests WHERE department=? "
-            "AND status IN ('approved','po_issued','partially_received','received','closed') "
+            "AND status IN ('approved','po_issued','in_transit','partially_received','received','closed') "
             "AND substr(COALESCE(request_date, created_at),1,4)=?", (department, period)).fetchone()["s"]
     finally:
         if own_conn:
@@ -5189,7 +6103,7 @@ def analytics_summary():
     finally:
         conn.close()
 
-    committed = [p for p in prs if p["status"] in ("approved", "po_issued", "closed")]
+    committed = [p for p in prs if p["status"] in ("approved", "po_issued", "in_transit", "closed")]
     by = lambda key, rows: _group_sum(rows, key, "total")
     spend_dept = by("department", committed)
     spend_vendor = by("vendor", committed)
@@ -5244,7 +6158,7 @@ def analytics_summary():
 
 
 # Statuses that represent committed (approved-or-later) spend for reporting.
-_SPEND_STATUSES = ("approved", "po_issued", "partially_received", "received", "closed")
+_SPEND_STATUSES = ("approved", "po_issued", "in_transit", "partially_received", "received", "closed")
 
 
 def export_dataset(key):
@@ -5299,7 +6213,7 @@ def export_dataset(key):
                 "FROM pr_requests p LEFT JOIN pr_items i ON i.pr_id = p.id "
                 "WHERE p.is_active=1 AND p.status IN (?,?) "
                 "GROUP BY p.id ORDER BY p.id",
-                ("po_issued", "partially_received")).fetchall()
+                ("po_issued", "in_transit", "partially_received")).fetchall()
             return (["PR No", "PO No", "Vendor", "Department", "Total",
                      "Currency", "Received", "Payment Status"],
                     [[r["pr_no"], r["po_no"], r["vendor"], r["department"],
@@ -5809,9 +6723,10 @@ def _effective_matrix(department):
         rows = sorted(((s, v) for s, v in m.items() if v["included"]),
                       key=lambda kv: kv[1]["seq"])
         return [(s, v["threshold"]) for s, v in rows], "department"
-    # ACTIVE_MATRIX, not APPROVAL_MATRIX: the default thresholds shown to an
-    # admin must be the ones the request will actually route on.
-    return [(s, float(C.ACTIVE_MATRIX.get(s, 0))) for s in LADDER], "default"
+    # The LIVE thresholds, not the constant: the numbers shown to an admin must
+    # be the ones the request will actually route on, including their own edits.
+    live = effective_thresholds("opex")
+    return [(s, float(live.get(s, 0))) for s in LADDER], "default"
 
 
 def _stage_gates(stage, is_last):
@@ -5973,7 +6888,81 @@ def visible_fields(conn=None):
             conn.close()
 
 
-def warehouse_revise(pr_id, qtys, stocks, user, ip=None):
+# The warehouse rung's own columns, and how each is read off the form. These are
+# the figures the STORE is the authority on — the history in
+# attach_item_history() is a starting point, not an answer: it cannot see a
+# damaged pallet, a supplier's phone call, or a part the plant has stopped using.
+# A value saved here wins; cleared, the computed figure comes back.
+_WH_FIELDS = (
+    ("item", "text"),              # item code
+    ("description", "text"),
+    ("stock_days", "num"),
+    ("pending_qty", "num"),
+    ("last_order_qty", "num"),
+    ("last_order_date", "text"),
+    ("last_order_price", "num"),
+    ("last_stock", "num"),
+    ("eta", "text"),
+)
+
+
+def _wh_value(raw, kind):
+    """One posted warehouse field -> what to store, or _UNSET to leave alone.
+
+    A BLANK box means "I have nothing to say", which clears the override and
+    lets the computed figure show again. It does NOT mean zero: a stock-days of
+    0 is a claim that the shelf is empty, and typing nothing is not that claim.
+    """
+    if raw is None:
+        return _UNSET
+    raw = str(raw).strip()
+    if raw == "":
+        return None
+    if kind == "num":
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return _UNSET              # unreadable: keep what is there
+    return raw
+
+
+def _wh_same(a, b):
+    """Is this warehouse figure unchanged?
+
+    None and "" both mean "nothing recorded" and are the same answer. ZERO IS
+    NOT. `(a or None) == (b or None)` reads naturally and is wrong here: it folds
+    0 into None, so a store typing 0 into an empty box — stating that the shelf
+    is empty — was silently discarded as "no change".
+    """
+    a = None if a in (None, "") else a
+    b = None if b in (None, "") else b
+    if a is None or b is None:
+        return a is b
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return str(a) == str(b)
+
+
+class _Unset(object):
+    def __repr__(self):
+        return "<unset>"
+
+
+_UNSET = _Unset()
+
+
+
+def _qty_moved(changes):
+    """Did a QUANTITY change, as opposed to one of the store's own figures?
+
+    Only a quantity moves the total, and only a moved total invalidates a
+    signature. Correcting stock-on-hand or a last-order date must not withdraw
+    anybody's approval — doing so would make the warehouse screen unusable.
+    """
+    return any("qty " in c for c in changes)
+
+def warehouse_revise(pr_id, qtys, stocks, user, ip=None, fields=None):
     """The warehouse rung corrects the QUANTITY and records what is on the shelf.
 
     DOAM §4.1 makes Warehouse a demand rung: the question it answers is "is this
@@ -5984,11 +6973,19 @@ def warehouse_revise(pr_id, qtys, stocks, user, ip=None):
     WHAT IT CANNOT TOUCH: price, supplier, and the item itself. Those belong to
     Purchasing, and a warehouse edit must never move commercial value.
 
-    WHY IT IS REFUSED AFTER PRICING: once a request carries money, every rung
-    above reads a total. Changing a quantity then changes that total under
-    signatures already given, and can change which ladder the request should have
-    climbed. Before pricing the request is worth zero, so a quantity is just a
-    quantity. Returns (ok, msg).
+    AFTER PRICING IT IS STILL ALLOWED, and re-collects the signatures above.
+    This used to be refused outright, and that refusal was a hole rather than a
+    control: a buyer who priced a request the moment it was raised removed the
+    store's ability to correct the quantity at all, and the warehouse rung — the
+    one rung whose entire job is "is this the right quantity, is it on the shelf"
+    — became a rubber stamp. PR-2026-000035 is exactly that.
+
+    So a quantity may be corrected whenever, and the honest consequence is paid
+    rather than avoided: every signature ALREADY GIVEN ABOVE the correcting rung
+    is cleared and must be given again, and the value ladder is rebuilt in case
+    the new total crosses a threshold. Signatures below are kept — they were
+    given on what is still true. Nobody ends up having signed a figure that
+    moved underneath them. Returns (ok, msg).
     """
     conn = get_db()
     try:
@@ -5997,19 +6994,26 @@ def warehouse_revise(pr_id, qtys, stocks, user, ip=None):
             return False, "not_found"
         if (pr["status"] or "") != "pending":
             return False, "not_pending"
-        if (_pr_field(pr, "pricing_status") or "unpriced") == "priced":
-            return False, "already_priced"
+        was_priced = (_pr_field(pr, "pricing_status") or "unpriced") == "priced"
         rung = conn.execute(
             "SELECT id, stage FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
             (pr_id, pr["current_seq"])).fetchall()
-        if not any(r["stage"] == "warehouse" for r in rung):
+        # EITHER warehouse rung. The store records what is on the shelf and
+        # issues against it; the Warehouse Manager reviews and corrects on the
+        # rung above. Both are demand rungs on a request carrying no money yet,
+        # so the reason this gate exists — never moving a signed total — holds
+        # for both. Restricting it to the store rung would also mean nothing
+        # could be issued once the request moved up, which is a capability the
+        # store has today.
+        here = next((r["stage"] for r in rung if r["stage"] in C.WAREHOUSE_STAGES), None)
+        if not here:
             return False, "not_warehouse_rung"
-        if not can_act_step(user, {"stage": "warehouse", "pr_id": pr_id}):
+        if not can_act_step(user, {"stage": here, "pr_id": pr_id}):
             return False, "not_eligible"
 
         changed = []
-        for row in conn.execute("SELECT id, item, qty, current_stock FROM pr_items "
-                                "WHERE pr_id=?", (pr_id,)).fetchall():
+        for row in conn.execute("SELECT * FROM pr_items WHERE pr_id=?",
+                                (pr_id,)).fetchall():
             new_q = qtys.get(row["id"], qtys.get(str(row["id"])))
             new_s = stocks.get(row["id"], stocks.get(str(row["id"])))
             sets, args, note = [], [], []
@@ -6032,6 +7036,23 @@ def warehouse_revise(pr_id, qtys, stocks, user, ip=None):
                     args.append(st)
                     note.append("on hand %g → %g"
                                 % (float(row["current_stock"] or 0), st))
+            # The rest of the warehouse's own figures (spec §1/§3). Saved on the
+            # LINE, so they print on the PR PDF and travel with the request.
+            posted = (fields or {}).get(row["id"], (fields or {}).get(str(row["id"]))) or {}
+            for col, kind in _WH_FIELDS:
+                if col not in posted:
+                    continue
+                val = _wh_value(posted.get(col), kind)
+                if val is _UNSET:
+                    continue
+                was = row[col] if col in row.keys() else None
+                if _wh_same(was, val):
+                    continue
+                sets.append("%s=?" % col)
+                args.append(val)
+                note.append("%s %s → %s" % (col.replace("_", " "),
+                                            was if was not in (None, "") else "—",
+                                            val if val not in (None, "") else "—"))
             if sets:
                 conn.execute("UPDATE pr_items SET %s WHERE id=?" % ", ".join(sets),
                              tuple(args) + (row["id"],))
@@ -6044,13 +7065,55 @@ def warehouse_revise(pr_id, qtys, stocks, user, ip=None):
         # what an auditor asks about.
         audit(conn, pr_id, (user or {}).get("username"), "warehouse_revised",
               " | ".join(changed)[:2000], ip)
+
+        # A quantity moved on a request that already carries money, so the total
+        # every rung above read is no longer the total. Those signatures are
+        # withdrawn and must be given again; the ones below stand, because they
+        # were given on what is still true.
+        requoted = 0
+        if was_priced and _qty_moved(changed):
+            new_total = conn.execute(
+                "SELECT COALESCE(SUM(COALESCE(qty,0) * COALESCE(unit_price,0)),0) t "
+                "FROM pr_items WHERE pr_id=?", (pr_id,)).fetchone()["t"]
+            conn.execute("UPDATE pr_items SET est_cost = ROUND(COALESCE(qty,0) * "
+                         "COALESCE(unit_price,0), 2) WHERE pr_id=?", (pr_id,))
+            conn.execute("UPDATE pr_requests SET total=? WHERE id=?",
+                         (round(float(new_total or 0), 2), pr_id))
+            above = conn.execute(
+                "SELECT id, seq, stage, approver_user FROM pr_steps "
+                "WHERE pr_id=? AND seq > ? AND status <> 'pending' ORDER BY seq",
+                (pr_id, pr["current_seq"])).fetchall()
+            for st in above:
+                conn.execute(
+                    "UPDATE pr_steps SET status='pending', approver_user=NULL, "
+                    "approver_role=NULL, acted_at=NULL, comment=NULL WHERE id=?",
+                    (st["id"],))
+            requoted = len(above)
+            if requoted:
+                who = ", ".join(
+                    "%s (%s)" % (stage_label(st["stage"]), st["approver_user"] or "—")
+                    for st in above)
+                audit(conn, pr_id, (user or {}).get("username"), "signatures_recollected",
+                      "The quantity changed after pricing, so the total moved to "
+                      "%.2f. Signatures already given above this rung are withdrawn "
+                      "and must be given again: %s" % (float(new_total or 0), who), ip)
+                notify_users(conn, [st["approver_user"] for st in above
+                                    if st["approver_user"]], "warning",
+                             "Re-approval needed on %s" % (pr["pr_no"] or "a request"),
+                             "The warehouse corrected a quantity after this request "
+                             "was priced. The total changed, so your approval has "
+                             "been withdrawn and is needed again.",
+                             link="/procurement/pr/%d" % pr_id)
+            # The new value may need rungs the old one did not.
+            _reconcile_value_ladder(conn, pr_id, pr["department"], new_total)
+
         notify_users(conn, [pr["requester"]], "info",
                      "Quantity corrected on %s" % (pr["pr_no"] or "your request"),
                      "The warehouse checked stock and adjusted your request: "
                      + " | ".join(changed)[:400],
                      link="/procurement/pr/%d" % pr_id)
         conn.commit()
-        return True, "revised"
+        return True, ("recollected" if requoted else "revised")
     finally:
         conn.close()
 
@@ -6093,9 +7156,17 @@ def issue_from_stock(pr_id, issues, user, ip=None):
         rung = conn.execute(
             "SELECT stage FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
             (pr_id, pr["current_seq"])).fetchall()
-        if not any(r["stage"] == "warehouse" for r in rung):
+        # EITHER warehouse rung. The store records what is on the shelf and
+        # issues against it; the Warehouse Manager reviews and corrects on the
+        # rung above. Both are demand rungs on a request carrying no money yet,
+        # so the reason this gate exists — never moving a signed total — holds
+        # for both. Restricting it to the store rung would also mean nothing
+        # could be issued once the request moved up, which is a capability the
+        # store has today.
+        here = next((r["stage"] for r in rung if r["stage"] in C.WAREHOUSE_STAGES), None)
+        if not here:
             return False, "not_warehouse_rung"
-        if not can_act_step(user, {"stage": "warehouse", "pr_id": pr_id}):
+        if not can_act_step(user, {"stage": here, "pr_id": pr_id}):
             return False, "not_eligible"
 
         lines = [dict(r) for r in conn.execute(

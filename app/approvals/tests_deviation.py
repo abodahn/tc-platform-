@@ -6,11 +6,17 @@ returns a label: the whole point of §4.4 is that "an order that would push stoc
 above the ceiling, or a price above target, cannot pass on the buyer's signature
 alone".
 """
+import sys
+from pathlib import Path
 import os
 import tempfile
 
 
 def _app():
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "deviation.db")
     os.environ.pop("DATABASE_URL", None)
@@ -31,7 +37,10 @@ def run():
         assert C.deviation_grade(5.1)["grade"] == "price_15"
         assert C.deviation_grade(15)["grade"] == "price_15", "15% is '5 to 15%'"
         assert C.deviation_grade(15.1)["grade"] == "price_over_15"
-        assert C.deviation_grade(20)["stages"] == ["finance", "ceo"]
+        # Was ["finance", "ceo"]. Finance removed from authority by instruction
+        # (2026-10-13); the §4.4 price bands passed up to the CFO so that a 20%
+        # overspend is still graded and still co-signed.
+        assert C.deviation_grade(20)["stages"] == ["cfo", "ceo"]
         assert C.deviation_grade(None, over_ceiling=True)["stages"] == \
             ["factory_manager", "scd"]
         # No target on file must not be graded as infinitely over.

@@ -140,7 +140,7 @@ def _fill_metrics(conn, start, today, buckets):
         SELECT i.qty, i.received_qty, i.vendor, p.vendor AS head_vendor
           FROM pr_items i JOIN pr_requests p ON p.id = i.pr_id
          WHERE COALESCE(p.req_del_date,'') >= ? AND COALESCE(p.req_del_date,'') <= ?
-           AND p.status IN ('po_issued','partially_received','received','closed')""",
+           AND p.status IN ('po_issued','in_transit','partially_received','received','closed')""",
             start, today):
         ordered = float(r["qty"] or 0)
         if ordered <= 0:

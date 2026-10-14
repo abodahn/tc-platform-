@@ -12,6 +12,7 @@ import json
 import os
 
 from app.approvals import constants as C
+from app.approvals import arabic_pdf as _ar
 
 _IMG_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "img")
 
@@ -506,7 +507,7 @@ def pr_pdf(bundle):
     pr, items, steps = bundle["pr"], bundle["items"], bundle["steps"]
     buf = io.BytesIO()
     page = landscape(A4)
-    c = canvas.Canvas(buf, pagesize=page)
+    c = _ar.wrap(canvas.Canvas(buf, pagesize=page))
     w, h = page
     pn = {"page": 1, "notes": _PR_NOTES}
 
@@ -528,17 +529,34 @@ def pr_pdf(bundle):
         ("Reason", pr.get("title")),
     ] + _cost_object_pairs(pr), cols=3, upper=False)
 
-    # Stock days / Pending qty / Last Stock stay blank on purpose: nothing in the
-    # system knows them, and a printed 0 would be a claim the buyer would believe.
+    # Stock days / Pending qty / ETA used to stay blank here, with the note that
+    # nothing in the system knew them. services.attach_item_history() now does:
+    # coverage from a year of demand, what is still owed on open orders, and the
+    # supplier's own promised date. Each is still blank when it is genuinely
+    # unknown — a printed 0 would be a claim the buyer would believe. "Last
+    # Stock" is the stock at the time of the LAST order, which nothing can
+    # compute; it prints only when the warehouse rung has typed it. ETA falls
+    # back to the requested date, as it always did.
     lead = _chosen_lead_time(bundle)
     rows = [[str(i), it.get("item") or "", _line_desc(it),
              it.get("unit") or "", _qty_cell(it),
              _fmt(it.get("current_stock"), 0),
-             "", "", _fmt(it.get("last_order_qty"), 0), it.get("last_order_date") or "",
+             "" if it.get("stock_days") is None else str(it["stock_days"]),
+             _fmt(it.get("pending_qty"), 0) if it.get("pending_qty") else "",
+             _fmt(it.get("last_order_qty"), 0), it.get("last_order_date") or "",
              it.get("vendor") or pr.get("vendor") or "", _fmt(it.get("unit_price")),
              _fmt(it.get("est_cost")), cur, _fmt(it.get("last_order_price")),
-             pr.get("po_no") or "", "", pr.get("payment_condition") or "",
-             pr.get("delivery_condition") or "", pr.get("req_del_date") or "", lead]
+             pr.get("po_no") or "",
+             "" if it.get("last_stock") is None else _fmt(it.get("last_stock"), 0),
+             pr.get("payment_condition") or "",
+             pr.get("delivery_condition") or "",
+             it.get("eta") or pr.get("req_del_date") or "",
+             # The LINE's own lead time when Purchasing recorded one. The chosen
+             # quote's figure is the fallback, and was previously the only
+             # answer — one number for a request however many suppliers it is
+             # split across.
+             ("%g days" % float(it["lead_time_days"])
+              if it.get("lead_time_days") is not None else lead)]
             for i, it in enumerate(items, 1)]
     # VENDOR / PAY. COND. / DEL. COND. wrap: they are the only place those three
     # contract terms appear, and an Incoterm without its named place ("DDP C…")
@@ -638,7 +656,10 @@ def _line_desc(it):
     request form, so the two are usually the same string. Printing both puts the
     same words twice on every document.
     """
-    d = (it.get("description") or "").strip()
+    # The item master's description wins when the line was picked from the
+    # catalogue: the requester states a need, the warehouse maintains what the
+    # part actually is, and a vendor must quote the part. Spec §4.
+    d = (it.get("master_description") or it.get("description") or "").strip()
     return "" if d and d == (it.get("item") or "").strip() else d
 
 
@@ -835,7 +856,7 @@ def po_pdf(bundle, po=None):
                   po_no=po.get("po_no") or pr.get("po_no"),
                   po_rev=po.get("rev") or pr.get("po_rev"))
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
+    c = _ar.wrap(canvas.Canvas(buf, pagesize=A4))
     w, h = A4
     pn = {"page": 1, "notes": None}
 
@@ -967,9 +988,15 @@ def rfq_pdf(bundle, rfq):
     mine = [it for it in items
             if ((it.get("vendor") or head_vendor or "").strip() == vendor)]
     items = mine or items
+    # Lines this RFQ does not ask for (spec §4). Applied AFTER the per-vendor
+    # split so that removing a line never resurrects the whole request through
+    # the `mine or items` fallback above.
+    gone = rfq.get("excluded") or set()
+    if gone:
+        items = [it for it in items if it.get("id") not in gone] or items
 
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
+    c = _ar.wrap(canvas.Canvas(buf, pagesize=A4))
     w, h = A4
     pn = {"page": 1, "notes": _RFQ_NOTES}
 
@@ -1105,7 +1132,7 @@ def grn_pdf(bundle, grn=None):
         except Exception:
             by_line = {}
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
+    c = _ar.wrap(canvas.Canvas(buf, pagesize=A4))
     w, h = A4
     pn = {"page": 1, "notes": _GRN_NOTES}
 
@@ -1253,7 +1280,7 @@ def debit_note_pdf(bundle, ret):
                   pr.get("po_no") or pr.get("pr_no"))
 
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
+    c = _ar.wrap(canvas.Canvas(buf, pagesize=A4))
     w, h = A4
     pn = {"page": 1, "notes": _DN_NOTES}
 

@@ -65,15 +65,19 @@ def run():
     with app.app_context():
         from app.db import get_db
         conn = get_db()
+        # lk_buy2 exists because nobody may price their own request (2026-10-13):
+        # the block below has lk_buy raise one, so a second buyer prices it.
         for u, role in (("lk_req", "production_manager"),
-                        ("lk_buy", "purchasing_manager")):
+                        ("lk_buy", "purchasing_manager"),
+                        ("lk_buy2", "purchasing_manager")):
             conn.execute(
                 "INSERT OR IGNORE INTO users (username, password_hash, full_name, "
                 "role, is_active, created_at) VALUES (?,?,?,?,1,'2026-01-01')",
                 (u, "x", u, role))
         conn.commit()
         ids = {r["username"]: r["id"] for r in conn.execute(
-            "SELECT id, username FROM users WHERE username IN ('lk_req','lk_buy')"
+            "SELECT id, username FROM users WHERE username IN "
+            "('lk_req','lk_buy','lk_buy2')"
         ).fetchall()}
         conn.execute(
             "INSERT OR IGNORE INTO proc_items (code, name, unit, category_name, "
@@ -123,7 +127,11 @@ def run():
     def field(nm):
         m = re.search(r"name=\"%s\"[^>]*" % re.escape(nm), body)
         return m.group(0) if m else ""
-    for nm in ("item[]", "unit[]", "current_stock[]", "vendor[]"):
+    # unit[] left this list on 2026-10-14: the requester now STATES the unit,
+    # because a line the catalogue does not hold — five DAYS of contract labour,
+    # a rental by the MONTH — has nothing to inherit one from and was being
+    # forced to "Pcs". The catalogue still wins where it exists; see below.
+    for nm in ("item[]", "current_stock[]", "vendor[]"):
         f = field(nm)
         chk("%-16s is HIDDEN, not drawn on the line" % nm,
             f and 'type="hidden"' in f, f[:60] or "ABSENT")
@@ -131,6 +139,9 @@ def run():
         # ARRAYS, so a field missing from one row would shift every value on
         # every line below it onto the wrong row.
         chk("%-16s is still POSTED, so the arrays stay aligned" % nm, bool(f))
+    chk("unit[] IS drawn — it is the requester's to state now",
+        'name="unit[]"' in body and 'type="hidden"' not in field("unit[]"),
+        field("unit[]")[:60] or "ABSENT")
     for nm in ("description[]", "qty[]"):
         f = field(nm)
         chk("%-16s is VISIBLE — what, and how many" % nm,
@@ -156,7 +167,9 @@ def run():
             "SELECT item, description, unit, qty, current_stock, vendor, unit_price "
             "FROM pr_items ORDER BY id DESC LIMIT 1").fetchone())
         conn.close()
-    chk("a posted UNIT is ignored", row["unit"] in ("", "Pcs"),
+    # The requester's unit is now KEPT on a free-text line (2026-10-14). What is
+    # still ignored is everything commercial: price, supplier, stock.
+    chk("a posted UNIT is kept on a free-text line", row["unit"] == "Kg",
         "%r (posted 'Kg')" % row["unit"])
     chk("a posted STOCK figure is ignored", float(row["current_stock"] or 0) == 0,
         "%r (posted 99)" % row["current_stock"])
@@ -187,8 +200,8 @@ def run():
     # The REQUEST FORM locks these for everybody, the buyer included. A request
     # form states a need; it is not where sourcing happens, and a buyer who fills
     # it in there is guessing a supplier before anyone has quoted.
-    chk("even the BUYER cannot set a unit on a request form",
-        b["unit"] in ("", "Pcs"), "%r (posted 'Kg')" % b["unit"])
+    chk("the buyer may state a unit too — same rule for everybody",
+        b["unit"] == "Kg", "%r (posted 'Kg')" % b["unit"])
     chk("nor a stock figure", float(b["current_stock"] or 0) == 0,
         "%r (posted 12)" % b["current_stock"])
     chk("nor a line supplier", not (b["vendor"] or "").strip()
@@ -208,11 +221,17 @@ def run():
         line = conn.execute("SELECT id FROM pr_items WHERE pr_id=? LIMIT 1",
                             (pr_id,)).fetchone()["id"]
         conn.close()
-    page = buy.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
+    # A SECOND buyer prices it. The request above was raised by `buy` himself,
+    # and since 2026-10-13 nobody may price their own request — the price decides
+    # which approvals it needs, so pricing your own sets your own threshold.
+    # (PR-2026-000035 was exactly that.) Which buyer does it is irrelevant to
+    # what this block tests: that the line's SUPPLIER is set at the pricing gate.
+    buy2 = client("lk_buy2", "purchasing_manager")
+    page = buy2.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
     chk("the request page offers a supplier box for the line",
         ("linevendor_%d" % line) in page)
     tokp = re.search(r'name="_csrf" value="([^"]+)"', page).group(1)
-    buy.post("/procurement/pr/%d/price" % pr_id, data={
+    buy2.post("/procurement/pr/%d/price" % pr_id, data={
         "price_%d" % line: "12", "linevendor_%d" % line: "Real Vendor",
         "currency": "EGP", "_csrf": tokp})
     with app.app_context():

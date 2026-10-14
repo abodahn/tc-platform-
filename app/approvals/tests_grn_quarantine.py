@@ -10,11 +10,17 @@ There are deliberately NO `if line:` / `if mat:` guards in this file. The previo
 round had them, and a non-matching seed skipped the whole warehouse block while the
 run still printed "all checks passed". Everything this file needs, it creates.
 """
+import sys
+from pathlib import Path
 import os
 import tempfile
 
 
 def _app():
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "grn.db")
     os.environ.pop("DATABASE_URL", None)

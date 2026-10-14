@@ -61,26 +61,39 @@
             <option value="other" {{ 'selected' if prefill.request_for_kind == 'other' }} data-i18n="proc.rf_other">Something else</option>
           </select></div>
 
-        {#- Step two, shown only for a machine: narrow 5,108 down by type. -#}
+        {#- Step two, shown only for a machine: narrow 5,108 down by type.
+
+            MULTI-SELECT since 2026-10-14. The combobox is deliberately still a
+            SINGLE select — it skips `multiple` on purpose (tc-combobox.js:489),
+            and a native multiple over 5,108 server-fetched rows is unusable. So
+            it stays the searchable picker and each choice becomes a chip; the
+            chips are what actually submit, joined into the same TEXT column the
+            field has always written. Nothing downstream has to learn a new
+            shape. -#}
         <div class="field" id="rfTypeWrap" style="display:none">
           <label data-i18n="proc.rf_mtype_l">Machine type</label>
-          <select name="request_for_type" id="rfType" data-search
+          <input type="hidden" name="request_for_type" id="rfTypeValue"
+                 value="{{ prefill.request_for_type or '' }}">
+          <div class="chips" id="rfTypeChips"></div>
+          <select id="rfType" data-search
                   data-src="/api/lookup/request-for?kind=machine_type" data-free>
             <option value=""></option>
-            {% if prefill.request_for_type %}<option value="{{ prefill.request_for_type }}" selected>{{ prefill.request_for_type }}</option>{% endif %}
           </select>
-          <span class="muted" style="font-size:12px" data-i18n="proc.rf_mtype_hint">Pick the type first — the list below then shows only machines of that type.</span>
+          <span class="muted" style="font-size:12px" data-i18n="proc.rf_mtype_hint">Pick the type first — the list below then shows only machines of that type. Choose more than one if the request covers several.</span>
         </div>
 
         {#- Step three: the thing itself. Its data-src is rewritten as the answers
             above change, and the combobox reads that attribute at fetch time. -#}
         <div class="field" id="rfPickWrap" style="display:none">
           <label id="rfPickLabel" data-i18n="proc.rf_pick_l">Which one</label>
-          <select name="request_for" id="rfPick" data-search
+          <input type="hidden" name="request_for" id="rfPickValue"
+                 value="{{ prefill.request_for or '' }}">
+          <div class="chips" id="rfPickChips"></div>
+          <select id="rfPick" data-search
                   data-src="/api/lookup/request-for?kind=machine" data-free>
             <option value=""></option>
-            {% if prefill.request_for %}<option value="{{ prefill.request_for }}" selected>{{ prefill.request_for }}</option>{% endif %}
           </select>
+          <span class="muted" style="font-size:12px" data-i18n="proc.rf_pick_hint">Pick as many as the request covers — each one is added below.</span>
         </div>
 
         {#- "Something else": a plain box, because the registers do not hold it. -#}
@@ -95,6 +108,32 @@
             site that never touches the switches sees the form unchanged. A
             hidden field is not posted; the value already on an existing request
             is left alone rather than blanked. -#}
+        {#- Bought in Egypt, or imported. Carries no authority either — but the
+            PO wording, the payment terms and the customs paperwork all hang off
+            it, and guessing it from the supplier's name is how an order ends up
+            with the wrong incoterms. Open to the requester and to Purchasing,
+            because either may know first. -#}
+        <div class="field"><label data-i18n="proc.ordtype_l">Order type</label>
+          <select name="order_type">
+            <option value="local" {{ 'selected' if (prefill.order_type or 'local') != 'export' }}
+                    data-i18n="proc.ordtype_local">🇪🇬 Local — bought inside Egypt</option>
+            <option value="export" {{ 'selected' if prefill.order_type == 'export' }}
+                    data-i18n="proc.ordtype_export">🌍 Export / import — comes from abroad</option>
+          </select></div>
+
+        {#- How badly the plant needs this. It carries NO authority: it never
+            shortens a ladder, skips a rung or moves a threshold. If it did,
+            everything would arrive top urgent within a week. -#}
+        <div class="field"><label data-i18n="proc.prio_l">Priority</label>
+          <select name="priority">
+            <option value="normal" {{ 'selected' if (prefill.priority or 'normal') == 'normal' }}
+                    data-i18n="proc.prio_normal">🟢 Normal</option>
+            <option value="urgent" {{ 'selected' if prefill.priority == 'urgent' }}
+                    data-i18n="proc.prio_urgent">🟠 Urgent</option>
+            <option value="top_urgent" {{ 'selected' if prefill.priority == 'top_urgent' }}
+                    data-i18n="proc.prio_top">🔴 Top urgent</option>
+          </select>
+          <span class="muted" style="font-size:12px" data-i18n="proc.prio_hint">Priority tells the buyer how to sequence their work. It does not change who approves the request or how much authority it needs.</span></div>
         {% if fields.show_expenditure_kind %}
         <div class="field"><label data-i18n="proc.kind_l">Expenditure type</label>
           <select name="expenditure_kind" id="expKind">
@@ -186,6 +225,7 @@
           fill is still a box they read, hesitate over, and ask about. -#}
       <div class="li-head request-line">
         <span data-i18n="proc.desc">Description</span>
+        <span data-i18n="proc.uom">UOM</span>
         <span data-i18n="proc.qty">Qty</span>
         <span></span>
       </div>
@@ -256,6 +296,12 @@
   // Why the greyed boxes are greyed, shown on hover.
   var LOCK_HINT = {{ lock_hint | tojson }};
   var DESC_PH = {{ desc_ph | tojson }};
+  // Built once from C.UNITS, so the list on a cloned row is the same list the
+  // server validates against — a hardcoded copy here would drift the first time
+  // somebody adds a unit.
+  var UNIT_OPTS = {{ units | tojson }}.map(function (u) {
+    return '<option value="' + u + '">' + u + '</option>';
+  }).join('');
   // Picker copy. These strings are BUILT INTO the row markup by JS, which runs
   // after app.js has already swapped data-i18n, so a data-i18n attribute here
   // would never be translated. Resolve them server-side instead — the same
@@ -303,12 +349,13 @@
       + '<input name="item[]" type="hidden">'
       + '<input name="spare_id[]" type="hidden">'
       + '<input name="item_id[]" type="hidden">'
-      + '<input name="unit[]" type="hidden">'
+
       + '<input name="current_stock[]" type="hidden" value="0">'
       + '<input name="vendor[]" type="hidden">'
       + '<input name="item_notes[]" type="hidden">'
       + '<input name="description[]" placeholder="' + (DESC_PH || 'What you need') + '" '
       +   'autocomplete="off" data-ac>'
+      + '<select name="unit[]" class="li-uom">' + UNIT_OPTS + '</select>'
       + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
       + '<button type="button" class="li-del" title="Remove">✕</button>'
       + '</div>';
@@ -394,9 +441,71 @@
       pick.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
+    /* ---- multi-select by chips (2026-10-14) -----------------------------
+       The combobox stays a SINGLE select — it refuses `multiple` by design,
+       and a native multiple over 5,108 server-fetched machines is unusable.
+       So each pick becomes a chip, and the chips are what submit: joined with
+       ", " into the same TEXT field this has always written, so the request
+       page, the PDF and every report keep reading exactly what they read
+       before. One machine looks identical to how it always did. */
+    function chipper(valueId, chipsId, selectEl) {
+      var hidden = document.getElementById(valueId);
+      var box = document.getElementById(chipsId);
+      if (!hidden || !box || !selectEl) return null;
+
+      function list() {
+        return (hidden.value || '').split(',')
+          .map(function (x) { return x.trim(); })
+          .filter(Boolean);
+      }
+      function write(arr) {
+        // De-duplicated case-insensitively: picking the same machine twice is a
+        // slip, not a request for two of it — the quantity says how many.
+        var seen = {}, out = [];
+        arr.forEach(function (v) {
+          var k = v.toLowerCase();
+          if (v && !seen[k]) { seen[k] = 1; out.push(v); }
+        });
+        hidden.value = out.join(', ');
+        draw();
+      }
+      function draw() {
+        box.innerHTML = '';
+        list().forEach(function (v) {
+          var chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.textContent = v;
+          var x = document.createElement('button');
+          x.type = 'button';
+          x.className = 'chip-x';
+          x.setAttribute('aria-label', 'Remove ' + v);
+          x.textContent = '×';
+          x.addEventListener('click', function () {
+            write(list().filter(function (o) { return o !== v; }));
+          });
+          chip.appendChild(x);
+          box.appendChild(chip);
+        });
+      }
+      selectEl.addEventListener('change', function () {
+        var v = (selectEl.value || '').trim();
+        if (!v) return;
+        write(list().concat([v]));
+        selectEl.value = '';            // ready for the next one
+      });
+      draw();
+      return { clear: function () { hidden.value = ''; draw(); }, list: list };
+    }
+
+    var pickChips = chipper('rfPickValue', 'rfPickChips', pick);
+    var typeChips = chipper('rfTypeValue', 'rfTypeChips', type);
+
     function srcFor(k) {
       if (k === 'machine') {
-        var t = (type && type.value) ? '&type=' + encodeURIComponent(type.value) : '';
+        // Every chosen type, so a request covering two kinds of machine still
+        // lists both in the picker below.
+        var tv = typeChips ? typeChips.list().join(',') : (type && type.value) || '';
+        var t = tv ? '&type=' + encodeURIComponent(tv) : '';
         return '/api/lookup/request-for?kind=machine' + t;
       }
       return '/api/lookup/request-for?kind=' + (k === 'line' ? 'line' : 'area');
@@ -419,7 +528,7 @@
         // The combobox listens for `change` on its select and re-syncs from it,
         // which is what puts the VISIBLE input back to empty; without the event
         // the old label sits there over a cleared value.
-        if (resetPick) { clearPick(); }
+        if (resetPick) { clearPick(); if (pickChips) pickChips.clear(); }
       }
       // NOT disabled. tc-combobox copies sel.disabled onto its visible input
       // ONCE, when it builds — so a field disabled at first render (nothing

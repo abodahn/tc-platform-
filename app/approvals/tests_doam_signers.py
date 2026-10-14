@@ -169,7 +169,14 @@ def run():
         conn.commit()
         conn.close()
 
-        for who, role in (("store", "storekeeper"), ("purchasing", "purchasing_manager"),
+        # The Warehouse Manager rung was added above the store on 2026-10-13 and
+        # is always on, so the walk has one more signature than it used to. Each
+        # rung is signed by a DIFFERENT person, which is the property this loop
+        # actually defends — segregation of duties refuses a second rung from
+        # anyone who has already signed one.
+        for who, role in (("store", "storekeeper"),
+                          ("whmgr", "warehouse_manager"),
+                          ("purchasing", "purchasing_manager"),
                           ("factory", "factory_manager")):
             good, msg = svc.act_on_step(pr_id, {"username": who, "role": role, "id": 0}, "approve")
             chk("%-11s signs their rung" % who, good, msg)

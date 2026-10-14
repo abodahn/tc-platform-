@@ -22,6 +22,8 @@ bytes — because every one of these was reachable from the screen.
     python -m app.approvals.tests_split_money
 """
 import base64
+import sys
+from pathlib import Path
 import os
 import re
 import tempfile
@@ -29,6 +31,10 @@ import zlib
 
 
 def _app():
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "splitmoney.db")
     os.environ.pop("DATABASE_URL", None)

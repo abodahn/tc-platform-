@@ -115,6 +115,11 @@ with app.app_context():
 
     okk, msg = svc.act_on_step(pr_id, signer["warehouse"], "approve")
     ok("warehouse signs: %s" % msg, okk)
+    # The Warehouse Manager rung (2026-10-13) sits between the store and the
+    # buyer and is always on. `signer` is built from STAGE_ROLES, so it already
+    # has a distinct person for it — which segregation of duties requires.
+    okk, msg = svc.act_on_step(pr_id, signer["warehouse_manager"], "approve")
+    ok("warehouse manager signs: %s" % msg, okk)
     okk, msg = svc.act_on_step(pr_id, buyer, "approve")          # purchasing, unpriced
     ok("PRICING GATE blocks the purchasing stage while unpriced (%s)" % msg,
        not okk and msg == "needs_pricing")
@@ -143,8 +148,8 @@ with app.app_context():
     ok("factory manager signs: %s" % msg, okk)
     okk, msg = svc.act_on_step(pr_id, signer["scd"], "approve")
     ok("supply chain director signs: %s" % msg, okk)
-    okk, msg = svc.act_on_step(pr_id, signer["finance"], "approve")
-    ok("finance signs: %s" % msg, okk)
+    # Finance was removed from authority on instruction (2026-10-13), so there is
+    # no finance rung on this ladder to sign.
     okk, msg = svc.act_on_step(pr_id, signer["cfo"], "approve")  # -> fully approved
     ok("cfo signs and the PR is fully approved: %s" % msg, okk and msg == "approved")
     ok("PR status is 'approved' with a drafted PO",
@@ -276,12 +281,16 @@ with app.app_context():
         conn.commit()
 
     for bad in ("no_such_role", "", "   ", ",,,", "SUPER_ADMIN", "'; DROP TABLE users;--"):
-        poke_role("finance", bad)
+        # Finance is off the LADDER but keeps its role definition, because
+        # requests already circulating carry a signed finance step. That makes it
+        # a good subject here: this block is about the stage-role override being
+        # validated, not about which rungs are live.
+        poke_role("scd", bad)
         ok("stage role %r -> ignored, constant roles kept" % bad,
-           svc.stage_roles_map()["finance"] == set(C.STAGE_ROLES["finance"]))
-    poke_role("finance", "no_such_role,cfo")
+           svc.stage_roles_map()["scd"] == set(C.STAGE_ROLES["scd"]))
+    poke_role("scd", "no_such_role,cfo")
     ok("stage role 'no_such_role,cfo' -> only the real role is used",
-       svc.stage_roles_map()["finance"] == {"cfo"})
+       svc.stage_roles_map()["scd"] == {"cfo"})
     poke_role("finance", None)
     ok("a garbage role never left the stage unsignable (someone can always act)",
        all(svc.stage_roles_map()[s] for s in C.LADDER))

@@ -789,6 +789,52 @@ table.tbl tr:last-child td { border-bottom: 0; }
 }
 .field input:focus, .field select:focus { border-color: var(--tc-red); box-shadow: 0 0 0 4px rgba(237,28,36,.1); }
 
+/* ---------- Warehouse rung: the store's own figures on a request line ------
+   Eight fields per item, sitting in a second row of a table that is already
+   wider than the viewport. Capped rather than fluid for exactly that reason: a
+   full-width grid inherits the TABLE's width, which pushed the last fields off
+   the right edge and put the page on a horizontal scrollbar. Tokens only, so it
+   follows the theme. */
+.wh-fields {
+  display: grid;
+  /* min() on the track floor, not a bare 158px: when the grid itself is
+     narrower than one column, a bare minimum makes the COLUMNS wider than
+     their container and the fields spill out of it. */
+  grid-template-columns: repeat(auto-fit, minmax(min(158px, 100%), 1fr));
+  gap: 12px 16px;
+  /* Sized against the VIEWPORT, not the cell: the cell belongs to a table wider
+     than the screen, so a percentage width would inherit that width and put the
+     last fields out of reach again. The floor keeps it usable on a phone, where
+     the grid collapses to a single column. */
+  width: min(860px, calc(100vw - 220px));
+  min-width: 260px;
+}
+.wh-fields .field { margin-bottom: 0; }          /* the grid gap owns the rhythm */
+.wh-fields .field input { height: 38px; }        /* denser: eight boxes per item */
+.wh-detail > td { background: var(--panel-2); border-top: 0; }
+/* The description earns two tracks — but only once there are two to earn. On a
+   single-column grid `span 2` invents a second column and overflows. */
+@media (min-width: 700px) { .wh-fields .field.wide { grid-column: span 2; } }
+
+/* Chips — a multi-select built on a single-select picker. The combobox refuses
+   `multiple` by design, and a native multiple over 5,108 server-fetched rows is
+   unusable, so each pick becomes one of these and the chips are what submit. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.chips:empty { display: none; }          /* no gap when nothing is chosen yet */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 4px 6px 4px 11px;
+  font-size: 12.5px; color: var(--ink); line-height: 1.4;
+}
+.chip-x {
+  border: 0; background: transparent; cursor: pointer; padding: 0;
+  width: 18px; height: 18px; border-radius: 50%;
+  color: var(--muted); font-size: 15px; line-height: 1;
+}
+.chip-x:hover { background: var(--crit-bg); color: var(--crit); }
+.chip-x:focus-visible { outline: 2px solid var(--tc-red); outline-offset: 1px; }
+
 /* ---------- Empty / loading ---------- */
 .empty { text-align: center; padding: 48px 24px; color: var(--muted); }
 .empty .ico { width: 46px; height: 46px; opacity: .4; margin-bottom: 12px; }
@@ -1170,6 +1216,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .b-approved,
 .b-po_issued,
 .b-closed           { background: var(--ok-bg);   color: var(--ok); }
+/* On the way: the order has left the supplier but nothing is in the building
+   yet, so it reads as in-progress rather than done. */
+.b-in_transit       { background: var(--info-bg); color: var(--info); }
 .b-rejected         { background: var(--crit-bg); color: var(--crit); }
 .b-draft,
 .b-cancelled,
@@ -1328,11 +1377,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   outline: none; box-shadow: none; border-style: dashed;
 }
 
-/* A REQUEST line asks two questions: what, and how many. The item, unit, stock
-   and supplier columns are not drawn on it — they are answered later by the
-   people who know, and a greyed box a requester can never fill is still a box
-   they read, hesitate over, and ask about. */
-.li-head.request-line, .li-row.request-line { grid-template-columns: 3fr 1fr 34px; }
+/* A REQUEST line asks three questions now: what, in what unit, and how many.
+   The unit joined them on 2026-10-14 — a line the catalogue does not hold (five
+   DAYS of labour, a rental by the MONTH) had nothing to inherit one from. The
+   item, stock and supplier columns are still not drawn here: they are answered
+   later by the people who know, and a greyed box a requester can never fill is
+   still a box they read, hesitate over, and ask about. */
+.li-head.request-line, .li-row.request-line {
+  grid-template-columns: 3fr 108px 1fr 34px;
+}
+.li-row.request-line .li-uom { width: 100%; }
 @media (max-width: 720px) {
+  /* Unit and quantity pair up on the second row; the description keeps the
+     first to itself, because it is the one that needs the width. */
   .li-head.request-line, .li-row.request-line { grid-template-columns: 1fr 1fr; }
 }

@@ -28,6 +28,13 @@ STAGE_AR = {
         "المخزن يراجع الرصيد قبل الالتزام بأي مبلغ: هل الصنف موجود فعلًا على "
         "الرف، وما هي آخر كمية طُلبت وبأي سعر. هذه مرحلة احتياج — مطلوبة دائمًا، "
         "أيًا كانت قيمة الطلب."),
+    "warehouse_manager": (
+        "مدير المخزن يراجع ما سجّله أمين المخزن ويصحّحه قبل أن يصل الطلب إلى "
+        "المشتريات: أيام التغطية، والكميات تحت الطلب بالفعل، وسعر آخر شراء "
+        "وتاريخه، والرصيد وقتها. أمين المخزن يجيب عن «هل الصنف على الرف»؛ وهذه "
+        "المرحلة تجيب عن «هل ينبغي شراؤه أصلًا، وبأي كمية». يملك تصحيح كل بيانات "
+        "المخزن والكمية — لكن ليس السعر ولا المورّد، فهما يدخلان عند بوابة "
+        "المشتريات وحدها. مرحلة دائمة، أيًا كانت قيمة الطلب."),
     "factory_manager": (
         "مدير المصنع يؤكّد أن الطلب ضروري تشغيليًا وأن مواصفاته صحيحة للأصل أو "
         "الماكينة أو الخط الذي طُلب من أجله. مرحلة احتياج — مطلوبة دائمًا، أيًا "
@@ -91,6 +98,14 @@ STAGE_TR = {
         "Depo, herhangi bir para taahhüdünden önce stoku kontrol eder: malzeme "
         "rafta var mı, en son ne kadar sipariş edildi ve hangi fiyata. Bu bir "
         "ihtiyaç aşamasıdır — talebin tutarı ne olursa olsun her zaman gereklidir."),
+    "warehouse_manager": (
+        "Depo Müdürü, deponun kaydettiklerini talep bir satın almacıya ulaşmadan "
+        "önce inceler ve düzeltir: kaç günlük stok kaldığı, hâlihazırda siparişte "
+        "olan miktar, parçanın son alım fiyatı ve tarihi, o andaki stok. Depo "
+        "«raf­ta var mı» sorusunu yanıtlar; bu basamak «bunu almalı mıyız ve ne "
+        "kadar» sorusunu yanıtlar. Tüm depo bilgilerini ve miktarı düzeltebilir — "
+        "ancak fiyatı ve tedarikçiyi değil; onlar yalnızca Satın Alma kapısında "
+        "girilir. Tutarı ne olursa olsun her zaman gereklidir."),
     "factory_manager": (
         "Fabrika Müdürü, talebin işletme açısından gerekli olduğunu ve talep "
         "edildiği varlık, makine veya hat için doğru tanımlandığını teyit eder. "
@@ -457,6 +472,7 @@ STATUS_AR = {
     "rejected": "رفضته إحدى المراحل مع ذكر السبب؛ ويرتد إلى مقدّم الطلب الذي "
                 "يمكنه التصحيح وإعادة الإرسال (وهذا يبني سلسلة الموافقات من جديد).",
     "po_issued": "صدر أمر الشراء إلى المورّد؛ ويمكن بدء الدفع.",
+    "in_transit": "شحن المورّد الطلب وهو في الطريق. حالة فقط — لم يُستلم شيء ولم تتحرّك أي كمية.",
     "partially_received": "تم استلام بعض بنود الطلب وليس كلها.",
     "received": "تم تأكيد التوريد لكل البنود.",
     "closed": "مكتمل ومؤرشف — لا يُتوقَّع أي إجراء آخر.",
@@ -471,6 +487,7 @@ STATUS_TR = {
                 "gönderebilecek olan talep edene geri döner (bu, zinciri "
                 "sıfırdan yeniden kurar).",
     "po_issued": "Satın alma emri tedarikçiye açıldı; ödeme başlayabilir.",
+    "in_transit": "Tedarikçi siparişi gönderdi, yolda. Yalnızca bir durum — hiçbir şey teslim alınmadı, stok hareket etmedi.",
     "partially_received": "Sipariş satırlarının bir kısmı teslim alındı, tamamı değil.",
     "received": "Her satır için teslim teyit edildi.",
     "closed": "Tamamlandı ve arşivlendi — başka bir işlem beklenmiyor.",
@@ -507,15 +524,18 @@ DOC = {
 
 STAGE_LABEL = {
     "en": {"requester": "Requester", "warehouse": "Warehouse",
+           "warehouse_manager": "Warehouse Manager",
            "factory_manager": "Factory Manager", "purchasing": "Purchasing",
            "finance": "Finance", "cfo": "CFO", "ceo": "CEO",
            "scd": "Supply Chain Director", "bod": "Board of Directors"},
     "ar": {"requester": "مقدّم الطلب", "warehouse": "المخزن",
+           "warehouse_manager": "مدير المخزن",
            "factory_manager": "مدير المصنع", "purchasing": "المشتريات",
            "finance": "الإدارة المالية", "cfo": "المدير المالي (CFO)",
            "ceo": "الرئيس التنفيذي (CEO)",
            "scd": "مدير سلسلة الإمداد", "bod": "مجلس الإدارة"},
     "tr": {"requester": "Talep eden", "warehouse": "Depo",
+           "warehouse_manager": "Depo Müdürü",
            "factory_manager": "Fabrika Müdürü", "purchasing": "Satın Alma",
            "finance": "Finans", "cfo": "CFO", "ceo": "CEO",
            "scd": "Tedarik Zinciri Direktörü", "bod": "Yönetim Kurulu"}
@@ -537,15 +557,18 @@ GATE_LABEL = {
 
 STATUS_LABEL = {
     "en": {"draft": "Draft", "pending": "Pending", "approved": "Approved",
-           "rejected": "Rejected", "po_issued": "PO issued",
+           "rejected": "Rejected", "po_issued": "On order",
+           "in_transit": "On the way",
            "partially_received": "Partially received", "received": "Received",
            "closed": "Closed", "cancelled": "Cancelled"},
     "ar": {"draft": "مسوَّدة", "pending": "قيد الموافقة", "approved": "معتمد",
            "rejected": "مرفوض", "po_issued": "صدر أمر الشراء",
+           "in_transit": "في الطريق",
            "partially_received": "مستلم جزئيًا", "received": "مستلم",
            "closed": "مغلق", "cancelled": "ملغى"},
     "tr": {"draft": "Taslak", "pending": "Onay bekliyor", "approved": "Onaylandı",
-           "rejected": "Reddedildi", "po_issued": "PO açıldı",
+           "rejected": "Reddedildi", "po_issued": "Siparişte",
+           "in_transit": "Yolda",
            "partially_received": "Kısmen teslim alındı", "received": "Teslim alındı",
            "closed": "Kapatıldı", "cancelled": "İptal edildi"}
 }
@@ -609,6 +632,84 @@ SETTING_WARN = {
         "show_delivery_condition": "Satın alma emrinde yazdırılır. Hiçbir yönlendirme buna bağlı değildir.",
     },
 }
+
+# --- the per-rung amount knobs -------------------------------------------
+# One knob per ladder rung per expenditure kind (constants.WORKFLOW_SETTINGS
+# generates them), so their labels are generated too: writing 42 more entries by
+# hand is 42 more chances for one language to fall behind, and the rung names
+# right above are already translated.
+_THR_LABEL = {"en": "%s joins at — %s spend (EGP)",
+              "ar": "%s يدخل من مبلغ — إنفاق %s (ج.م)",
+              "tr": "%s şu tutardan katılır — %s harcama (EGP)"}
+_THR_KIND = {"en": {"opex": "operating", "capex": "capital"},
+             "ar": {"opex": "تشغيلي", "capex": "رأسمالي"},
+             "tr": {"opex": "işletme", "capex": "sermaye"}}
+
+# Said out loud because the honest consequence is not obvious: a rung that ships
+# at 0 is on EVERY request, and giving it an amount does not make it a lighter
+# check — it removes it from everything below that amount.
+_THR_WARN_ALWAYS = {
+    "en": "This rung signs every request today. Any amount above 0 means requests "
+          "below it are never seen by this rung at all — it is removed, not relaxed.",
+    "ar": "هذه المرحلة توقّع على كل طلب حاليًا. وأي مبلغ أكبر من صفر يعني أن الطلبات "
+          "الأقل منه لا تمرّ على هذه المرحلة إطلاقًا — فهي تُحذف ولا تُخفَّف.",
+    "tr": "Bu basamak bugün her talebi imzalar. 0'dan büyük bir tutar, altındaki "
+          "taleplerin bu basamağı hiç görmediği anlamına gelir — gevşetilmez, kaldırılır.",
+}
+_THR_WARN_PURCHASING = {
+    "en": "The pricing gate and the competitive-quote (RFQ) rule fire AT this rung. "
+          "Give it an amount and requests below that amount reach a purchase order "
+          "with no priced lines checked and no quotes required.",
+    "ar": "بوابة التسعير وقاعدة عروض الأسعار المتنافسة (RFQ) تعملان عند هذه المرحلة. "
+          "فإذا أعطيتها مبلغًا، وصلت الطلبات الأقل منه إلى أمر شراء دون مراجعة أسعار "
+          "ودون أي عروض مطلوبة.",
+    "tr": "Fiyatlandırma kapısı ve rekabetçi teklif (RFQ) kuralı BU basamakta çalışır. "
+          "Bir tutar verirseniz, altındaki talepler fiyat kontrolü yapılmadan ve teklif "
+          "istenmeden satın alma emrine ulaşır.",
+}
+
+
+def _thr_keys():
+    """[(key, kind, stage, default)] for every amount knob. Imported lazily:
+    constants does not import this module, and nothing here should make it."""
+    from app.approvals import constants as C
+    out = []
+    for kind, matrix in (("opex", C.OPEX_MATRIX), ("capex", C.CAPEX_MATRIX)):
+        for stage, at in matrix.items():
+            out.append((C.threshold_key(kind, stage), kind, stage, float(at)))
+    return out
+
+
+def threshold_labels(lang="en"):
+    """{settings key: rung name + expenditure kind} in `lang`."""
+    lg = lang if lang in _THR_LABEL else "en"
+    names = STAGE_LABEL.get(lg) or STAGE_LABEL["en"]
+    return {key: _THR_LABEL[lg] % (names.get(stage) or stage, _THR_KIND[lg][kind])
+            for key, kind, stage, _at in _thr_keys()}
+
+
+def threshold_warn(lang="en"):
+    """{settings key: what giving this rung an amount actually costs}, for the
+    rungs that are on every request today. A rung that already has a threshold
+    needs no warning — moving a number is not the same as removing a signature."""
+    lg = lang if lang in _THR_LABEL else "en"
+    out = {}
+    for key, _kind, stage, at in _thr_keys():
+        if at > 0:
+            continue
+        out[key] = (_THR_WARN_PURCHASING if stage == "purchasing"
+                    else _THR_WARN_ALWAYS)[lg]
+    return out
+
+
+# Folded into the two tables every consumer already reads, so nothing has to
+# know the amount knobs are generated: SETTING_LABEL stays the one source of
+# truth for a setting's name, in every language.
+for _lg in ("en", "ar", "tr"):
+    SETTING_LABEL[_lg].update(threshold_labels(_lg))
+    SETTING_WARN[_lg].update(threshold_warn(_lg))
+del _lg
+
 
 # Platform role labels. English comes from app/security.py ROLES (the code
 # default) — a role an admin RENAMED keeps the admin's name in every language,

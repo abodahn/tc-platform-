@@ -24,12 +24,18 @@ broken as one that never does:
 
 Run:  python app/approvals/tests_forecast_gate.py
 """
+import sys
+from pathlib import Path
 import os
 import tempfile
 from datetime import datetime, timedelta, timezone
 
 
 def _app():
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "fcgate.db")
     os.environ.pop("DATABASE_URL", None)

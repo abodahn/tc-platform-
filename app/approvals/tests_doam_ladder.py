@@ -34,8 +34,8 @@ OPEX = [
     (10_000,         "purchasing",     "1  PRM, at the band edge"),
     (10_000.01,      "scd",            "2  PD/SCD (L2), one piastre over"),
     (200_000,        "scd",            "2  PD/SCD, at the band edge"),
-    (200_000.01,     "finance",        "3  Financial Director (L2)"),
-    (500_000,        "finance",        "3  FIND, at the band edge"),
+    (200_000.01,     "scd",            "3  Supply Chain Director (L2)"),
+    (500_000,        "scd",            "3  SCD, at the band edge"),
     (500_000.01,     "cfo",            "4  MD or CFO (L1)"),
     (2_000_000,      "cfo",            "4  CFO, at the band edge"),
     (2_000_000.01,   "ceo",            "5  MD and CFO (L1)"),
@@ -56,16 +56,20 @@ chk("Board is NOT pulled in below 5,000,000", "bod" not in t5, t5)
 
 print("\n  tier 1 is short: a small buy does not collect directors")
 t1 = C.build_ladder(5_000, "opex")
-chk("tier 1 ladder is warehouse + purchasing only", t1 == ["warehouse", "purchasing"], t1)
+# The Warehouse Manager rung joined above the store on 2026-10-13 and is always
+# on, so tier 1 is three demand rungs rather than two. What tier 1 MEANS is
+# unchanged: no value rung, nobody above the buyer.
+chk("tier 1 ladder is the demand rungs only",
+    t1 == ["warehouse", "warehouse_manager", "purchasing"], t1)
 
 # ---------------------------------------------------------------- CAPEX §4.2
 print("\nDOAM §4.2 — CAPEX ladder (every tier is a joint approval)")
 CAPEX = [
-    (100_000,      {"purchasing", "scd", "finance", "factory_manager", "cfo"}, "1  SCD+FIND review, PD+CFO approve"),
-    (250_000,      {"purchasing", "scd", "finance", "factory_manager", "cfo"}, "1  at the band edge"),
-    (250_000.01,   {"purchasing", "scd", "finance", "factory_manager", "cfo", "ceo"}, "2  + MD"),
-    (2_000_000,    {"purchasing", "scd", "finance", "factory_manager", "cfo", "ceo"}, "2  at the band edge"),
-    (2_000_000.01, {"purchasing", "scd", "finance", "factory_manager", "cfo", "ceo", "bod"}, "3  Board"),
+    (100_000,      {"purchasing", "scd", "factory_manager", "cfo"}, "1  SCD+FIND review, PD+CFO approve"),
+    (250_000,      {"purchasing", "scd", "factory_manager", "cfo"}, "1  at the band edge"),
+    (250_000.01,   {"purchasing", "scd", "factory_manager", "cfo", "ceo"}, "2  + MD"),
+    (2_000_000,    {"purchasing", "scd", "factory_manager", "cfo", "ceo"}, "2  at the band edge"),
+    (2_000_000.01, {"purchasing", "scd", "factory_manager", "cfo", "ceo", "bod"}, "3  Board"),
 ]
 for total, want, tier in CAPEX:
     got = set(C.build_ladder(total, "capex"))
@@ -76,7 +80,8 @@ chk("CAPEX never routes through Warehouse (not a stores replenishment)",
     all("warehouse" not in C.build_ladder(v, "capex") for v in (1, 10**6, 10**8)))
 
 print("\n  the same money is treated differently as CAPEX than as OPEX")
-chk("300,000 OPEX ends at Financial Director", final(300_000, "opex") == "finance")
+chk("300,000 OPEX ends at the Supply Chain Director",
+    final(300_000, "opex") == "scd")
 chk("300,000 CAPEX ends at Managing Director", final(300_000, "capex") == "ceo")
 
 # ---------------------------------------------------------------- safety
@@ -84,11 +89,17 @@ print("\nfail-safe behaviour")
 chk("a blank/unknown kind falls back to OPEX, never to no approvals",
     C.build_ladder(500_000, "") == C.build_ladder(500_000, "opex")
     and C.build_ladder(500_000, "nonsense") == C.build_ladder(500_000, "opex"))
-chk("zero and None still require the always-on stages",
-    C.build_ladder(0, "opex") == ["warehouse", "purchasing"]
-    and C.build_ladder(None, "opex") == ["warehouse", "purchasing"])
+# The always-on stages are whatever the matrix says costs nothing to reach, so
+# these read them from it rather than naming rungs: the set gained the Warehouse
+# Manager on 2026-10-13 and will change again. What must hold is that a zero,
+# blank or unreadable total still collects EVERY always-on rung — a fat-fingered
+# value must never be the cheap way through the gate.
+_ALWAYS = [st for st in C.DOAM_LADDER if C.OPEX_MATRIX.get(st, 1) <= 0]
+chk("zero and None still require the always-on stages (%s)" % _ALWAYS,
+    C.build_ladder(0, "opex") == _ALWAYS
+    and C.build_ladder(None, "opex") == _ALWAYS)
 chk("a non-numeric total does not crash and does not skip approvals",
-    C.build_ladder("abc", "opex") == ["warehouse", "purchasing"])
+    C.build_ladder("abc", "opex") == _ALWAYS)
 chk("every stage in every DOAM matrix is a real DOAM ladder stage",
     all(s in C.DOAM_LADDER for m in C.MATRICES.values() for s in m))
 chk("every DOAM stage has a label and a DOAM level",
@@ -145,6 +156,8 @@ chk("DOAM_IN_FORCE is set", C.DOAM_IN_FORCE is True)
 chk("a bare build_ladder() call now uses the DOAM, not the paper form",
     C.build_ladder(48_000) == C.build_ladder(48_000, "opex"), C.build_ladder(48_000))
 
+# The pre-DOAM paper form, unchanged — it is a historical record of what the
+# company signed before the DOAM, not a live ladder, so Finance stays on it.
 paper = ["warehouse", "factory_manager", "purchasing", "finance", "cfo"]
 now = C.build_ladder(48_000)
 print("     48,000 EGP was : %d approvers  %r" % (len(paper), paper))

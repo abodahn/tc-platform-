@@ -19,12 +19,34 @@ PR_STATUSES = [
     "pending",     # in the approval ladder, waiting on the current stage
     "approved",    # every required stage approved
     "rejected",    # a stage rejected it (bounces back to the requester)
-    "po_issued",   # a Purchase Order has been generated from it
+    "po_issued",   # ON ORDER — the PO is placed with the supplier
+    "in_transit",  # ON THE WAY — the supplier has dispatched it
     "partially_received",  # some line items received, not all
     "received",    # goods/services received (delivery confirmed)
     "closed",      # delivered / completed
     "cancelled",   # withdrawn by the requester or an admin
 ]
+
+# What each status is CALLED on screen, where the key itself reads badly.
+# po_issued is not renamed in the database — every existing order carries it,
+# and renaming a stored value to improve a label is how history gets lost. Only
+# the wording changes.
+STATUS_LABELS = {
+    "po_issued": "On order",
+    "in_transit": "On the way",
+    "partially_received": "Partially received",
+}
+
+
+def status_label(status):
+    """Human wording for a status key, falling back to the key tidied up."""
+    s = str(status or "")
+    return STATUS_LABELS.get(s) or s.replace("_", " ").capitalize()
+
+
+# The order statuses a buyer moves through AFTER the PO is placed, in sequence.
+# Used to decide what the next step is rather than hardcoding it at each screen.
+ORDER_FLOW = ("po_issued", "in_transit", "partially_received", "received", "closed")
 
 PAYMENT_STATUSES = ["unpaid", "partial", "paid"]
 
@@ -36,8 +58,13 @@ CURRENCIES = ["EGP", "USD", "EUR", "TRY"]
 # every existing PR line is untouched. The tail comes from the ERP item master
 # (Cone for 2,205 thread items, Yard, Packet, Sheet, Carton, Drum, Barrel) —
 # mangling those into 'Pcs' would put a wrong unit on a purchase order.
-UNITS = ["Pcs", "Set", "Box", "Roll", "Meter", "Kg", "Liter", "Service", "Lot",
-         "Cone", "Yard", "Packet", "Sheet", "Carton", "Drum", "Barrel"]
+# Ordered so the ones a requester reaches for are first. "Day", "Hour" and
+# "Month" matter because a request is not always a thing in a box: contract
+# labour, a service visit and a machine rental are all quantities of TIME, and
+# without a unit for them people wrote "5" against "Pcs" and the PO read wrong.
+UNITS = ["Pcs", "Each", "Unit", "Set", "Box", "Carton", "Packet", "Roll", "Cone",
+         "Meter", "Yard", "Sheet", "Kg", "Gram", "Ton", "Liter", "Drum", "Barrel",
+         "Day", "Hour", "Month", "Service", "Lot", "Pair", "Dozen", "Pack"]
 PAYMENT_CONDITIONS = ["Advanced Payment", "On Delivery", "Net 15", "Net 30",
                       "Net 60", "Cash", "Cheque", "Installments"]
 DELIVERY_CONDITIONS = ["T&C Warehouse", "On-site / Factory floor", "Vendor premises",
@@ -73,8 +100,18 @@ LEGACY_LADDER = ["warehouse", "factory_manager", "purchasing", "finance", "cfo",
 # Manager's signature and tier 2 on a director's, and this order satisfies both
 # without special cases. It also matches the real sequence — the buyer sources
 # and prices, then management commits.
-DOAM_LADDER = ["warehouse", "purchasing", "factory_manager", "scd",
-               "finance", "cfo", "ceo", "bod"]
+# The Warehouse MANAGER is a rung of its own, after the store and before the
+# buyer, and it is ALWAYS on (matrix 0). The store answers "is it on the shelf
+# and is the quantity right"; the manager answers "is this what we should be
+# buying at all, given coverage, what is already on order, and what it cost last
+# time" — which is why that rung is the one carrying the eight warehouse figures
+# and may correct every one of them.
+# Finance was removed from the ladder on instruction. Its DEFINITIONS below
+# (label, level, roles) are deliberately kept: requests already circulating
+# carry a signed `finance` step, and deleting the label would blank the signature
+# block on every one of them. Nothing NEW routes to it.
+DOAM_LADDER = ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
+               "scd", "cfo", "ceo", "bod"]
 
 # What the rest of the codebase means by "the ladder". Unchanged on purpose:
 # nothing about who signs moves until someone signs the DOAM.
@@ -86,6 +123,7 @@ LADDER = LEGACY_LADDER
 STAGE_LABELS = {
     "requester": "Requester",
     "warehouse": "Warehouse",
+    "warehouse_manager": "Warehouse Manager",
     "purchasing": "Procurement Manager",
     "factory_manager": "Plant Director",
     "scd": "Supply Chain Director",
@@ -100,6 +138,7 @@ STAGE_LABELS = {
 # value tier" (single-source, §4.3) needs in order to mean anything.
 DOAM_LEVEL = {
     "warehouse": "L4",
+    "warehouse_manager": "L4",
     "purchasing": "L4",
     "factory_manager": "L2",
     "scd": "L2",
@@ -182,7 +221,8 @@ CONTROL_ORIGINS = ("single_source", "unbudgeted", "deviation")
 #       which is the top rung, so only this tier needs naming.
 #
 # Nothing here moves WHO signs or in what order; build_ladder is untouched.
-CAPEX_REVIEW_STAGES = ("purchasing", "scd", "finance")
+# Finance removed on instruction; the CAPEX review is now Purchasing + SCD.
+CAPEX_REVIEW_STAGES = ("purchasing", "scd")
 # top rung of the value ladder -> the stages that commit ALONGSIDE it.
 OPEX_JOINT_APPROVERS = {"ceo": ("cfo",)}
 
@@ -287,8 +327,71 @@ def apply_l2_domain(stages, domain):
 # If two DOAM roles are the same person at T&C (Managing Director and CEO, or
 # Financial Director and CFO), map both stages to that one role here rather than
 # editing any logic — that is the whole answer to "are they the same person".
+# The two rungs the store owns. Named once so "may the warehouse correct
+# this?" has a single answer rather than a literal repeated at each call
+# site -- which is how a new rung gets added while the editing screen
+# silently stays shut to it.
+# --- Order type ------------------------------------------------------------
+# Bought in Egypt, or imported. Carries NO authority — it does not change a rung,
+# a threshold or a ladder. It is a commercial fact: the PO wording, the payment
+# terms a buyer negotiates and the customs paperwork all depend on it, and
+# guessing it from the supplier's name is how a request ends up with the wrong
+# incoterms.
+ORDER_TYPES = ("local", "export")
+ORDER_TYPE_LABELS = {"local": "Local", "export": "Export / import"}
+
+
+def normalise_order_type(value):
+    """Whatever arrived -> a real key. Unreadable becomes 'local', which is the
+    common case and the one with no customs consequences."""
+    v = str(value or "").strip().lower()
+    if v in ("export", "import", "foreign", "overseas"):
+        return "export"
+    return "local"
+
+
+# --- Request priority ------------------------------------------------------
+# Ordered least to most urgent. The KEY is stored; the label and colour are
+# presentation. Deliberately not an authority: priority never changes who signs,
+# which rung applies or any threshold — it only says how loudly the plant is
+# asking, and a field that could shorten a ladder would be set to "top urgent"
+# on everything within a week.
+PR_PRIORITIES = ("normal", "urgent", "top_urgent")
+PRIORITY_LABELS = {
+    "normal": "Normal",
+    "urgent": "Urgent",
+    "top_urgent": "Top urgent",
+}
+# Mapped onto the palette the rest of the system already uses for severity, so a
+# red here means what a red means everywhere else on the screen.
+PRIORITY_BADGE = {
+    "normal": "b-approved",     # green
+    "urgent": "b-pending",      # amber
+    "top_urgent": "b-rejected", # red
+}
+
+
+def normalise_priority(value):
+    """Whatever arrived -> a real priority key. Anything unreadable becomes
+    'normal': an unrecognised value must never be treated as the loudest one."""
+    v = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return v if v in PR_PRIORITIES else "normal"
+
+
+WAREHOUSE_STAGES = ("warehouse", "warehouse_manager")
+
 STAGE_ROLES = {
+    # The store rung is "somebody in the store"; the rung above it is the
+    # manager's specifically. The manager is deliberately left on BOTH:
+    #
+    #   * segregation of duties already guarantees two different people — one
+    #     person who signs the store rung is refused the manager rung by the
+    #     dual-role rule, which is the independence the second rung exists for;
+    #   * and a site with no storekeeper account still moves. Narrowing this to
+    #     {storekeeper} stalls every request at rung 1 for such a site, which is
+    #     a worse failure than the one the split was added to fix.
     "warehouse": {"storekeeper", "warehouse_manager"},
+    "warehouse_manager": {"warehouse_manager"},
     "purchasing": {"purchasing_manager"},
     "factory_manager": {"factory_manager", "plant_director"},
     "scd": {"supply_chain_director"},
@@ -393,10 +496,10 @@ def holds_authority(role, stage):
 #   above 10,000,000      Board, with a business case
 OPEX_MATRIX = {
     "warehouse": 0,
+    "warehouse_manager": 0,          # always, at any value — a demand rung
     "purchasing": 0,
     "factory_manager": 10_000,
     "scd": 10_000,
-    "finance": 200_000,
     "cfo": 500_000,
     "ceo": 2_000_000,
     "bod": 5_000_000,
@@ -411,7 +514,6 @@ OPEX_MATRIX = {
 CAPEX_MATRIX = {
     "purchasing": 0,
     "scd": 0,
-    "finance": 0,
     "factory_manager": 0,
     "cfo": 0,
     "ceo": 250_000,
@@ -429,9 +531,9 @@ MATRICES = {"opex": OPEX_MATRIX, "capex": CAPEX_MATRIX}
 # why the two ladders cannot share one comparison.
 APPROVAL_MATRIX = {
     "warehouse": 0,
+    "warehouse_manager": 0,
     "factory_manager": 0,
     "purchasing": 0,
-    "finance": 10_000,
     "cfo": 25_000,
     "ceo": 100_000,
 }
@@ -484,7 +586,7 @@ def normalise_expenditure_kind(raw):
     return "opex", False        # unrecognised -> weaker ladder, but SAY SO
 
 
-def build_ladder(total, kind=None):
+def build_ladder(total, kind=None, matrix=None):
     """Return the ordered list of stage keys required for a request of `total`.
 
     `kind` selects the DOAM ladder: "opex" (§4.1) or "capex" (§4.2). With no kind
@@ -492,6 +594,12 @@ def build_ladder(total, kind=None):
 
     An unrecognised kind falls back to DOAM OPEX rather than to no approvals: a
     blank or fat-fingered value must never be the cheap path through the gate.
+
+    `matrix` overrides the amount each rung joins at. Production passes the LIVE
+    matrix (services.live_matrix -> matrix_for below), so an admin who edits a
+    threshold on the governance screen changes the routing without a code edit;
+    omitted, the DOAM numbers in this module apply, which is what every
+    governance screen and check module wants.
     """
     try:
         t = float(total or 0)
@@ -500,9 +608,40 @@ def build_ladder(total, kind=None):
     if not DOAM_IN_FORCE and kind is None:
         # The pre-DOAM paper form: inclusive thresholds, legacy stage order.
         return [s for s in LEGACY_LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
-    matrix = MATRICES.get((kind or "opex").strip().lower(), OPEX_MATRIX)
+    matrix = matrix or MATRICES.get((kind or "opex").strip().lower(), OPEX_MATRIX)
     return [s for s in DOAM_LADDER
             if s in matrix and (matrix[s] <= 0 or t > matrix[s])]
+
+
+def threshold_key(kind, stage):
+    """The settings key carrying one rung's amount, for one expenditure kind."""
+    return "thr_%s_%s" % ((kind or "opex").strip().lower(), stage)
+
+
+def matrix_for(kind="opex", get=None):
+    """{stage: amount} for `kind`, with the admin's override applied per rung.
+
+    `get(key)` returns the value in force for a settings key — in production
+    services.num_setting, which already falls back to the default below when the
+    row is absent, blank or out of bounds. With no getter this is the DOAM matrix
+    unchanged, so nothing that imports constants alone changes behaviour.
+
+    A stage is NOT dropped when its knob is missing: the rung list is the
+    matrix's, and only the number is configurable. Removing a signature from the
+    ladder is a DOAM amendment, not a settings edit.
+    """
+    k = (kind or "opex").strip().lower()
+    base = MATRICES.get(k, OPEX_MATRIX)
+    if get is None:
+        return dict(base)
+    out = {}
+    for stage, at in base.items():
+        try:
+            v = get(threshold_key(k, stage))
+            out[stage] = float(at if v is None else v)
+        except (TypeError, ValueError):
+            out[stage] = float(at)
+    return out
 
 
 def final_approver_level(total, kind="opex"):
@@ -1159,10 +1298,15 @@ def cost_object_required(texts):
 # computed per line from the stock master (see services.deviation_findings), and
 # a line with no stock record is still reported "not assessable" rather than
 # guessed either way.
+# DOAM §4.4. Finance held the 5-15% band and co-signed above 15%; with Finance
+# removed from authority those bands pass UP to the CFO rather than disappearing.
+# Deleting them instead would have quietly removed a price control nobody asked
+# to remove — the instruction was to take Finance out, not to stop grading
+# deviations.
 DEVIATION_PRICE_BANDS = [
-    (5.0,  [],                  "price_5"),      # standard approvers + 3 quotes
-    (15.0, ["finance"],         "price_15"),
-    (None, ["finance", "ceo"],  "price_over_15"),
+    (5.0,  [],              "price_5"),      # standard approvers + 3 quotes
+    (15.0, ["cfo"],         "price_15"),
+    (None, ["cfo", "ceo"],  "price_over_15"),
 ]
 
 
@@ -1239,7 +1383,9 @@ def advance_rule(po_value, advance_pct):
     except (TypeError, ValueError):
         value = 0.0
     if pct <= ADVANCE_FIND_MAX_PCT:
-        return {"stages": ["finance"], "level": DOAM_LEVEL.get("finance", "L2"),
+        # Was Finance (DOAM §4.3). With Finance out of authority the smaller
+        # advance is authorised by the CFO, not by nobody.
+        return {"stages": ["cfo"], "level": DOAM_LEVEL.get("cfo", "L1"),
                 "guarantee": False}
     return {"stages": ["cfo", "ceo"], "level": DOAM_LEVEL.get("cfo", "L1"),
             "guarantee": value > ADVANCE_GUARANTEE_OVER}
@@ -1397,6 +1543,24 @@ WORKFLOW_SETTINGS = {
     "aging_overdue_days": {"kind": "int", "min": 1, "default": 4},
 }
 
+# --- the amount each rung joins at (DOAM 4.1 OPEX / 4.2 CAPEX) -------------
+# Generated rather than typed out: one knob per ladder rung per expenditure
+# kind, keyed thr_<kind>_<stage>, defaulting to the DOAM number above. Asked for
+# directly — "I need to control the value for each approval from the settings" —
+# and until now that number could only be changed by editing this file, or
+# LOWERED per department through the responsibility matrix.
+#
+# 0 means "always on, at any value", which is what the demand rungs ship as.
+# min is 0 and there is no max: a company that wants the Board on every purchase
+# sets 0, and one that raises a tier to 50,000,000 is making a policy decision,
+# not fat-fingering a gate open. What the floor still refuses is a NEGATIVE
+# amount, which would read as "always on" by accident.
+for _kind, _matrix in (("opex", OPEX_MATRIX), ("capex", CAPEX_MATRIX)):
+    for _stage, _at in _matrix.items():
+        WORKFLOW_SETTINGS[threshold_key(_kind, _stage)] = {
+            "kind": "num", "min": 0, "default": float(_at)}
+del _kind, _matrix, _stage, _at
+
 # The optional fields an admin may hide, and the HONEST consequence of hiding
 # each. The settings screen prints `warn` next to the switch: a control that
 # still applies to a field nobody can fill is a request that cannot be
@@ -1423,6 +1587,15 @@ OPTIONAL_FIELDS = (
 # Default explanation text per ladder stage. Seeded into proc_stage_meta and
 # used as the fallback whenever an admin resets a stage's explanation.
 STAGE_EXPLAIN = {
+    "warehouse_manager": (
+        "The Warehouse Manager reviews what the store recorded and corrects it "
+        "before the request reaches a buyer: coverage in days, what is already on "
+        "order, what the part cost and when it was last bought, and the stock at "
+        "that time. The store answers “is it on the shelf”; this rung "
+        "answers “should we be buying this at all, and how much”. It "
+        "may correct every warehouse figure and the quantity — but not price "
+        "or supplier, which enter only at the Purchasing gate. Always on the "
+        "ladder, at any value."),
     "requester": (
         "Any user with “Raise purchase requests” opens the request and states what is "
         "needed: item, quantity, unit, specification and the department it is for. "
@@ -1632,6 +1805,8 @@ STATUS_MEANING = {
     "rejected": "A stage rejected it with a reason; it bounces back to the requester, "
                 "who can correct and resubmit (which rebuilds the ladder from scratch).",
     "po_issued": "The Purchase Order has been issued to the vendor; payment may begin.",
+    "in_transit": "The supplier has dispatched the order and it is on the way. A "
+                  "status only — nothing has been received and no stock has moved.",
     "partially_received": "Some ordered lines have been received, not all of them.",
     "received": "Delivery confirmed for every line.",
     "closed": "Completed and archived — no further action expected.",

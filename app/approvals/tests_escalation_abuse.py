@@ -157,8 +157,30 @@ with app.app_context():
        any(a in ("escalated_stage", "escalation_blocked") for a in ev))
     _want = _C.build_ladder(150000)
     _have = [r["stage"] for r in steps(pr2)]
-    ok("no rung was dropped: the ladder still has every stage the value requires",
-       [s for s in _have if s in _want] == _want)
+    # A rung may be ABSENT in exactly one case, added 2026-10-13 with the
+    # Warehouse Manager rung: two adjacent rungs that escalate to the SAME person
+    # are one signature, and asking for both deadlocks the request (segregation
+    # of duties refuses the second from whoever gave the first). The control is
+    # not lost — the surviving rung still carries that independent signature —
+    # but it must never be SILENT, so an absence is acceptable here only when the
+    # audit trail names the rung.
+    #
+    # Labels are parsed EXACTLY, not matched as substrings: "Warehouse" is a
+    # substring of "Warehouse Manager", which made both rungs look absorbed and
+    # the assertion vacuous.
+    _absorbed = set()
+    for _e in svc.get_pr(pr2)["events"]:
+        if _e["action"] != "escalation_absorbed":
+            continue
+        _named = {x.strip() for x in
+                  (_e["detail"] or "").split(" was absorbed")[0].split(",")}
+        _absorbed |= {st for st in _want if _C.stage_label(st) in _named}
+    _missing = [st for st in _want if st not in _have]
+    ok("every rung the value requires is present, or audited as absorbed (%s)"
+       % (_missing or "none missing"),
+       [s for s in _have if s in _want] == [s for s in _want if s not in _absorbed]
+       and set(_missing) == _absorbed)
+
     ok("...and every rung ON TOP of the value ladder is a named DOAM control rung",
        all((r["origin"] or "ladder") in _C.CONTROL_ORIGINS
            for r in steps(pr2) if r["stage"] not in _want))

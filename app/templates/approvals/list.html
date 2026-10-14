@@ -22,6 +22,16 @@
       {% endfor %}
       <span style="flex:1"></span>
       <a class="btn btn-sm {{ 'btn-primary' if mine else 'btn-ghost' }}" href="{{ url_for('approvals.listing', status=status, mine=None if mine else 1) }}" data-i18n="proc.mine">Mine only</a>
+      {#- Exports exactly what the filters above are showing, which is why it
+          sits beside them and carries the same arguments. The count is on the
+          button so nobody sends a colleague a file they think is the whole
+          register when it is one status. -#}
+      <a class="btn btn-sm btn-ghost"
+         href="{{ url_for('approvals.listing_xlsx', status=status, mine=1 if mine else None) }}">
+        <svg class="ico"><use href="#i-report"></use></svg>
+        <span data-i18n="proc.export_xlsx">Export to Excel</span>
+        <span class="muted">({{ prs|length }})</span>
+      </a>
     </div>
   </div>
 </div>
@@ -41,7 +51,17 @@
       <tbody>
       {% for pr in prs %}
         <tr onclick="location.href='{{ url_for('approvals.detail', pr_id=pr.id) }}'" style="cursor:pointer">
-          <td><div style="font-weight:600">{{ pr.pr_no }}</div>
+          <td><div class="flex gap center" style="gap:7px">
+                <span style="font-weight:600">{{ pr.pr_no }}</span>
+                {#- Only the two that mean "move this up the queue" get a badge.
+                    Tagging every normal request as well would make the colour
+                    stop meaning anything, which is the whole point of it. -#}
+                {% if pr.priority and pr.priority != 'normal' %}
+                <span class="badge b-{{ 'rejected' if pr.priority == 'top_urgent' else 'pending' }}"
+                      data-i18n="proc.prio_{{ 'top' if pr.priority == 'top_urgent' else 'urgent' }}">
+                  {{ '🔴 Top urgent' if pr.priority == 'top_urgent' else '🟠 Urgent' }}</span>
+                {% endif %}
+              </div>
               <div class="muted" style="font-size:12px">{{ pr.title }}</div></td>
           <td>{{ pr.requester_name or pr.requester }}</td>
           <td>{{ pr.department or '—' }}</td>

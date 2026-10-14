@@ -2,12 +2,47 @@
 {% block title %}{{ pr.pr_no }}{% endblock %}
 {% block content %}
 
+{#- The purchase history behind one request line: how long the shelf lasts, what
+    is already on its way, and what the part cost last time. Facts, not fields —
+    services.attach_item_history() computes them on every read, because a stored
+    copy is wrong the moment the next order for the same part lands. Shown on the
+    warehouse screen AND the main item table, so one macro serves both. -#}
+{% macro item_history(it) %}
+<div class="muted" style="font-size:12px;display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+  {% if it.stock_days is not none %}
+  <span><span data-i18n="proc.hist_stock_days">Stock days</span>: <b>{{ it.stock_days }}</b></span>
+  {% endif %}
+  {% if it.pending_qty %}
+  <span><span data-i18n="proc.hist_pending">On order</span>:
+    <b>{{ '%g'|format(it.pending_qty) }}</b> {{ it.unit }}</span>
+  {% endif %}
+  {% if it.eta %}
+  <span><span data-i18n="proc.hist_eta">ETA</span>: <b>{{ it.eta }}</b></span>
+  {% endif %}
+  {% if it.last_order_date %}
+  <span><span data-i18n="proc.hist_last">Last order</span>:
+    <b>{{ '%g'|format(it.last_order_qty or 0) }}</b>
+    {%- if it.last_order_price %} @ {{ '%g'|format(it.last_order_price) }}{% endif %}
+    · {{ it.last_order_date }}</span>
+  {% else %}
+  <span data-i18n="proc.hist_none">first order</span>
+  {% endif %}
+</div>
+{% endmacro %}
+
 {% set steps = b.steps %}
 <div class="page-head">
   <div>
     <div class="flex gap center wrap" style="margin-bottom:4px">
       <h1 style="margin:0">{{ pr.pr_no }}</h1>
       <span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span>
+      {#- Beside the status, because an approver decides what to do with a
+          request from the two together. Normal is left unbadged on purpose. -#}
+      {% if pr.priority and pr.priority != 'normal' %}
+      <span class="badge b-{{ 'rejected' if pr.priority == 'top_urgent' else 'pending' }}"
+            data-i18n="proc.prio_{{ 'top' if pr.priority == 'top_urgent' else 'urgent' }}">
+        {{ '🔴 Top urgent' if pr.priority == 'top_urgent' else '🟠 Urgent' }}</span>
+      {% endif %}
     </div>
     <div class="sub">{{ pr.title }}{% if pr.request_for %} · {{ pr.request_for }}{% endif %}
       {% if source_link %} · <a href="{{ source_link.url }}" class="tag" style="text-decoration:none">🔗 {{ source_link.label }}</a>{% endif %}</div>
@@ -174,8 +209,38 @@
 </div></div>
 {% endif %}
 
+{#- A held request is still pending and still in every queue — that is the
+    difference between a hold and a rejection — so it has to SAY so loudly, or
+    the next approver simply wonders why their buttons do nothing. -#}
+{% if pr.hold_reason %}
+<div class="panel mt-4" style="border-color:var(--warn)">
+  <div class="panel-pad">
+    <div class="flex gap center wrap" style="gap:12px">
+      <span class="badge b-pending" data-i18n="proc.held_badge">⏸ On hold</span>
+      <div style="flex:1 1 260px">
+        <div style="font-weight:600">{{ pr.hold_reason }}</div>
+        <div class="muted" style="font-size:12px">
+          <span data-i18n="proc.held_by">Held by</span> {{ pr.held_by }} ·
+          {{ (pr.held_at or '')[:16] }} ·
+          <span data-i18n="proc.held_note">it keeps its place in the ladder and nobody can sign it until it is resumed</span>
+        </div>
+      </div>
+      {% if actionable %}
+      <form method="post" action="{{ url_for('approvals.resume', pr_id=pr.id) }}"
+            class="flex gap center" style="gap:8px">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input name="note" style="max-width:220px"
+               placeholder="What changed? (optional)" data-i18n-ph="proc.resume_note">
+        <button class="btn btn-sm" type="submit" data-i18n="proc.resume">▶ Resume</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- Action box (only when the current user can act on the active step) -->
-{% if actionable %}
+{% if actionable and not pr.hold_reason %}
 <div class="panel accent mt-4">
   <div class="panel-head"><h3><span data-i18n="proc.your_action">Your decision</span> — {{ stage_label(actionable.stage) }}
     <span class="tag" data-i18n="proc.act.{{ actionable.action }}">{{ actionable.action_label }}</span></h3></div>
@@ -199,6 +264,64 @@
           <span data-i18n="proc.act.{{ actionable.action }}_sign">{{ act_sign }}</span></button>
       </div>
     </form>
+    {#- SEND BACK. Between holding and rejecting, because it is the move for
+        "somebody below got this wrong" — which rejection answers far too
+        bluntly: it tears the whole ladder down and lands on the requester's
+        desk. Here the approver names the rung and says why, and only the
+        signatures from that rung UP are withdrawn. Offered only when there IS a
+        rung behind: on the first rung there is nowhere to send it. -#}
+    {% if back_rungs %}
+    <details class="mt-3">
+      <summary style="cursor:pointer;color:var(--warn);font-weight:600"
+               data-i18n="proc.back_q">Send back to an earlier step</summary>
+      <form method="post" action="{{ url_for('approvals.send_back', pr_id=pr.id) }}" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="flex gap wrap" style="gap:12px;align-items:flex-end">
+          <div class="field" style="flex:0 1 240px;margin-bottom:0">
+            <label data-i18n="proc.back_to_l">Back to</label>
+            <select name="to_seq" required>
+              {% for r in back_rungs|reverse %}
+              <option value="{{ r.seq }}">{{ r.seq }} · {{ r.label }}{% if r.signed_by %} — {{ r.signed_by }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field" style="flex:1 1 280px;margin-bottom:0">
+            <label data-i18n="proc.back_reason_l">What should they look at?</label>
+            <input name="reason" required autocomplete="off"
+                   placeholder="Why is it going back?" data-i18n-ph="proc.back_reason_ph">
+          </div>
+        </div>
+        <button class="btn btn-ghost mt-2" type="submit"
+                style="border-color:var(--warn);color:var(--warn)"
+                data-i18n="proc.back">↩ Send back</button>
+        <span class="muted" style="font-size:12px;margin-inline-start:8px"
+              data-i18n="proc.back_hint">Every signature from that step upward is withdrawn, including yours, and the people who gave them are told why. Steps below it are untouched.</span>
+      </form>
+    </details>
+    {% endif %}
+
+    {#- HOLD sits between signing and rejecting, because that is what it is for:
+        the request is not wrong, something about it is unanswered. Without it an
+        approver with a question had two moves — reject work that is fine, or sit
+        on it silently — and the second is worse, because the aging report cannot
+        tell a request somebody is thinking about from one nobody has opened.
+        The reason is mandatory for the same reason a rejection's is. -#}
+    <details class="mt-3">
+      <summary style="cursor:pointer;color:var(--warn);font-weight:600"
+               data-i18n="proc.hold_q">Put this on hold</summary>
+      <form method="post" action="{{ url_for('approvals.hold', pr_id=pr.id) }}" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field"><label data-i18n="proc.hold_reason_l">Why is it on hold?</label>
+          <input name="hold_reason" required autocomplete="off"
+                 placeholder="What has to be sorted out before this can move?"
+                 data-i18n-ph="proc.hold_reason_ph"></div>
+        <button class="btn btn-ghost" type="submit"
+                style="border-color:var(--warn);color:var(--warn)"
+                data-i18n="proc.hold">⏸ Hold</button>
+        <span class="muted" style="font-size:12px;margin-inline-start:8px"
+              data-i18n="proc.hold_hint">It stays in the queue and keeps its place in the ladder. Nobody can sign it until it is resumed.</span>
+      </form>
+    </details>
     <details class="mt-3">
       <summary style="cursor:pointer;color:var(--crit);font-weight:600" data-i18n="proc.reject_q">Reject this request</summary>
       <form method="post" action="{{ url_for('approvals.reject', pr_id=pr.id) }}" class="mt-2">
@@ -271,6 +394,70 @@
                       data-qty="issueqty_{{ it.id }}"
                       data-item="{{ it.item }}"
                       data-i18n="proc.wh_search">🔎 Search on WH</button>
+            </td>
+          </tr>
+          {#- The store's own record of this part. Pre-filled from order history
+              where the system can work it out, but these are the WAREHOUSE's
+              figures: it can see a damaged pallet, a supplier's phone call and a
+              part the plant has stopped using, none of which the history knows.
+              Saved with "Save quantities" and printed on the PR PDF.
+
+              Clearing a box is not the same as typing 0 — a blank hands the
+              figure back to the computed one, a 0 is the store stating a fact. -#}
+          {#- The store's own record of this part. Pre-filled from order history
+              where the system can work it out, but these are the WAREHOUSE's
+              figures: it can see a damaged pallet, a supplier's phone call and a
+              part the plant has stopped using, none of which the history knows.
+              Saved with "Save quantities" and printed on the PR PDF.
+
+              Clearing a box is not the same as typing 0 — a blank hands the
+              figure back to the computed one, a 0 is the store stating a fact.
+
+              Laid out with the project's own .field pattern (label above input)
+              and capped in width: this row sits inside a table already wider
+              than the viewport, so an unconstrained grid pushed the last fields
+              off the right edge. -#}
+          <tr class="wh-detail">
+            <td></td>
+            <td colspan="5" style="padding-top:0;padding-bottom:16px">
+              <div class="wh-fields">
+                <div class="field"><label for="whitem_{{ it.id }}"
+                     data-i18n="proc.wh_code">Item code</label>
+                  <input id="whitem_{{ it.id }}" name="whitem_{{ it.id }}"
+                         value="{{ it.item or '' }}"></div>
+                <div class="field wide"><label for="whdescription_{{ it.id }}"
+                     data-i18n="proc.wh_desc">Item description</label>
+                  <input id="whdescription_{{ it.id }}" name="whdescription_{{ it.id }}"
+                         value="{{ it.description or '' }}"></div>
+                <div class="field"><label for="whstock_days_{{ it.id }}"
+                     data-i18n="proc.hist_stock_days">Stock days</label>
+                  <input id="whstock_days_{{ it.id }}" name="whstock_days_{{ it.id }}"
+                         type="number" step="any" min="0" inputmode="decimal"
+                         value="{{ '' if it.stock_days is none else '%g'|format(it.stock_days) }}"></div>
+                <div class="field"><label for="whpending_qty_{{ it.id }}"
+                     data-i18n="proc.hist_pending">On order</label>
+                  <input id="whpending_qty_{{ it.id }}" name="whpending_qty_{{ it.id }}"
+                         type="number" step="any" min="0" inputmode="decimal"
+                         value="{{ '' if it.pending_qty is none else '%g'|format(it.pending_qty) }}"></div>
+                <div class="field"><label for="whlast_order_qty_{{ it.id }}"
+                     data-i18n="proc.wh_last_qty">Last order qty</label>
+                  <input id="whlast_order_qty_{{ it.id }}" name="whlast_order_qty_{{ it.id }}"
+                         type="number" step="any" min="0" inputmode="decimal"
+                         value="{{ '' if it.last_order_qty is none else '%g'|format(it.last_order_qty) }}"></div>
+                <div class="field"><label for="whlast_order_date_{{ it.id }}"
+                     data-i18n="proc.wh_last_date">Last order date</label>
+                  <input id="whlast_order_date_{{ it.id }}" name="whlast_order_date_{{ it.id }}"
+                         type="date" value="{{ it.last_order_date or '' }}"></div>
+                <div class="field"><label for="whlast_stock_{{ it.id }}"
+                     data-i18n="proc.wh_last_stock">Last stock</label>
+                  <input id="whlast_stock_{{ it.id }}" name="whlast_stock_{{ it.id }}"
+                         type="number" step="any" min="0" inputmode="decimal"
+                         value="{{ '' if it.last_stock is none else '%g'|format(it.last_stock) }}"></div>
+                <div class="field"><label for="wheta_{{ it.id }}"
+                     data-i18n="proc.hist_eta">ETA</label>
+                  <input id="wheta_{{ it.id }}" name="wheta_{{ it.id }}"
+                         type="date" value="{{ it.eta or '' }}"></div>
+              </div>
             </td>
           </tr>
         {% endfor %}
@@ -440,6 +627,8 @@
               line on the request's header vendor. -#}
           <th data-i18n="proc.line_vendor">Supplier for this line</th>
           <th data-i18n="proc.unit_price">Unit price</th>
+          <th data-i18n="proc.wh_last_price">Last order price</th>
+          <th data-i18n="proc.lead_days">Lead days</th>
         </tr></thead>
         <tbody>
         {% for it in b['items'] %}
@@ -466,6 +655,7 @@
                   {% endif %}
                 </div>
                 {% endif %}
+                {{ item_history(it) }}
             </td>
             <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}
               {#- What the store handed over off the shelf. Without this the line
@@ -491,11 +681,32 @@
               </div>
               {% endif %}
             </td>
+            {#- Chosen from the vendor master, not typed (spec §2). A supplier
+                typed by hand is invisible to vendor scoring, to the approved-
+                supplier check and to the three-way match, all of which key on
+                the master row — and all three were silently skipping those
+                lines. data-search gives it the same type-to-filter box the
+                payment condition uses, however few vendors are on file.
+
+                A line that already names a supplier NOT on the master keeps it
+                as an option, marked. Dropping it would silently reassign a
+                supplier on an existing request, which is a worse bug than the
+                one this change fixes. -#}
             <td>
-              <input name="linevendor_{{ it.id }}" list="vlistAll" autocomplete="off"
-                     value="{{ it.vendor or '' }}" style="min-width:150px"
-                     placeholder="{{ pr.vendor or '' }}"
-                     data-i18n-ph="proc.line_vendor_ph">
+              {% set known = vendors|map(attribute='name')|list %}
+              <select name="linevendor_{{ it.id }}" data-search style="min-width:170px">
+                <option value="" {{ 'selected' if not it.vendor }}
+                        data-hint="{{ pr.vendor or '' }}"
+                        data-i18n="proc.line_vendor_ph">Leave blank to use the request's vendor</option>
+                {% for v in vendors %}
+                <option value="{{ v.name }}" {{ 'selected' if it.vendor == v.name }}
+                        {% if v.dues %}data-hint="{{ '{:,.0f}'.format(v.dues) }} due back"{% endif %}>{{ v.name }}</option>
+                {% endfor %}
+                {% if it.vendor and it.vendor not in known %}
+                <option value="{{ it.vendor }}" selected
+                        data-hint="not on the vendor master">{{ it.vendor }}</option>
+                {% endif %}
+              </select>
             </td>
             <td>
               <div style="display:flex;gap:6px;align-items:center">
@@ -509,6 +720,20 @@
               <div class="mr-out muted" id="mrout_price_{{ it.id }}"
                    style="display:none;font-size:12px;margin-top:6px;max-width:420px"></div>
             </td>
+            {#- Spec §2 — Purchasing's own two figures on the line. Pre-filled
+                from order history where the system can work it out; what the
+                buyer types wins. A blank box is not a zero: clearing it hands
+                the figure back to the computed one. -#}
+            <td>
+              <input type="number" name="last_order_price_{{ it.id }}" min="0" step="any"
+                     style="max-width:130px" inputmode="decimal"
+                     value="{{ '' if it.last_order_price is none else '%g'|format(it.last_order_price) }}">
+            </td>
+            <td>
+              <input type="number" name="lead_time_days_{{ it.id }}" min="0" step="any"
+                     style="max-width:95px" inputmode="numeric"
+                     value="{{ '' if it.lead_time_days is none else '%g'|format(it.lead_time_days) }}">
+            </td>
           </tr>
         {% endfor %}
         </tbody>
@@ -521,8 +746,19 @@
           <input name="vendor" autocomplete="off" value="{{ pr.vendor or '' }}"></div>
         <div class="field"><label data-i18n="proc.payment_l">Payment condition</label>
           <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}" {{ 'selected' if pr.payment_condition==p }}>{{ p }}</option>{% endfor %}</select></div>
-        <div class="field"><label data-i18n="proc.tax_l">VAT %</label>
-          <input type="number" name="tax_rate" min="0" step="any" value="{{ '%g'|format(pr.tax_rate or 0) }}"></div>
+        {#- VAT / tax rate removed from this screen on request (spec §2).
+
+            It is NOT posted at all now, and price_pr() treats an absent tax_rate
+            as "leave what is there" rather than zero — so a request that already
+            carries a rate keeps it, and only new requests start at 0.
+
+            Consequence, recorded here because it is not visible on the screen:
+            approval routing uses egp_commitment(), which is deliberately
+            TAX-INCLUSIVE (DOAM §3.4 — "the total value of a commitment"). With
+            the rate at 0 the ladder routes on the net figure again, so a request
+            just under a threshold no longer picks up the rung its gross value
+            would have crossed. Restoring that control without bringing the field
+            back is one line: default the column to the company VAT rate. -#}
       </div>
       <div class="flex gap wrap mt-3">
         <button class="btn btn-primary" type="submit">
@@ -698,7 +934,21 @@
        out is the commonest over-delivery, and with no form the operator's only door
        was /warehouse/receive, which booked it as uncontrolled free stock. Nothing is
        outstanding, so the whole excess goes to quarantine and none of it to stock. #}
-    {% if pr.status in ('po_issued','partially_received','received') and can_purchasing %}
+    {#- The supplier has dispatched it. A STATUS, not a receipt — nothing is
+        booked and no quantity moves, so it sits above the receive form rather
+        than inside it, where a hurried operator might read it as "received". -#}
+    {% if pr.status == 'po_issued' and can_purchasing %}
+    <form method="post" class="flex gap center wrap" style="gap:10px;margin-bottom:14px"
+          action="{{ url_for('approvals.mark_in_transit', pr_id=pr.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button class="btn btn-sm" type="submit" data-i18n="proc.mark_transit">🚚 Mark as on the way</button>
+      <input name="note" style="max-width:280px"
+             placeholder="Carrier / waybill (optional)" data-i18n-ph="proc.transit_note">
+      <span class="muted" style="font-size:12px" data-i18n="proc.transit_hint">Tells the requester the order has left the supplier. Nothing is received and no stock moves.</span>
+    </form>
+    {% endif %}
+
+    {% if pr.status in ('po_issued','in_transit','partially_received','received') and can_purchasing %}
     <form method="post" action="{{ url_for('approvals.receive', pr_id=pr.id) }}" style="overflow-x:auto">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <table class="tbl" style="margin-bottom:10px">
@@ -772,23 +1022,51 @@
       <tbody>
       {% for q in b.quarantine %}
         <tr>
+          {% set allowed = (q.ordered_qty or 0) * 5.0 / 100.0 %}
+          {% set within = (q.qty or 0) <= allowed %}
           <td>{{ q.item }}</td>
-          <td>{{ '%g'|format(q.ordered_qty or 0) }}</td>
-          <td style="color:var(--crit);font-weight:600">{{ '%g'|format(q.qty or 0) }}</td>
+          <td style="font-variant-numeric:tabular-nums">{{ '%g'|format(q.ordered_qty or 0) }}</td>
+          {#- The excess reads against the clause it is judged by, not on its own:
+              "2" means nothing until you know 0.5 was allowed. -#}
+          <td style="font-variant-numeric:tabular-nums">
+            <b style="color:{{ 'var(--ink)' if within else 'var(--crit)' }}">{{ '%g'|format(q.qty or 0) }}</b>
+            <div class="muted" style="font-size:11.5px">
+              <span data-i18n="proc.quar.allowed">tolerance</span>
+              {{ '%g'|format(allowed) }}</div>
+          </td>
           <td>{% if q.status == 'quarantined' %}<span class="badge b-rejected" data-i18n="proc.quar.held">Quarantined</span>
               {% else %}<span class="badge b-approved">{{ q.resolution }}</span>
               <span class="muted" style="font-size:11px">{{ q.resolved_by }} · {{ (q.resolved_at or '')[:16] }}</span>{% endif %}</td>
           <td>{% if q.status == 'quarantined' and can_purchasing %}
-            <form method="post" style="display:inline"
-                  action="{{ url_for('approvals.resolve_quarantine', q_id=q.id, decision='return') }}">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.quar.return">Return to supplier</button>
-            </form>
-            <form method="post" style="display:inline"
-                  action="{{ url_for('approvals.resolve_quarantine', q_id=q.id, decision='accept') }}">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.quar.accept">Accept as free issue</button>
-            </form>
+            {#- Three different answers, so three buttons rather than one with a
+                mode. Accepting WITHIN tolerance is the ordinary one and is the
+                only primary; it is offered only when the excess actually is
+                within the clause, because a button that always refuses is worse
+                than no button. -#}
+            <div class="flex gap wrap" style="gap:8px;justify-content:flex-end">
+              {% if within %}
+              <form method="post" style="display:inline"
+                    action="{{ url_for('approvals.resolve_quarantine', q_id=q.id, decision='accept_tolerance') }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button class="btn btn-sm" type="submit"
+                        data-i18n="proc.quar.accept_tol">Accept within tolerance</button>
+              </form>
+              {% endif %}
+              <form method="post" style="display:inline"
+                    action="{{ url_for('approvals.resolve_quarantine', q_id=q.id, decision='return') }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.quar.return">Return to supplier</button>
+              </form>
+              <form method="post" style="display:inline"
+                    action="{{ url_for('approvals.resolve_quarantine', q_id=q.id, decision='accept') }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.quar.accept">Accept as free issue</button>
+              </form>
+            </div>
+            {% if not within %}
+            <div class="muted" style="font-size:11.5px;text-align:end;margin-top:4px"
+                 data-i18n="proc.quar.over_tol">Beyond the allowed tolerance — needs authorising before it can be paid for.</div>
+            {% endif %}
           {% endif %}</td>
         </tr>
       {% endfor %}
@@ -899,7 +1177,7 @@
       </tbody>
     </table>
     {% endif %}
-    {% if can_pay and pr.status in ('po_issued','partially_received','received','closed') and (pr.payment_status or 'unpaid') != 'paid' %}
+    {% if can_pay and pr.status in ('po_issued','in_transit','partially_received','received','closed') and (pr.payment_status or 'unpaid') != 'paid' %}
     <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_payment">+ Record payment</summary>
       <form method="post" action="{{ url_for('approvals.add_payment', pr_id=pr.id) }}" class="mt-2">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -922,7 +1200,7 @@
     {% endif %}
 
     {# --- Advance payment authorisation (DOAM §4.3) --- #}
-    {% if pr.status in ('po_issued','partially_received','received') %}
+    {% if pr.status in ('po_issued','in_transit','partially_received','received') %}
       {% if pr.advance_pct %}
       <div class="mt-2" style="font-size:12.5px;color:var(--muted)">
         <span data-i18n="proc.adv_authorised">Advance authorised</span>:
@@ -976,7 +1254,7 @@
    cancelled AFTER approval advertised a PO number and a PDF link answering 400. #}
 {% if (pos and pr.status in ('approved','po_issued','partially_received','received','closed'))
       or (pr.po_rev or 0) > 0
-      or (can_purchasing and pr.status in ('po_issued','partially_received')) %}
+      or (can_purchasing and pr.status in ('po_issued','in_transit','partially_received')) %}
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="proc.po.title">Purchase Order</h3>
     <div class="flex gap center">
@@ -1018,7 +1296,7 @@
     {% if (pr.po_rev or 0) > 0 %}
     <div class="muted" style="margin-bottom:10px;font-size:12.5px" data-i18n="proc.po.rev_hint">This order has been revised — the PO PDF carries the revision number, and every revision (with its reason and a snapshot of the lines) is kept on file.</div>
     {% endif %}
-    {% if can_purchasing and pr.status in ('po_issued','partially_received') %}
+    {% if can_purchasing and pr.status in ('po_issued','in_transit','partially_received') %}
     <details>
       <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.po.revise">Revise this PO</summary>
       <form method="post" action="{{ url_for('approvals.revise_po', pr_id=pr.id) }}" class="mt-2">
@@ -1078,13 +1356,22 @@
                    the line differs from the header vendor in the panel head. #}
                 {% if it.vendor and it.vendor != pr.vendor %}
                 <div class="muted" style="font-size:12px;margin-top:2px">
-                  <span data-i18n="proc.vendor_l">Vendor</span>: <b>{{ it.vendor }}</b></div>
+                  <span data-i18n="proc.vendor_l">Vendor</span>: <b>{{ it.vendor }}</b>
+                  {#- A supplier typed by hand that is not on the vendor master:
+                      scoring, the approved-supplier check and the three-way match
+                      all key on the master, and all three skip a line like this
+                      without saying so. Spec §2. -#}
+                  {% if not it.vendor_known %}
+                  <span class="tag" style="color:var(--ink)"
+                        data-i18n="proc.vendor_unlinked">not on the vendor master</span>
+                  {% endif %}</div>
                 {% endif %}
                 {% if it.spare_id and spare_live.get(it.spare_id) %}
                 <div style="font-size:12px;margin-top:2px">🏬 <span data-i18n="proc.live_stock">Warehouse now</span>:
                   <b>{{ '%g'|format(spare_live[it.spare_id].available) }} {{ spare_live[it.spare_id].uom }}</b>
                   <span class="muted" data-i18n="proc.live_stock_hint">available</span></div>
-                {% endif %}</td>
+                {% endif %}
+                {{ item_history(it) }}</td>
             <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}
               {#- What the store handed over off the shelf. Without this the line
                   just reads a smaller number than was asked for, and the only
@@ -1233,6 +1520,47 @@
                        href="{{ url_for('approvals.rfq_pdf', pr_id=pr.id, rfq=r.id) }}">
                   <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rfq.pdf">RFQ PDF</span></a></td>
               </tr>
+              {#- Correcting an RFQ, and choosing which lines it asks for. Offered
+                  only while it is unanswered: a quotation on file was priced
+                  against a specific list of lines, and changing that list
+                  afterwards leaves a comparison nobody can reproduce. -#}
+              {% if can_purchasing and not rfq_locked and r.status != 'answered' %}
+              <tr><td colspan="5" style="padding-top:0">
+                <details>
+                  <summary class="btn btn-ghost btn-sm" data-i18n="proc.rfq.edit">Edit this RFQ</summary>
+                  <form method="post" style="margin-top:10px"
+                        action="{{ url_for('approvals.edit_rfq', pr_id=pr.id, rfq_id=r.id) }}">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                    <div class="flex gap wrap" style="gap:12px;align-items:flex-end">
+                      <label style="flex:1 1 200px">
+                        <span data-i18n="proc.vendor_l">Vendor</span>
+                        <input name="vendor" value="{{ r.vendor or '' }}"></label>
+                      <label style="flex:0 1 170px">
+                        <span data-i18n="proc.rfq.reply_by">Reply by</span>
+                        <input name="reply_by" type="date" value="{{ r.reply_by or '' }}"></label>
+                      <label style="flex:2 1 260px">
+                        <span data-i18n="proc.notes">Notes</span>
+                        <input name="notes" value="{{ r.notes or '' }}"></label>
+                    </div>
+                    <div style="margin-top:10px">
+                      <div class="muted" style="font-size:12px;margin-bottom:4px"
+                           data-i18n="proc.rfq.drop_hint">Untick a line to leave it out of this RFQ.</div>
+                      <div class="flex gap wrap" style="gap:14px">
+                        {% for it in b['items'] %}
+                        <label class="flex gap center" style="gap:5px;font-size:13px">
+                          <input type="checkbox" name="keep_items" value="{{ it.id }}"
+                                 {% if it.id not in (r.excluded or []) %}checked{% endif %}>
+                          <span>{{ it.master_code or it.item }}</span>
+                        </label>
+                        {% endfor %}
+                      </div>
+                    </div>
+                    <button class="btn btn-sm" style="margin-top:10px"
+                            data-i18n="proc.save">Save</button>
+                  </form>
+                </details>
+              </td></tr>
+              {% endif %}
             {% endfor %}
             </tbody>
           </table>
@@ -1311,9 +1639,48 @@
                 <form method="post" action="{{ url_for('approvals.choose_quote', pr_id=pr.id, quote_id=q.id) }}" style="display:inline">
                   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
                   <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.choose">Choose</button>
+                </form>
+                {#- Removing a price that is no longer on the table. The CHOSEN
+                    quotation has neither control: it is what the ladder routed
+                    on and what the PO was raised from. Choose another first. -#}
+                <form method="post" style="display:inline"
+                      action="{{ url_for('approvals.delete_quote', pr_id=pr.id, quote_id=q.id) }}"
+                      onsubmit="return confirm((window.tcT &amp;&amp; window.tcT('proc.quote.remove_q')) || 'Remove this quotation?')">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <button class="btn btn-ghost btn-sm" type="submit"
+                          data-i18n="proc.quote.remove">Remove</button>
                 </form>{% endif %}
               </td>
             </tr>
+            {% if can_purchasing and not q.is_chosen %}
+            <tr><td colspan="4" style="padding-top:0">
+              <details>
+                <summary class="btn btn-ghost btn-sm" data-i18n="proc.quote.edit">Edit this quotation</summary>
+                <form method="post" style="margin-top:10px"
+                      action="{{ url_for('approvals.edit_quote', pr_id=pr.id, quote_id=q.id) }}">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <div class="flex gap wrap" style="gap:12px;align-items:flex-end">
+                    <label style="flex:1 1 180px">
+                      <span data-i18n="proc.vendor_l">Vendor</span>
+                      <input name="vendor" value="{{ q.vendor or '' }}"></label>
+                    <label style="flex:0 1 140px">
+                      <span data-i18n="proc.amount">Amount</span>
+                      <input name="amount" type="number" step="any" min="0" value="{{ q.amount or 0 }}"></label>
+                    <label style="flex:0 1 100px">
+                      <span data-i18n="proc.currency">Currency</span>
+                      <input name="currency" value="{{ q.currency or 'EGP' }}"></label>
+                    <label style="flex:0 1 120px">
+                      <span data-i18n="proc.lead_days">Lead days</span>
+                      <input name="lead_time_days" type="number" min="0" value="{{ q.lead_time_days or '' }}"></label>
+                    <label style="flex:1 1 160px">
+                      <span data-i18n="proc.warranty">Warranty</span>
+                      <input name="warranty" value="{{ q.warranty or '' }}"></label>
+                  </div>
+                  <button class="btn btn-sm" style="margin-top:10px" data-i18n="proc.save">Save</button>
+                </form>
+              </details>
+            </td></tr>
+            {% endif %}
           {% endfor %}
           </tbody>
         </table>
@@ -1560,8 +1927,12 @@
 
 <!-- Audit timeline -->
 <div class="panel mt-4">
-  <div class="panel-head"><h3 data-i18n="proc.timeline">Audit trail</h3></div>
-  <div class="panel-pad">
+  <details>
+    <summary class="panel-head" style="cursor:pointer">
+      <h3 style="display:inline" data-i18n="proc.timeline">Audit trail</h3>
+      <span class="muted" style="font-weight:400"> &middot; {{ b.events|length }}</span>
+    </summary>
+    <div class="panel-pad">
     <ul class="tl">
       {% for e in b.events %}
       <li>
@@ -1570,7 +1941,8 @@
       </li>
       {% endfor %}
     </ul>
-  </div>
+    </div>
+  </details>
 </div>
 
 {% endblock %}

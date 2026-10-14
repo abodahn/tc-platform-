@@ -299,6 +299,18 @@
       </tr></thead>
       <tbody>
       {% for k in v.knobs %}
+        {#- The amount knobs are generated one per rung per expenditure kind and
+            sort to the end of the registry, so one banded row introduces the
+            whole group rather than letting 14 thresholds trail off the table
+            with no heading. -#}
+        {% if k.key.startswith('thr_') and loop.changed('thr') %}
+        <tr id="approval-amounts"><td colspan="{{ 5 if can_edit else 4 }}"
+                style="padding-top:18px;border-top:2px solid var(--line,#E5E7EB)">
+          <b data-i18n="pwf.thresholds_hd">The amount each approval joins at</b>
+          <div class="muted" style="font-size:11.5px;max-width:72ch;margin-top:3px"
+               data-i18n="pwf.thresholds_note">One row per rung, per expenditure type. 0 means the rung signs every request at any value. These are the company thresholds; a department may still demand a signature EARLIER under &ldquo;Thresholds &amp; departments&rdquo;, never later.</div>
+        </td></tr>
+        {% endif %}
         <tr>
           <td><b>{{ v.L.setting.get(k.key, k.key) }}</b>
             <div class="muted" style="font-size:11px">{{ k.key }}</div>
@@ -342,7 +354,7 @@
       </tbody>
     </table>
     <div class="muted mt-2" style="font-size:12px" data-i18n="pwf.settings_note">Resetting DELETES the stored value so the rule follows the code default again — it does not copy today’s default into the database. An invalid stored value is ignored by the engine, never applied.</div>
-    <div class="muted mt-2" style="font-size:12px" data-i18n="pwf.readonly_note">Read-only by design: the stage SLA / escalation clock, and the 1% tolerance used by the 3-way match verdict, live in code. Amount thresholds and which stages apply are edited per department under “Thresholds &amp; departments”.</div>
+    <div class="muted mt-2" style="font-size:12px" data-i18n="pwf.readonly_note">Read-only by design: the stage SLA / escalation clock, and the 1% tolerance used by the three-way match.</div>
   </div>
 </div>
 

@@ -60,7 +60,7 @@ _TOL = (f"(CASE WHEN {_GRAND}*{_TOL_PCT / 100.0!r} > {_TOL_ABS!r} "
 # the set services.budget_status() gates a new request against — a request still
 # climbing the ladder has committed nothing, and a report that said otherwise
 # would disagree with the budget check that actually blocks a submission.
-_COMMITTED = ("'approved','po_issued','partially_received','received','closed'")
+_COMMITTED = ("'approved','po_issued','in_transit','partially_received','received','closed'")
 
 _STATUS_OPTS = [
     ("draft", "Draft", "مسودة", "Taslak"),
@@ -413,7 +413,7 @@ R.register(**_common(
     ),
     frm=f"pr_requests p {_INV} {_ITM} {_DN}",
     base_where=["COALESCE(p.is_active,1) = 1",
-                "p.status IN ('po_issued','partially_received','received','closed')"],
+                "p.status IN ('po_issued','in_transit','partially_received','received','closed')"],
     order="p.due_date ASC, p.id DESC",
     date_col="p.created_at",
     columns=[

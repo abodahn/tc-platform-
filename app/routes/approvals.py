@@ -132,6 +132,91 @@ def export_csv(key):
                      download_name=f"procurement_{key}.csv")
 
 
+# The columns the register exports, in the order a buyer reads them. Kept beside
+# the list route rather than in services, because this IS the list screen in a
+# spreadsheet — change one and you should be looking at the other.
+_LIST_EXPORT = (
+    ("pr_no", "PR number"), ("request_date", "Date"), ("title", "Title"),
+    ("department", "Department"), ("requester_name", "Requester"),
+    ("expenditure_kind", "OPEX / CAPEX"), ("vendor", "Supplier"),
+    ("total", "Total"), ("currency", "Currency"),
+    ("status", "Status"), ("pricing_status", "Priced"),
+    ("budget_state", "Budget"), ("po_no", "PO number"),
+    ("approved_at", "Approved"), ("payment_status", "Payment"),
+)
+
+
+@bp.route("/list.xlsx")
+@login_required
+@permission_required("proc_view")
+def listing_xlsx():
+    """The purchase-request register as a real .xlsx.
+
+    It exports WHAT IS ON SCREEN — the same status filter and the same "only
+    mine" toggle the page was rendered with. An export that silently returns
+    everything is worse than none: the buyer who filtered to 'pending' and sent
+    the file on has no idea they shared the whole register.
+
+    A real workbook rather than CSV-with-a-BOM because money and dates survive
+    it: Excel reads 1,250.00 as a number and 2026-10-13 as a date instead of
+    guessing from the text, and nobody has to fight the import wizard over
+    Arabic.
+    """
+    import openpyxl
+    from openpyxl.styles import Font, Alignment
+    from openpyxl.utils import get_column_letter
+
+    status = request.args.get("status", "all")
+    mine = request.args.get("mine") == "1"
+    user = _u()
+    prs = svc.list_prs(status=status,
+                       requester=(user["username"] if mine else None))
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Purchase requests"
+    ws.append([label for _k, label in _LIST_EXPORT])
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.alignment = Alignment(vertical="center")
+    ws.freeze_panes = "A2"
+
+    for pr in prs:
+        row = []
+        for key, _label in _LIST_EXPORT:
+            v = pr[key] if key in pr.keys() else None
+            if key == "total":
+                try:
+                    v = float(v or 0)
+                except (TypeError, ValueError):
+                    v = 0.0
+            elif key in ("request_date", "approved_at"):
+                v = (str(v)[:10] or None) if v else None
+            row.append(v)
+        ws.append(row)
+
+    money = [i for i, (k, _l) in enumerate(_LIST_EXPORT, start=1) if k == "total"]
+    for i in money:
+        for c in ws[get_column_letter(i)][1:]:
+            c.number_format = "#,##0.00"
+    # Width from the widest cell, capped: a Title column sized to its longest
+    # entry pushes everything else off the screen.
+    for i, (_k, label) in enumerate(_LIST_EXPORT, start=1):
+        longest = max([len(str(label))]
+                      + [len(str(c.value or "")) for c in ws[get_column_letter(i)]])
+        ws.column_dimensions[get_column_letter(i)].width = min(max(longest + 2, 10), 42)
+    ws.auto_filter.ref = ws.dimensions
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    name = "purchase_requests_%s%s.xlsx" % (status, "_mine" if mine else "")
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True, download_name=name)
+
+
 @bp.route("/list")
 @login_required
 @permission_required("proc_view")
@@ -283,6 +368,12 @@ def _parse_header(f, can_price=False, existing=None):
                         or f.get("request_for_free", "").strip()),
         "request_for_kind": f.get("request_for_kind", "").strip()[:20],
         "department": f.get("department", "").strip(),
+        # Normalised in the service, not here: an unreadable value must land on
+        # 'normal', never on the loudest one.
+        "priority": f.get("priority", "").strip(),
+        # Local or import. Normalised in the service; an unreadable value lands
+        # on 'local', the case with no customs consequences.
+        "order_type": f.get("order_type", "").strip(),
         "request_date": f.get("request_date", "").strip(),
         "currency": f.get("currency", "EGP"),
         "vendor": f.get("vendor", "").strip(),               # a *suggested* vendor is allowed
@@ -405,16 +496,23 @@ def _parse_items(f, can_price=False, can_buy=False):
             # are dropped here too, so a hand-crafted POST cannot set them
             # either, exactly as unit_price already works below.
             #
-            # Unit survives one way: a line PICKED from the catalogue carries the
-            # catalogue's own unit, which is master data rather than the
-            # requester's opinion. services.py resolves that from item_id.
-            # Locked for EVERYONE on a request form, buyer included. A request
-            # says what is needed and how many; the unit comes from the
-            # catalogue when the line was picked, and the supplier is chosen at
-            # SOURCING, on the request page, once there is something to source.
-            # can_buy is still passed because tests and the API call this
-            # directly, and the buyer's own sourcing screen posts through it.
-            "unit": (units[i] if i < len(units) else "Pcs") if can_buy else "",
+            # UNIT is now the requester's to state, changed 2026-10-14 on
+            # instruction. It was locked for everyone, on the reasoning that a
+            # unit is master data and not an opinion — true for a line picked
+            # from the catalogue, and wrong for every line that is not. A request
+            # for five DAYS of contract labour, or a machine rental by the MONTH,
+            # has no catalogue row to inherit from, and people were writing the
+            # number against "Pcs" because that was the only thing the form could
+            # produce.
+            #
+            # The master data still wins where it exists: a line picked from the
+            # catalogue has its unit overwritten from item_id in
+            # services.fill_units_from_catalogue(), exactly as before. What the
+            # requester types only survives on a line the catalogue does not
+            # hold — which is the case it was missing.
+            #
+            # Still locked for everyone: price, supplier and stock figures.
+            "unit": (units[i] if i < len(units) else "") or "",
             "qty": qtys[i] if i < len(qtys) else 0,
             "current_stock": (stocks[i] if i < len(stocks) else 0) if can_buy else 0,
             # One requisition, several suppliers: each line may name its own.
@@ -669,7 +767,7 @@ def warehouse_revise(pr_id):
     if not bundle:
         abort(404)
     f = request.form
-    qtys, stocks = {}, {}
+    qtys, stocks, fields = {}, {}, {}
     for it in bundle["items"]:
         q = f.get("whqty_%s" % it["id"])
         st = f.get("whstock_%s" % it["id"])
@@ -677,7 +775,15 @@ def warehouse_revise(pr_id):
             qtys[it["id"]] = q
         if st is not None and str(st).strip() != "":
             stocks[it["id"]] = st
-    ok, msg = svc.warehouse_revise(pr_id, qtys, stocks, _u(), ip=_ip())
+        # The store's own figures (spec §1/§3). A key present with an empty value
+        # is meaningful — it clears the override — so these are collected on
+        # PRESENCE in the form, not on being non-blank like the two above.
+        posted = {col: f.get("wh%s_%s" % (col, it["id"]))
+                  for col, _kind in svc._WH_FIELDS
+                  if ("wh%s_%s" % (col, it["id"])) in f}
+        if posted:
+            fields[it["id"]] = posted
+    ok, msg = svc.warehouse_revise(pr_id, qtys, stocks, _u(), ip=_ip(), fields=fields)
     flash({"revised": "Saved. The requester has been told what changed.",
            "unchanged": "Nothing was changed.",
            "already_priced": "This request already carries prices, so a quantity "
@@ -1196,6 +1302,13 @@ def detail(pr_id):
                            # and vendor_approved() is the real control.
                            vendors=svc.list_vendors(),
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
+                           # The rungs THIS request could go back to. Built from
+                           # its own steps, not a generic ladder: a request whose
+                           # value never reached the CFO has no CFO rung to
+                           # return to.
+                           back_rungs=(svc.rungs_behind(bundle["steps"],
+                                                       pr.get("current_seq"))
+                                       if actionable else []),
                            act_why=act_why, act_sign=act_sign,
                            l2_domain=l2_dom, l2_note=l2_note,
                            stage_label=C.stage_label, queued=queued,
@@ -1227,9 +1340,14 @@ def detail(pr_id):
                                     or user_can("proc_admin")
                                     or svc.can_act_step(
                                         user, {"stage": "warehouse", "pr_id": pr["id"]}))),
+                           # `is_priced` is deliberately NOT a condition here any
+                           # more (2026-10-13). It used to hide this panel the
+                           # moment a request carried money, which meant a buyer
+                           # could neutralise the warehouse rung by pricing on
+                           # arrival — the service now allows the correction and
+                           # rebuilds the ladder, so the screen must offer it.
                            wh_review=bool(actionable
-                                          and actionable.get("stage") == "warehouse"
-                                          and not is_priced),
+                                          and actionable.get("stage") in C.WAREHOUSE_STAGES),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
                            rfq_min=C.RFQ_QUOTE_MIN, rfq_threshold=C.RFQ_VALUE_THRESHOLD,
                            # Who to ask for a price, defaulted to the vendors the
@@ -1311,6 +1429,70 @@ def add_quote(pr_id):
 def choose_quote(pr_id, quote_id):
     ok, msg = svc.choose_quote(pr_id, quote_id, _u(), ip=_ip())
     flash("Quote selected." if ok else f"Could not select quote ({msg}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+# --- editing an RFQ and the quotations against it (spec §4 and §5) ----------
+# Both sit behind proc_purchasing, the same permission that issues the RFQ and
+# chooses the quote. Both refuse once the document has been acted on — an RFQ
+# that has been answered, a quotation that has been chosen — because changing
+# either afterwards rewrites what somebody already priced or signed against.
+_RFQ_ERRORS = {
+    "answered": "This RFQ has already been answered. Remove the quotation "
+                "against it first, or issue a new RFQ.",
+    "locked": "Sourcing is locked — this request is already approved, ordered, "
+              "closed or cancelled.",
+    "all_removed": "An RFQ has to ask for at least one line.",
+    "not_found": "Request for quotation not found.",
+    "unavailable": "Requests for quotation are not available on this database yet.",
+}
+_QUOTE_ERRORS = {
+    "chosen": "This is the chosen quotation. Choose another one first, then edit "
+              "or remove this.",
+    "locked": "This request is already approved, ordered, closed or cancelled.",
+    "bad_amount": "Enter the quoted amount as a positive number.",
+    "not_found": "Quotation not found.",
+    "unavailable": "Could not reach the quotations table.",
+}
+
+
+@bp.route("/pr/<int:pr_id>/rfq/<int:rfq_id>/edit", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def edit_rfq(pr_id, rfq_id):
+    f = request.form
+    ok, msg = svc.update_rfq(
+        rfq_id, vendor=f.get("vendor"), reply_by=f.get("reply_by"),
+        notes=f.get("notes"), keep_items=f.getlist("keep_items"),
+        user=_u(), ip=_ip())
+    flash(("No change." if msg == "no_change" else "Request for quotation updated.")
+          if ok else _RFQ_ERRORS.get(msg, "Could not update the RFQ (%s)." % msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/quote/<int:quote_id>/edit", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def edit_quote(pr_id, quote_id):
+    f = request.form
+    data = {k: f.get(k) for k in ("vendor", "amount", "currency",
+                                  "lead_time_days", "warranty", "notes") if k in f}
+    ok, msg = svc.update_quote(quote_id, data, user=_u(), ip=_ip())
+    flash(("No change." if msg == "no_change" else "Quotation updated.")
+          if ok else _QUOTE_ERRORS.get(msg, "Could not update the quotation (%s)." % msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/quote/<int:quote_id>/delete", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def delete_quote(pr_id, quote_id):
+    ok, msg = svc.delete_quote(quote_id, user=_u(), ip=_ip())
+    flash("Quotation removed." if ok
+          else _QUOTE_ERRORS.get(msg, "Could not remove the quotation (%s)." % msg),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
@@ -1707,22 +1889,41 @@ def price(pr_id):
     # the moment Purchasing make it — the same moment they put a price against
     # the line, which is the price THAT supplier quoted.
     vendors = {}
+    line_fields = {}
     for it in bundle["items"]:
         raw = f.get("linevendor_%s" % it["id"])
         if raw is not None:
             vendors[it["id"]] = str(raw).strip()[:120]
+        # Spec §2 — the two line figures Purchasing owns. Collected on PRESENCE,
+        # because an empty box is a meaningful answer here: it clears the
+        # override and hands the figure back to what order history computes.
+        posted = {c: f.get("%s_%s" % (c, it["id"]))
+                  for c in ("last_order_price", "lead_time_days")
+                  if ("%s_%s" % (c, it["id"])) in f}
+        if posted:
+            line_fields[it["id"]] = posted
     meta = {"tax_rate": f.get("tax_rate", "").strip(),
             "payment_condition": f.get("payment_condition", "").strip(),
             "vendor": f.get("vendor", "").strip(),
             "currency": f.get("currency", "").strip(),
             "fx_rate": f.get("fx_rate", "").strip()}   # EGP-equivalent rate for non-EGP PRs
-    ok, msg = svc.price_pr(pr_id, prices, meta, _u(), ip=_ip(), vendors=vendors)
+    ok, msg = svc.price_pr(pr_id, prices, meta, _u(), ip=_ip(), vendors=vendors,
+                        line_fields=line_fields)
     flash("Pricing saved — the request now carries its commercial value and any "
           "value-based approvals have joined the ladder." if ok
           else {"locked": "This request can no longer be priced.",
                 "fx_required": "Foreign-currency request: enter the EGP exchange rate "
                                "before pricing, so the value approvals route on the true "
-                               "EGP equivalent."}.get(
+                               "EGP equivalent.",
+                "self_pricing": "You raised this request, so you cannot price it. The "
+                                "price decides which approvals it needs, and nobody "
+                                "sets their own threshold. Another buyer — or a "
+                                "procurement admin — enters it.",
+                "demand_rungs_pending": "The warehouse has not checked this request "
+                                        "yet. Pricing it now would lock the quantity "
+                                        "before the store has confirmed what is on the "
+                                        "shelf. It can be priced once it reaches the "
+                                        "Purchasing rung."}.get(
               msg, f"Could not save pricing ({msg})."),
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
@@ -2142,17 +2343,99 @@ def settle_return(ret_id):
     return redirect(request.referrer or url_for("approvals.index"))
 
 
+@bp.route("/pr/<int:pr_id>/send-back", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def send_back(pr_id):
+    """Send a request back to a rung the approver picks, with a reason."""
+    ok, msg = svc.send_back(pr_id, request.form.get("to_seq"),
+                            request.form.get("reason"), _u(), ip=_ip())
+    flash(("Sent back to %s. Every signature from there up has been withdrawn and "
+           "the people who gave them have been told." % msg) if ok
+          else {"reason_required": "Say why it is going back. The rung receiving it "
+                                   "needs to know what to look at.",
+                "not_backwards": "A request can only go BACKWARDS. Sending it forward "
+                                 "would skip the rungs in between.",
+                "no_such_rung": "That rung is not on this request's ladder.",
+                "forbidden": "Only somebody who could sign the live rung can send it back.",
+                "bad_target": "Choose a rung to send it back to.",
+                }.get(msg, "Could not send it back (%s)." % msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/hold", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def hold(pr_id):
+    """Park a request without rejecting it. The reason is mandatory."""
+    ok, msg = svc.hold_request(pr_id, request.form.get("hold_reason"), _u(), ip=_ip())
+    flash("Put on hold. It stays in the queue and nobody can sign it until it "
+          "is resumed — the requester has been told why." if ok
+          else {"reason_required": "Say why it is on hold. A request parked with no "
+                                   "reason cannot be told apart from one forgotten.",
+                "already_held": "This request is already on hold.",
+                "forbidden": "Only somebody who could sign this rung can hold it.",
+                "not_pending": "Only a circulating request can be held.",
+                }.get(msg, "Could not hold it (%s)." % msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/resume", methods=["POST"])
+@login_required
+@permission_required("proc_approve")
+def resume(pr_id):
+    """Lift a hold. Open to anyone who could sign the rung, not only whoever
+    placed it — the person who parked it may be on leave."""
+    ok, msg = svc.resume_request(pr_id, request.form.get("note"), _u(), ip=_ip())
+    flash("Hold lifted — the approvals are moving again." if ok
+          else {"not_held": "This request is not on hold.",
+                "forbidden": "Only somebody who could sign this rung can resume it.",
+                }.get(msg, "Could not resume it (%s)." % msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/in-transit", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def mark_in_transit(pr_id):
+    """ON ORDER -> ON THE WAY. A status, not a receipt: nothing is booked."""
+    ok, msg = svc.mark_in_transit(pr_id, _u(), note=request.form.get("note"), ip=_ip())
+    flash("Marked as on the way — the requester has been told." if ok
+          else {"not_on_order": "Only an order that is still on order can be marked "
+                                "as dispatched.",
+                "not_found": "Request not found."}.get(msg, "Could not update (%s)." % msg),
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
 @bp.route("/quarantine/<int:q_id>/<decision>", methods=["POST"])
 @login_required
 @permission_required("proc_purchasing")
 def resolve_quarantine(q_id, decision):
     ok, msg = svc.resolve_quarantine(q_id, decision, _u(), ip=_ip())
-    flash({"return": "Over-delivery marked for return to the supplier.",
-           "accept": "Over-delivery accepted as a free issue (stock unchanged).",
-           }.get(msg, f"Could not resolve the quarantine ({msg}).")
-          if ok else {"already_resolved": "That quarantine record is already decided.",
-                      }.get(msg, f"Could not resolve the quarantine ({msg})."),
-          "success" if ok else "error")
+    if ok:
+        note = {"return": "Over-delivery marked for return to the supplier.",
+                "accept": "Over-delivery accepted as a free issue — on the shelf "
+                          "at zero cost, and not payable.",
+                "accept_tolerance": "Over-delivery accepted within tolerance — on "
+                                    "the shelf at the order price, and payable on "
+                                    "the supplier's invoice.",
+                }.get(msg, f"Could not resolve the quarantine ({msg}).")
+    elif str(msg).startswith("over_tolerance:"):
+        # The numbers, not just a refusal: the buyer needs to know how far past
+        # the clause this delivery is before deciding to return it or escalate.
+        _, _got, _max = str(msg).split(":")
+        note = ("This over-delivery is %s, beyond the %s the DOAM allows (5%% of "
+                "the ordered quantity). It stays in quarantine until it is "
+                "authorised — return it, or accept it as a free issue." % (_got, _max))
+    else:
+        note = {"already_resolved": "That quarantine record is already decided.",
+                "bad_decision": "Unknown decision.",
+                }.get(msg, f"Could not resolve the quarantine ({msg}).")
+    flash(note, "success" if ok else "error")
     return redirect(request.referrer or url_for("approvals.index"))
 
 
@@ -2248,7 +2531,12 @@ def settings():
                            # screen to a 500 for every admin including
                            # super_admin. The responsibility matrix could not be
                            # opened at all.
-                           stage_labels=C.STAGE_LABELS, default_matrix=C.ACTIVE_MATRIX,
+                           stage_labels=C.STAGE_LABELS,
+                           # The amounts in force, which now includes whatever the
+                           # admin saved under "Configurable rules" — showing the
+                           # shipped constant here would invite a department
+                           # matrix the live floor then refuses.
+                           default_matrix=svc.effective_thresholds("opex"),
                            is_builtin=(dept in C.DEPARTMENTS),
                            has_custom=(dept in svc.all_dept_matrices()),
                            # Escalation chain: role names and the section's own
@@ -2277,7 +2565,8 @@ def save_settings():
     # A brand-new department (Add form, no stages ticked) seeds with the default
     # ladder so it persists and is immediately usable; admins tune it afterwards.
     if not rows and f.get("new_department"):
-        rows = [{"stage": s, "threshold": C.ACTIVE_MATRIX.get(s, 0)} for s in C.LADDER]
+        _live = svc.effective_thresholds("opex")
+        rows = [{"stage": s, "threshold": _live.get(s, 0)} for s in C.LADDER]
     ok, msg = svc.set_dept_matrix(dept, rows, _u())
     flash(f"Responsibility matrix saved for {dept}." if ok else f"Could not save ({msg}).",
           "success" if ok else "error")

@@ -65,8 +65,14 @@ def run():
     from app.approvals import constants as C
     for stage in C.LADDER:
         chk("settings lists %s" % stage, stage in html)
+    # Asserted against whatever the ACTIVE matrix says rather than a named rung:
+    # the example used to be Finance, which was removed from authority on
+    # instruction (2026-10-13). What this line is really defending is that the
+    # settings screen prints real figures and not zeros, so it should not have to
+    # be edited again the next time the ladder changes.
+    _priced = [v for v in C.ACTIVE_MATRIX.values() if v and v > 0]
     chk("and shows a real threshold, not 0",
-        "{:,.0f}".format(C.ACTIVE_MATRIX["finance"]) in html)
+        bool(_priced) and any("{:,.0f}".format(v) in html for v in _priced))
 
     with app.app_context():
         from app.db import get_db

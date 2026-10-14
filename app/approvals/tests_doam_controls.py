@@ -4,6 +4,8 @@ Both were previously DEFINED and unreachable — a matrix and a level_above()
 with no call sites. These checks run through create_pr/submit_pr/set_single_source,
 the same entry points the web form uses, so they fail if the wiring is removed.
 """
+import sys
+from pathlib import Path
 import os
 import tempfile
 
@@ -11,6 +13,10 @@ import tempfile
 def _app():
     # Config.DB_PATH is the switch the app actually reads — an env var here would
     # silently run these checks against the live beta database.
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "doamctl.db")
     os.environ.pop("DATABASE_URL", None)

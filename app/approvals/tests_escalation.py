@@ -169,7 +169,10 @@ with app.app_context():
        bool(wh["esc_role"]))
     ok("...and records what it escalated FROM",
        set((wh["esc_from"] or "").split(",")) == set(C.STAGE_ROLES["warehouse"]))
-    ok("no OTHER rung was escalated (purchasing has no holders at all)",
+    # Two warehouse rungs now (2026-10-13) and one warehouse person, who is the
+    # requester — so BOTH of those rungs escalate. Purchasing has no holders at
+    # all and is left alone, which is the part this line really guards.
+    ok("only the warehouse rung escalated; purchasing has no holders at all",
        [s["stage"] for s in st1 if s["esc_from"]] == ["warehouse"])
     # THE INVARIANT the first cut of this feature missed: the escalated rung must
     # not be handed to the only person who can sign another rung of the SAME
@@ -194,6 +197,13 @@ with app.app_context():
        okk and msg == "advanced")
     # Rung 2 is Purchasing under §4.1, and §4.3's lowest sourcing band still wants
     # one quotation on file before the buyer signs.
+    # The Warehouse Manager rung escalated to the SAME superior as the store
+    # rung below it, because the one warehouse person is the requester of this
+    # request. It is absorbed into that rung rather than asking the CEO to sign
+    # twice — which segregation of duties refuses, and which would leave the
+    # request stuck on rung 2 forever.
+    ok("the duplicate escalated rung was absorbed, not left to deadlock",
+       "warehouse_manager" not in [x["stage"] for x in steps_of(conn, pr1)])
     svc.add_quote(pr1, {"vendor": "Owner Case Vendor", "amount": 20000}, pm)
     okk, msg = svc.act_on_step(pr1, pm, "approve")
     ok("the buyer signs the purchasing rung (%s)" % msg, okk and msg == "advanced")
@@ -271,8 +281,14 @@ with app.app_context():
                             "currency": "EGP"},
                            [{"item": "Gloves", "qty": 10, "unit_price": 0}], wm, submit=True)
     st2 = steps_of(conn, pr2)
-    ok("NO escalation anywhere: every esc_role / esc_from is NULL",
-       all(s["esc_role"] is None and s["esc_from"] is None for s in st2))
+    # A colleague on the STORE rung removes the escalation from that rung — the
+    # point of this regression. The Warehouse Manager rung above it (2026-10-13)
+    # still has exactly one holder, who is the requester, so it escalates on its
+    # own account: a second storekeeper is not a second manager.
+    ok("the store rung no longer escalates once a colleague holds it",
+       st2[0]["esc_role"] is None and st2[0]["esc_from"] is None)
+    ok("and nothing else escalates except the manager rung the requester holds",
+       [s["stage"] for s in st2 if s["esc_from"]] == ["warehouse_manager"])
     ok("the warehouse rung is signed by the stage's own roles",
        svc.step_roles(st2[0]) == set(C.STAGE_ROLES["warehouse"]))
     ok("the colleague can sign it", svc.can_act_step(store2, st2[0]))
@@ -455,7 +471,13 @@ with app.app_context():
        [s for _, s in ladder_shape(conn, prg)] == C.DEMAND_STAGES)
     # One person per rung: SOD_ADMIN_EXEMPT is False, so one account cannot sign
     # two rungs of the same request and a single admin can no longer walk a ladder.
-    okk, msg = svc.act_on_step(prg, wm, "approve")              # warehouse
+    okk, msg = svc.act_on_step(prg, wm, "approve")              # warehouse (store)
+    # The Warehouse Manager rung (2026-10-13) sits between the store and the
+    # buyer and is always on, so the walk needs its signature before purchasing
+    # becomes current. A DIFFERENT person signs it: wm has already signed the
+    # store rung and segregation of duties refuses him a second.
+    wm2 = mkuser(conn, "esc_wm_gate", "warehouse_manager")
+    okk, msg = svc.act_on_step(prg, wm2, "approve")             # warehouse manager
     okk, msg = svc.act_on_step(prg, pm, "approve")              # purchasing, unpriced
     ok("PRICING GATE still blocks the purchasing stage while unpriced (%s)" % msg,
        not okk and msg == "needs_pricing")
@@ -476,12 +498,17 @@ with app.app_context():
     # an unpriced request, pricing appends Finance + CFO, and finance_manager ->
     # cfo would hand the finance rung to the only CFO — who is then refused his own
     # cfo rung. The climb must pass him, exactly as at submit time.
+    # Finance was removed from the ladder on 2026-10-13, so the value rung this
+    # case needs is now the CFO's: its sole holder raises the request, and the
+    # rung only appears once pricing puts the request above 500,000. The point
+    # under test is unchanged — a rung that joins AFTER submit gets the same
+    # escalation treatment as one that was there from the start.
     fmg = mkuser(conn, "esc_fmg", "finance_manager")
-    ok("esc_fmg is the only holder of a finance-stage role",
-       svc.role_holders(conn, C.STAGE_ROLES["finance"]) == {"esc_fmg"})
+    ok("esc_cfo is the only holder of the cfo-stage role",
+       svc.role_holders(conn, C.STAGE_ROLES["cfo"]) == {"esc_cfo"})
     prr, _ = svc.create_pr({"title": "Priced later", "department": "Production",
                             "currency": "EGP"},
-                           [{"item": "Cutter", "qty": 1, "unit_price": 0}], fmg, submit=True)
+                           [{"item": "Cutter", "qty": 1, "unit_price": 0}], cfo, submit=True)
     ok("it submitted with the demand ladder only",
        [s for _, s in ladder_shape(conn, prr)] == C.DEMAND_STAGES)
     ok("the demand rungs were NOT escalated (others hold those roles)",
@@ -493,20 +520,16 @@ with app.app_context():
     svc.price_pr(prr, {itr: 600000.0}, {"tax_rate": 0}, admin)
     ok("pricing appended the value rungs build_ladder(600000) requires",
        [s for _, s in ladder_shape(conn, prr)] == C.build_ladder(600000))
-    fin = next(s for s in steps_of(conn, prr) if s["stage"] == "finance")
-    cfo_step = next(s for s in steps_of(conn, prr) if s["stage"] == "cfo")
-    ok("the finance rung escalated (%r)" % fin["esc_role"], bool(fin["esc_role"]))
-    ok("...NOT onto the only CFO, who is needed on the cfo rung",
-       "cfo" not in svc.step_roles(fin))
-    ok("...it climbed to the CEO instead (%r)" % fin["esc_role"],
+    fin = next(s for s in steps_of(conn, prr) if s["stage"] == "cfo")
+    ok("the cfo rung escalated (%r)" % fin["esc_role"], bool(fin["esc_role"]))
+    ok("...it climbed to the CEO (%r)" % fin["esc_role"],
        svc.step_roles(fin) == {"ceo"})
-    ok("the CEO can sign the escalated finance rung", svc.can_act_step(ceo, fin))
-    ok("the requester cannot", not svc.can_act_step(fmg, fin))
-    ok("and the CFO is left free for his OWN rung", svc.can_act_step(cfo, cfo_step))
-    ok("the cfo rung itself was not escalated", cfo_step["esc_from"] is None)
+    ok("the CEO can sign the escalated cfo rung", svc.can_act_step(ceo, fin))
+    ok("the requester cannot — he holds the normal signing role for it",
+       not svc.can_act_step(cfo, fin))
     ok("the reconcile escalation is audited",
        any(e["action"] == "escalated_stage"
-           and C.stage_label("finance") in (e["detail"] or "")
+           and C.stage_label("cfo") in (e["detail"] or "")
            for e in svc.get_pr(prr)["events"]))
     # the _busy hand-off itself: somebody who already signed a rung of this request
     # can never sign another (dual_role), so the climb must skip them too.
@@ -574,8 +597,12 @@ with app.app_context():
     except ImportError:
         ok("reportlab not installed — PDF render skipped", True)
         ok("reportlab not installed — PDF render skipped", True)
+    # pr2 carries an escalation of its own now — its requester is the sole
+    # Warehouse Manager, so that rung escalates even though a second storekeeper
+    # covers the store rung below it. prg was raised by a normal requester who
+    # holds no signing role at all, which is what "no escalation" means here.
     ok("a PR with no escalation prints no deviation line",
-       pdfgen._esc_lines(svc.get_pr(pr2)["steps"]) == [])
+       pdfgen._esc_lines(svc.get_pr(prg)["steps"]) == [])
 
     print("\n--- 12. trilingual prose for the new rule ---------------------")
     row = dict(conn.execute("SELECT body, body_ar, body_tr FROM proc_doc "

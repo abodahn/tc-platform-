@@ -168,9 +168,14 @@ def request_for():
         elif kind == "machine":
             try:
                 where, params = ["is_active=1"], []
-                if mtype:
-                    where.append("type = ?")
-                    params.append(mtype)
+                # SEVERAL types, not one. The request form lets a requester pick
+                # more than one machine type (2026-10-14), and it sends them
+                # comma-separated — a single `type = ?` matched none of them, so
+                # choosing two types showed an empty machine list.
+                types = [t.strip() for t in (mtype or "").split(",") if t.strip()]
+                if types:
+                    where.append("type IN (%s)" % ",".join("?" * len(types)))
+                    params += types
                 if q:
                     where.append("(LOWER(code) LIKE ? OR LOWER(name) LIKE ? "
                                  "OR LOWER(COALESCE(brand,'')) LIKE ? "

@@ -7,11 +7,17 @@ Direct materials MUST name their sales order; spares, MRO, facility and capital
 spend carry an asset or cost centre instead. The check that matters is that a
 fabric requisition cannot enter the approval ladder without one.
 """
+import sys
+from pathlib import Path
 import os
 import tempfile
 
 
 def _app():
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "thread.db")
     os.environ.pop("DATABASE_URL", None)

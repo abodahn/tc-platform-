@@ -77,6 +77,7 @@ def run():
         tech = mk("al_tech", "normal_user")            # raises, signs nothing
         store = mk("al_store", "storekeeper")
         store2 = mk("al_store2", "storekeeper")        # signs nothing: the intruder
+        whm = mk("al_whm", "warehouse_manager")        # the rung above the store
         buyer = mk("al_buyer", "purchasing_manager")
         pd = mk("al_pd", "factory_manager")
         scd = mk("al_scd", "supply_chain_director")
@@ -151,8 +152,12 @@ def run():
             "SELECT stage FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()]
         chk("the ladder reaches the CFO rung", ladder[-1] == "cfo", ladder)
 
-        for who, label in ((store, "warehouse"), (buyer, "purchasing"), (pd, "plant"),
-                           (scd, "supply chain"), (fin, "finance")):
+        # +Warehouse Manager (added 2026-10-13, always on); -Finance (removed from
+        # authority the same day). One distinct person per rung, which is the
+        # property this walk defends.
+        for who, label in ((store, "warehouse"), (whm, "wh manager"),
+                           (buyer, "purchasing"), (pd, "plant"),
+                           (scd, "supply chain")):
             good, msg = svc.act_on_step(pr_id, who, "approve")
             chk("%-12s signs their rung" % label, good, msg)
 
@@ -267,8 +272,12 @@ def run():
                                      "WHERE pr_id=? AND stage='cfo'", (d_id,)).fetchone())
         chk("the CFO rung ESCALATED instead of resting on the under-level buyer",
             cfo_step["esc_role"] == "ceo", cfo_step)
-        for who, label in ((store, "warehouse"), (buyer, "purchasing"), (pd, "plant"),
-                           (scd, "supply chain"), (fin, "finance")):
+        # +Warehouse Manager (added 2026-10-13, always on); -Finance (removed from
+        # authority the same day). One distinct person per rung, which is the
+        # property this walk defends.
+        for who, label in ((store, "warehouse"), (whm, "wh manager"),
+                           (buyer, "purchasing"), (pd, "plant"),
+                           (scd, "supply chain")):
             good, msg = svc.act_on_step(d_id, who, "approve")
             chk("%-12s signs their rung" % label, good, msg)
         bad, why = svc.act_on_step(d_id, buyer, "approve")

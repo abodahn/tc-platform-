@@ -10,11 +10,17 @@ Two defences, both checked here: the write refuses to save a weakened matrix,
 and the READ enforces the floor anyway, so a row saved before the rule existed
 cannot keep working.
 """
+import sys
+from pathlib import Path
 import os
 import tempfile
 
 
 def _app():
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "floor.db")
     os.environ.pop("DATABASE_URL", None)
@@ -39,23 +45,28 @@ def run():
             "the refusal should name what is missing, by its human label: %s" % msg
 
         # Raising a threshold above the DOAM's is also a weakening.
-        raised = [{"stage": s, "threshold": (v if s != "finance" else 900_000)}
+        #
+        # The example stage here was Finance until it was removed from authority
+        # on instruction (2026-10-13). The CFO has the same shape — a value rung
+        # with a real threshold — and the PROPERTY under test is untouched: a
+        # department may not make itself cheaper to spend in than the DOAM says.
+        raised = [{"stage": s, "threshold": (v if s != "cfo" else 900_000)}
                   for s, v in C.OPEX_MATRIX.items()]
         ok, msg = svc.set_dept_matrix("Production", raised, {"username": "admin"})
-        assert not ok and C.stage_label("finance") in msg, msg
+        assert not ok and C.stage_label("cfo") in msg, msg
 
         # --- a matrix that only ADDS is accepted ------------------------------
         stronger = [{"stage": s, "threshold": v} for s, v in C.OPEX_MATRIX.items()]
-        stronger[stronger.index(next(r for r in stronger if r["stage"] == "finance"))] = \
-            {"stage": "finance", "threshold": 50_000}      # Finance signs EARLIER
+        stronger[stronger.index(next(r for r in stronger if r["stage"] == "cfo"))] = \
+            {"stage": "cfo", "threshold": 50_000}          # the CFO signs EARLIER
         ok, msg = svc.set_dept_matrix("Production", stronger, {"username": "admin"})
         assert ok, "a strictly stronger matrix was refused: %s" % msg
 
         conn = get_db()
         ladder = svc.dept_ladder(conn, "Production", 120_000, "opex")
         conn.close()
-        assert "finance" in ladder, \
-            "the department asked for Finance at 50k; at 120k it must be there: %s" % ladder
+        assert "cfo" in ladder, \
+            "the department asked for the CFO at 50k; at 120k it must be there: %s" % ladder
 
         # --- the READ enforces the floor even against a legacy bad row --------
         conn = get_db()

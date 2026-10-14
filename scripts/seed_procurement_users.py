@@ -41,7 +41,11 @@ from app.db import get_db  # noqa: E402
 CAST = [
     # --- Procurement: DOAM §4.1 / §4.2 ladder, in signing order ---------------
     ("req.tester",   "normal_user",           "Requester Tester",    "Raises a request. Cannot see or enter any price"),
-    ("wh.tester",    "warehouse_manager",     "Warehouse Tester",    "Warehouse rung — always required on OPEX"),
+    # Two warehouse rungs now, not one. The store rung is the STOREKEEPER's and
+    # the review rung above it is the MANAGER's, so one account can no longer
+    # walk both — which is the entire point of splitting them.
+    ("wh.tester",    "warehouse_manager",     "Warehouse Tester",    "Warehouse MANAGER rung — reviews and corrects what the store recorded"),
+    ("whm.tester",   "warehouse_manager",     "Warehouse Mgr Tester","Second Warehouse Manager — needed when wh.tester raised the request"),
     ("buyer.tester", "purchasing_manager",    "Purchasing Tester",   "PRICING GATE: enters the commercial value, runs sourcing"),
     ("pd.tester",    "plant_director",        "Plant Director",      "Joins above 10,000 — production and maintenance spend"),
     ("scd.tester",   "supply_chain_director", "Supply Chain Dir",    "Joins above 10,000 — inventory replenishment"),
@@ -53,7 +57,7 @@ CAST = [
     # --- Maintenance: ticket -> spares -> work order -------------------------
     ("tech.tester",  "maintenance_technician","Technician Tester",   "Raises tickets, diagnoses, requests spare parts"),
     ("mm.tester",    "maintenance_manager",   "Maintenance Manager", "Assigns tickets, approves spares, closes work orders"),
-    ("store.tester", "storekeeper",           "Storekeeper Tester",  "Issues spare parts, receives goods against a PO"),
+    ("store.tester", "storekeeper",           "Storekeeper Tester",  "STORE rung — records stock on hand, issues parts, receives against a PO"),
 ]
 
 

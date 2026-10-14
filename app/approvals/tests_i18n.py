@@ -324,30 +324,31 @@ with app.app_context():
        and row["body"] == C.DOC_SECTIONS["budget_gate"]
        and row["body_tr"] == T.DOC_TR["budget_gate"])
     s0 = dict(conn.execute("SELECT explanation, explanation_ar FROM proc_stage_meta "
-                           "WHERE stage='finance'").fetchone())
+                           "WHERE stage='scd'").fetchone())
     r = client.post("/procurement/workflow/stage",
-                    data={"_csrf": "tok", "stage": "finance", "roles": "finance_manager",
+                    data={"_csrf": "tok", "stage": "scd", "roles": "supply_chain_director",
                           "explanation": s0["explanation"],
                           "explanation_ar": s0["explanation_ar"],
-                          "explanation_tr": "Finans aşaması — yöneticinin metni."})
+                          "explanation_tr": "Tedarik zinciri aşaması — yöneticinin metni."})
     ok("POST /procurement/workflow/stage [tr only] -> 302 (raw)", r.status_code == 302)
     row = dict(conn.execute("SELECT role, explanation, explanation_ar, explanation_tr "
-                            "FROM proc_stage_meta WHERE stage='finance'").fetchone())
+                            "FROM proc_stage_meta WHERE stage='scd'").fetchone())
     ok("the route saved Turkish, kept EN + AR, and still applied the role override",
-       row["explanation_tr"] == "Finans aşaması — yöneticinin metni."
-       and row["explanation"] == C.STAGE_EXPLAIN["finance"]
-       and row["explanation_ar"] == T.STAGE_AR["finance"]
-       and row["role"] == "finance_manager")
+       row["explanation_tr"] == "Tedarik zinciri aşaması — yöneticinin metni."
+       and row["explanation"] == C.STAGE_EXPLAIN["scd"]
+       and row["explanation_ar"] == T.STAGE_AR["scd"]
+       and row["role"] == "supply_chain_director")
     r = client.post("/procurement/workflow/stage",
-                    data={"_csrf": "tok", "stage": "finance", "reset": "explanation"})
+                    data={"_csrf": "tok", "stage": "scd", "reset": "explanation"})
     row = dict(conn.execute("SELECT explanation, explanation_ar, explanation_tr "
-                            "FROM proc_stage_meta WHERE stage='finance'").fetchone())
+                            "FROM proc_stage_meta WHERE stage='scd'").fetchone())
     # Picked by stage key, not by ladder position: index 3 was 'finance' on the
-    # six-rung paper ladder and is 'scd' on the DOAM one.
+    # six-rung paper ladder and is 'scd' on the DOAM one — and Finance left the
+    # ladder altogether on 2026-10-13.
     _st = {s["stage"]: s for s in svc.workflow_view("Production", "tr")["stages"]}
     ok("reset clears all three languages so the code defaults apply again",
        r.status_code == 302 and not any(row.values())
-       and _st["finance"]["explanation"] == T.STAGE_TR["finance"])
+       and _st["scd"]["explanation"] == T.STAGE_TR["scd"])
 
     print("\n--- 10. nothing else moved ------------------------------------")
     ok("workflow_view still reports the whole ladder / 6 gates / 9 statuses / 4 knobs",

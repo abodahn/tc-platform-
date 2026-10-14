@@ -44,7 +44,7 @@
           <th data-i18n="proc.include">Include</th>
           <th data-i18n="proc.approver">Approver</th>
           <th data-i18n="proc.threshold">Applies when total ≥ (EGP)</th>
-          <th data-i18n="proc.default">Default</th>
+          <th data-i18n="proc.company_amount">Company amount</th>
         </tr></thead>
         <tbody>
         {% for stage in ladder %}
@@ -59,6 +59,14 @@
         </tbody>
       </table>
       <div class="muted mt-2" style="font-size:12px" data-i18n="proc.resp_note">The requester always signs by submitting. Tick the approvers this department needs and set the amount each one applies from (0 = always). Clearing every tick makes this department fall back to the default rules.</div>
+      {#- Findability: the COMPANY amount for each approval is a governance knob,
+          and an admin who comes looking for "the value for each approval" lands
+          here first. One line, so they do not have to guess which screen. -#}
+      <div class="muted mt-1" style="font-size:12px">
+        <span data-i18n="proc.company_amount_note">A department may demand a signature EARLIER than the company amount, never later. The company amount for each approval is set here:</span>
+        <a href="{{ url_for('approvals.workflow') }}#approval-amounts"
+           data-i18n="pwf.thresholds_hd">The amount each approval joins at</a>.
+      </div>
       <div class="flex gap mt-3">
         <button class="btn btn-primary" type="submit" data-i18n="proc.save_matrix">Save responsibility matrix</button>
       </div>

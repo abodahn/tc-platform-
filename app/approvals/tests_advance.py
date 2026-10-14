@@ -8,11 +8,17 @@ The point of these checks is that the rule blocks MONEY, not just that it is
 written down: every case goes through add_payment(), which is what the payment
 form and the API both call.
 """
+import sys
+from pathlib import Path
 import os
 import tempfile
 
 
 def _app():
+    # Run as a script, sys.path[0] is this directory, not the repo root — so
+    # `import config` raised before a single check ran.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    os.environ.setdefault("TC_ENV", "development")
     import config
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "advance.db")
     os.environ.pop("DATABASE_URL", None)
@@ -27,7 +33,11 @@ def run():
         from app.approvals import services as svc, constants as C
 
         # --- the rule itself, at the edges the document names -----------------
-        assert C.advance_rule(100000, 25.0)["stages"] == ["finance"]
+        # DOAM §4.3 gave the sub-ceiling advance to the Financial Director.
+        # Finance was removed from authority by instruction (2026-10-13) and the
+        # control passed UP to the CFO rather than being dropped — an advance of
+        # a quarter of the order value is not a thing nobody authorises.
+        assert C.advance_rule(100000, 25.0)["stages"] == ["cfo"]
         assert C.advance_rule(100000, 25.1)["stages"] == ["cfo", "ceo"]
         assert C.advance_rule(600000, 25.1)["guarantee"] is True
         assert C.advance_rule(600000, 25.0)["guarantee"] is False, \
@@ -59,16 +69,20 @@ def run():
         ok, msg = svc.add_payment(pr_id, {"amount": 10000}, fin)
         assert not ok and msg == "advance_not_authorised", (ok, msg)
 
-        # 2. The Financial Director may authorise up to 25%.
-        ok, msg = svc.authorize_advance(pr_id, 20, "", fin)
-        assert ok, "FIN-D refused at 20%%: %s" % msg
+        # 2. The sub-ceiling advance. DOAM §4.3 gave this to the Financial
+        #    Director; Finance was removed from authority by instruction
+        #    (2026-10-13) and the control passed UP to the CFO rather than being
+        #    dropped. The SHAPE of the rule is what this walk defends and it is
+        #    unchanged: one authority up to the ceiling, a higher one beyond it.
+        ok, msg = svc.authorize_advance(pr_id, 20, "", cfo)
+        assert ok, "the CFO was refused at 20%%: %s" % msg
         ok, msg = svc.add_payment(pr_id, {"amount": 20000}, fin)
         assert ok, "an authorised 20%% advance was blocked: %s" % msg
 
-        # 3. ...but not beyond it.
-        ok, msg = svc.authorize_advance(pr_id, 40, "", fin)
+        # 3. ...and Finance cannot authorise an advance at all any more.
+        ok, msg = svc.authorize_advance(pr_id, 20, "", fin)
         assert not ok and msg == "not_authorised", \
-            "the Financial Director authorised 40%%: %s" % msg
+            "Finance still authorised an advance after removal: %s" % msg
         ok, msg = svc.authorize_advance(pr_id, 40, "", cfo)
         assert ok, "the CFO could not authorise 40%%: %s" % msg
 
