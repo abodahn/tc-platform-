@@ -699,9 +699,17 @@ def seed_governance(conn):
     # a non-empty table means the seed has run and no owner edit is restored.
     # Guarded + rollback: a failed statement aborts the whole PostgreSQL
     # transaction, which would take the rest of the seed down with it.
+    # Seeded per ROLE, not per table: a role added to DEFAULT_ESCALATION after a
+    # database was first seeded must still reach it (plant_director and
+    # supply_chain_director did not, so a director's own request had nobody
+    # above it). Only roles with NO row are written — an owner's edit, including
+    # a deliberately blank superior, is a row and is never touched. Still one
+    # SELECT per boot, as before.
     try:
-        if not conn.execute("SELECT 1 FROM proc_escalations LIMIT 1").fetchone():
-            for role, superior in DEFAULT_ESCALATION.items():
+        have = {r["role_key"] for r in conn.execute(
+            "SELECT role_key FROM proc_escalations").fetchall()}
+        for role, superior in DEFAULT_ESCALATION.items():
+            if role not in have:
                 conn.execute("INSERT OR IGNORE INTO proc_escalations "
                              "(role_key, superior_role) VALUES (?,?)", (role, superior))
                 n += 1

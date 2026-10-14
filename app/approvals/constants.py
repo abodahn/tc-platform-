@@ -857,6 +857,11 @@ DEFAULT_ESCALATION = {
     "storekeeper": "warehouse_manager",
     "warehouse_manager": "factory_manager",
     "factory_manager": "ceo",
+    # The two L2 directors report to the CEO, like the factory manager. Without
+    # these rows a director who raises a request is the only eligible signer of
+    # their own rung and "nobody above" — the request waits forever.
+    "plant_director": "ceo",
+    "supply_chain_director": "ceo",
     "purchasing_manager": "cfo",
     "finance_user": "finance_manager",
     "finance_manager": "cfo",
@@ -886,8 +891,12 @@ PROC_ROLE_PERMS = {
     "purchasing_manager": ["proc_view", "proc_create", "proc_approve", "proc_purchasing",
                            "proc_catalogue"],
     "finance_manager": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
-    "cfo": ["proc_view", "proc_approve", "proc_pay"],
-    "ceo": ["proc_view", "proc_approve"],
+    # Every approver may also RAISE a request (asked for 2026-10-14: "anyone can
+    # be a requester"). That costs no control: DOAM §3.4 self-approval is
+    # absolute, so their own rung goes one level up the escalation chain below
+    # rather than to them.
+    "cfo": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
+    "ceo": ["proc_view", "proc_create", "proc_approve"],
     # proc_catalogue is the item master. The store is the only function that
     # handles the physical item every day, so it is the only one that notices the
     # unit is wrong or the name describes a part that has not been stocked for two
@@ -900,20 +909,20 @@ PROC_ROLE_PERMS = {
     # is not in it. A role that lives only as a database row is therefore absent
     # from the registry in every environment where that one write did not land —
     # which is how a 60,000 EGP request reached the 'scd' rung with no eligible
-    # signer and no error. Same grants as cfo/ceo: they approve, they do not buy.
-    "supply_chain_director": ["proc_view", "proc_approve"],
-    "plant_director": ["proc_view", "proc_approve"],
+    # signer and no error. Same grants as cfo/ceo: approve, and raise their own.
+    "supply_chain_director": ["proc_view", "proc_create", "proc_approve"],
+    "plant_director": ["proc_view", "proc_create", "proc_approve"],
     # DOAM §7.3.4 "FIND owns payment", and Table 4 L2 "FIN-D owns payment
     # control". Releasing payment was gated on proc_purchasing, so the buyer who
     # committed the spend could also pay it and Finance could not — the exact
     # separation the clause exists to create, inverted. proc_pay moves it.
-    "financial_director": ["proc_view", "proc_approve", "proc_pay"],
-    "managing_director": ["proc_view", "proc_approve"],
-    "board": ["proc_view", "proc_approve"],
+    "financial_director": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
+    "managing_director": ["proc_view", "proc_create", "proc_approve"],
+    "board": ["proc_view", "proc_create", "proc_approve"],
     # grants for roles that already exist on the platform:
     "storekeeper": ["proc_view", "proc_create", "proc_approve", "proc_catalogue"],
     "factory_manager": ["proc_view", "proc_create", "proc_approve"],
-    "finance_user": ["proc_view", "proc_approve"],
+    "finance_user": ["proc_view", "proc_create", "proc_approve"],
     "production_manager": ["proc_view", "proc_create"],
     "production_supervisor": ["proc_view", "proc_create"],
     "maintenance_manager": ["proc_view", "proc_create"],
@@ -1668,13 +1677,14 @@ ROLE_EXPLAIN = {
         "Accountable for production and maintenance commitments. Signs the Factory "
         "Manager stage: when a request is positively identified as a plant commitment "
         "this director carries that level and the Supply Chain Director stage is dropped. "
-        "Holds view and approve only — it does not raise requests, price them, buy or pay."),
+        "May also raise requests of its own — those go to the CEO, never back to this "
+        "role. Does not price, buy or pay."),
     "supply_chain_director": (
         "Accountable for operational and inventory replenishment. The only role mapped to "
         "the Supply Chain Director stage: when a request is positively identified as a "
         "replenishment this director carries that level and the Factory Manager stage is "
-        "dropped. Holds view and approve only — it does not raise requests, price them, "
-        "buy or pay."),
+        "dropped. May also raise requests of its own — those go to the CEO, never back "
+        "to this role. Does not price, buy or pay."),
     "purchasing_manager": (
         "Runs procurement. Prices requests, sets FX rates, collects and compares vendor "
         "quotes, records single-source justifications, signs the Purchasing stage and "

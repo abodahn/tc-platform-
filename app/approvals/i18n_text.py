@@ -172,13 +172,13 @@ ROLE_AR = {
     "plant_director": (
         "مسؤول عن الالتزامات الإنتاجية والخاصة بالصيانة. يوقّع على مرحلة مدير "
         "المصنع: إذا تبيّن بوضوح أن الطلب التزام من هذا النوع، فإن هذا المدير "
-        "يحمل ذلك المستوى وتُسقَط مرحلة مدير سلسلة الإمداد. يملك الاطلاع والاعتماد فقط — "
-        "لا ينشئ الطلبات ولا يُسعّرها ولا يشتري ولا يدفع."),
+        "يحمل ذلك المستوى وتُسقَط مرحلة مدير سلسلة الإمداد. ويمكنه أيضًا إنشاء طلباته "
+        "الخاصة — وتذهب هذه إلى الرئيس التنفيذي، ولا تعود إليه أبدًا. لا يُسعّر ولا يشتري ولا يدفع."),
     "supply_chain_director": (
         "مسؤول عن التشغيل وإعادة تدبير المخزون. الدور الوحيد المرتبط بمرحلة مدير "
         "سلسلة الإمداد: إذا تبيّن بوضوح أن الطلب إعادة تدبير للمخزون، فإن هذا "
-        "المدير يحمل ذلك المستوى وتُسقَط مرحلة مدير المصنع. يملك الاطلاع والاعتماد "
-        "فقط — لا ينشئ الطلبات ولا يُسعّرها ولا يشتري ولا يدفع."),
+        "المدير يحمل ذلك المستوى وتُسقَط مرحلة مدير المصنع. ويمكنه أيضًا إنشاء "
+        "طلباته الخاصة — وتذهب هذه إلى الرئيس التنفيذي، ولا تعود إليه أبدًا. لا يُسعّر ولا يشتري ولا يدفع."),
     "purchasing_manager": (
         "يدير المشتريات. يُسعّر الطلبات، ويحدّد أسعار الصرف (FX)، ويجمع عروض "
         "أسعار المورّدين ويقارنها، ويسجّل مبرّرات الشراء من مصدر واحد، ويوقّع على "
@@ -230,14 +230,14 @@ ROLE_TR = {
         "imzalar: bir talep açıkça üretim veya bakım taahhüdü olarak "
         "belirlendiğinde bu "
         "kademeyi bu direktör taşır ve Tedarik Zinciri Direktörü aşaması düşer. "
-        "Yalnızca görüntüleme ve onay yetkisi vardır — talep açmaz, "
-        "fiyatlandırmaz, satın almaz, ödeme yapmaz."),
+        "Kendi taleplerini de açabilir — bunlar CEO'ya gider, asla bu role geri "
+        "dönmez. Fiyatlandırmaz, satın almaz, ödeme yapmaz."),
     "supply_chain_director": (
         "Operasyonel ve stok ikmalinden sorumludur. Tedarik Zinciri Direktörü "
         "aşamasına bağlı tek roldür: bir talep açıkça stok ikmali olarak "
         "belirlendiğinde bu kademeyi bu direktör taşır ve Fabrika Müdürü aşaması "
-        "düşer. Yalnızca görüntüleme ve onay yetkisi vardır — talep açmaz, "
-        "fiyatlandırmaz, satın almaz, ödeme yapmaz."),
+        "düşer. Kendi taleplerini de açabilir — bunlar CEO'ya gider, asla bu role "
+        "geri dönmez. Fiyatlandırmaz, satın almaz, ödeme yapmaz."),
     "purchasing_manager": (
         "Satın almayı yürütür. Talepleri fiyatlandırır, FX kurlarını belirler, "
         "tedarikçi tekliflerini toplayıp karşılaştırır, tek kaynak gerekçelerini "
