@@ -4135,5 +4135,11 @@
   "pwf.thresholds_hd": "Her onayın katıldığı tutar",
   "pwf.thresholds_note": "Her basamak ve her harcama türü için bir satır. 0, basamağın her talebi her tutarda imzaladığı anlamına gelir. Bunlar şirket eşikleridir; bir departman “Eşikler ve departmanlar” altında imzayı DAHA ERKEN isteyebilir, daha sonra asla.",
   "proc.company_amount": "Şirket tutarı",
-  "proc.company_amount_note": "Bir departman imzayı şirket tutarından DAHA ERKEN isteyebilir, daha sonra asla. Her onay için şirket tutarı buradan belirlenir:"
+  "proc.company_amount_note": "Bir departman imzayı şirket tutarından DAHA ERKEN isteyebilir, daha sonra asla. Her onay için şirket tutarı buradan belirlenir:",
+  "admin.test_cast": "Test hesaplarını oluştur",
+  "admin.test_cast_hint": "Satın alma döngüsünü baştan sona denemek için her onay adımına bir hesap. Yönetim Kurulu, CFO ve Genel Müdür de dahildir; bu yüzden güçlü bir parola seçin ve test bitince bu hesapları devre dışı bırakın. Zaten var olan hesaplara hiç dokunulmaz.",
+  "admin.password_again": "Parola (tekrar)",
+  "test_cast_done": "Test hesapları oluşturuldu. Zaten var olanlara dokunulmadı.",
+  "test_cast_none": "Tüm test hesapları zaten var — hiçbir şey değişmedi.",
+  "test_cast_mismatch": "İki parola eşleşmiyor."
 }

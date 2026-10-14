@@ -75,6 +75,34 @@
       </div>
     </form>
   </div>
+
+  {#- The whole purchase-cycle test cast in one click. Collapsed: it is used
+      once per environment, and the users list is what this tab is for. -#}
+  <details class="panel" style="margin-bottom:18px">
+    <summary class="panel-head" style="cursor:pointer">
+      <h3 style="display:inline" data-i18n="admin.test_cast">Create test accounts</h3>
+      <span class="muted" style="font-weight:400"> &middot;
+        {{ test_cast|selectattr('exists')|list|length }} / {{ test_cast|length }}</span>
+    </summary>
+    <div class="panel-pad">
+      <p class="muted" style="font-size:12.5px;max-width:78ch;margin-top:0" data-i18n="admin.test_cast_hint">One account per approval step, so the purchase cycle can be walked end to end. It includes the Board, the CFO and the Managing Director, so choose a strong password and deactivate these accounts when testing is done. Accounts that already exist are left exactly as they are.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 14px">
+        {% for t in test_cast %}
+        <span class="tag {{ 'ok' if t.exists }}" title="{{ t.role }}"><code>{{ t.username }}</code> &middot; {{ t.role }}{% if t.exists %} &check;{% endif %}</span>
+        {% endfor %}
+      </div>
+      <form method="post" action="{{ url_for('admin.create_test_cast') }}">
+        <div class="grid cols-3">
+          <div class="field"><label data-i18n="admin.password">Password</label>
+            <input name="password" type="password" autocomplete="new-password" required minlength="8"></div>
+          <div class="field"><label data-i18n="admin.password_again">Password again</label>
+            <input name="password2" type="password" autocomplete="new-password" required minlength="8"></div>
+          <div class="field" style="display:flex;align-items:flex-end">
+            <button class="btn btn-primary btn-block" type="submit" data-i18n="admin.test_cast">Create test accounts</button></div>
+        </div>
+      </form>
+    </div>
+  </details>
   {% endif %}
 
   <div class="panel">

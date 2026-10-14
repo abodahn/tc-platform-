@@ -4135,5 +4135,11 @@
   "pwf.thresholds_hd": "The amount each approval joins at",
   "pwf.thresholds_note": "One row per rung, per expenditure type. 0 means the rung signs every request at any value. These are the company thresholds; a department may still demand a signature EARLIER under “Thresholds & departments”, never later.",
   "proc.company_amount": "Company amount",
-  "proc.company_amount_note": "A department may demand a signature EARLIER than the company amount, never later. The company amount for each approval is set here:"
+  "proc.company_amount_note": "A department may demand a signature EARLIER than the company amount, never later. The company amount for each approval is set here:",
+  "admin.test_cast": "Create test accounts",
+  "admin.test_cast_hint": "One account per approval step, so the purchase cycle can be walked end to end. It includes the Board, the CFO and the Managing Director, so choose a strong password and deactivate these accounts when testing is done. Accounts that already exist are left exactly as they are.",
+  "admin.password_again": "Password again",
+  "test_cast_done": "Test accounts created. Any that already existed were left untouched.",
+  "test_cast_none": "Every test account already exists — nothing was changed.",
+  "test_cast_mismatch": "The two passwords do not match."
 }

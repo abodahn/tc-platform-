@@ -23,42 +23,16 @@ import os
 import sys
 import secrets
 import string
-from datetime import datetime, timezone
 
 # Make the app importable when run from the repo root or the scripts/ folder.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from werkzeug.security import generate_password_hash  # noqa: E402
 from app import create_app  # noqa: E402
 from app.db import get_db  # noqa: E402
 
-# username, role, full name, what they do in the cycle.
-# Thresholds below are the DOAM §4.1 OPEX ladder now in force — NOT the older
-# 10k/25k/100k figures this cast was first written against, which would send you
-# looking for a CFO signature on a request that no longer needs one.
-CAST = [
-    # --- Procurement: DOAM §4.1 / §4.2 ladder, in signing order ---------------
-    ("req.tester",   "normal_user",           "Requester Tester",    "Raises a request. Cannot see or enter any price"),
-    # Two warehouse rungs now, not one. The store rung is the STOREKEEPER's and
-    # the review rung above it is the MANAGER's, so one account can no longer
-    # walk both — which is the entire point of splitting them.
-    ("wh.tester",    "warehouse_manager",     "Warehouse Tester",    "Warehouse MANAGER rung — reviews and corrects what the store recorded"),
-    ("whm.tester",   "warehouse_manager",     "Warehouse Mgr Tester","Second Warehouse Manager — needed when wh.tester raised the request"),
-    ("buyer.tester", "purchasing_manager",    "Purchasing Tester",   "PRICING GATE: enters the commercial value, runs sourcing"),
-    ("pd.tester",    "plant_director",        "Plant Director",      "Joins above 10,000 — production and maintenance spend"),
-    ("scd.tester",   "supply_chain_director", "Supply Chain Dir",    "Joins above 10,000 — inventory replenishment"),
-    ("fin.tester",   "financial_director",    "Financial Director",  "Joins above 200,000. ALSO RELEASES PAYMENT (DOAM 7.3.4)"),
-    ("cfo.tester",   "cfo",                   "CFO Tester",          "Joins above 500,000. Authorises advances over 25%"),
-    ("md.tester",    "managing_director",     "Managing Director",   "Joins above 2,000,000. CAPEX above 250,000"),
-    ("bod.tester",   "board",                 "Board Tester",        "Joins above 5,000,000. CAPEX above 2,000,000"),
-
-    # --- Maintenance: ticket -> spares -> work order -------------------------
-    ("tech.tester",  "maintenance_technician","Technician Tester",   "Raises tickets, diagnoses, requests spare parts"),
-    ("mm.tester",    "maintenance_manager",   "Maintenance Manager", "Assigns tickets, approves spares, closes work orders"),
-    ("store.tester", "storekeeper",           "Storekeeper Tester",  "STORE rung — records stock on hand, issues parts, receives against a PO"),
-]
+from app.test_cast import CAST, seed  # noqa: E402  (one cast, shared with Admin)
 
 
 
@@ -101,47 +75,12 @@ def main():
     password, generated = _password()
     _guard_weak_password_on_production(password)
     app = create_app()
-    created, updated = [], []
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with app.app_context():
         conn = get_db()
-        # Portable probe for the optional account_status column (added by the auth
-        # module). SELECT works on both SQLite and PostgreSQL; a failure means the
-        # column is absent, so roll back to clear any aborted-transaction state.
         try:
-            conn.execute("SELECT account_status FROM users LIMIT 1").fetchone()
-            has_status = True
-        except Exception:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            has_status = False
-        try:
-            for username, role, full_name, _desc in CAST:
-                row = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
-                pwhash = generate_password_hash(password)
-                if row:
-                    if has_status:
-                        conn.execute("UPDATE users SET role=?, is_active=1, account_status='active', "
-                                     "password_hash=? WHERE username=?", (role, pwhash, username))
-                    else:
-                        conn.execute("UPDATE users SET role=?, is_active=1, password_hash=? "
-                                     "WHERE username=?", (role, pwhash, username))
-                    updated.append(username)
-                else:
-                    if has_status:
-                        conn.execute(
-                            "INSERT INTO users (username,password_hash,full_name,email,role,is_active,"
-                            "account_status,created_at) VALUES (?,?,?,?,?,1,'active',?)",
-                            (username, pwhash, full_name, username + "@tcgarments.com", role, now))
-                    else:
-                        conn.execute(
-                            "INSERT INTO users (username,password_hash,full_name,email,role,is_active,"
-                            "created_at) VALUES (?,?,?,?,?,1,?)",
-                            (username, pwhash, full_name, username + "@tcgarments.com", role, now))
-                    created.append(username)
-            conn.commit()
+            # reset_existing=True: this script's documented behaviour — re-apply
+            # each role, reactivate, and set the password on every cast account.
+            created, updated, _skipped = seed(conn, password, reset_existing=True)
         finally:
             conn.close()
 

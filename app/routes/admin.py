@@ -53,10 +53,14 @@ def index():
             "is_builtin": key in BUILTIN_ROLE_KEYS,
             "users": user_by_role.get(key, 0),
         })
+    from app.test_cast import CAST
+    have = {u["username"] for u in users}
+    test_cast = [{"username": u, "role": (eff.get(r) or {}).get("label") or r,
+                  "exists": u in have} for u, r, _fn, _d in CAST]
     return render_template("admin.html", users=users, systems=systems, audit=audit,
                            roles=all_role_choices(), counts=counts, active="admin",
                            roles_list=roles_list, perm_groups=permission_catalogue(),
-                           audit_actions=audit_actions)
+                           audit_actions=audit_actions, test_cast=test_cast)
 
 
 # ==========================================================================
@@ -281,6 +285,39 @@ def add_user():
             flash("user_added", "success")
     finally:
         conn.close()
+    return redirect(url_for("admin.index") + "#users")
+
+
+@bp.route("/users/test-cast", methods=["POST"])
+@permission_required("manage_users")
+def create_test_cast():
+    """Create the whole test cast (app/test_cast.py) in one go.
+
+    Same permission as Add user, which can already create every one of these
+    roles one form at a time — so this adds no authority, it only saves
+    thirteen forms. Existing accounts are never touched, the password must pass
+    the same policy as any other account, and it is typed twice because a typo
+    here would lock thirteen accounts at once."""
+    from app.test_cast import seed
+    f = request.form
+    password = f.get("password") or ""
+    if password != (f.get("password2") or ""):
+        flash("test_cast_mismatch", "error")
+        return redirect(url_for("admin.index") + "#users")
+    ok, msg = validate_password(password)
+    if not ok:
+        flash(msg, "error")
+        return redirect(url_for("admin.index") + "#users")
+    conn = get_db()
+    try:
+        created, _updated, skipped = seed(conn, password)
+    finally:
+        conn.close()
+    log_audit(current_user()["username"], "test_cast_create",
+              "Created %d test account(s): %s. Left %d existing untouched."
+              % (len(created), ", ".join(created) or "none", len(skipped)),
+              request.remote_addr or "")
+    flash("test_cast_done" if created else "test_cast_none", "success")
     return redirect(url_for("admin.index") + "#users")
 
 
