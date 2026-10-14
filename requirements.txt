@@ -18,6 +18,10 @@ reportlab>=4.0,<5        # PR/PO/GRN PDFs. Verified: with no upper bound pip res
                          # to reportlab 5.0.0 while every environment here runs 4.2.5. The
                          # build would have succeeded and PDF generation could then fail at
                          # runtime — on a paid build, on production.
+arabic-reshaper==3.0.0   # Arabic on PDFs: joins letters into their connected forms.
+python-bidi==0.4.2       # ...and puts them right-to-left. Both pure-python. Without
+                         # them app/approvals/arabic_pdf.py still draws, but every
+                         # Arabic word comes out as separate letters in reverse order.
 
 # --- Production WSGI servers ---
 waitress==3.0.0          # local Windows production (serve.py)
