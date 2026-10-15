@@ -129,7 +129,10 @@ STAGE_LABELS = {
     "scd": "Supply Chain Director",
     "finance": "Financial Director",
     "cfo": "CFO",
-    "ceo": "Managing Director",
+    # "CEO", as every screen already says (i18n proc stage labels). The DOAM
+    # calls this level MD; at T&C the person who signs it is the CEO, and the
+    # PDF saying one thing while the screen says another confused the reader.
+    "ceo": "CEO",
     "bod": "Board of Directors",
 }
 
