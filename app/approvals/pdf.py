@@ -119,6 +119,16 @@ def _clip(c, s, font, size, max_w):
     return s + "…"
 
 
+def _fit(text, font, size, max_w, floor):
+    """(size, text) that fits max_w: shrink down to `floor` first, and only then
+    clip. For values where a cut-off string is a wrong string."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    text = str(text or "")
+    while size > floor and stringWidth(text, font, size) > max_w:
+        size -= 0.2
+    return size, _clip(None, text, font, size, max_w)
+
+
 def _wrap_lines(c, text, font, size, max_w, max_lines=2):
     """Word-wrap text to at most max_lines that each fit max_w points; the last
     line is ellipsised if content is dropped."""
@@ -147,15 +157,47 @@ def _wrap_lines(c, text, font, size, max_w, max_lines=2):
 # --------------------------------------------------------------------------
 # shared chrome
 # --------------------------------------------------------------------------
-def _draw_header(c, w, h, cm, title, doc_no, sub, form_code=None):
+# Status chip colours: the state of the request is the one thing a reader of a
+# filed PR needs at a glance, so it is the one place colour is spent besides the
+# brand rule. (fill, text) pairs; text clears 4.5:1 on its own fill.
+_STATUS_TONE = {
+    "pending": ((1.00, 0.95, 0.84), (0.50, 0.32, 0.00)),
+    "draft": ((0.93, 0.93, 0.95), (0.30, 0.30, 0.35)),
+    "rejected": ((0.99, 0.90, 0.90), (0.66, 0.06, 0.10)),
+    "cancelled": ((0.99, 0.90, 0.90), (0.66, 0.06, 0.10)),
+}
+_STATUS_OK = ((0.88, 0.96, 0.90), (0.06, 0.40, 0.20))     # approved and onward
+
+
+def _status_chip(c, x_right, y, status, cm):
+    """Right-aligned rounded chip carrying the request status."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    key = str(status or "").lower()
+    fill, ink = _STATUS_TONE.get(key, _STATUS_OK)
+    label = C.status_label(key).upper() if key else "—"
+    tw = stringWidth(label, "Helvetica-Bold", 8)
+    cw, ch = tw + 0.5 * cm, 0.46 * cm
+    c.setFillColorRGB(*fill)
+    c.roundRect(x_right - cw, y, cw, ch, ch / 2, stroke=0, fill=1)
+    c.setFillColorRGB(*ink)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawCentredString(x_right - cw / 2, y + 0.15 * cm, label)
+    c.setFillColorRGB(0, 0, 0)
+    return cw
+
+
+def _draw_header(c, w, h, cm, title, doc_no, sub, form_code=None, compact=False,
+                 status=None):
     """Clean white letterhead: full brand lockup on the left, document title on the
     right, and a red rule beneath. Returns the y to start body content at.
 
     `form_code` is the DOAM Annex controlled-form code (T&C-PUF-nn). Printed small
     under the brand so a filed PDF can be traced to the register entry that sets
     its retention period, which is the whole point of a controlled form."""
-    top = h - 0.55 * cm
-    logo_h = 2.35 * cm
+    # compact: the PR has to fit one page, and the full 2.35 cm lockup was the
+    # single largest block of empty paper on it.
+    top = h - (0.45 if compact else 0.55) * cm
+    logo_h = (1.45 if compact else 2.35) * cm
     logo = _logo()
     if logo:
         try:
@@ -167,26 +209,50 @@ def _draw_header(c, w, h, cm, title, doc_no, sub, form_code=None):
             pass
     # right-aligned title block
     c.setFillColorRGB(0.11, 0.11, 0.13)
-    c.setFont("Helvetica-Bold", 19)
-    c.drawRightString(w - 1.5 * cm, top - 0.8 * cm, title)
-    c.setFont("Helvetica-Bold", 11)
-    c.setFillColorRGB(0.80, 0.06, 0.14)
-    c.drawRightString(w - 1.5 * cm, top - 1.45 * cm, doc_no)
-    c.setFont("Helvetica", 9)
-    c.setFillColorRGB(0.45, 0.45, 0.45)
-    c.drawRightString(w - 1.5 * cm, top - 2.0 * cm, sub)
-    if form_code:
+    if compact:
+        # title and number share one line; the status chip sits under them
+        c.setFont("Helvetica-Bold", 10.5)
+        c.setFillColorRGB(0.80, 0.06, 0.14)
+        c.drawRightString(w - 1.5 * cm, top - 0.55 * cm, doc_no)
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        nw = stringWidth(doc_no, "Helvetica-Bold", 10.5)
+        c.setFillColorRGB(0.11, 0.11, 0.13)
+        c.setFont("Helvetica-Bold", 15)
+        c.drawRightString(w - 1.5 * cm - nw - 0.35 * cm, top - 0.55 * cm, title)
+        chip_w = 0
+        if status is not None:
+            chip_w = _status_chip(c, w - 1.5 * cm, top - 1.25 * cm, status, cm)
+        elif sub:
+            c.setFont("Helvetica", 8.5)
+            c.setFillColorRGB(0.42, 0.42, 0.45)
+            c.drawRightString(w - 1.5 * cm, top - 1.1 * cm, sub)
+    else:
+        c.setFont("Helvetica-Bold", 19)
+        c.drawRightString(w - 1.5 * cm, top - 0.8 * cm, title)
+        c.setFont("Helvetica-Bold", 11)
+        c.setFillColorRGB(0.80, 0.06, 0.14)
+        c.drawRightString(w - 1.5 * cm, top - 1.45 * cm, doc_no)
+        c.setFont("Helvetica", 9)
+        c.setFillColorRGB(0.45, 0.45, 0.45)
+        c.drawRightString(w - 1.5 * cm, top - 2.0 * cm, sub)
+    if form_code and compact:
+        # on the status line, left of the chip, rather than a line of its own
+        c.setFont("Helvetica", 7)
+        c.setFillColorRGB(0.42, 0.42, 0.45)
+        c.drawRightString(w - 1.5 * cm - chip_w - (0.3 * cm if chip_w else 0),
+                          top - 1.1 * cm, form_code)
+    elif form_code:
         c.setFont("Helvetica", 7.5)
         c.setFillColorRGB(0.55, 0.55, 0.55)
         c.drawString(1.5 * cm, top - logo_h - 0.42 * cm, form_code)
     # red separator rule under the header
     ry = top - logo_h - 0.05 * cm
     c.setStrokeColorRGB(0.93, 0.11, 0.14)
-    c.setLineWidth(2.2)
+    c.setLineWidth(1.6 if compact else 2.2)
     c.line(1.5 * cm, ry, w - 1.5 * cm, ry)
     c.setFillColorRGB(0, 0, 0)
     c.setStrokeColorRGB(0, 0, 0)
-    return ry - 0.55 * cm
+    return ry - (0.35 if compact else 0.55) * cm
 
 
 def _footer(c, w, cm, page, notes=None):
@@ -203,28 +269,48 @@ def _footer(c, w, cm, page, notes=None):
     c.setFillColorRGB(0, 0, 0)
 
 
-def _meta_grid(c, w, cm, y, pairs, cols=2, upper=True):
+def _meta_grid(c, w, cm, y, pairs, cols=2, upper=True, row_h=0.62, tail=0):
     """Label/value block inside a light box, `cols` fields across. Returns the new y.
     `upper=False` prints the labels as given — the PR reproduces a customer form
     whose wording (and casing) has to match; PO/GRN/DN keep the house uppercase."""
-    rows = (len(pairs) + cols - 1) // cols
-    box_h = rows * 0.62 * cm + 0.5 * cm
+    # tail: the last `tail` fields share one wide row of their own — the PR's
+    # Request-for (machine serial + model) and Reason (free text) were clipped
+    # mid-word when squeezed into one narrow cell each.
+    tail = min(tail, len(pairs))
+    grid = pairs[:len(pairs) - tail]
+    rows = (len(grid) + cols - 1) // cols + (1 if tail else 0)
+    box_h = rows * row_h * cm + 0.5 * cm
     c.setStrokeColorRGB(0.88, 0.88, 0.9)
     c.setLineWidth(0.6)
     c.roundRect(1.5 * cm, y - box_h, w - 3 * cm, box_h, 4, stroke=1, fill=0)
     colw = (w - 3 * cm) / cols
     yy = y - 0.55 * cm
-    for i, (label, val) in enumerate(pairs):
+    for i, (label, val) in enumerate(grid):
         col = i % cols
         x = 1.7 * cm + col * colw
         c.setFont("Helvetica", 7.5)
-        c.setFillColorRGB(0.5, 0.5, 0.5)
+        c.setFillColorRGB(0.42, 0.42, 0.45)
         c.drawString(x, yy, label.upper() if upper else label)
-        c.setFont("Helvetica-Bold", 9.5)
+        # shrink a long value (a machine serial + model) before cutting it
+        vs, vtxt = _fit(val or "—", "Helvetica-Bold", 9.5, colw - 0.6 * cm, 7.0)
+        c.setFont("Helvetica-Bold", vs)
         c.setFillColorRGB(0.1, 0.1, 0.1)
-        c.drawString(x, yy - 0.33 * cm, _clip(c, val or "—", "Helvetica-Bold", 9.5, colw - 0.6 * cm))
+        c.drawString(x, yy - 0.33 * cm, vtxt)
         if col == cols - 1:
-            yy -= 0.62 * cm
+            yy -= row_h * cm
+    if tail:
+        if len(grid) % cols:
+            yy -= row_h * cm
+        tw = (w - 3 * cm) / tail
+        for k, (label, val) in enumerate(pairs[len(pairs) - tail:]):
+            x = 1.7 * cm + k * tw
+            c.setFont("Helvetica", 7.5)
+            c.setFillColorRGB(0.42, 0.42, 0.45)
+            c.drawString(x, yy, label.upper() if upper else label)
+            vs, vtxt = _fit(val or "—", "Helvetica-Bold", 9.5, tw - 0.6 * cm, 7.0)
+            c.setFont("Helvetica-Bold", vs)
+            c.setFillColorRGB(0.1, 0.1, 0.1)
+            c.drawString(x, yy - 0.33 * cm, vtxt)
     c.setFillColorRGB(0, 0, 0)
     return y - box_h - 0.4 * cm
 
@@ -235,7 +321,8 @@ FILL_IN = object()
 
 
 def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None,
-           max_lines=4, font_size=8.5, pad=None, row_h=None):
+           max_lines=4, font_size=8.5, pad=None, row_h=None,
+           wrap_ink=(0.34, 0.34, 0.38)):
     """Bordered table with variable-height rows. cols = [(width_cm, header, align)].
     wrap_col makes that column a rich cell: pass the cell as (item, description) —
     the item renders bold and the description wraps beneath it (up to max_lines),
@@ -348,7 +435,7 @@ def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None,
                         c.setFillColorRGB(0.1, 0.1, 0.13)
                     else:
                         c.setFont("Helvetica", font_size - 0.3)
-                        c.setFillColorRGB(0.34, 0.34, 0.38)
+                        c.setFillColorRGB(*wrap_ink)
                     c.drawString(xx + pad, ly, txt)
                     ly -= line_h
                 c.setFillColorRGB(0, 0, 0)
@@ -387,7 +474,7 @@ def _table_borders(c, x0, y_bottom, y_top, total_w, widths):
         c.line(xx, y_bottom, xx, y_top)
 
 
-def _totals_block(c, w, cm, y, pr, cur):
+def _totals_block(c, w, cm, y, pr, cur, words_beside=False):
     """Right-aligned Subtotal / VAT / Grand Total box + amount-in-words line."""
     subtotal = 0.0
     try:
@@ -427,11 +514,20 @@ def _totals_block(c, w, cm, y, pr, cur):
     c.drawString(bx + 0.3 * cm, y - bx_h + 0.24 * cm, "GRAND TOTAL")
     c.drawRightString(bx + bx_w - 0.3 * cm, y - bx_h + 0.24 * cm, f"{_fmt(grand)} {cur}")
     c.setFillColorRGB(0, 0, 0)
+    words = "Amount in words: " + _amount_words(grand, pr.get("currency"))
+    if words_beside:
+        # same line as the grand total it spells out, in the space left of it
+        c.setFont("Helvetica-Oblique", 8.5)
+        c.setFillColorRGB(0.3, 0.3, 0.3)
+        c.drawString(1.5 * cm, y - bx_h + 0.24 * cm,
+                     _clip(c, words, "Helvetica-Oblique", 8.5, w - 3.5 * cm - bx_w))
+        c.setFillColorRGB(0, 0, 0)
+        return y - bx_h - 0.45 * cm
     y -= bx_h + 0.5 * cm
     # amount in words
     c.setFont("Helvetica-Oblique", 8.5)
     c.setFillColorRGB(0.3, 0.3, 0.3)
-    c.drawString(1.5 * cm, y, "Amount in words: " + _amount_words(grand, pr.get("currency")))
+    c.drawString(1.5 * cm, y, words)
     c.setFillColorRGB(0, 0, 0)
     return y - 0.7 * cm
 
@@ -499,23 +595,55 @@ def _chosen_lead_time(bundle):
 
 
 def pr_pdf(bundle):
-    """The customer's paper PURCHASE REQUEST form: 21 columns, landscape."""
+    """The customer's paper PURCHASE REQUEST form: 21 columns, landscape, ONE page.
+
+    One page is a requirement, not a preference: the paper form is a single
+    sheet that is signed and filed, and a signature block alone on page 2 is a
+    page that gets separated from the request it authorises. So the body is
+    drawn once on a throwaway canvas tall enough that nothing can break, to
+    measure it, and then drawn for real — at full size when it fits, which is
+    every ordinary request, and scaled down uniformly when it does not. A long
+    request gets smaller type; it never gets a second page."""
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import cm
     from reportlab.pdfgen import canvas
 
-    pr, items, steps = bundle["pr"], bundle["items"], bundle["steps"]
-    buf = io.BytesIO()
     page = landscape(A4)
-    c = _ar.wrap(canvas.Canvas(buf, pagesize=page))
     w, h = page
+    foot = 1.8 * cm                     # footer rule (1.5 cm) + its notes live below this
+
+    tall = 600 * cm
+    probe = _ar.wrap(canvas.Canvas(io.BytesIO(), pagesize=(w, tall)))
+    need = tall - _pr_body(probe, w, tall, cm, bundle)
+    scale = min(1.0, (h - foot) / need) if need > 0 else 1.0
+
+    buf = io.BytesIO()
+    c = _ar.wrap(canvas.Canvas(buf, pagesize=page))
+    c.saveState()
+    if scale < 1.0:
+        # shrink about the top edge and centre horizontally; the body is laid
+        # out on a virtual page h/scale tall so its top lands on the real top
+        c.translate(w * (1 - scale) / 2, 0)
+        c.scale(scale, scale)
+    _pr_body(c, w, h / scale, cm, bundle)
+    c.restoreState()
+    _footer(c, w, cm, 1, _PR_NOTES)
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+def _pr_body(c, w, h, cm, bundle):
+    """Everything on the PR except the footer. Returns the lowest y drawn."""
+    pr, items, steps = bundle["pr"], bundle["items"], bundle["steps"]
     pn = {"page": 1, "notes": _PR_NOTES}
 
     y = _draw_header(c, w, h, cm, "PURCHASE REQUEST", pr.get("pr_no") or "PR",
-                     "STATUS: " + (pr.get("status") or "").upper(),
-                     form_code=C.FORM_CODES["capex"]
+                     "", form_code=C.FORM_CODES["capex"]
                      if (pr.get("expenditure_kind") == "capex")
-                     else C.FORM_CODES["pr"])
+                     else C.FORM_CODES["pr"], compact=True,
+                     status=pr.get("status") or "")
 
     cur = pr.get("currency") or ""
     y = _meta_grid(c, w, cm, y, [
@@ -524,10 +652,11 @@ def pr_pdf(bundle):
          else "Foreign"),
         ("PR S.N", pr.get("pr_no")),
         ("Name of Requestor", pr.get("requester_name") or pr.get("requester")),
-        ("REQUEST FOR", pr.get("request_for")),
         ("Department Name", pr.get("department")),
+    ] + _cost_object_pairs(pr) + [
+        ("REQUEST FOR", pr.get("request_for")),
         ("Reason", pr.get("title")),
-    ] + _cost_object_pairs(pr), cols=3, upper=False)
+    ], cols=5, upper=False, row_h=0.7, tail=2)
 
     # Stock days / Pending qty / ETA used to stay blank here, with the note that
     # nothing in the system knew them. services.attach_item_history() now does:
@@ -561,23 +690,18 @@ def pr_pdf(bundle):
     # VENDOR / PAY. COND. / DEL. COND. wrap: they are the only place those three
     # contract terms appear, and an Incoterm without its named place ("DDP C…")
     # is not a delivery condition.
-    y = _table(c, w, cm, y, _PR_COLS, rows, h, pn, title="Line items",
-               wrap_col=[1, 2, 10, 17, 18], max_lines=4, font_size=6, pad=0.07 * cm)
+    y = _table(c, w, cm, y, _PR_COLS, rows, h, pn, title=None,
+               wrap_col=[1, 2, 10, 17, 18], max_lines=4, font_size=6, pad=0.07 * cm,
+               # a one-line row at 6 pt needs 0.42 cm, not the 0.6 cm sized for
+               # 8.5 pt tables; every row saved is a line printed at full size
+               row_h=0.42 * cm,
+               # item names and vendors ARE the request: ink, not caption grey
+               wrap_ink=(0.13, 0.13, 0.16))
 
-    if y - 3.4 * cm < 2.2 * cm:                      # keep the totals box whole
-        _footer(c, w, cm, pn["page"], _PR_NOTES)
-        c.showPage()
-        pn["page"] += 1
-        y = h - 2.5 * cm
-    y = _totals_block(c, w, cm, y, pr, cur)
+    y = _totals_block(c, w, cm, y, pr, cur, words_beside=True)
 
     # signatures (the paper form's A20:U25 notes/signature block)
-    _signature_grid(c, w, h, cm, y, pr, steps, pn)
-    _footer(c, w, cm, pn["page"], _PR_NOTES)
-    c.showPage()
-    c.save()
-    buf.seek(0)
-    return buf.read()
+    return _signature_grid(c, w, h, cm, y, pr, steps, pn)
 
 
 def _role_names(csv):
@@ -704,96 +828,142 @@ def _authority_lines(steps):
     return out
 
 
+# The Table 5 letter in its chip. APPROVE is the one that commits the company's
+# money, so it alone carries the brand red; the others stay ink.
+_LETTER_FILL = {"A": (0.80, 0.06, 0.14)}
+_INK = (0.11, 0.12, 0.16)
+
+
 def _signature_grid(c, w, h, cm, y, pr, steps, pn):
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(1.5 * cm, y, "Approval signatures (DOAM Table 5: P prepare / "
-                              "R review / A approve / E endorse)")
-    y -= 0.35 * cm
+    """One box per signature, up to eight across a single row.
+
+    Each box is named by the RUNG it signs (Warehouse, Warehouse Manager, ...),
+    not by the signer's role key: two Warehouse Managers sign the two warehouse
+    rungs, and the role alone printed "warehouse_manager" twice, raw, saying
+    nothing about which check each signature was. Returns the lowest y drawn."""
+    from math import ceil
+    c.setFont("Helvetica-Bold", 9)
+    c.setFillColorRGB(*_INK)
+    c.drawString(1.5 * cm, y, "Approval signatures")
+    c.setFont("Helvetica", 7)
+    c.setFillColorRGB(0.42, 0.42, 0.45)
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    c.drawString(1.5 * cm + stringWidth("Approval signatures", "Helvetica-Bold", 9)
+                 + 0.25 * cm, y, "DOAM Table 5:  P prepare · R review · "
+                                 "A approve · E endorse")
+    # Each box prints only its code; the address is printed once, here. Eight
+    # boxes across leaves no room for the full URL, and a URL clipped mid-code is
+    # a signature nobody can verify.
+    c.drawRightString(w - 1.5 * cm, y, "Verify a signature: " + _verify_base()
+                      + "/procurement/verify/<code>")
+    c.setFillColorRGB(0, 0, 0)
+    y -= 0.32 * cm
     # More than one A on the ladder is not a duplicate: the DOAM says so in as
     # many words, and the reader of the paper form is owed the sentence rather
     # than left to guess which of the two signatures was the real one.
     if sum(1 for s in (steps or []) if _step_action(s) == "approve") > 1:
-        c.setFont("Helvetica-Oblique", 7.4)
+        c.setFont("Helvetica-Oblique", 7)
         c.setFillColorRGB(0.3, 0.3, 0.35)
         c.drawString(1.5 * cm, y, _clip(c, JOINT_APPROVAL_NOTE, "Helvetica-Oblique",
-                                        7.4, w - 3 * cm))
-        c.setFillColorRGB(0, 0, 0)
-        y -= 0.32 * cm
-    for line in _esc_lines(steps):
-        c.setFont("Helvetica-Oblique", 7.4)
-        c.setFillColorRGB(0.62, 0.18, 0.08)
-        c.drawString(1.5 * cm, y, _clip(c, line, "Helvetica-Oblique", 7.4, w - 3 * cm))
+                                        7, w - 3 * cm))
         c.setFillColorRGB(0, 0, 0)
         y -= 0.3 * cm
-    blocks = [{"role": "Requester — PREPARE (P)",
+    for line in _esc_lines(steps):
+        c.setFont("Helvetica-Oblique", 7)
+        c.setFillColorRGB(0.62, 0.18, 0.08)
+        c.drawString(1.5 * cm, y, _clip(c, line, "Helvetica-Oblique", 7, w - 3 * cm))
+        c.setFillColorRGB(0, 0, 0)
+        y -= 0.28 * cm
+
+    blocks = [{"rung": "Requester", "letter": "P",
                "name": pr.get("requester_name") or pr.get("requester"),
                "sig": None, "date": (pr.get("submitted_at") or pr.get("request_date") or "")[:10],
-               "status": "originator"}]
+               "status": "originator", "esc": False}]
     for s in steps:
-        # DOAM Table 5 — the block says WHAT the signature is (Review / Approve /
+        # DOAM Table 5 — the box says WHAT the signature is (Review / Approve /
         # Endorse), not just whose it is. Without it the printed form evidences a
         # signature was collected and nothing about the authority it carried.
-        act = _step_action(s)
-        blocks.append({"role": (s.get("approver_role") or s.get("stage") or "")
-                       + " — " + _ACTION_WORDS[act]
-                       + (" (ESCALATED)" if s.get("esc_from") else ""),
+        blocks.append({"rung": C.stage_label(s.get("stage") or "") or s.get("stage") or "",
+                       "letter": C.STEP_ACTION_CODE[_step_action(s)],
                        "name": s.get("approver_name"), "sig": s.get("sig_png"),
                        "date": (s.get("acted_at") or "")[:10], "status": s.get("status"),
-                       "code": s.get("verify_code")})
+                       "code": s.get("verify_code"), "esc": bool(s.get("esc_from"))})
 
-    per_row, gap = 3, 0.3 * cm
+    rows = ceil(len(blocks) / 8.0)
+    per_row = ceil(len(blocks) / float(rows))
+    gap = 0.18 * cm
     bw = (w - 3 * cm - (per_row - 1) * gap) / per_row
-    bh = 2.5 * cm
+    bh, band = 2.05 * cm, 0.48 * cm
     x0 = 1.5 * cm
+    y -= 0.08 * cm
     for idx, b in enumerate(blocks):
         col = idx % per_row
         if col == 0:
-            y -= bh + 0.3 * cm
-            if y < 2.2 * cm:
-                _footer(c, w, cm, pn["page"], pn.get("notes"))
-                c.showPage()
-                pn["page"] += 1
-                y = h - 2.5 * cm - bh
+            y -= bh + (0.16 * cm if idx else 0)
         x = x0 + col * (bw + gap)
-        # header strip
-        c.setFillColorRGB(0.11, 0.12, 0.16)
-        c.roundRect(x, y + bh - 0.55 * cm, bw, 0.55 * cm, 3, stroke=0, fill=1)
+        # header band: rung name + Table 5 letter chip
+        c.setFillColorRGB(0.94, 0.945, 0.955)
+        c.rect(x, y + bh - band, bw, band, stroke=0, fill=1)
+        chip = 0.34 * cm
+        c.setFillColorRGB(*_LETTER_FILL.get(b["letter"], _INK))
+        c.roundRect(x + bw - chip - 0.1 * cm, y + bh - band + (band - chip) / 2,
+                    chip, chip, 1.5, stroke=0, fill=1)
         c.setFillColorRGB(1, 1, 1)
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(x + 0.2 * cm, y + bh - 0.38 * cm, _clip(c, b["role"], "Helvetica-Bold", 8, bw - 0.4 * cm))
-        # body box
-        c.setStrokeColorRGB(0.82, 0.82, 0.85)
-        c.setLineWidth(0.6)
-        c.rect(x, y, bw, bh - 0.55 * cm, stroke=1, fill=0)
+        c.setFont("Helvetica-Bold", 6.6)
+        c.drawCentredString(x + bw - chip / 2 - 0.1 * cm,
+                            y + bh - band + (band - chip) / 2 + 0.09 * cm, b["letter"])
+        c.setFillColorRGB(*_INK)
+        c.setFont("Helvetica-Bold", 7)
+        label = b["rung"] + (" (escalated)" if b["esc"] else "")
+        ls, label = _fit(label, "Helvetica-Bold", 7, bw - chip - 0.36 * cm, 5.6)
+        c.setFont("Helvetica-Bold", ls)
+        c.drawString(x + 0.14 * cm, y + bh - band + 0.18 * cm, label)
+        # body
+        c.setStrokeColorRGB(0.80, 0.80, 0.83)
+        c.setLineWidth(0.5)
+        c.rect(x, y, bw, bh, stroke=1, fill=0)
         img = _img_reader(b["sig"])
         if img:
             try:
-                c.drawImage(img, x + 0.25 * cm, y + 0.75 * cm, width=bw - 0.5 * cm,
-                            height=1.0 * cm, mask="auto", preserveAspectRatio=True)
+                c.drawImage(img, x + 0.15 * cm, y + 0.62 * cm, width=bw - 0.3 * cm,
+                            height=bh - band - 0.7 * cm, mask="auto",
+                            preserveAspectRatio=True)
             except Exception:
                 pass
+        elif b["status"] == "originator":
+            c.setFont("Helvetica-Oblique", 6.8)
+            c.setFillColorRGB(0.45, 0.45, 0.48)
+            c.drawCentredString(x + bw / 2, y + 1.0 * cm, "signed by submitting")
         elif b["status"] == "pending":
-            c.setFont("Helvetica-Oblique", 8)
-            c.setFillColorRGB(0.65, 0.65, 0.65)
-            c.drawCentredString(x + bw / 2, y + 1.15 * cm, "awaiting signature")
+            c.setFont("Helvetica-Oblique", 6.8)
+            c.setFillColorRGB(0.45, 0.45, 0.48)
+            c.drawCentredString(x + bw / 2, y + 1.0 * cm, "awaiting signature")
         elif b["status"] == "rejected":
-            c.setFont("Helvetica-Bold", 9)
-            c.setFillColorRGB(0.75, 0.07, 0.23)
-            c.drawCentredString(x + bw / 2, y + 1.15 * cm, "REJECTED")
-        # name + date footer line
-        c.setStrokeColorRGB(0.9, 0.9, 0.9)
-        c.line(x + 0.2 * cm, y + 0.6 * cm, x + bw - 0.2 * cm, y + 0.6 * cm)
-        c.setFont("Helvetica", 7.2)
-        c.setFillColorRGB(0.35, 0.35, 0.35)
-        meta = (b["name"] or "—") + (("  ·  " + b["date"]) if b["date"] else "")
-        c.drawString(x + 0.2 * cm, y + 0.28 * cm, _clip(c, meta, "Helvetica", 7.2, bw - 0.4 * cm))
-        # signature-event verification handle (checked at /procurement/verify/<code>)
+            c.setFont("Helvetica-Bold", 8)
+            c.setFillColorRGB(0.70, 0.07, 0.12)
+            c.drawCentredString(x + bw / 2, y + 1.0 * cm, "REJECTED")
+        # name on its own line; date and verification code on the next
+        c.setStrokeColorRGB(0.88, 0.88, 0.90)
+        c.line(x + 0.12 * cm, y + 0.58 * cm, x + bw - 0.12 * cm, y + 0.58 * cm)
+        inner = bw - 0.24 * cm
+        ns, name = _fit(b["name"] or "—", "Helvetica-Bold", 6.6, inner, 5.2)
+        c.setFont("Helvetica-Bold", ns)
+        c.setFillColorRGB(0.18, 0.18, 0.22)
+        c.drawString(x + 0.12 * cm, y + 0.36 * cm, name)
+        c.setFont("Helvetica", 5.8)
+        c.setFillColorRGB(0.38, 0.38, 0.42)
+        if b["date"]:
+            c.drawString(x + 0.12 * cm, y + 0.13 * cm, b["date"])
+        # signature-event verification code (checked at /procurement/verify/<code>);
+        # shrunk, never clipped — a partial code verifies nothing
         if b.get("code"):
-            c.setFont("Helvetica", 5.8)
-            c.setFillColorRGB(0.5, 0.5, 0.55)
-            c.drawString(x + 0.2 * cm, y + 0.08 * cm,
-                         _clip(c, "Verify: " + _verify_base() + "/procurement/verify/" + b["code"],
-                               "Helvetica", 5.8, bw - 0.4 * cm))
+            from reportlab.pdfbase.pdfmetrics import stringWidth
+            room = inner - (stringWidth(b["date"] + "  ", "Helvetica", 5.8) if b["date"] else 0)
+            cs = 5.4
+            while cs > 3.0 and stringWidth(b["code"], "Courier", cs) > room:
+                cs -= 0.2
+            c.setFont("Courier", cs)
+            c.drawRightString(x + bw - 0.12 * cm, y + 0.13 * cm, b["code"])
         c.setFillColorRGB(0, 0, 0)
     return y
 
