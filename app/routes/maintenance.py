@@ -171,7 +171,8 @@ def mhuman(value):
     if value is None:
         return "—"
     v = escape(str(value))
-    return Markup(f'<span data-i18n="mx.{v}">{_humanize(value)}</span>')
+    # the text escaped too: audit values carry names typed by people and sent by TC Terminal
+    return Markup(f'<span data-i18n="mx.{v}">{escape(_humanize(value))}</span>')
 
 
 @bp.app_template_filter("mbadge")
@@ -1626,6 +1627,15 @@ IMPORT_SPECS = {
         "example": ["SN-4D0EH13700", "Electronic & motor service - DUZ MAKINA",
                     "Electronic & motor service", 1, 0, 1],
     },
+    # TC Terminal links (app/maintenance/machine_events.py): Egemen's numbers to
+    # the platform's. A row the link created with an empty local_value is filled
+    # by importing the same key (fill_blank); a value already set is never changed.
+    "ext_map": {
+        "required": ("ext_key",),
+        "table": "mnt_ext_map", "key": "ext_key", "fill_blank": "local_value",
+        "headers": ["ext_key", "ext_name", "local_value", "notes"],
+        "example": ["machine:001", "Line 3 / Machine 001", "SN-4D0EH13700", ""],
+    },
     "pm_plans": {
         "required": ("machine_code", "title"),
         "headers": ["machine_code", "title", "frequency", "interval_days",
@@ -1876,9 +1886,16 @@ def import_run(kind):
                 if not key:
                     errors.append(f"Row {i}: {keycol} is required")
                     continue
-                if conn.execute(f"SELECT 1 FROM {table} WHERE {keycol}=?",
-                                (key,)).fetchone():
-                    skipped += 1
+                found = conn.execute(f"SELECT * FROM {table} WHERE {keycol}=?",
+                                     (key,)).fetchone()
+                if found:
+                    fill = spec.get("fill_blank")
+                    if fill and not str(found[fill] or "").strip() and str(d.get(fill) or "").strip():
+                        conn.execute(f"UPDATE {table} SET {fill}=? WHERE {keycol}=?",
+                                     (str(d[fill]).strip(), key))
+                        added += 1
+                    else:
+                        skipped += 1
                     continue
                 vals, bad = {}, None
                 for c in numcols:

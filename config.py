@@ -159,6 +159,12 @@ class Config:
     AUTO_TICKET_MIN_SEVERITY = (os.getenv("TC_AUTO_TICKET_MIN_SEVERITY", "critical") or "critical").strip().lower()
     AUTO_TICKET_REQUESTER = (os.getenv("TC_AUTO_TICKET_REQUESTER", "platform-automation") or "").strip()
 
+    # --- TC Terminal machine events -> maintenance tickets ---------------
+    # The shared token the LAN bridge sends as X-TC-Token on
+    # POST /api/maintenance/machine-event. Unset = the endpoint is off (503).
+    # Only one instance should take events, or a fault becomes two tickets.
+    MACHINE_EVENT_TOKEN = (os.getenv("TC_MACHINE_EVENT_TOKEN", "") or "").strip()
+
     # --- Single Sign-On (SSO): platform is the Identity Provider -----------
     # One platform login → the platform mints a short-lived signed token when
     # a user opens an integrated system, and that system trusts it and logs the

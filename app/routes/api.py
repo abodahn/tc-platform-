@@ -6,7 +6,10 @@ TC Platform — JSON API.
   GET  /api/status/<key>       live status of one system (auth)
   POST /api/integrations/sync  update integrated-system URLs (admin creds; used
                                by GO_ONLINE.ps1 to push fresh tunnel URLs)
+  POST /api/maintenance/machine-event  one TC Terminal machine event, from the LAN
+                               bridge (X-TC-Token = TC_MACHINE_EVENT_TOKEN)
 """
+import hmac
 import sys
 from flask import Blueprint, jsonify, request, current_app
 from werkzeug.security import check_password_hash
@@ -94,6 +97,26 @@ def health():
         "python": sys.version.split()[0],
         "env": Config.ENV,
     })
+
+
+@bp.route("/maintenance/machine-event", methods=["POST"])
+def machine_event():
+    """A fault, repair or parts event from a TC Terminal: opens and moves its maintenance
+    ticket (app/maintenance/machine_events.py). Authenticated by a shared token header,
+    not a session, so it is CSRF-exempt. Off (503) until TC_MACHINE_EVENT_TOKEN is set."""
+    from app.maintenance import machine_events as mev
+
+    token = Config.MACHINE_EVENT_TOKEN
+    if not token:
+        return jsonify({"ok": False, "error": "disabled"}), 503
+    sent = request.headers.get("X-TC-Token") or ""
+    if not hmac.compare_digest(sent.encode(), token.encode()):
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    event, err = mev.validate(request.get_json(silent=True))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    code, body = mev.handle(event)   # 409 while another copy of the same event is still being applied
+    return jsonify(body), code
 
 
 @bp.route("/integrations/sync", methods=["POST"])

@@ -1118,6 +1118,7 @@
   "m.imp_tab_chk": "بنود قائمة فحص الصيانة",
   "m.imp_tab_loc": "المواقع",
   "m.imp_tab_machines": "إضافة ماكينات · قالب CSV أو Excel",
+  "m.imp_tab_ext": "روابط أجهزة TC Terminal",
   "m.imp_tab_ndl": "تكاليف الإبر",
   "m.imp_tab_pm": "خطط الصيانة الوقائية",
   "m.imp_tab_spares": "إضافة قطع غيار · قالب CSV أو Excel",

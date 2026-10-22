@@ -308,6 +308,27 @@ CREATE TABLE IF NOT EXISTS mnt_attachments (
 CREATE TABLE IF NOT EXISTS mnt_settings (
     key TEXT PRIMARY KEY, value TEXT
 );
+
+-- ===== TC Terminal link (app/maintenance/machine_events.py) =====
+-- Every machine event received: the resend guard (event_uid, claimed before it is applied:
+-- result 'pending:...' until done) and the fault -> ticket link (fault_ref =
+-- tcterm:<machine>:<fault_uid>; opened=1 when this fault opened the ticket rather than
+-- joining one already open) in one table, so mnt_tickets needs no ALTER.
+CREATE TABLE IF NOT EXISTS mnt_machine_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_uid TEXT UNIQUE NOT NULL, fault_ref TEXT, event TEXT, machine_code TEXT,
+    ticket_id INTEGER, opened INTEGER DEFAULT 0,
+    occurred_at TEXT, received_at TEXT, result TEXT, payload TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_mnt_mev_fault ON mnt_machine_events(fault_ref);
+-- Egemen's numbers -> the platform's: machine:<MakineID> -> mnt_machines.code,
+-- person:<PersonelId> -> users.username, fault:<ArizaTipiId> -> an issue category.
+-- An empty local_value is a link still to be made (Import > TC Terminal links).
+CREATE TABLE IF NOT EXISTS mnt_ext_map (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ext_key TEXT UNIQUE NOT NULL, ext_name TEXT, local_value TEXT, notes TEXT,
+    is_active INTEGER DEFAULT 1, created_at TEXT
+);
 """
 
 

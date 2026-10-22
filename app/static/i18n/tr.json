@@ -1118,6 +1118,7 @@
   "m.imp_tab_chk": "Bakım kontrol maddeleri",
   "m.imp_tab_loc": "Konumlar",
   "m.imp_tab_machines": "Makine ekle · CSV veya Excel şablonu",
+  "m.imp_tab_ext": "TC Terminal eşleştirmeleri",
   "m.imp_tab_ndl": "İğne maliyetleri",
   "m.imp_tab_pm": "Önleyici bakım planları",
   "m.imp_tab_spares": "Yedek parça ekle · CSV veya Excel şablonu",

@@ -13,9 +13,11 @@ from flask import session, request, g, abort, redirect, url_for, flash
 _FIELD = "_csrf"
 _HEADER = "X-CSRF-Token"
 _SAFE = {"GET", "HEAD", "OPTIONS", "TRACE"}
-# Endpoints exempt from CSRF (read-only JSON APIs / health probes, and the
-# credential-authenticated integrations sync used by GO_ONLINE.ps1).
-_EXEMPT = {"api.health", "api.status", "api.status_one", "api.integrations_sync"}
+# Endpoints exempt from CSRF (read-only JSON APIs / health probes, the
+# credential-authenticated integrations sync used by GO_ONLINE.ps1, and the
+# token-authenticated TC Terminal machine events).
+_EXEMPT = {"api.health", "api.status", "api.status_one", "api.integrations_sync",
+           "api.machine_event"}
 
 
 def get_token():

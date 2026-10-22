@@ -1118,6 +1118,7 @@
   "m.imp_tab_chk": "PM checklist items",
   "m.imp_tab_loc": "Locations",
   "m.imp_tab_machines": "Add machines · CSV or Excel template",
+  "m.imp_tab_ext": "TC Terminal links",
   "m.imp_tab_ndl": "Needle costs",
   "m.imp_tab_pm": "Preventive maintenance plans",
   "m.imp_tab_spares": "Add spare parts · CSV or Excel template",
