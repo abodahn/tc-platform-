@@ -13,7 +13,7 @@
   <span><span data-i18n="proc.hist_stock_days">Stock days</span>: <b>{{ it.stock_days }}</b></span>
   {% endif %}
   {% if it.pending_qty %}
-  <span><span data-i18n="proc.hist_pending">On order</span>:
+  <span><span data-i18n="proc.hist_pending">Pending quantity</span>:
     <b>{{ '%g'|format(it.pending_qty) }}</b> {{ it.unit }}</span>
   {% endif %}
   {% if it.eta %}
@@ -435,7 +435,7 @@
                          type="number" step="any" min="0" inputmode="decimal"
                          value="{{ '' if it.stock_days is none else '%g'|format(it.stock_days) }}"></div>
                 <div class="field"><label for="whpending_qty_{{ it.id }}"
-                     data-i18n="proc.hist_pending">On order</label>
+                     data-i18n="proc.hist_pending">Pending quantity</label>
                   <input id="whpending_qty_{{ it.id }}" name="whpending_qty_{{ it.id }}"
                          type="number" step="any" min="0" inputmode="decimal"
                          value="{{ '' if it.pending_qty is none else '%g'|format(it.pending_qty) }}"></div>

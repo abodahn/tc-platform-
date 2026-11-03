@@ -4131,6 +4131,10 @@ def cost_object_check(conn, pr_id, pr):
         return False, "so_closed" if state == "closed" else "so_unknown"
     if fc:
         return True, None        # already checked above
+    # Admin switch: with the gate off, a request citing nothing is let through.
+    # A reference that IS typed is still validated above, so junk never prints.
+    if not bool_setting(conn, "cost_object_gate"):
+        return True, None
     texts = [_pr_field(pr, "title"), _pr_field(pr, "request_for")]
     rows = conn.execute(
         "SELECT i.item, i.description, i.spare_id, c.category_name FROM pr_items i "

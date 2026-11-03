@@ -1541,6 +1541,10 @@ WORKFLOW_SETTINGS = {
     "show_forecast_ref": {"kind": "bool", "default": True},
     "show_cost_center": {"kind": "bool", "default": True},
     "show_delivery_condition": {"kind": "bool", "default": True},
+    # DOAM 3.4 sales-order / forecast / cost-centre gate on direct materials.
+    # Default ON; an admin may switch it off when the plant does not yet keep
+    # its sales orders in the system.
+    "cost_object_gate": {"kind": "bool", "default": True},
     # --- approval aging (app/approvals/aging.py) -----------------------------
     # DAYS, not hours. SLA_HOURS_PER_STAGE above is the escalation engine's unit
     # and stays that way; a buyer chasing a signature counts in days, and the

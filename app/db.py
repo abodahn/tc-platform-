@@ -1211,6 +1211,8 @@ def init_db():
             ("terms_accepted_at", "ALTER TABLE users ADD COLUMN terms_accepted_at TEXT"),
             ("privacy_accepted_at", "ALTER TABLE users ADD COLUMN privacy_accepted_at TEXT"),
             ("session_epoch", "ALTER TABLE users ADD COLUMN session_epoch INTEGER DEFAULT 0"),
+            # 1 = must choose a new password before using anything else.
+            ("must_change_password", "ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0"),
         ):
             try:
                 conn.execute(_ddl)

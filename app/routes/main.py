@@ -115,6 +115,29 @@ def _enforce_system_scope():
     return redirect(url_for("main.dashboard"))
 
 
+_PW_CHANGE_OK = {"main.profile", "main.change_password", "main.prefs"}
+
+
+@bp.before_app_request
+def _enforce_password_change():
+    """An account created with a starting password may do nothing until it has
+    chosen its own: every page sends it back to the profile's password form."""
+    user = current_user()
+    try:
+        flagged = user and user["must_change_password"]
+    except (KeyError, IndexError):   # column not migrated yet
+        flagged = False
+    if not flagged:
+        return
+    if (request.endpoint == "static" or request.blueprint == "auth"
+            or request.endpoint in _PW_CHANGE_OK):
+        return
+    if request.method == "GET" and request.accept_mimetypes.accept_html:
+        flash("pw_must_change", "error")
+        return redirect(url_for("main.profile"))
+    return jsonify(error="pw_must_change"), 403
+
+
 @bp.app_context_processor
 def inject_globals():
     user = current_user()
@@ -932,9 +955,14 @@ def change_password():
         if not ok:
             flash(msg, "error")
             return redirect(url_for("main.profile"))
-        conn.execute("UPDATE users SET password_hash=? WHERE id=?",
-                     (generate_password_hash(new), user["id"]))
+        if check_password_hash(row["password_hash"], new):
+            flash("pw_same_as_old", "error")
+            return redirect(url_for("main.profile"))
+        conn.execute("UPDATE users SET password_hash=?, must_change_password=0, "
+                     "last_password_change_at=? WHERE id=?",
+                     (generate_password_hash(new), utcnow(), user["id"]))
         conn.commit()
+        g.pop("user", None)
         log_audit(user["username"], "password_change", "User changed own password",
                   request.remote_addr or "")
         flash("pw_changed", "success")
