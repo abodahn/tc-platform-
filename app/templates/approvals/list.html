@@ -7,10 +7,12 @@
     <h1 data-i18n="proc.all_title">Purchase Requests</h1>
     <div class="sub" data-i18n="proc.all_sub">Every request and where it stands in its approval cycle.</div>
   </div>
+  {% if can('proc_create') %}
   <a class="btn btn-primary" href="{{ url_for('approvals.new') }}">
     <svg class="ico"><use href="#i-report"></use></svg>
     <span data-i18n="proc.new">New Request</span>
   </a>
+  {% endif %}
 </div>
 
 <div class="panel">
