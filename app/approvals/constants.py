@@ -1545,6 +1545,9 @@ WORKFLOW_SETTINGS = {
     # Default ON; an admin may switch it off when the plant does not yet keep
     # its sales orders in the system.
     "cost_object_gate": {"kind": "bool", "default": True},
+    # DOAM 3.4 forbids approving your own request. Default OFF; a plant short of
+    # staff may switch it on TEMPORARILY so a lone signer is not blocked.
+    "allow_self_approval": {"kind": "bool", "default": False},
     # --- approval aging (app/approvals/aging.py) -----------------------------
     # DAYS, not hours. SLA_HOURS_PER_STAGE above is the escalation engine's unit
     # and stays that way; a buyer chasing a signature counts in days, and the

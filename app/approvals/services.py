@@ -2679,7 +2679,9 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         # ...but only for an APPROVAL. The clause governs approving; rejecting
         # your own request is withdrawing it, which is legitimate and harmless.
         # Blocking that too stranded the request with nobody able to close it.
-        if decision == "approve" and pr["requester"] == uname:
+        # The one waiver is the admin's explicit, temporary allow_self_approval switch.
+        if (decision == "approve" and pr["requester"] == uname
+                and not bool_setting(conn, "allow_self_approval")):
             return False, "self_approval"
         if not (_is_admin and bool_setting(conn, "sod_admin_exempt")):
             other = conn.execute(
