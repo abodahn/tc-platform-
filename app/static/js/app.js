@@ -586,6 +586,45 @@
   window.tcT = t;                 // translate a key (for dynamic content)
   window.tcApplyI18n = applyI18n; // re-translate after injecting DOM
 
+  /* ---------------- Confirm before moving a request on ----------------
+     A submit button marked data-advance sends a request to its next stage,
+     which the user cannot step back from on this page — ask once first.
+     Capture phase, registered before the progress bar's listener, so a
+     cancelled confirm never starts the bar. */
+  let advDlg;
+  const tt = (k, f) => { const v = t(k); return v === k ? f : v; };
+  document.addEventListener("submit", (e) => {
+    const btn = e.submitter, form = e.target;
+    if (e.defaultPrevented || !btn || !btn.hasAttribute("data-advance") || btn.dataset.advOk) return;
+    e.preventDefault();
+    if (!advDlg) {
+      advDlg = document.createElement("dialog");
+      advDlg.className = "tc-dialog";
+      advDlg.setAttribute("aria-labelledby", "advDlgT");
+      advDlg.innerHTML = '<h3 id="advDlgT"></h3><p class="mt-2"><b class="adv-act"></b></p>'
+        + '<p class="muted mt-2 adv-body"></p>'
+        + '<div class="flex gap wrap mt-3" style="justify-content:flex-end">'
+        + '<button type="button" class="btn btn-ghost adv-no" autofocus></button>'
+        + '<button type="button" class="btn btn-primary adv-yes"></button></div>';
+      document.body.appendChild(advDlg);
+      advDlg.querySelector(".adv-no").addEventListener("click", () => advDlg.close());
+    }
+    advDlg.querySelector("h3").textContent = tt("proc.adv.title", "Move to the next step?");
+    advDlg.querySelector(".adv-act").textContent = (btn.textContent || "").replace(/\s+/g, " ").trim();
+    advDlg.querySelector(".adv-body").textContent = tt("proc.adv.body",
+      "Once you continue, you can't easily come back to this step. Check that everything above is correct.");
+    advDlg.querySelector(".adv-no").textContent = tt("proc.adv.no", "Go back and check");
+    const yes = advDlg.querySelector(".adv-yes");
+    yes.textContent = tt("proc.adv.yes", "Yes, continue");
+    yes.onclick = () => {
+      advDlg.close();
+      btn.dataset.advOk = "1";
+      form.requestSubmit(btn);            // re-runs the submit with the same button
+      delete btn.dataset.advOk;           // ask again if the user returns via Back
+    };
+    advDlg.showModal();
+  }, true);
+
   /* ---------------- Boot ---------------- */
   document.addEventListener("DOMContentLoaded", async () => {
     const initTheme = cfg.theme || localStorage.getItem(LS.theme) || "light";

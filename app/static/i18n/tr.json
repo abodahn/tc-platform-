@@ -4144,5 +4144,9 @@
   "admin.password_again": "Parola (tekrar)",
   "test_cast_done": "Test hesapları oluşturuldu. Zaten var olanlara dokunulmadı.",
   "test_cast_none": "Tüm test hesapları zaten var — hiçbir şey değişmedi.",
-  "test_cast_mismatch": "İki parola eşleşmiyor."
+  "test_cast_mismatch": "İki parola eşleşmiyor.",
+  "proc.adv.title": "Sonraki adıma geçilsin mi?",
+  "proc.adv.body": "Devam ettikten sonra bu adıma kolayca geri dönemezsiniz. Yukarıdaki her şeyin doğru olduğundan emin olun.",
+  "proc.adv.no": "Geri dön ve kontrol et",
+  "proc.adv.yes": "Evet, devam et"
 }

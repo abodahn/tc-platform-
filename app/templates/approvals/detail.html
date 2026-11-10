@@ -259,7 +259,7 @@
       <div class="field"><label data-i18n="proc.comment">Comment (optional)</label>
         <input name="comment" autocomplete="off" placeholder="Add a note to your approval…"></div>
       <div class="flex gap wrap">
-        <button class="btn btn-primary" type="submit">
+        <button class="btn btn-primary" type="submit" data-advance>
           <svg class="ico"><use href="#i-check"></use></svg>
           <span data-i18n="proc.act.{{ actionable.action }}_sign">{{ act_sign }}</span></button>
       </div>
@@ -469,7 +469,7 @@
         {#- A SEPARATE submit, because issuing moves physical stock and saving a
             quantity does not. One button doing both would mean a storekeeper
             correcting a number could empty a shelf by accident. -#}
-        <button class="btn btn-ghost" type="submit" data-i18n="proc.wh_issue_btn"
+        <button class="btn btn-ghost" type="submit" data-advance data-i18n="proc.wh_issue_btn"
                 formaction="{{ url_for('approvals.issue_from_stock', pr_id=pr.id) }}">📦 Issue from stock</button>
         <span class="muted" style="font-size:12px" data-i18n="proc.wh_save_hint">The requester is told what changed. You still sign the stage below.</span>
       </div>
@@ -882,7 +882,7 @@
   <div><b data-i18n="proc.ready_po">Fully approved.</b> <span class="muted">PO {{ pr.po_no }} is drafted and ready to issue.</span></div>
   <form method="post" action="{{ url_for('approvals.issue_po', pr_id=pr.id) }}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button class="btn btn-primary" type="submit"><svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.issue_po">Issue Purchase Order</span></button>
+    <button class="btn btn-primary" type="submit" data-advance><svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.issue_po">Issue Purchase Order</span></button>
   </form>
 </div></div>
 {% endif %}
@@ -941,7 +941,7 @@
     <form method="post" class="flex gap center wrap" style="gap:10px;margin-bottom:14px"
           action="{{ url_for('approvals.mark_in_transit', pr_id=pr.id) }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <button class="btn btn-sm" type="submit" data-i18n="proc.mark_transit">🚚 Mark as on the way</button>
+      <button class="btn btn-sm" type="submit" data-advance data-i18n="proc.mark_transit">🚚 Mark as on the way</button>
       <input name="note" style="max-width:280px"
              placeholder="Carrier / waybill (optional)" data-i18n-ph="proc.transit_note">
       <span class="muted" style="font-size:12px" data-i18n="proc.transit_hint">Tells the requester the order has left the supplier. Nothing is received and no stock moves.</span>
@@ -979,7 +979,7 @@
       <div class="flex gap center wrap">
         <input name="notes" class="input" placeholder="Delivery note (optional)" data-i18n-ph="proc.receipt_note" style="min-width:200px">
         <input name="reject_reason" class="input" placeholder="Reason for rejection (required if rejecting)" data-i18n-ph="proc.reject_reason_ph" style="min-width:260px">
-        <button class="btn btn-primary btn-sm" type="submit"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="proc.record_receipt">Record receipt</span></button>
+        <button class="btn btn-primary btn-sm" type="submit" data-advance><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="proc.record_receipt">Record receipt</span></button>
       </div>
       <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.over_hint">Anything above the ordered quantity is held in quarantine, not added to stock.</div>
       <div class="muted" style="font-size:11px;margin-top:2px" data-i18n="proc.reject_hint">A rejected quantity is not received, does not enter stock, and goes back to the supplier under a debit note that reduces what is payable.</div>
@@ -1230,7 +1230,7 @@
     {% if pr.status in ('received','partially_received') and can_purchasing %}
     <form method="post" action="{{ url_for('approvals.close', pr_id=pr.id) }}" class="mt-3">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.close">Close request</button>
+      <button class="btn btn-ghost btn-sm" type="submit" data-advance data-i18n="proc.close">Close request</button>
     </form>
     {% endif %}
   </div>
@@ -1321,7 +1321,7 @@
     <a class="btn btn-ghost" href="{{ url_for('approvals.edit', pr_id=pr.id) }}" data-i18n="proc.edit">Edit</a>
     <form method="post" action="{{ url_for('approvals.submit', pr_id=pr.id) }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <button class="btn btn-primary" type="submit">{{ 'Resubmit' if pr.status == 'rejected' else 'Submit for approval' }}</button>
+      <button class="btn btn-primary" type="submit" data-advance>{{ 'Resubmit' if pr.status == 'rejected' else 'Submit for approval' }}</button>
     </form>
   </div>
 </div></div>
