@@ -585,7 +585,6 @@ SETTING_LABEL = {
            "show_forecast_ref": "Show ‘Agreed forecast’ on requests",
            "show_cost_center": "Show ‘Cost centre’ on requests",
            "show_delivery_condition": "Show ‘Delivery condition’ on requests",
-           "cost_object_gate": "Direct materials must cite a sales order, forecast or cost centre",
            "allow_self_approval": "Allow approving your own request (temporary)"},
     "ar": {"rfq_quote_min": "عدد عروض الأسعار المتنافسة المطلوبة",
            "rfq_value_threshold": "عروض الأسعار مطلوبة من (EGP)",
@@ -596,7 +595,6 @@ SETTING_LABEL = {
            "show_forecast_ref": "إظهار «التوقّع المعتمد» في الطلبات",
            "show_cost_center": "إظهار «مركز التكلفة» في الطلبات",
            "show_delivery_condition": "إظهار «شرط التسليم» في الطلبات",
-           "cost_object_gate": "المواد المباشرة تتطلب أمر بيع أو توقعًا معتمدًا أو مركز تكلفة",
            "allow_self_approval": "السماح بالموافقة على طلبك الخاص (مؤقت)"},
     "tr": {"rfq_quote_min": "Gereken rekabetçi teklif sayısı",
            "rfq_value_threshold": "Tekliflerin gerekli olduğu tutar (EGP)",
@@ -607,7 +605,6 @@ SETTING_LABEL = {
            "show_forecast_ref": "Taleplerde ‘Onaylı tahmin’ göster",
            "show_cost_center": "Taleplerde ‘Masraf merkezi’ göster",
            "show_delivery_condition": "Taleplerde ‘Teslim koşulu’ göster",
-           "cost_object_gate": "Doğrudan malzemeler satış siparişi, tahmin veya masraf merkezi göstermeli",
            "allow_self_approval": "Kendi talebini onaylamaya izin ver (geçici)"}
 }
 
@@ -622,7 +619,6 @@ SETTING_WARN = {
         "show_forecast_ref": "The other half of the DOAM 3.4 cost object. Safe to hide on its own if the plant works to sales orders; not safe to hide together with Sales order.",
         "show_cost_center": "The route maintenance and facility spend uses to answer DOAM 3.4 instead of a sales order. Hiding it does not stop spare-part requests, which are recognised from the parts master.",
         "show_delivery_condition": "Prints on the purchase order. Nothing routes on it.",
-        "cost_object_gate": "Off: fabric, trims and other direct materials can be submitted with no sales order, forecast or cost centre, so their cost cannot be traced to a client order.",
         "allow_self_approval": "On: the person who raised a request can also approve it, so one account can authorise its own purchase. Use only while there are not enough staff, then switch it off.",
     },
     "ar": {
@@ -631,7 +627,6 @@ SETTING_WARN = {
         "show_forecast_ref": "النصف الآخر من مرجع التكلفة في البند 3.4. إخفاؤه وحده آمن إذا كان المصنع يعمل بأوامر البيع، لكن إخفاءه مع «أمر البيع» غير آمن.",
         "show_cost_center": "الطريق الذي تستخدمه مصروفات الصيانة والمرافق للإجابة على البند 3.4 بدلاً من أمر البيع. إخفاؤه لا يوقف طلبات قطع الغيار، فهي تُعرَف من دليل قطع الغيار.",
         "show_delivery_condition": "يُطبع على أمر الشراء. ولا يُبنى عليه أي توجيه للموافقات.",
-        "cost_object_gate": "عند الإيقاف: يمكن تقديم طلبات الأقمشة والإكسسوارات وغيرها من المواد المباشرة دون أمر بيع أو توقع أو مركز تكلفة، فلا يمكن ربط تكلفتها بطلبية العميل.",
         "allow_self_approval": "عند التشغيل: من قدّم الطلب يمكنه أيضًا الموافقة عليه، أي أن حسابًا واحدًا يعتمد مشترياته بنفسه. استخدمه فقط مؤقتًا لحين توفر عدد كافٍ من الموظفين، ثم أوقفه.",
     },
     "tr": {
@@ -640,7 +635,6 @@ SETTING_WARN = {
         "show_forecast_ref": "DOAM 3.4 maliyet nesnesinin diğer yarısı. Fabrika satış siparişleriyle çalışıyorsa tek başına gizlemek güvenlidir; Satış siparişi ile birlikte gizlemek değildir.",
         "show_cost_center": "Bakım ve tesis harcamalarının satış siparişi yerine DOAM 3.4'e cevap verirken kullandığı yol. Gizlemek yedek parça taleplerini durdurmaz; onlar parça ana verisinden tanınır.",
         "show_delivery_condition": "Satın alma emrinde yazdırılır. Hiçbir yönlendirme buna bağlı değildir.",
-        "cost_object_gate": "Kapalıyken kumaş, aksesuar ve diğer doğrudan malzemeler satış siparişi, tahmin veya masraf merkezi olmadan gönderilebilir; maliyetleri müşteri siparişine bağlanamaz.",
         "allow_self_approval": "Açıkken talebi açan kişi onu onaylayabilir de; tek bir hesap kendi satın almasını yetkilendirebilir. Yalnızca yeterli personel yokken kullanın, sonra kapatın.",
     },
 }

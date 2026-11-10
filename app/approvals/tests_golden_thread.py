@@ -40,13 +40,13 @@ def run():
 
         tech = {"username": "tech", "id": 1}
 
-        # 1. Fabric with no sales order cannot be submitted.
+        # 1. Fabric with no sales order is submitted: the reference is optional.
         bad, _ = svc.create_pr({"title": "Fabric for the new style",
                                 "department": "Production"},
                                [{"item": "Cotton twill fabric", "qty": 500,
                                  "unit_price": 60}], tech, submit=False)
         ok, msg = svc.submit_pr(bad, tech)
-        assert not ok and msg == "cost_object_required", (ok, msg)
+        assert ok, (ok, msg)  # reference optional since 2026-11-10
 
         # 2. With a REAL, OPEN sales order on it, the same request goes through.
         #    The reference is validated against ord_orders now (audit 3.4-b2a):
