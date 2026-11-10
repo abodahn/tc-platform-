@@ -4144,5 +4144,9 @@
   "admin.password_again": "Password again",
   "test_cast_done": "Test accounts created. Any that already existed were left untouched.",
   "test_cast_none": "Every test account already exists — nothing was changed.",
-  "test_cast_mismatch": "The two passwords do not match."
+  "test_cast_mismatch": "The two passwords do not match.",
+  "proc.adv.title": "Move to the next step?",
+  "proc.adv.body": "Once you continue, you can't easily come back to this step. Check that everything above is correct.",
+  "proc.adv.no": "Go back and check",
+  "proc.adv.yes": "Yes, continue"
 }
