@@ -4133,64 +4133,11 @@ def cost_object_check(conn, pr_id, pr):
         return False, "so_closed" if state == "closed" else "so_unknown"
     if fc:
         return True, None        # already checked above
-    # Admin switch: with the gate off, a request citing nothing is let through.
-    # A reference that IS typed is still validated above, so junk never prints.
-    if not bool_setting(conn, "cost_object_gate"):
-        return True, None
-    texts = [_pr_field(pr, "title"), _pr_field(pr, "request_for")]
-    rows = conn.execute(
-        "SELECT i.item, i.description, i.spare_id, c.category_name FROM pr_items i "
-        "LEFT JOIN proc_items c ON c.id = i.item_id WHERE i.pr_id=?",
-        (pr_id,)).fetchall()
-    # Master data beats free text. Every line linked to a MAINTENANCE SPARE is
-    # MRO under Table 12 (asset / cost centre), whatever the wording says — and
-    # sewing-machine spares are called things like "thread guide" and "elastic
-    # feeder". Without this the maintenance auto-reorder would raise a request
-    # and then be told to find a sales order it must not carry.
-    #
-    # But spare_id is a HIDDEN FORM FIELD the requester posts, with no foreign
-    # key behind it, so "linked to a spare" has to mean a row that really exists
-    # in the spares master — otherwise spare_id[]=999999 is a client-side off
-    # switch for the whole gate. And the free text must not ride along with the
-    # link: the type-ahead only clears spare_id when item[] is retyped, so
-    # picking any spare and putting "cotton twill for style 4471" in
-    # description[] turned the exemption on from the browser with no devtools.
-    #
-    # ponytail: only when EVERY line resolves to a real spare; a mixed request is
-    # judged on its text, which is the safe way round.
-    real = _real_spares([r["spare_id"] for r in rows])
-    if rows and all(r["spare_id"] in real for r in rows):
-        # Judge an all-spare request on the requester's OWN words, with the
-        # master-data names struck out of them. "Thread guide bracket" is the
-        # spare's name, so the bridge's own title and line survive; "Cotton
-        # twill fabric for style 4471" typed into item[] or description[] beside
-        # a picked spare does not. This also closes the title, which an earlier
-        # version of this branch never read at all.
-        free = [_pr_field(pr, "title"), _pr_field(pr, "request_for")]
-        for r in rows:
-            free += [r["item"], r["description"]]
-        blob = " ".join(str(t or "") for t in free).lower()
-        # Longest first, so striking "thread guide bracket" is not pre-empted by
-        # a shorter master string that overlaps it.
-        for master in sorted((str(t or "").strip().lower()
-                              for texts in real.values() for t in texts),
-                             key=len, reverse=True):
-            if master:
-                blob = blob.replace(master, " ")
-        if not C.cost_object_required([blob]):
-            return True, None
-    for r in rows:
-        texts += [r["item"], r["description"], r["category_name"]]
-    # An EMPTY order register still refuses, deliberately — see tests_so_gate.
-    # I nearly relaxed this on the theory that a register with nothing in it
-    # cannot validate anything and so blocks all purchasing for no benefit. That
-    # reasoning is out of date: since the forecast register landed, a requester
-    # with no sales order has a legitimate alternative to cite, so an empty
-    # register is not a dead end and the refusal is not a trap. The only escape
-    # is the orders module being ABSENT altogether, which sales_order_state
-    # already handles by returning None.
-    need = C.cost_object_required(texts)
-    return (need is None), ("cost_object_required" if need else None)
+    # Citing a sales order / forecast / cost centre is OPTIONAL (owner's call,
+    # 2026-11-10): a request that cites nothing is never refused, whatever
+    # the old cost_object_gate setting says. A reference that IS typed is
+    # still validated above, so junk never prints on the PO.
+    return True, None
 
 
 def _pr_fx(pr):

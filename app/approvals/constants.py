@@ -1541,10 +1541,8 @@ WORKFLOW_SETTINGS = {
     "show_forecast_ref": {"kind": "bool", "default": True},
     "show_cost_center": {"kind": "bool", "default": True},
     "show_delivery_condition": {"kind": "bool", "default": True},
-    # DOAM 3.4 sales-order / forecast / cost-centre gate on direct materials.
-    # Default ON; an admin may switch it off when the plant does not yet keep
-    # its sales orders in the system.
-    "cost_object_gate": {"kind": "bool", "default": True},
+    # cost_object_gate removed 2026-11-10: citing a sales order / forecast /
+    # cost centre is optional, so there is no switch to turn it back on.
     # DOAM 3.4 forbids approving your own request. Default OFF; a plant short of
     # staff may switch it on TEMPORARILY so a lone signer is not blocked.
     "allow_self_approval": {"kind": "bool", "default": False},

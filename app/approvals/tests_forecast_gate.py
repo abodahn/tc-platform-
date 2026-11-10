@@ -11,7 +11,7 @@ routes of the forecast screen.
 Both directions of every control, because a control that always blocks is as
 broken as one that never does:
 
-    no reference            -> REFUSED (cost_object_required)
+    no reference            -> accepted (reference optional since 2026-11-10)
     junk sales order        -> REFUSED (so_unknown)
     junk forecast reference -> REFUSED (fc_unknown)
     real, open sales order  -> ALLOWED
@@ -80,7 +80,7 @@ def run():
         # 1. Nothing has changed for the half that already worked.
         # ---------------------------------------------------------------
         _, ok, msg = submit(FABRIC)
-        assert not ok and msg == "cost_object_required", (ok, msg)
+        assert ok, (ok, msg)  # reference optional since 2026-11-10
 
         _, ok, msg = submit(FABRIC, so_no="x")
         assert not ok and msg == "so_unknown", (ok, msg)

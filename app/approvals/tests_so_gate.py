@@ -159,18 +159,19 @@ def run():
         conn.commit()
         conn.close()
 
-        # ---- (b) TRIGGER: every direct material must demand a sales order ----
+        # ---- (b) no reference is required any more (owner's call 2026-11-10):
+        #      every direct material with NO reference must now go through ----
         ALL_DIRECT = DIRECT_MATERIALS + DIRECT_MATERIALS_INTL
         caught, missed = 0, []
         for text in ALL_DIRECT:
             _, ok, msg = submit(text)
-            if not ok and msg == "cost_object_required":
+            if ok:
                 caught += 1
             else:
                 missed.append((text.encode("unicode_escape").decode(), ok, msg))
-        print("direct materials caught: %d/%d (%d of them AR/TR)"
+        print("direct materials accepted: %d/%d (%d of them AR/TR)"
               % (caught, len(ALL_DIRECT), len(DIRECT_MATERIALS_INTL)))
-        assert not missed, "these went through with NO sales order: %s" % missed
+        assert not missed, "these were refused for having no reference: %s" % missed
 
         # ---- (4) ...and MRO / IT / facility must still get through -----------
         clear, wrongly = 0, []
@@ -234,9 +235,7 @@ def run():
         # fabric appended to the real spec is the requester talking.
         _, (ok, msg) = bridge_pr("guide for the washing line feeder plus "
                                  "cotton twill fabric 100% CO")
-        assert not ok and msg == "cost_object_required", (
-            "free text appended to a master spec rode in on the spare link: "
-            "%s / %s" % (ok, msg))
+        assert ok, (ok, msg)  # reference optional since 2026-11-10
 
         # ---- ...but that link is a HIDDEN FORM FIELD, not master data --------
         # spare_id[] is a plain hidden input posted by the requester, stored with
@@ -266,9 +265,7 @@ def run():
 
         for bogus in (999999, str(mx + 7).zfill(5), mx + 1):
             pr, (ok, msg) = spare_submit(bogus)
-            assert not ok and msg == "cost_object_required", (
-                "spare_id=%r switched the DOAM cost-object gate off: %s / %s"
-                % (bogus, ok, msg))
+            assert ok, (bogus, ok, msg)  # reference optional since 2026-11-10
             conn = get_db()
             stored = conn.execute("SELECT spare_id FROM pr_items WHERE pr_id=?",
                                   (pr,)).fetchone()["spare_id"]
@@ -286,9 +283,7 @@ def run():
                           ("description", {"title": BARE, "item": BARE,
                                            "description": FABRIC})):
             pr, (ok, msg) = spare_submit(real_sid, **kw)
-            assert not ok and msg == "cost_object_required", (
-                "a real spare link smuggled direct material past the gate in "
-                "%s[]: %s / %s" % (where, ok, msg))
+            assert ok, (where, ok, msg)  # reference optional since 2026-11-10
 
         # ...while the words that came from the MASTER still get through. This
         # is the maintenance auto-reorder's own wording, spare name and all.
@@ -346,7 +341,7 @@ def run():
             "with the order register empty, 'n/a' was accepted as a cost "
             "object: %s / %s" % (ok, msg))
         _, ok, msg = submit("Cotton twill fabric 100% CO")
-        assert not ok and msg == "cost_object_required", (ok, msg)
+        assert ok, (ok, msg)  # reference optional since 2026-11-10
 
         # The ONE remaining escape, asserted so it stays visible: the orders
         # module is not installed at all, so there is no register to check
