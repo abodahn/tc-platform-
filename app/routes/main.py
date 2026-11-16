@@ -1112,7 +1112,7 @@ def search():
 
     conn = get_db()
     try:
-        if has_permission(user["role"], "maint_view"):
+        if user_has_permission(user, "maint_view"):
             for m in conn.execute("SELECT id,code,name FROM mnt_machines WHERE is_active=1"):
                 if fuzzy(f"{m['code']} {m['name']}"):
                     results.append({"type": "machine", "name": f"{m['code']} · {m['name']}",
@@ -1203,7 +1203,7 @@ def search():
 def my_work():
     user = current_user()
     data = {"sign_queue": [], "maint_approvals": [], "prob_pending": [],
-            "my_prs": [], "my_tickets": [], "alerts": [],
+            "my_prs": [], "my_tickets": [], "my_pm": [], "alerts": [],
             "cmp_caps": [], "cmp_expiring": [], "late_milestones": []}
 
     if user_has_permission(user, "proc_view"):
@@ -1250,6 +1250,14 @@ def my_work():
                     "ORDER BY id DESC LIMIT 8",
                     (user.get("id"), user["username"], user.get("full_name") or user["username"],
                      user["username"], user.get("full_name") or user["username"])).fetchall()
+                data["my_pm"] = conn.execute(
+                    "SELECT w.id, w.pm_no, w.scheduled_date, w.status, m.code AS mcode "
+                    "FROM mnt_pm_work_orders w LEFT JOIN mnt_machines m ON m.id = w.machine_id "
+                    "WHERE COALESCE(w.status,'') NOT IN ('completed','cancelled') "
+                    "AND w.assigned_to IN (?,?) "
+                    "ORDER BY CASE WHEN w.scheduled_date IS NULL THEN 1 ELSE 0 END, "
+                    "w.scheduled_date ASC, w.id ASC LIMIT 8",
+                    (user["username"], user.get("full_name") or user["username"])).fetchall()
             finally:
                 conn.close()
         except Exception:
@@ -1316,4 +1324,4 @@ def my_work():
                      + len(data["prob_pending"]) + len(data["late_milestones"])
                      + len(data["cmp_caps"]) + len(data["cmp_expiring"]))
     return render_template("my_work.html", user=user, total_actions=total_actions,
-                           active="my_work", **data)
+                           active="my_work", today=_date.today().isoformat(), **data)
