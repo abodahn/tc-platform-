@@ -1223,7 +1223,14 @@ def my_work():
                     "SELECT a.id, a.level, a.approver_role, a.created_at, r.request_no, "
                     "r.id AS request_id FROM mnt_approvals a "
                     "JOIN mnt_requests r ON r.id = a.request_id "
-                    "WHERE a.status='pending' ORDER BY a.id DESC LIMIT 10").fetchall()
+                    "WHERE a.status='pending' "
+                    # only the rung that is next in line, and only if it is this user's role
+                    "AND NOT EXISTS (SELECT 1 FROM mnt_approvals b WHERE b.request_id=a.request_id "
+                    "AND b.status='pending' AND b.level < a.level) "
+                    "AND (? = 1 OR COALESCE(a.approver_role,'') IN ('', ?)) "
+                    "ORDER BY a.id DESC LIMIT 10",
+                    (1 if user_has_permission(user, "maint_admin") else 0,
+                     user.get("role") or "")).fetchall()
             finally:
                 conn.close()
         except Exception:
@@ -1235,9 +1242,14 @@ def my_work():
             try:
                 data["my_tickets"] = conn.execute(
                     "SELECT id, ticket_no, machine_code, status, priority, created_at "
-                    "FROM mnt_tickets WHERE requester=? AND is_active=1 "
+                    # tickets store the display name (and the id since requester_user_id
+                    # was added), so matching the username alone found nothing
+                    "FROM mnt_tickets WHERE is_active=1 "
+                    "AND (requester_user_id=? OR requester IN (?,?) OR assigned_to IN (?,?)) "
                     "AND status NOT IN ('closed','cancelled','rejected') "
-                    "ORDER BY id DESC LIMIT 8", (user["username"],)).fetchall()
+                    "ORDER BY id DESC LIMIT 8",
+                    (user.get("id"), user["username"], user.get("full_name") or user["username"],
+                     user["username"], user.get("full_name") or user["username"])).fetchall()
             finally:
                 conn.close()
         except Exception:

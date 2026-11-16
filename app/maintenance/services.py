@@ -454,6 +454,10 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
                 (user or {}).get("role") != ap["approver_role"]:
             return False, "wrong_role"
         rid = ap["request_id"]
+        # Rungs sign in order: level 2 can't sign while level 1 is still pending.
+        if conn.execute("SELECT 1 FROM mnt_approvals WHERE request_id=? AND status='pending' "
+                        "AND level < ?", (rid, ap["level"] or 1)).fetchone():
+            return False, "earlier_level_pending"
         if decision == "reject":
             if not (comment or "").strip():
                 return False, "reason_required"

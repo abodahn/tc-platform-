@@ -4148,5 +4148,7 @@
   "proc.adv.title": "Move to the next step?",
   "proc.adv.body": "Once you continue, you can't easily come back to this step. Check that everything above is correct.",
   "proc.adv.no": "Go back and check",
-  "proc.adv.yes": "Yes, continue"
+  "proc.adv.yes": "Yes, continue",
+  "earlier_level_pending": "An earlier approval level is still pending. It must be signed first.",
+  "wrong_role": "This approval level belongs to another role."
 }
