@@ -349,6 +349,7 @@
       + '<input name="item[]" type="hidden">'
       + '<input name="spare_id[]" type="hidden">'
       + '<input name="item_id[]" type="hidden">'
+      + '<input name="line_id[]" type="hidden">'
 
       + '<input name="current_stock[]" type="hidden" value="0">'
       + '<input name="vendor[]" type="hidden">'
@@ -686,6 +687,7 @@
   });
 
   function fillRow(r, it){
+    r.querySelector('[name="line_id[]"]').value = (it.id != null ? it.id : '');
     r.querySelector('[name="item[]"]').value = it.item || '';
     r.querySelector('[name="description[]"]').value = it.description || '';
     if (it.unit) r.querySelector('[name="unit[]"]').value = it.unit;

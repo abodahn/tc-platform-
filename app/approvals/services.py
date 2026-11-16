@@ -1507,6 +1507,28 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
             return False, "not_found"
         if pr["status"] not in ("draft", "rejected"):
             return False, "not_editable"
+        existing = {r["id"]: r for r in conn.execute(
+            "SELECT id, item, item_id, issued_qty FROM pr_items WHERE pr_id=?",
+            (pr_id,)).fetchall()}
+        claimed = set()
+        line_ids = []
+        for it in items:
+            raw_id = str(it.get("line_id") or "")
+            lid = int(raw_id) if raw_id.isdigit() else None
+            if lid not in existing or lid in claimed:
+                lid = None
+            else:
+                claimed.add(lid)
+                old = existing[lid]
+                # An issued line must stay the same item, or its issue reads as another item's.
+                if float(old["issued_qty"] or 0) > 0 and (
+                        (it.get("item") or "") != (old["item"] or "")
+                        or str(it.get("item_id") or "").strip() != str(old["item_id"] or "")):
+                    return False, "issued_line_changed"
+            line_ids.append(lid)
+        if any(float(r["issued_qty"] or 0) > 0 and lid not in claimed
+               for lid, r in existing.items()):
+            return False, "issued_line_removed"
         total = round(sum(_amount(it) for it in items), 2)
         # Requesters can't set commercial terms: keep whatever Purchasing entered.
         tax_rate = float(header.get("tax_rate") or 0) if can_price \
@@ -1554,21 +1576,29 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
             # the lines were replaced unpriced -> back through the pricing gate
             conn.execute("UPDATE pr_requests SET pricing_status='unpriced', "
                          "priced_at=NULL, priced_by=NULL WHERE id=?", (pr_id,))
-        conn.execute("DELETE FROM pr_items WHERE pr_id=?", (pr_id,))
+        for lid in existing.keys() - claimed:
+            conn.execute("DELETE FROM pr_items WHERE id=? AND pr_id=?", (lid, pr_id))
         fill_units_from_catalogue(conn, items)
-        for i, it in enumerate(items, start=1):
-            conn.execute(
-                """INSERT INTO pr_items (pr_id, seq, item, description, unit, qty,
-                   current_stock, vendor, unit_price, est_cost, notes, spare_id, item_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (pr_id, i, it.get("item"), it.get("description"), it.get("unit") or "Pcs",
-                 float(it.get("qty") or 0), float(it.get("current_stock") or 0),
-                 it.get("vendor") or header.get("vendor"),
-                 float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes"),
-                 (int(it["spare_id"])
-                  if str(it.get("spare_id") or "").strip().isdigit()
-                  and int(it["spare_id"]) in real_spares else None),
-                 int(it["item_id"]) if str(it.get("item_id") or "").strip().isdigit() else None))
+        for i, (it, lid) in enumerate(zip(items, line_ids), start=1):
+            values = (i, it.get("item"), it.get("description"), it.get("unit") or "Pcs",
+                      float(it.get("qty") or 0), float(it.get("current_stock") or 0),
+                      it.get("vendor") or header.get("vendor"),
+                      float(it.get("unit_price") or 0), round(_amount(it), 2), it.get("notes"),
+                      (int(it["spare_id"])
+                       if str(it.get("spare_id") or "").strip().isdigit()
+                       and int(it["spare_id"]) in real_spares else None),
+                      int(it["item_id"]) if str(it.get("item_id") or "").strip().isdigit() else None)
+            if lid is not None:
+                conn.execute(
+                    """UPDATE pr_items SET seq=?, item=?, description=?, unit=?, qty=?,
+                       current_stock=?, vendor=?, unit_price=?, est_cost=?, notes=?,
+                       spare_id=?, item_id=? WHERE id=? AND pr_id=?""",
+                    values + (lid, pr_id))
+            else:
+                conn.execute(
+                    """INSERT INTO pr_items (pr_id, seq, item, description, unit, qty,
+                       current_stock, vendor, unit_price, est_cost, notes, spare_id, item_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (pr_id,) + values)
         audit(conn, pr_id, user.get("username") if user else "system", "edited",
               f"Draft updated (total {total})", ip)
         conn.commit()
@@ -7223,7 +7253,7 @@ def issue_from_stock(pr_id, issues, user, ip=None):
             return False, "not_eligible"
 
         lines = [dict(r) for r in conn.execute(
-            "SELECT id, item, qty, issued_qty FROM pr_items WHERE pr_id=?",
+            "SELECT id, item, qty, issued_qty, issued_from FROM pr_items WHERE pr_id=?",
             (pr_id,)).fetchall()]
         done = []
         for ln in lines:
@@ -7258,10 +7288,25 @@ def issue_from_stock(pr_id, issues, user, ip=None):
                 notes="Issued against %s" % (pr["pr_no"] or ("PR#%d" % pr_id)))
             if not ok:
                 return False, msg
+            if float(ln["issued_qty"] or 0) > 0 and not conn.execute(
+                    "SELECT id FROM pr_item_issues WHERE pr_item_id=?",
+                    (ln["id"],)).fetchone():
+                conn.execute(
+                    "INSERT INTO pr_item_issues (pr_id, pr_item_id, source_code, qty) "
+                    "VALUES (?,?,?,?)",
+                    (pr_id, ln["id"], ln["issued_from"], ln["issued_qty"]))
+            conn.execute(
+                "INSERT INTO pr_item_issues (pr_id, pr_item_id, spare_id, source_code, "
+                "qty, issued_by, issued_at) VALUES (?,?,?,?,?,?,?)",
+                (pr_id, ln["id"], sp["id"], code, want, (user or {}).get("username"), _now()))
+            sources = list(dict.fromkeys(r["source_code"] for r in conn.execute(
+                "SELECT source_code FROM pr_item_issues WHERE pr_item_id=? "
+                "AND reversed_at IS NULL ORDER BY id", (ln["id"],)).fetchall()
+                if r["source_code"]))
             conn.execute(
                 "UPDATE pr_items SET qty=?, issued_qty=COALESCE(issued_qty,0)+?, "
                 "issued_from=? WHERE id=?",
-                (float(ln["qty"] or 0) - want, want, code, ln["id"]))
+                (float(ln["qty"] or 0) - want, want, ", ".join(sources), ln["id"]))
             done.append("%s: %g issued from %s" % (ln["item"], want, code))
 
         if not done:
@@ -7328,7 +7373,10 @@ def reverse_stock_issue(pr_id, line_id, user, ip=None):
             return False, "line_not_found"
         issued = float(_pr_field(ln, "issued_qty") or 0)
         code = str(_pr_field(ln, "issued_from") or "").strip()
-        if issued <= 0 or not code:
+        issue_rows = conn.execute(
+            "SELECT * FROM pr_item_issues WHERE pr_item_id=? AND reversed_at IS NULL "
+            "ORDER BY id", (line_id,)).fetchall()
+        if issued <= 0 or (not issue_rows and not code):
             return False, "nothing_issued"
         # Reversible only while the request has not moved on. Once it is priced,
         # ordered or received, putting stock back would restore a quantity that
@@ -7346,15 +7394,29 @@ def reverse_stock_issue(pr_id, line_id, user, ip=None):
         if not can_act_step(user, {"stage": "warehouse", "pr_id": pr_id}) and not _admin:
             return False, "not_eligible"
 
-        sp = conn.execute("SELECT id FROM mnt_spare_parts WHERE code=? OR "
-                          "LOWER(code)=LOWER(?)", (code, code)).fetchone()
-        if not sp:
-            return False, "stock_item_gone"
-        ok, msg = _move_stock(
-            conn, sp["id"], "receipt", issued, user, request_id=pr_id,
-            notes="Issue reversed on %s" % (pr["pr_no"] or ("PR#%d" % pr_id)))
-        if not ok:
-            return False, msg
+        returns = []
+        for row in issue_rows or [{"spare_id": None, "source_code": code, "qty": issued}]:
+            if row["spare_id"] is not None:
+                sp = conn.execute("SELECT id FROM mnt_spare_parts WHERE id=?",
+                                  (row["spare_id"],)).fetchone()
+            else:
+                sp = conn.execute("SELECT id FROM mnt_spare_parts WHERE code=? OR "
+                                  "LOWER(code)=LOWER(?)",
+                                  (row["source_code"], row["source_code"])).fetchone()
+            if not sp:
+                return False, "stock_item_gone"
+            returns.append((sp["id"], float(row["qty"]), row["source_code"]))
+        for spare_id, qty, source in returns:
+            ok, msg = _move_stock(
+                conn, spare_id, "receipt", qty, user, request_id=pr_id,
+                notes="Issue reversed on %s" % (pr["pr_no"] or ("PR#%d" % pr_id)))
+            if not ok:
+                return False, msg
+        if issue_rows:
+            conn.execute("UPDATE pr_item_issues SET reversed_at=? WHERE pr_item_id=? "
+                         "AND reversed_at IS NULL", (_now(), line_id))
+            issued = sum(qty for _, qty, _ in returns)
+        returned = ", ".join("%g to %s" % (qty, source) for _, qty, source in returns)
 
         conn.execute(
             "UPDATE pr_items SET qty=COALESCE(qty,0)+?, issued_qty=0, "
@@ -7380,14 +7442,16 @@ def reverse_stock_issue(pr_id, line_id, user, ip=None):
                      ("partial" if float(still or 0) > 0 else None, pr_id))
 
         audit(conn, pr_id, (user or {}).get("username"), "stock_issue_reversed",
-              "%s: %g returned to %s%s" % (ln["item"], issued, code,
+              "%s: %s%s" % (ln["item"], returned if issue_rows else
+                                    "%g returned to %s" % (issued, code),
                                            " — request reopened" if reopened else ""), ip)
         notify_users(
             conn, [pr["requester"]], "info",
             "Stock issue reversed on %s" % (pr["pr_no"] or "your request"),
             "%g %s went back to stock%s." % (issued, ln["item"],
                                              " and the request is circulating again"
-                                             if reopened else ""),
+                                             if reopened else "")
+            + ((" " + returned) if issue_rows else ""),
             link="/procurement/pr/%d" % pr_id)
         conn.commit()
         return True, "reopened" if reopened else "reversed"

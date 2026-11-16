@@ -622,6 +622,19 @@ CREATE TABLE IF NOT EXISTS pr_rfq_excluded (
     removed_at TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_rfq_excl ON pr_rfq_excluded(rfq_id, pr_item_id);
+
+CREATE TABLE IF NOT EXISTS pr_item_issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER NOT NULL,
+    pr_item_id INTEGER NOT NULL,
+    spare_id INTEGER,
+    source_code TEXT,
+    qty REAL NOT NULL,
+    issued_by TEXT,
+    issued_at TEXT,
+    reversed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_pr_item_issues_line ON pr_item_issues(pr_item_id);
 """
 
 # Columns added to pr_quotes after first release: the RFQ a returned quotation
