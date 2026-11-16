@@ -119,7 +119,7 @@ with app.app_context():
             ck("%s: Turkish differs from English" % kind,
                all((rows[k]["tr"] or "") != (rows[k]["en"] or "") for k in seeded))
             total += len(seeded)
-        ck("35 prose rows translated x2 languages == 70 translations", total == 35, total)
+        ck("36 prose rows translated x2 languages == 72 translations", total == 36, total)
     finally:
         c.close()
 
