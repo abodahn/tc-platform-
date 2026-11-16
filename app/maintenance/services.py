@@ -5,6 +5,7 @@ All workflow logic + transactions live here so routes stay thin. The critical
 spare-part issue is fully transactional (rolls back on any failure) and stock
 can never go negative. Status transitions are guarded.
 """
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +15,8 @@ from config import Config
 from app.db import get_db
 from app.maintenance.constants import TICKET_TRANSITIONS
 from app.maintenance import workflow as wf
+
+log = logging.getLogger("tc.maintenance")
 
 YEAR = None  # set lazily per call to avoid import-time clock reads in tooling
 
@@ -1000,6 +1003,50 @@ def save_attachments(files, entity_type, entity_id, kind, user, limit=5):
     return saved
 
 
+def _notify_spare_arrived(spare_id, qty):
+    """Stock arrived for a spare: tell whoever is waiting on it. Never raises.
+
+    Notify only: waiting_stock->waiting_approval needs the approval rows that only
+    create_request builds, so moving the ticket here would strand it."""
+    try:
+        conn = get_db()
+        try:
+            spare = conn.execute("SELECT code FROM mnt_spare_parts WHERE id=?",
+                                 (spare_id,)).fetchone()
+            tickets = conn.execute(
+                "SELECT DISTINCT t.id, t.assigned_to FROM mnt_requests r "
+                "JOIN mnt_request_items ri ON ri.request_id=r.id "
+                "JOIN mnt_tickets t ON t.id=r.ticket_id "
+                "WHERE ri.spare_id=? AND r.status='out_of_stock' "
+                "AND t.status IN ('waiting_stock','spare_required')", (spare_id,)).fetchall()
+            for t in tickets:
+                tid, title = t["id"], "Spare part arrived"
+                message = (f"{spare['code']} received ({float(qty):g}) — ticket #{tid} is "
+                           "waiting on it; raise or re-approve the spare request.")
+                link = f"/maintenance/tickets/{tid}"
+                for role in ("maintenance_technician", "maintenance_manager"):
+                    notify(conn, role, title, message, "ticket", tid, "info", link)
+                # assigned_to is free text (a name or a username); bell it if it is a user
+                acct = None
+                if t["assigned_to"]:
+                    acct = conn.execute(
+                        "SELECT username FROM users WHERE username=? OR full_name=?",
+                        (t["assigned_to"], t["assigned_to"])).fetchone()
+                if acct:
+                    conn.execute(
+                        "INSERT INTO notifications (severity,module,title,message,target_user,"
+                        "link,created_at) VALUES ('info','maintenance',?,?,?,?,?)",
+                        (title, message, acct["username"], link, _now()))
+            conn.commit()
+        except Exception:
+            conn.rollback()     # never leave a shared PG connection aborted
+            raise
+        finally:
+            conn.close()
+    except Exception:
+        log.warning("spare-arrived notification failed for spare %s", spare_id, exc_info=True)
+
+
 def receive_stock(spare_id, qty, price, user, ip=None):
     conn = get_db()
     try:
@@ -1041,6 +1088,7 @@ def receive_stock(spare_id, qty, price, user, ip=None):
                          (price, round(new_avg, 4), spare_id))
         audit(conn, user, "stock_receive", "spare", spare_id, None, qty, ip=ip)
         conn.commit()
+        _notify_spare_arrived(spare_id, qty)
         return True, ""
     finally:
         conn.close()

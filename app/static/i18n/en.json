@@ -4152,5 +4152,18 @@
   "earlier_level_pending": "An earlier approval level is still pending. It must be signed first.",
   "wrong_role": "This approval level belongs to another role.",
   "proc.short_close_reason": "Short-close reason",
-  "proc.short_close_ph": "Why is the rest of the order not coming?"
+  "proc.short_close_ph": "Why is the rest of the order not coming?",
+  "proc.stockpost.title": "Stock posting failed",
+  "proc.stockpost.item": "Item",
+  "proc.stockpost.target": "Target",
+  "proc.stockpost.qty": "Qty",
+  "proc.stockpost.status": "Status",
+  "proc.stockpost.attempts": "Attempts",
+  "proc.stockpost.error": "Last error",
+  "proc.stockpost.spare": "spare",
+  "proc.stockpost.material": "material",
+  "proc.stockpost.failed": "failed",
+  "proc.stockpost.posting": "posting",
+  "proc.stockpost.hint": "These received quantities have not reached stock yet. Retry, or check the store before retrying a line stuck in 'posting'.",
+  "proc.stockpost.retry": "Retry posting"
 }

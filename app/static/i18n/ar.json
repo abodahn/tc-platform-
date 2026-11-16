@@ -4152,5 +4152,18 @@
   "earlier_level_pending": "فيه مستوى موافقة قبله لسه منتظر، لازم يتوقّع الأول.",
   "wrong_role": "مستوى الموافقة ده تابع لرول تاني.",
   "proc.short_close_reason": "سبب الإقفال من غير استلام الباقي",
-  "proc.short_close_ph": "ليه باقي الطلب مش هييجي؟"
+  "proc.short_close_ph": "ليه باقي الطلب مش هييجي؟",
+  "proc.stockpost.title": "ترحيل المخزون فشل",
+  "proc.stockpost.item": "الصنف",
+  "proc.stockpost.target": "الوجهة",
+  "proc.stockpost.qty": "الكمية",
+  "proc.stockpost.status": "الحالة",
+  "proc.stockpost.attempts": "عدد المحاولات",
+  "proc.stockpost.error": "آخر خطأ",
+  "proc.stockpost.spare": "قطعة غيار",
+  "proc.stockpost.material": "خامة",
+  "proc.stockpost.failed": "فشل",
+  "proc.stockpost.posting": "جاري الترحيل",
+  "proc.stockpost.hint": "الكميات المستلمة دي لسه ما اتضافتش للمخزون. جرّب تاني، أو راجع المخزن قبل إعادة محاولة صنف عالق في حالة «جاري الترحيل».",
+  "proc.stockpost.retry": "إعادة محاولة الترحيل"
 }

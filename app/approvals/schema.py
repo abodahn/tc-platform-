@@ -569,6 +569,16 @@ CREATE TABLE IF NOT EXISTS proc_forecasts (
     agreed_by TEXT, agreed_by_name TEXT, agreed_role TEXT, agreed_at TEXT,
     created_by TEXT, created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS pr_stock_postings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER, grn_id INTEGER, ref TEXT, item_id INTEGER,
+    target TEXT, target_id INTEGER, qty REAL, free INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending', attempts INTEGER DEFAULT 0, last_error TEXT,
+    created_at TEXT, posted_at TEXT,
+    UNIQUE (ref, item_id, target)
+);
+CREATE INDEX IF NOT EXISTS ix_pr_stock_post_pr ON pr_stock_postings(pr_id, status);
+
 """
 
 # Trilingual prose (added after first release). The English column stays exactly

@@ -31,6 +31,9 @@ next is not worth translating carefully.
 # module docstring for why, and tests_messages_i18n.py for the check that keeps
 # that choice honest.
 MESSAGES = {
+    'Stock posting retry completed.': {'ar': 'تمت إعادة محاولة ترحيل المخزون.', 'tr': 'Stok aktarımı yeniden denendi.'},
+    'Some stock postings still need attention. Check the store before retrying.': {'ar': 'في ترحيلات مخزون لسه محتاجة مراجعة. راجع المخزن قبل ما تحاول تاني.', 'tr': 'Bazı stok aktarımlarının incelenmesi gerekiyor. Yeniden denemeden önce depoyu kontrol edin.'},
+
     # --- Hold, Resume and Send back (spec: hold & reject options) -----------
     "Put on hold. It stays in the queue and nobody can sign it until it is resumed — the requester has been told why.": {
         "ar": "تم التعليق. يبقى الطلب في قائمة الانتظار ولا يستطيع أحد التوقيع عليه حتى يُستأنف — وقد أُبلغ مقدّم الطلب بالسبب.",

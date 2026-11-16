@@ -3577,15 +3577,15 @@ def resolve_quarantine(q_id, decision, user, ip=None):
         }[decision]
         audit(conn, q["pr_id"], uname, "quarantine_resolved",
               f"Over-delivery of {q['item']} ({q['qty']:g}) — {_how}", ip)
-        conn.commit()
         pr_id, item_id, qty = q["pr_id"], q["item_id"], float(q["qty"] or 0)
+        if qty > 0 and decision in ("accept", "accept_tolerance"):
+            _queue_stock_postings(conn, pr_id, "quar:%s" % q_id, {item_id: qty},
+                                  free=(decision == "accept"))
+        conn.commit()
     finally:
         conn.close()
-    # Post-commit and best-effort, exactly like _post_bridge_receipt: a store that
-    # will not take the free issue must not undo the decision.
     if qty > 0 and decision in ("accept", "accept_tolerance"):
-        _post_bridge_receipt(pr_id, {item_id: qty},
-                             user, free=(decision == "accept"))
+        post_stock_postings(pr_id, user)
     if decision == "accept_tolerance" and qty > 0:
         # Payable means RECEIVED: the three-way match and the payable ceiling both
         # read received_qty, so an excess kept and paid for has to be in it. Done
@@ -3758,39 +3758,162 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
         if fully and effective:      # nothing accepted = a pure over-delivery, not a confirmation
             notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
                          f"{pr['pr_no']} fully received ({grn_no}).", link=_pr_link(pr_id))
+        if post_stock:
+            _queue_stock_postings(conn, pr_id, "grn:%s" % grn_id, effective, grn_id=grn_id)
         conn.commit()
         if post_stock:
-            _post_bridge_receipt(pr_id, effective, user)
+            post_stock_postings(pr_id, user)
         return True, ("received" if fully else "partial")
     finally:
         conn.close()
 
 
-def _post_bridge_receipt(pr_id, receipts, user, free=False):
-    """Post a goods receipt back into whichever store owns the goods. Post-commit,
-    best-effort: never blocks receiving.
+def _queue_stock_postings(conn, pr_id, ref, receipts, free=False, grn_id=None):
+    """Write one pr_stock_postings row per received line, INSIDE the caller's GRN
+    transaction, so a receipt can never commit without its stock postings queued.
 
-    TWO independent stores, so TWO independent try blocks — nesting them would let a
-    maintenance-side failure skip the material store entirely:
-      * maintenance spare parts (spare auto-reorder PRs), and
-      * the raw-material store (fabric rolls / trims). Without this second call every
-        fabric and trim receipt booked in procurement was invisible to /warehouse —
-        procurement said 'received' while material stock never moved.
-    Each callee already swallows its own errors, so anything reaching us here is
-    unexpected and is logged rather than silently dropped.
+    Dispatch is per LINE: a spare-linked line goes to maintenance spare stock,
+    any other line of a non-maintenance PR to warehouse materials (resolved at post
+    time — a lookup in another module's table must not risk poisoning this
+    transaction on PostgreSQL). Maintenance-origin PRs never post to materials;
+    a legacy bridge PR ('spare:<id>', no line links) posts every line to that spare."""
+    pr = conn.execute("SELECT source_module, source_ref FROM pr_requests WHERE id=?",
+                      (pr_id,)).fetchone()
+    items = conn.execute("SELECT id, spare_id FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+    has_links = any(it["spare_id"] for it in items)
+    src = str(pr["source_ref"] or "")
+    legacy = src.split(":", 1)[1] if src.startswith("spare:") else ""
+    for it in items:
+        try:
+            qty = float(receipts.get(str(it["id"])) or receipts.get(it["id"]) or 0)
+        except (TypeError, ValueError):
+            continue
+        if not qty > 0:
+            continue
+        if it["spare_id"]:
+            target, target_id = "spare", it["spare_id"]
+        elif pr["source_module"] == "maintenance":
+            if has_links or not legacy.isdigit():
+                continue
+            target, target_id = "spare", int(legacy)
+        else:
+            target, target_id = "material", None
+        conn.execute(
+            "INSERT INTO pr_stock_postings "
+            "(pr_id,grn_id,ref,item_id,target,target_id,qty,free,status,created_at) "
+            "SELECT ?,?,?,?,?,?,?,?,'pending',? WHERE NOT EXISTS "
+            "(SELECT 1 FROM pr_stock_postings WHERE ref=? AND item_id=? AND target=?)",
+            (pr_id, grn_id, ref, it["id"], target, target_id, qty, int(free), _now(),
+             ref, it["id"], target))
 
-    free=True books the quantity at zero unit cost — an accepted over-delivery is a
-    free issue: it goes on the shelf, it does not move the weighted-average cost."""
+
+def _set_posting(sql, args):
+    """One committed UPDATE on pr_stock_postings; returns rowcount."""
+    conn = get_db()
     try:
-        from app.maintenance.procure_bridge import post_receipt_to_stock
-        post_receipt_to_stock(pr_id, receipts, user, free=free)
-    except Exception:
-        log.warning("maintenance receipt bridge failed for PR %s", pr_id, exc_info=True)
+        n = conn.execute(sql, args).rowcount
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
+def post_stock_postings(pr_id, user=None, manual=False):
+    """Post this PR's queued stock rows (pending, or failed: auto retry stops after
+    5 attempts, a manual retry does not). Never raises.
+
+    A row is CLAIMED ('posting') in its own commit before the store is touched, and
+    a 'posting' row is never retried, automatically or manually: if the process
+    died after the store committed, retrying would post the same goods twice."""
+    result = {"posted": 0, "failed": 0}
+    actor = user or {"username": "system"}
+    cap = "" if manual else " AND COALESCE(attempts,0)<5"
+    spare_posted = False
     try:
-        from app.warehouse.services import post_receipt_to_material
-        post_receipt_to_material(pr_id, receipts, user, free=free)
+        conn = get_db()
+        try:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT p.*, i.unit_price, i.item, r.pr_no, r.source_ref "
+                "FROM pr_stock_postings p LEFT JOIN pr_items i ON i.id=p.item_id "
+                "JOIN pr_requests r ON r.id=p.pr_id WHERE p.pr_id=? "
+                "AND p.status IN ('pending','failed')" + cap + " ORDER BY p.id",
+                (pr_id,)).fetchall()]
+        finally:
+            conn.close()
+        for row in rows:
+            ok, err = False, ""
+            try:
+                if row["target"] == "material" and not row["target_id"]:
+                    from app.warehouse.services import _resolve_material
+                    conn = get_db()
+                    try:
+                        mat = _resolve_material(conn, row["item"])
+                    finally:
+                        conn.close()
+                    if not mat:
+                        # not a warehouse material — nothing to post, same as before
+                        _set_posting("UPDATE pr_stock_postings SET status='skipped' "
+                                     "WHERE id=? AND status IN ('pending','failed')",
+                                     (row["id"],))
+                        continue
+                    row["target_id"] = mat["id"]
+                if _set_posting(
+                        "UPDATE pr_stock_postings SET status='posting', target_id=?, "
+                        "attempts=COALESCE(attempts,0)+1 WHERE id=? "
+                        "AND status IN ('pending','failed')" + cap,
+                        (row["target_id"], row["id"])) != 1:
+                    continue      # another request claimed it
+                price = 0.0 if row["free"] else float(row["unit_price"] or 0)
+                try:
+                    if row["target"] == "spare":
+                        from app.maintenance.services import receive_stock
+                        ok, err = receive_stock(int(row["target_id"]), row["qty"], price, actor)
+                    else:
+                        from app.warehouse.services import post_line_to_material
+                        ok, err = post_line_to_material(row["target_id"], row["qty"], price,
+                                                        row["pr_no"], actor)
+                except Exception as exc:                          # noqa: BLE001
+                    # Outcome unknown (the store may have committed): stay 'posting'
+                    # so a person checks the store instead of a retry doubling it.
+                    log.warning("stock posting %s crashed", row["id"], exc_info=True)
+                    try:
+                        get_db().rollback()   # the shared PG connection may be aborted
+                    except Exception:
+                        pass
+                    _set_posting("UPDATE pr_stock_postings SET last_error=? WHERE id=?",
+                                 (repr(exc)[:300], row["id"]))
+                    result["failed"] += 1
+                    continue
+                _set_posting("UPDATE pr_stock_postings SET status=?, posted_at=?, "
+                             "last_error=? WHERE id=?",
+                             ("posted" if ok else "failed", _now() if ok else None,
+                              None if ok else str(err)[:300], row["id"]))
+                result["posted" if ok else "failed"] += 1
+                spare_posted = spare_posted or (ok and row["target"] == "spare")
+            except Exception:
+                log.warning("stock posting row %s failed", row["id"], exc_info=True)
+        if spare_posted and str(rows[0]["source_ref"] or "").startswith("ticket:"):
+            from app.maintenance.procure_bridge import notify_ticket_parts_arrived
+            notify_ticket_parts_arrived(pr_id)
     except Exception:
-        log.warning("material receipt bridge failed for PR %s", pr_id, exc_info=True)
+        log.warning("stock postings failed for PR %s", pr_id, exc_info=True)
+    return result
+
+
+def stock_posting_issues(pr_id):
+    """Rows that have not reached stock and need a person: failed, or stuck mid-post."""
+    try:
+        conn = get_db()
+        try:
+            return [dict(r) for r in conn.execute(
+                "SELECT p.*, i.item FROM pr_stock_postings p "
+                "LEFT JOIN pr_items i ON i.id=p.item_id "
+                "WHERE p.pr_id=? AND p.status IN ('failed','posting') ORDER BY p.id",
+                (pr_id,)).fetchall()]
+        finally:
+            conn.close()
+    except Exception:
+        return []
 
 
 def _due_date(payment_condition, base_date):
