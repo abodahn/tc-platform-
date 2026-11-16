@@ -127,6 +127,10 @@ def receive_post():
     # its own GRN number allocated. post_stock=False because we book the stock
     # ourselves right after, keeping the roll/lot detail the bridge cannot carry.
     line = svc.po_line_for(form.get("grn_ref"), mid)
+    if line and line.get("no_po"):
+        flash("That reference belongs to a purchase request that has no purchase order yet. "
+              "Issue the PO first, or receive here without the reference.", "error")
+        return redirect(url_for("warehouse.receive"))
     delivered = svc.qty_of(form.get("length_m") if roll else form.get("qty"))
     asked, quarantined = delivered, 0.0
     if line and delivered > 0:

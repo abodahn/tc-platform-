@@ -3577,7 +3577,7 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
         # /warehouse/receive with no GRN and no quarantine. Outstanding is 0, so
         # the arithmetic below yields accepted=0 / over=everything and the whole
         # excess routes into quarantine without touching stock.
-        if pr["status"] not in ("po_issued", "in_transit", "approved", "partially_received", "received"):
+        if pr["status"] not in ("po_issued", "in_transit", "partially_received", "received"):
             return False, "not_receivable"
         items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
         now = _now()
@@ -4732,7 +4732,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         conn.close()
 
 
-def close_pr(pr_id, user, ip=None):
+def close_pr(pr_id, user, ip=None, reason=None):
     conn = get_db()
     try:
         pr = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
@@ -4740,9 +4740,18 @@ def close_pr(pr_id, user, ip=None):
             return False, "not_found"
         if pr["status"] not in ("received", "po_issued", "in_transit", "partially_received"):
             return False, "not_closable"
+        items = conn.execute("SELECT qty, received_qty FROM pr_items WHERE pr_id=?",
+                             (pr_id,)).fetchall()
+        short = any(float(it["qty"] or 0) > 0 and
+                    round(float(it["received_qty"] or 0), 6) < round(float(it["qty"] or 0), 6)
+                    for it in items)
+        reason = (reason or "").strip()
+        if short and not reason:
+            return False, "reason_required"
         conn.execute("UPDATE pr_requests SET status='closed', closed_at=? WHERE id=?",
                      (_now(), pr_id))
-        audit(conn, pr_id, user.get("username") if user else "system", "closed", "Closed", ip)
+        audit(conn, pr_id, user.get("username") if user else "system", "closed",
+              "Short-closed: " + reason[:500] if short else "Closed", ip)
         conn.commit()
         return True, ""
     finally:

@@ -2013,7 +2013,7 @@ def email_po(pr_id):
 
 _RECEIVE_ERR = {
     "not_receivable": "This request is not open for receiving — a receipt can only "
-                      "be booked on an approved, issued or received purchase order.",
+                      "be booked once the purchase order has been issued.",
     "nothing_received": "Enter an accepted or a rejected quantity on at least one line.",
     "not_found": "That purchase request no longer exists.",
 }
@@ -2170,8 +2170,10 @@ def authorize_advance(pr_id):
 @login_required
 @permission_required("proc_purchasing")
 def close(pr_id):
-    ok, msg = svc.close_pr(pr_id, _u(), ip=_ip())
-    flash("Request closed." if ok else f"Could not close ({msg}).",
+    ok, msg = svc.close_pr(pr_id, _u(), ip=_ip(), reason=request.form.get("reason"))
+    flash("Request closed." if ok else
+          "Part of this order was never received. Give a short-close reason to close it."
+          if msg == "reason_required" else f"Could not close ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
