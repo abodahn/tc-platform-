@@ -164,6 +164,17 @@ def checks():
     assert one("SELECT COUNT(*) c FROM notifications WHERE target_user=? AND title='Spare part arrived'", "test_assignee")["c"] == 1
     assert spare_stock() == 9
 
+    # a PR raised from a ticket (free-text line, no spare link) still tells the ticket team
+    tpr, tl = make("Ticket repair", "Repair", 1, 5)
+    execute("UPDATE pr_requests SET source_module='maintenance', source_ref=? WHERE id=?",
+            "ticket:%s" % tid, tpr)
+    approve_all(tpr)
+    assert svc.receive_items(tpr, {tl: 1}, store)[0]
+    arrived = "SELECT COUNT(*) c FROM mnt_notifications WHERE entity_type='ticket' AND entity_id=? AND title LIKE 'Parts arrived%'"
+    assert one(arrived, tid)["c"] == 1
+    svc.post_stock_postings(tpr, manual=True)          # a retry must not repeat it
+    assert one(arrived, tid)["c"] == 1
+
 
 if __name__ == "__main__":
     run()

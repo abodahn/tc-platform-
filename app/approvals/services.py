@@ -3586,6 +3586,8 @@ def resolve_quarantine(q_id, decision, user, ip=None):
         conn.close()
     if qty > 0 and decision in ("accept", "accept_tolerance"):
         post_stock_postings(pr_id, user)
+        from app.maintenance.procure_bridge import notify_ticket_parts_arrived
+        notify_ticket_parts_arrived(pr_id)   # no-op unless the PR was raised from a ticket
     if decision == "accept_tolerance" and qty > 0:
         # Payable means RECEIVED: the three-way match and the payable ceiling both
         # read received_qty, so an excess kept and paid for has to be in it. Done
@@ -3763,6 +3765,12 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
         conn.commit()
         if post_stock:
             post_stock_postings(pr_id, user)
+            # The ticket team hears about ANY accepted goods on a ticket-raised PR
+            # (its line is usually free text with no spare link, so it is not tied
+            # to a spare posting — and a page-load retry must not repeat the notice).
+            if any(float(v or 0) > 0 for v in effective.values()) and                     str(pr["source_ref"] or "").startswith("ticket:"):
+                from app.maintenance.procure_bridge import notify_ticket_parts_arrived
+                notify_ticket_parts_arrived(pr_id)
         return True, ("received" if fully else "partial")
     finally:
         conn.close()
@@ -3828,7 +3836,6 @@ def post_stock_postings(pr_id, user=None, manual=False):
     result = {"posted": 0, "failed": 0}
     actor = user or {"username": "system"}
     cap = "" if manual else " AND COALESCE(attempts,0)<5"
-    spare_posted = False
     try:
         conn = get_db()
         try:
@@ -3889,12 +3896,8 @@ def post_stock_postings(pr_id, user=None, manual=False):
                              ("posted" if ok else "failed", _now() if ok else None,
                               None if ok else str(err)[:300], row["id"]))
                 result["posted" if ok else "failed"] += 1
-                spare_posted = spare_posted or (ok and row["target"] == "spare")
             except Exception:
                 log.warning("stock posting row %s failed", row["id"], exc_info=True)
-        if spare_posted and str(rows[0]["source_ref"] or "").startswith("ticket:"):
-            from app.maintenance.procure_bridge import notify_ticket_parts_arrived
-            notify_ticket_parts_arrived(pr_id)
     except Exception:
         log.warning("stock postings failed for PR %s", pr_id, exc_info=True)
     return result
