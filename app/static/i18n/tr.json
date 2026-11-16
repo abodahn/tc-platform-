@@ -4148,5 +4148,7 @@
   "proc.adv.title": "Sonraki adıma geçilsin mi?",
   "proc.adv.body": "Devam ettikten sonra bu adıma kolayca geri dönemezsiniz. Yukarıdaki her şeyin doğru olduğundan emin olun.",
   "proc.adv.no": "Geri dön ve kontrol et",
-  "proc.adv.yes": "Evet, devam et"
+  "proc.adv.yes": "Evet, devam et",
+  "earlier_level_pending": "Önceki bir onay seviyesi hâlâ bekliyor. Önce o imzalanmalı.",
+  "wrong_role": "Bu onay seviyesi başka bir role ait."
 }

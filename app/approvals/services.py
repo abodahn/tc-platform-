@@ -2767,11 +2767,14 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         now = _now()
 
         if decision == "reject":
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE pr_steps SET status='rejected', approver_user=?, approver_name=?, "
-                "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=?",
+                "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=? AND status='pending'",
                 (uname, sig_name or user.get("full_name") or uname, user.get("role"),
                  comment, sig_png, now, step["id"]))
+            if cur.rowcount == 0:  # someone else signed this step a moment ago
+                conn.rollback()
+                return False, "not_pending"
             _record_sign_event(conn, pr, step, "reject", uname,
                                sig_name or user.get("full_name") or uname, now, ip)
             conn.execute(
@@ -2790,11 +2793,14 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         # ('reviewed' / 'approved' / 'endorsed'), so a Review can be told from an
         # Approve by a query and not only by reading the sentence.
         act = step_action_of(step)
-        conn.execute(
+        cur = conn.execute(
             "UPDATE pr_steps SET status='approved', approver_user=?, approver_name=?, "
-            "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=?",
+            "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=? AND status='pending'",
             (uname, sig_name or user.get("full_name") or uname, user.get("role"),
              comment, sig_png, now, step["id"]))
+        if cur.rowcount == 0:  # concurrent approve/reject won the race; don't double-sign
+            conn.rollback()
+            return False, "not_pending"
         _record_sign_event(conn, pr, step, act, uname,
                            sig_name or user.get("full_name") or uname, now, ip)
         audit(conn, pr_id, uname, C.STEP_ACTION_PAST[act],
@@ -4607,6 +4613,9 @@ def add_payment(pr_id, data, user, ip=None, force=False):
     match = three_way_match(pr_id)
     conn = get_db()
     try:
+        # Lock the PR row first (no-op write) so two payments can't both pass the
+        # cap and then overwrite paid_amount with an understated total.
+        conn.execute("UPDATE pr_requests SET paid_amount=paid_amount WHERE id=?", (pr_id,))
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"

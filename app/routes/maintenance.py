@@ -209,6 +209,8 @@ def dashboard():
 
         def c(sql, a=()):
             return conn.execute(sql, a).fetchone()["c"]
+        from datetime import datetime, timezone
+        month_start = datetime.now(timezone.utc).strftime("%Y-%m-01 00:00:00")
         kpis = {
             "open_tickets": c("SELECT COUNT(*) c FROM mnt_tickets WHERE status NOT IN ('closed','cancelled','rejected')"),
             "critical": c("SELECT COUNT(*) c FROM mnt_tickets WHERE priority='critical' AND status NOT IN ('closed','cancelled')"),
@@ -219,8 +221,11 @@ def dashboard():
             "low_stock": c("SELECT COUNT(*) c FROM mnt_spare_parts WHERE stock_qty <= reorder_level AND stock_qty > 0"),
             "out_stock": c("SELECT COUNT(*) c FROM mnt_spare_parts WHERE stock_qty <= 0"),
             "pm_overdue": c("SELECT COUNT(*) c FROM mnt_pm_plans WHERE active=1 AND next_due < date('now')"),
-            "downtime_month": conn.execute("SELECT COALESCE(SUM(total_downtime_min),0) c FROM mnt_tickets WHERE status='closed'").fetchone()["c"],
-            "cost_month": conn.execute("SELECT COALESCE(SUM(cost),0) c FROM mnt_tickets").fetchone()["c"],
+            # "this month" = since the 1st (UTC); these used to sum ALL time under a monthly label
+            "downtime_month": c("SELECT COALESCE(SUM(total_downtime_min),0) c FROM mnt_tickets "
+                                "WHERE status='closed' AND closed_at >= ?", (month_start,)),
+            "cost_month": c("SELECT COALESCE(SUM(cost),0) c FROM mnt_tickets "
+                            "WHERE COALESCE(closed_at, created_at) >= ?", (month_start,)),
         }
         # MTTR (avg downtime of closed) & breakdown count
         mttr = conn.execute("SELECT AVG(total_downtime_min) a FROM mnt_tickets WHERE status='closed' AND total_downtime_min>0").fetchone()["a"]

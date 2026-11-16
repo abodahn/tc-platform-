@@ -7,7 +7,7 @@ audit logs. All write actions are audit-logged.
 import json
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
-                   flash, abort)
+                   flash, abort, session)
 from werkzeug.security import generate_password_hash
 
 from app.db import get_db, log_audit, utcnow
@@ -262,7 +262,9 @@ def add_user():
     full_name = (f.get("full_name") or "").strip()
     email = (f.get("email") or "").strip()
     role = f.get("role") or "normal_user"
-    if not username or not password or role not in ROLES:
+    from app.security import effective_roles as _eff
+    # same check as Edit User: the form offers Admin-created roles too
+    if not username or not password or role not in _eff():
         flash("user_invalid", "error")
         return redirect(url_for("admin.index") + "#users")
     ok, msg = validate_password(password)
@@ -464,8 +466,13 @@ def edit_user(uid):
                 flash(msg, "error")
                 return redirect(url_for("admin.index") + "#users")
             conn.execute(
-                "UPDATE users SET full_name=?, email=?, role=?, extra_perms=?, password_hash=? WHERE id=?",
+                "UPDATE users SET full_name=?, email=?, role=?, extra_perms=?, password_hash=?, "
+                "session_epoch=COALESCE(session_epoch,0)+1 WHERE id=?",
                 (full_name, email, role, extra_json, generate_password_hash(new_password), uid))
+            # the reset ends that user's live sessions; keep the admin's own session if they reset themselves
+            if row["username"] == current_user()["username"]:
+                session["ep"] = conn.execute("SELECT session_epoch FROM users WHERE id=?",
+                                             (uid,)).fetchone()["session_epoch"]
         else:
             conn.execute("UPDATE users SET full_name=?, email=?, role=?, extra_perms=? WHERE id=?",
                          (full_name, email, role, extra_json, uid))
