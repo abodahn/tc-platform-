@@ -2018,6 +2018,77 @@ def aggregated_total(conn, pr_id, pr, own_egp=None):
     return total, sibs
 
 
+def _commercial_terms(conn, pr_id):
+    """The commercial terms an approval signature stands on."""
+    pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+    try:
+        tax_rate = float(pr["tax_rate"] or 0)
+    except (TypeError, ValueError):
+        tax_rate = 0.0
+    total = float(pr["total"] or 0)
+    return {
+        "vendor": (pr["vendor"] or "").strip(),
+        "currency": (pr["currency"] or "EGP").strip().upper(),
+        "payment_condition": (pr["payment_condition"] or "").strip(),
+        "grand": total + total * tax_rate / 100,
+        "line_vendors": tuple((r["vendor"] or "").strip() for r in conn.execute(
+            "SELECT vendor FROM pr_items WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()),
+    }
+
+
+def _withdraw_signatures_on_changed_terms(conn, pr, before, uname, ip, why):
+    after = _commercial_terms(conn, pr["id"])
+    changed = []
+    if before["vendor"] != after["vendor"] or before["line_vendors"] != after["line_vendors"]:
+        changed.append("vendor: %s -> %s" % (before["vendor"] or "-", after["vendor"] or "-")
+                       if before["vendor"] != after["vendor"] else "line vendors changed")
+    for key, label in (("currency", "currency"), ("payment_condition", "payment terms")):
+        if before[key] != after[key]:
+            changed.append("%s: %s -> %s" % (label, before[key], after[key]))
+    if abs(before["grand"] - after["grand"]) > 0.005:
+        changed.append("total: %.2f -> %.2f" % (before["grand"], after["grand"]))
+    if not changed:
+        return 0
+
+    pivot = conn.execute(
+        "SELECT MIN(seq) AS pivot FROM pr_steps WHERE pr_id=? AND stage=?",
+        (pr["id"], PRICING_GATE_STAGE)).fetchone()["pivot"]
+    if pivot is None:
+        demand = conn.execute("SELECT seq, stage FROM pr_steps WHERE pr_id=?",
+                              (pr["id"],)).fetchall()
+        pivot = max((r["seq"] for r in demand if r["stage"] in C.DEMAND_STAGES), default=0)
+    # Demand rungs below pricing signed the need; pricing makes the change.
+    # Every rung above it signed the old commercial terms.
+    steps = conn.execute(
+        "SELECT id, seq, stage, approver_user FROM pr_steps "
+        "WHERE pr_id=? AND seq>? AND status='approved' ORDER BY seq",
+        (pr["id"], pivot)).fetchall()
+    if not steps:
+        return 0
+    now = _now()
+    for step in steps:
+        conn.execute(
+            "UPDATE pr_steps SET status='pending', approver_user=NULL, approver_name=NULL, "
+            "approver_role=NULL, sig_png=NULL, acted_at=NULL, comment=NULL WHERE id=?",
+            (step["id"],))
+    new_seq = min(step["seq"] for step in steps)
+    if new_seq < (pr["current_seq"] or 0):
+        conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (new_seq, pr["id"]))
+        conn.execute("UPDATE pr_steps SET activated_at=? WHERE pr_id=? AND seq=?",
+                     (now, pr["id"], new_seq))
+    who = ", ".join("%s (%s)" % (stage_label(s["stage"]), s["approver_user"] or "")
+                    for s in steps)
+    audit(conn, pr["id"], uname, "signatures_recollected",
+          "%s: the commercial terms changed (%s), so these signatures are withdrawn "
+          "and must be given again: %s" % (why, "; ".join(changed), who), ip)
+    notify_users(conn, [s["approver_user"] for s in steps if s["approver_user"]]
+                 + [pr["requester"]], "warning",
+                 "Re-approval needed on %s" % (pr["pr_no"] or "a request"),
+                 "The commercial terms changed after you approved, so your approval "
+                 "was withdrawn and is needed again.", link=_pr_link(pr["id"]))
+    return len(steps)
+
+
 def _reconcile_value_ladder(conn, pr_id, department, total):
     """After a pending PR is priced, bring its value-based rungs (Finance / CFO /
     CEO) in line with the new total: append the ones now required that aren't in
@@ -2249,6 +2320,7 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None)
             eff_fx = _mfx if _mfx > 0 else _pfx
             if eff_fx <= 0 or abs(eff_fx - 1.0) < 1e-9:   # 1.0 == the unset default
                 return False, "fx_required"
+        before = _commercial_terms(conn, pr_id)
         items = conn.execute(
             "SELECT id, qty, unit_price FROM pr_items WHERE pr_id=? ORDER BY seq",
             (pr_id,)).fetchall()
@@ -2328,6 +2400,9 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None)
                          (meta["vendor"], pr_id, pr["vendor"]))
 
         if pr["status"] == "pending":
+            _withdraw_signatures_on_changed_terms(
+                conn, pr, before, (user or {}).get("username") or "system", ip,
+                "Re-priced while approval was pending")
             _reconcile_value_ladder(conn, pr_id, pr["department"], total)
             # DOAM §4.4 — deviation grading runs HERE, immediately after the
             # value ladder is reconciled: the prices being graded are the ones
@@ -5315,18 +5390,25 @@ def choose_quote(pr_id, quote_id, user, ip=None):
                          (quote_id, pr_id)).fetchone()
         if not q:
             return False, "not_found"
-        pr = conn.execute("SELECT id, status, requester FROM pr_requests WHERE id=?",
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?",
                           (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
         # Choosing which supplier wins, on your own request.
-        _bad = _refuse_self_commercial(pr, user, "quote_choice") if pr else None
+        _bad = _refuse_self_commercial(pr, user, "quote_choice")
         if _bad:
             return False, _bad
-        if pr and pr["status"] in ("approved", "po_issued", "in_transit",
-                                   "partially_received", "received", "closed", "cancelled"):
+        if pr["status"] in ("approved", "po_issued", "in_transit",
+                            "partially_received", "received", "closed", "cancelled"):
             return False, "locked"   # the vendor is fixed once the PR is approved
+        before = _commercial_terms(conn, pr_id)
         conn.execute("UPDATE pr_quotes SET is_chosen=0 WHERE pr_id=?", (pr_id,))
         conn.execute("UPDATE pr_quotes SET is_chosen=1 WHERE id=?", (quote_id,))
         conn.execute("UPDATE pr_requests SET vendor=? WHERE id=?", (q["vendor"], pr_id))
+        if pr["status"] == "pending":
+            _withdraw_signatures_on_changed_terms(
+                conn, pr, before, (user or {}).get("username") or "system", ip,
+                "Quote chosen while approval was pending")
         audit(conn, pr_id, user.get("username") if user else "system", "quote_chosen",
               f"Selected {q['vendor']} @ {q['amount']}", ip)
         conn.commit()
