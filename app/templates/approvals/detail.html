@@ -1230,6 +1230,19 @@
     {% if pr.status in ('received','partially_received') and can_purchasing %}
     <form method="post" action="{{ url_for('approvals.close', pr_id=pr.id) }}" class="mt-3">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      {% set short_close = namespace(required=false) %}
+      {% for it in b['items'] %}
+        {% if (it.qty or 0) > 0 and (it.received_qty or 0) < (it.qty or 0) %}
+          {% set short_close.required = true %}
+        {% endif %}
+      {% endfor %}
+      {% if short_close.required %}
+      <div class="field">
+        <label for="short-close-reason" data-i18n="proc.short_close_reason">Short-close reason</label>
+        <input id="short-close-reason" type="text" name="reason" required
+               placeholder="Why is the rest of the order not coming?" data-i18n-ph="proc.short_close_ph">
+      </div>
+      {% endif %}
       <button class="btn btn-ghost btn-sm" type="submit" data-advance data-i18n="proc.close">Close request</button>
     </form>
     {% endif %}

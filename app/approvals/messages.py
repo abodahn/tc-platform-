@@ -633,6 +633,14 @@ MESSAGES = {
         "ar": "تم إقفال الطلب.",
         "tr": "Talep kapatıldı.",
     },
+    "Part of this order was never received. Give a short-close reason to close it.": {
+        "ar": "جزء من الطلب ده لسه ما اتستلمش. اكتب سبب إقفال الطلب من غير استلام الباقي.",
+        "tr": "Bu siparişin bir kısmı hiç teslim alınmadı. Kapatmak için eksik teslimatla kapatma nedenini yazın.",
+    },
+    "This request is not open for receiving — a receipt can only be booked once the purchase order has been issued.": {
+        "ar": "الطلب ده مش متاح للاستلام. لازم أمر الشراء يصدر الأول عشان تسجّل الاستلام.",
+        "tr": "Bu talep teslim almaya açık değil — teslim alma ancak satın alma siparişi düzenlendikten sonra kaydedilebilir.",
+    },
     "Request not found.": {
         "ar": "الطلب غير موجود.",
         "tr": "Talep bulunamadı.",

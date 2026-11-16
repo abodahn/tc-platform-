@@ -4150,5 +4150,7 @@
   "proc.adv.no": "Go back and check",
   "proc.adv.yes": "Yes, continue",
   "earlier_level_pending": "An earlier approval level is still pending. It must be signed first.",
-  "wrong_role": "This approval level belongs to another role."
+  "wrong_role": "This approval level belongs to another role.",
+  "proc.short_close_reason": "Short-close reason",
+  "proc.short_close_ph": "Why is the rest of the order not coming?"
 }

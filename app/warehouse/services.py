@@ -665,7 +665,8 @@ def po_line_for(grn_ref, material_id):
     procurement receiving tab — capped at the outstanding quantity, over-delivery
     quarantined, one numbered GRN per delivery — instead of booking free stock the
     order never hears about (which is what broke the three-way match).
-    Returns {pr_id, item_id, outstanding}. Never raises: no procurement tables, no
+    Returns {pr_id, item_id, outstanding}, or {no_po: True, pr_id} for pre-PO requests.
+    Never raises: no procurement tables, no
     match, no reference -> plain unreferenced stock-in, exactly as before."""
     ref = (grn_ref or "").strip()
     if not ref or not material_id:
@@ -679,9 +680,10 @@ def po_line_for(grn_ref, material_id):
         # further shipment arriving after the PO is closed out. Excluding it sent
         # that delivery straight into stock as uncontrolled free stock. With
         # outstanding == 0 the caller quarantines the whole lot and stocks none.
-        if not pr or pr["status"] not in ("approved", "po_issued",
-                                          "partially_received", "received"):
+        if not pr or pr["status"] in ("closed", "cancelled"):
             return None
+        if pr["status"] not in ("po_issued", "in_transit", "partially_received", "received"):
+            return {"no_po": True, "pr_id": pr["id"]}
         for it in conn.execute("SELECT id, item, qty, received_qty FROM pr_items "
                                "WHERE pr_id=? ORDER BY seq, id", (pr["id"],)).fetchall():
             mat = _resolve_material(conn, it["item"])
