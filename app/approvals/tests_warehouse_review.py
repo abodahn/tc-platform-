@@ -461,6 +461,82 @@ def run():
     chk("finance cannot put stock back", not okE and msgE == "not_eligible", msgE)
     chk("but an admin can — the person who erred may be the one unable to fix it",
         okF, msgF)
+    # Preserve each physical source, including issues predating the issue ledger.
+    with app.app_context():
+        conn = get_db()
+        conn.execute(
+            "INSERT INTO mnt_spare_parts (code, name, uom, stock_qty, reserved_qty, is_active) "
+            "VALUES ('SP-ISS-2','Spare','Pcs',20,0,1)")
+        conn.commit()
+        header = {"title": "Issue history", "department": "IT", "currency": "EGP"}
+        pid8, _ = svc.create_pr(header, [{"item": "Spare", "qty": 10}], reqr, priced=False)
+        line8 = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (pid8,)).fetchone()["id"]
+
+        def stocks():
+            return {r["code"]: float(r["stock_qty"]) for r in conn.execute(
+                "SELECT code, stock_qty FROM mnt_spare_parts WHERE code IN (?,?)",
+                ("SP-ISS-1", "SP-ISS-2")).fetchall()}
+
+        before = stocks()
+        for code, qty in [("SP-ISS-1", 2), ("SP-ISS-2", 3)]:
+            assert svc.issue_from_stock(pid8, {line8: {"code": code, "qty": qty}},
+                                        signer["warehouse"])[0]
+        ln8 = dict(conn.execute("SELECT * FROM pr_items WHERE id=?", (line8,)).fetchone())
+        assert ln8["issued_from"] == "SP-ISS-1, SP-ISS-2" and ln8["issued_qty"] == 5
+        assert stocks() == {"SP-ISS-1": before["SP-ISS-1"] - 2, "SP-ISS-2": 17}
+        assert svc.reverse_stock_issue(pid8, line8, signer["warehouse"])[0]
+        assert stocks() == before
+        assert conn.execute("SELECT COUNT(*) n FROM pr_item_issues WHERE pr_item_id=? "
+                            "AND reversed_at IS NULL", (line8,)).fetchone()["n"] == 0
+
+        # No history: use the original single-code return, then test backfilling
+        # that same legacy state when a further issue comes from another source.
+        for add_issue in (False, True):
+            conn.execute("DELETE FROM pr_item_issues WHERE pr_item_id=?", (line8,))
+            conn.execute("UPDATE pr_items SET qty=8, issued_qty=2, issued_from=? WHERE id=?",
+                         ("SP-ISS-1", line8))
+            conn.execute("UPDATE mnt_spare_parts SET stock_qty=stock_qty-2 WHERE code=?",
+                         ("SP-ISS-1",))
+            conn.commit()
+            if add_issue:
+                assert svc.issue_from_stock(pid8, {line8: {"code": "SP-ISS-2", "qty": 3}},
+                                            signer["warehouse"])[0]
+                rows = conn.execute("SELECT * FROM pr_item_issues WHERE pr_item_id=? "
+                                    "ORDER BY id", (line8,)).fetchall()
+                assert len(rows) == 2 and rows[0]["spare_id"] is None
+                assert rows[0]["qty"] == 2 and rows[0]["source_code"] == "SP-ISS-1"
+            assert svc.reverse_stock_issue(pid8, line8, signer["warehouse"])[0]
+            assert stocks() == before
+
+        assert svc.issue_from_stock(pid8, {line8: {"code": "SP-ISS-1", "qty": 2}},
+                                    signer["warehouse"])[0]
+        conn.execute("UPDATE pr_requests SET status='rejected' WHERE id=?", (pid8,))
+        conn.execute("UPDATE pr_items SET received_qty=1 WHERE id=?", (line8,))
+        conn.commit()
+        item = {"line_id": str(line8), "item": "Spare", "qty": 0}
+        assert svc.update_pr(pid8, header, [item], reqr, can_price=False)[0]
+        kept = dict(conn.execute("SELECT * FROM pr_items WHERE id=?", (line8,)).fetchone())
+        assert kept["issued_qty"] == 2 and kept["issued_from"] == "SP-ISS-1"
+        assert kept["qty"] == 0 and kept["received_qty"] == 1
+        old_header = dict(conn.execute("SELECT * FROM pr_requests WHERE id=?", (pid8,)).fetchone())
+        events = conn.execute("SELECT COUNT(*) n FROM pr_events WHERE pr_id=?",
+                              (pid8,)).fetchone()["n"]
+        assert svc.update_pr(pid8, dict(header, title="Changed", expenditure_kind="capex"),
+                             [], reqr) == (False, "issued_line_removed")
+        assert dict(conn.execute("SELECT * FROM pr_items WHERE id=?", (line8,)).fetchone()) == kept
+        assert dict(conn.execute("SELECT * FROM pr_requests WHERE id=?", (pid8,)).fetchone()) == old_header
+        assert conn.execute("SELECT COUNT(*) n FROM pr_events WHERE pr_id=?",
+                            (pid8,)).fetchone()["n"] == events
+        assert svc.update_pr(pid8, header, [dict(item, item="Pump")], reqr) == (
+            False, "issued_line_changed")
+        # Only the first duplicate claim keeps the existing identity.
+        assert svc.update_pr(pid8, header, [item, dict(item, qty=1)], reqr)[0]
+        ids = [r["id"] for r in conn.execute("SELECT id FROM pr_items WHERE pr_id=? ORDER BY seq",
+                                           (pid8,)).fetchall()]
+        assert ids[0] == line8 and ids[1] != line8
+        conn.close()
+    chk("multiple sources, legacy reversal/backfill, and issued-line edits", True)
+
     print("\n" + ("RESULT: ALL GREEN" if ok_all[0] else "RESULT: FAILURES ABOVE"))
     return ok_all[0]
 

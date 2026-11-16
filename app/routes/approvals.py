@@ -472,6 +472,7 @@ def _parse_items(f, can_price=False, can_buy=False):
     units = f.getlist("unit[]"); qtys = f.getlist("qty[]")
     stocks = f.getlist("current_stock[]"); prices = f.getlist("unit_price[]")
     notes = f.getlist("item_notes[]"); spares = f.getlist("spare_id[]")
+    line_ids = f.getlist("line_id[]")
     item_ids = f.getlist("item_id[]"); vendors = f.getlist("vendor[]")
     # A line is real if it says WHAT is needed — in the item box or, on a request
     # form where that box is locked, in the description. Requiring item[] would
@@ -529,6 +530,7 @@ def _parse_items(f, can_price=False, can_buy=False):
             # OPTIONAL catalogue link (proc_items.id). Blank on a free-text line,
             # which stays a first-class way to raise a request.
             "item_id": item_ids[i] if i < len(item_ids) else "",
+            "line_id": line_ids[i] if i < len(line_ids) else "",
         })
     return items
 
@@ -1171,7 +1173,10 @@ def edit_save(pr_id):
         return redirect(url_for("approvals.edit", pr_id=pr_id))
     ok, msg = svc.update_pr(pr_id, header, items, _u(), ip=_ip(), can_price=can_price)
     if not ok:
-        flash(f"Could not save ({msg}).", "error")
+        _issued = ("A line that already had stock issued against it cannot be removed "
+                   "or changed to another item. Reverse the stock issue on that line first.")
+        flash({"issued_line_removed": _issued, "issued_line_changed": _issued}.get(
+            msg, f"Could not save ({msg})."), "error")
         return redirect(url_for("approvals.edit", pr_id=pr_id))
     _save_attachments(pr_id, _u())
     if request.form.get("action") != "draft":
