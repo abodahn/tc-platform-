@@ -479,7 +479,7 @@ with app.test_client() as cl:
     absent = [p["ar"][:40] for p in expected
               if ('data-loc-ar="%s"' % escape(p["ar"])) not in html_en]
     ck("all %d DB paragraphs ship Arabic in the markup" % len(expected),
-       not absent and len(expected) == 37, (len(expected), absent[:3]))
+       not absent and len(expected) == 38, (len(expected), absent[:3]))
     long_ones = [(e, a, t) for e, a, t, _ in trios if len(e) > 80]
     ck("the long PARAGRAPHS (not just the labels) ship Arabic and Turkish",
        len(long_ones) >= 25, len(long_ones))

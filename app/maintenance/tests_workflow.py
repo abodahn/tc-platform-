@@ -426,8 +426,8 @@ with app.app_context():
         ck("the admin's rules text survived",
            wf.texts(c, "doc")["costing"] == "MY OWN costing note.")
         ck("the admin's setting survived", wf.num(c, "resolution_sla_hours") == 36.0)
-        ck("seeded text count == 35",
-           sum(len(x) for x in (wf.STATUS_TEXT, wf.ROLE_TEXT, wf.STAGE_TEXT, wf.DOC_TEXT)) == 35)
+        ck("seeded text count == 36",
+           sum(len(x) for x in (wf.STATUS_TEXT, wf.ROLE_TEXT, wf.STAGE_TEXT, wf.DOC_TEXT)) == 36)
         wf.reset_setting(c, "resolution_sla_hours", ADMIN)
     finally:
         c.close()
