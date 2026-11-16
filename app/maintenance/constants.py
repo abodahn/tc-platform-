@@ -118,6 +118,8 @@ MAINT_ROLE_PERMS = {
     "maintenance_technician": ["maint_view", "maint_ticket_create", "maint_technician"],
     "storekeeper": ["maint_view", "maint_store", "maint_approve"],
     "production_supervisor": ["maint_view", "maint_ticket_create"],
+    # opens a ticket and follows it - no approvals, no store, no procurement
+    "maintenance_requester": ["maint_view", "maint_ticket_create"],
     "factory_manager": ["maint_view", "maint_approve", "maint_manage"],
     # grants for existing platform roles:
     "production_manager": ["maint_view", "maint_ticket_create", "maint_approve"],
@@ -133,5 +135,6 @@ MAINT_ROLE_LABELS = {
     "maintenance_technician": "Maintenance Technician",
     "storekeeper": "Storekeeper / Warehouse",
     "production_supervisor": "Production Supervisor",
+    "maintenance_requester": "Maintenance Requester",
     "factory_manager": "Factory Manager",
 }

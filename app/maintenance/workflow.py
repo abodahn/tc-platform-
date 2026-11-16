@@ -162,6 +162,7 @@ ROLE_TEXT = {
                    "adjusts stock. Deliberately the ISSUER and not an approval rung.",
     "production_supervisor": "Raises tickets from the floor and takes the machine back "
                              "after testing.",
+    "maintenance_requester": "Opens maintenance tickets and follows their progress.",
     "factory_manager": "Signs the extra rung on critical or high-value spare requests.",
     "production_manager": "Raises tickets from production and can sign approvals.",
     "it_director": "Administers the module: settings, master data, approval matrix.",
@@ -313,6 +314,7 @@ ROLE_TEXT_AR = {
     "storekeeper": "يدير مخزن قطع الغيار: يصرف القطع المعتمدة، ويستلم المخزون، ويجري "
                    "التسويات. وهو الصارف عن قصد وليس درجة موافقة.",
     "production_supervisor": "يفتح التذاكر من صالة الإنتاج، ويستلم الماكينة بعد الاختبار.",
+    "maintenance_requester": "يفتح تذاكر الصيانة ويتابع حالتها.",
     "factory_manager": "يوقّع الدرجة الإضافية في طلبات قطع الغيار الحرجة أو مرتفعة القيمة.",
     "production_manager": "يفتح التذاكر من الإنتاج ويمكنه توقيع الموافقات.",
     "it_director": "يدير الوحدة: الإعدادات والبيانات الأساسية ومصفوفة الموافقات.",
@@ -331,6 +333,7 @@ ROLE_TEXT_TR = {
                    "yapar, stok düzeltir. Bilinçli olarak ÇIKIŞI YAPAN taraftır, onay "
                    "basamağı değildir.",
     "production_supervisor": "Sahadan talep açar ve testten sonra makineyi geri alır.",
+    "maintenance_requester": "Bakım talebi açar ve durumunu takip eder.",
     "factory_manager": "Kritik veya yüksek değerli yedek parça taleplerindeki ek basamağı "
                        "imzalar.",
     "production_manager": "Üretimden talep açar ve onayları imzalayabilir.",
@@ -466,6 +469,7 @@ LABEL_I18N = {
         "maintenance_technician": (None, "فنّي الصيانة", "Bakım Teknisyeni"),
         "storekeeper": (None, "أمين المخزن", "Depo Sorumlusu"),
         "production_supervisor": (None, "مشرف الإنتاج", "Üretim Şefi"),
+        "maintenance_requester": (None, "طالب صيانة", "Bakım Talep Eden"),
         "factory_manager": (None, "مدير المصنع", "Fabrika Müdürü"),
         "production_manager": (None, "مدير الإنتاج", "Üretim Müdürü"),
         "it_director": (None, "مدير تقنية المعلومات", "BT Direktörü"),
