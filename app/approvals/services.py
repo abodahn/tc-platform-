@@ -76,14 +76,14 @@ def bell(conn, severity, title, message, link=None):
         "VALUES (?,?,?,?,?,?)", (severity, "procurement", title, message, link, _now()))
 
 
-def notify_users(conn, usernames, severity, title, message, link=None):
+def notify_users(conn, usernames, severity, title, message, link=None, module="procurement"):
     """Send a per-user bell notification to each username (deduped, skips blanks),
     and, when SMTP is configured, an email to those who allow it."""
     targets = {u for u in usernames if u}
     for u in targets:
         conn.execute(
             "INSERT INTO notifications (severity, module, title, message, target_user, link, created_at) "
-            "VALUES (?,?,?,?,?,?,?)", (severity, "procurement", title, message, u, link, _now()))
+            "VALUES (?,?,?,?,?,?,?)", (severity, module, title, message, u, link, _now()))
     try:
         _email_targets(conn, targets, title, message, link)
     except Exception:

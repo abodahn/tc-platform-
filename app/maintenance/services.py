@@ -83,6 +83,47 @@ def notify(conn, target_role, title, message, entity_type, entity_id,
             "VALUES (?,?,?,?,?)", (severity, "maintenance", title, message, _now()))
 
 
+def _usernames_for(conn, names):
+    names = list({name.strip() for name in (names or []) if name and name.strip()})
+    if not names:
+        return []
+    placeholders = ",".join("?" for _ in names)
+    return [row["username"] for row in conn.execute(
+        f"SELECT username FROM users WHERE is_active=1 AND "
+        f"(username IN ({placeholders}) OR full_name IN ({placeholders}))",
+        tuple(names + names)).fetchall()]
+
+
+def _role_usernames(conn, role):
+    if not (role or "").strip():
+        return []
+    return [row["username"] for row in conn.execute(
+        "SELECT username FROM users WHERE is_active=1 AND role=?", (role,)).fetchall()]
+
+
+def _requester_usernames(conn, ticket_id):
+    ticket = conn.execute(
+        "SELECT requester_user_id, requester FROM mnt_tickets WHERE id=?",
+        (ticket_id,)).fetchone()
+    if not ticket:
+        return []
+    if ticket["requester_user_id"] is not None:
+        user = conn.execute("SELECT username FROM users WHERE id=? AND is_active=1",
+                            (ticket["requester_user_id"],)).fetchone()
+        return [user["username"]] if user else []
+    return _usernames_for(conn, [ticket["requester"]])
+
+
+def _notify_people(conn, usernames, title, message, link):
+    if not usernames:
+        return
+    try:
+        from app.approvals.services import notify_users
+        notify_users(conn, usernames, "info", title, message, link=link, module="maintenance")
+    except Exception:
+        pass
+
+
 # --- status helpers --------------------------------------------------------
 _STATUS_STAMP = {
     "under_review": "reviewed_at", "assigned": "assigned_at",
@@ -284,6 +325,9 @@ def review_assign(ticket_id, technician, priority, response_due, resolution_due,
         notify(conn, "maintenance_technician", "Work order assigned",
                f"{doc_no('MNT', ticket_id)} assigned to you", "ticket", ticket_id,
                "info", f"/maintenance/tickets/{ticket_id}")
+        _notify_people(conn, _usernames_for(conn, [technician]), "Work order assigned",
+                       f"{doc_no('MNT', ticket_id)} assigned to you",
+                       f"/maintenance/tickets/{ticket_id}")
         conn.commit()
         return True, ""
     finally:
@@ -431,6 +475,10 @@ def create_request(ticket_id, items, reason, urgency, user, ip=None):
             notify(conn, first_role, "Spare request awaiting approval",
                    f"{doc_no('SPR', rid)} needs your approval", "request", rid,
                    "warning", f"/maintenance/approvals")
+            if roles:
+                _notify_people(conn, _role_usernames(conn, roles[0]),
+                               "Spare request awaiting approval",
+                               f"{doc_no('SPR', rid)} needs your approval", "/maintenance/approvals")
         audit(conn, user, "request_create", "request", rid, None, doc_no("SPR", rid), ip=ip)
         conn.commit()
         return rid, ""
@@ -473,6 +521,9 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             if req:
                 set_ticket_status(conn, req["ticket_id"], "spare_required", user, ip, force=True,
                                   comment=comment)
+                ticket_id = req["ticket_id"]
+                _notify_people(conn, _requester_usernames(conn, ticket_id), "Spare request rejected",
+                               f"{doc_no('SPR', rid)}: {comment}", f"/maintenance/tickets/{ticket_id}")
             notify(conn, "maintenance_technician", "Spare request rejected",
                    f"Request {rid}: {comment}", "request", rid, "warning")
             audit(conn, user, "approval_reject", "request", rid, None, "rejected",
@@ -487,6 +538,12 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             conn.execute("UPDATE mnt_requests SET status='returned' WHERE id=?", (rid,))
             notify(conn, "maintenance_technician", "Spare request returned",
                    f"Request {rid} returned for clarification", "request", rid, "info")
+            req = conn.execute("SELECT ticket_id FROM mnt_requests WHERE id=?", (rid,)).fetchone()
+            if req:
+                ticket_id = req["ticket_id"]
+                _notify_people(conn, _requester_usernames(conn, ticket_id), "Spare request returned",
+                               f"{doc_no('SPR', rid)} returned for clarification",
+                               f"/maintenance/tickets/{ticket_id}")
             audit(conn, user, "approval_return", "request", rid, None, "returned",
                   comment=comment, ip=ip)
             conn.commit()
@@ -549,9 +606,20 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
                              (_now(), rid))
                 if req:
                     set_ticket_status(conn, req["ticket_id"], "approved_issue", user, ip, force=True)
+                    ticket_id = req["ticket_id"]
+                    _notify_people(conn, _requester_usernames(conn, ticket_id), "Spare request approved",
+                                   f"{doc_no('SPR', rid)} approved", f"/maintenance/tickets/{ticket_id}")
                 notify(conn, "storekeeper", "Spare request approved - ready to issue",
                        f"Request {rid} approved", "request", rid, "warning",
                        "/maintenance/requests")
+        else:
+            next_rung = conn.execute(
+                "SELECT approver_role FROM mnt_approvals WHERE request_id=? AND status='pending' "
+                "ORDER BY level, id LIMIT 1", (rid,)).fetchone()
+            if next_rung:
+                _notify_people(conn, _role_usernames(conn, next_rung["approver_role"]),
+                               "Spare request awaiting approval",
+                               f"{doc_no('SPR', rid)} needs your approval", "/maintenance/approvals")
         audit(conn, user, "approval_approve", "request", rid, None, "approved", comment=comment, ip=ip)
         conn.commit()
         return True, ""
@@ -720,6 +788,8 @@ def close_ticket(ticket_id, user, ip=None):
         downtime = max(downtime, 0)
         conn.execute("UPDATE mnt_tickets SET status='closed', closed_at=?, total_downtime_min=? WHERE id=?",
                      (_now(), downtime, ticket_id))
+        _notify_people(conn, _requester_usernames(conn, ticket_id), "Ticket closed",
+                       f"{doc_no('MNT', ticket_id)} has been closed", f"/maintenance/tickets/{ticket_id}")
         if t["machine_id"] and not (t["machine_rolled"] or 0):
             # Only charge the machine's downtime meter when production was actually
             # stopped -- otherwise administrative waiting time (approvals, parts)

@@ -1270,7 +1270,8 @@ def pm():
                 checklists[row["plan_id"]].append(row)
         wos = conn.execute(
             "SELECT w.*, m.code mcode FROM mnt_pm_work_orders w JOIN mnt_machines m ON m.id=w.machine_id "
-            "ORDER BY w.id DESC LIMIT 30").fetchall()
+            # open orders first so an old overdue one linked from /my-work is still listed
+            "ORDER BY CASE WHEN w.status='completed' THEN 1 ELSE 0 END, w.id DESC LIMIT 30").fetchall()
     finally:
         conn.close()
     # Overdue and due-soon first, then the rest — and cap what is rendered. All

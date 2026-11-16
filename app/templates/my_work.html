@@ -176,9 +176,32 @@
   </div>
   {% endif %}
 
+  {# ── My PM work orders ── #}
+  {% if my_pm %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.my_pm">My PM work orders</h3>
+      <span class="badge-count">{{ my_pm|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for w in my_pm %}
+      <a class="row-line" href="{{ url_for('maintenance.pm') }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ w.pm_no }}</b> · {{ w.mcode or '' }} · {{ w.scheduled_date or '' }}</span>
+        {% if w.scheduled_date and (w.scheduled_date|string)[:10] < today %}
+        <span class="tag" data-i18n="mywork.overdue">Overdue</span>
+        {% else %}
+        <span class="tag">{{ w.status }}</span>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
 </div>
 
-{% if not (sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets
+{% if not (sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets or my_pm
            or late_milestones or cmp_caps or cmp_expiring) %}
 <div class="panel"><div class="panel-pad muted" data-i18n="mywork.empty">
   Nothing to show yet — new approvals, tickets and alerts assigned to you will appear here.
