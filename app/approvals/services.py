@@ -13,7 +13,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from app.db import get_db
-from app.security import has_permission, effective_roles
+from app.security import has_permission, user_has_permission, effective_roles
 from app.approvals import constants as C
 from app.approvals.constants import (
     build_ladder, ladder_rungs, rungs_from_stages, stage_label, STAGE_ROLES,
@@ -230,23 +230,34 @@ def stage_role(stage):
     return stage_roles_map().get(stage, set())
 
 
+def _may_sign(user):
+    """The per-PERSON half of can_act(): proc_approve or proc_admin, from the role (DB custom_roles overlay included) plus the user's own extra_perms."""
+    u = dict(user) if user else {}
+    return user_has_permission(u, "proc_approve") or user_has_permission(u, "proc_admin")
+
+
 def role_holders(conn, roles):
     """Usernames who may sign on behalf of any of `roles`: everyone actively
     holding one, plus anyone with an active delegation from such a person.
+    Only active accounts with procurement signing permission are counted.
     Two queries regardless of how many roles are passed."""
     roles = {r for r in (roles or ()) if r}
     if not roles:
         return set()
     ph = ",".join(["?"] * len(roles))
     out = {r["username"] for r in conn.execute(
-        f"SELECT username FROM users WHERE is_active=1 AND role IN ({ph})",
-        tuple(roles)).fetchall()}
+        f"SELECT username, role, extra_perms FROM users WHERE is_active=1 "
+        f"AND COALESCE(account_status,'active')='active' AND role IN ({ph})",
+        tuple(roles)).fetchall() if _may_sign(r)}
     today = _now()[:10]
-    sql = (f"SELECT d.to_user u FROM proc_delegations d JOIN users usr ON usr.username=d.from_user "
+    sql = (f"SELECT d.to_user u, tu.role, tu.extra_perms FROM proc_delegations d "
+           f"JOIN users usr ON usr.username=d.from_user JOIN users tu ON tu.username=d.to_user "
            f"WHERE d.is_active=1 AND usr.role IN ({ph}) "
+           f"AND tu.is_active=1 AND COALESCE(tu.account_status,'active')='active' "
            f"AND (d.from_date IS NULL OR d.from_date<=?) AND (d.to_date IS NULL OR d.to_date>=?)")
     for r in conn.execute(sql, tuple(roles) + (today, today)).fetchall():
-        out.add(r["u"])
+        if _may_sign(r):
+            out.add(r["u"])
     return out
 
 
@@ -380,9 +391,9 @@ def can_act(user, stage, _deleg=None, _roles=None):
     if not user:
         return False
     role = user.get("role")
-    if role == "super_admin" or has_permission(role, "proc_admin"):
+    if role == "super_admin" or user_has_permission(user, "proc_admin"):
         return True
-    if not has_permission(role, "proc_approve"):
+    if not user_has_permission(user, "proc_approve"):
         return False
     if _roles is None:
         _roles = stage_roles_map()
@@ -507,9 +518,8 @@ def resolve_escalation(conn, stage, requester, _roles=None, _chain=None,
         return None, ""                       # a colleague can sign: unchanged
     # Nobody who normally signs this rung is allowed to: they are the originator,
     # or they already signed another rung of THIS request and the dual-role rule
-    # will refuse them. `_busy` is empty on a fresh submit, so that path behaves
-    # exactly as before; it is only non-empty for a value rung appended after
-    # pricing, which is where the collision an earlier escalation created shows up.
+    # will refuse them. `_busy` also includes sole signers committed to earlier
+    # rungs on submit, so later rungs cannot rely on their second signature.
     busy = set(_busy) | _sole_signers(_holders, requester, skip=stage)
     chain = escalation_map(conn) if _chain is None else _chain
     seen, level = set(roles), set(roles)
@@ -517,7 +527,11 @@ def resolve_escalation(conn, stage, requester, _roles=None, _chain=None,
         nxt = {chain.get(r) or "" for r in level} - {""} - seen
         if not nxt:
             break
-        found = {r for r in nxt if can_sign_role(r, stage)
+        # Role half (admin, or holds the rung's authority level) here; the
+        # per-person half (active, proc_approve incl. extra_perms) is role_holders'.
+        found = {r for r in nxt
+                 if (r == "super_admin" or has_permission(r, "proc_admin")
+                     or C.holds_authority(r, stage))
                  and role_holders(conn, {r}) - {requester} - busy}
         if found:
             return found, "escalated"
@@ -1841,7 +1855,8 @@ def submit_pr(pr_id, user, ip=None):
                 _origin[_ux] = "unbudgeted"
         rungs = rungs_from_stages(_stages)
         # SoD escalation, resolved BEFORE anything is written: a rung whose only
-        # eligible signer is the requester climbs one level up the org chart. A
+        # eligible signer is the requester or committed to an earlier rung climbs
+        # one level up the org chart. A
         # rung with nobody above it can never be signed, so the request is refused
         # here rather than parked in a queue forever.
         _roles = stage_roles_map(conn)
@@ -1853,9 +1868,14 @@ def submit_pr(pr_id, user, ip=None):
         # rule, so that would just move the deadlock one rung down.
         _holders = {s: stage_signers(conn, s, _roles.get(s) or ()) for s in flat_stages}
         esc, blocked = {}, []
+        _committed = set()
         for stage in flat_stages:
+            _free = _holders[stage] - {pr["requester"]}
             e_role, e_from, why = _esc_columns(conn, stage, pr["requester"], _roles,
-                                               _chain, _holders=_holders)
+                                               _chain, _holders=_holders,
+                                               _busy=_committed if _free else ())
+            if not why and len(_free) == 1:
+                _committed |= _free
             if why == "escalated":
                 esc[stage] = (e_role, e_from)
             elif why == "no_superior":
@@ -1939,9 +1959,12 @@ def submit_pr(pr_id, user, ip=None):
                 if e_role:
                     audit(conn, pr_id, user.get("username") if user else "system",
                           "escalated_stage",
-                          f"{stage_label(stage)}: signing escalated from "
-                          f"{e_from or '—'} to {e_role} — the requester holds the "
-                          f"normal signing role.", ip)
+                          (f"{stage_label(stage)}: signing escalated from "
+                           f"{e_from or '—'} to {e_role} — the requester holds the "
+                           f"normal signing role." if pr["requester"] in _holders.get(stage, ()) else
+                           f"{stage_label(stage)}: signing escalated from {e_from or '—'} to {e_role} — "
+                           f"its only eligible signer must sign an earlier rung of this request, "
+                           f"and one person may not sign two rungs."), ip)
         stamp_step_actions(conn, pr_id)          # DOAM Table 5 (R / A / E)
         conn.execute(
             "UPDATE pr_requests SET status='pending', current_seq=1, submitted_at=?, "
@@ -2278,7 +2301,7 @@ def _refuse_self_commercial(pr, user, what):
     if not uname or pr["requester"] != uname:
         return None
     role = (user or {}).get("role") or ""
-    if role == "super_admin" or has_permission(role, "proc_admin"):
+    if role == "super_admin" or user_has_permission(user, "proc_admin"):
         return None
     log.info("refused self-%s on PR %s by %s", what, pr["id"] if "id" in pr.keys() else "?", uname)
     return "self_%s" % what
@@ -2317,7 +2340,7 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None)
         # that is a visible, audited act by somebody who is not the requester.
         _uname = (user or {}).get("username")
         _role = (user or {}).get("role") or ""
-        _is_admin = _role == "super_admin" or has_permission(_role, "proc_admin")
+        _is_admin = _role == "super_admin" or user_has_permission(user, "proc_admin")
         if _uname and pr["requester"] == _uname and not _is_admin:
             return False, "self_pricing"
 
@@ -2721,6 +2744,50 @@ def resume_request(pr_id, note, user, ip=None):
     finally:
         conn.close()
 
+def _reescalate_dual_role(conn, pr_id, pr, seq):
+    """Re-route pending steps at this seq when all signers already acted.
+    Keep requester-only stages on their existing submission escalation path.
+    """
+    steps = conn.execute("SELECT * FROM pr_steps WHERE pr_id=?", (pr_id,)).fetchall()
+    busy = {s["approver_user"] for s in steps
+            if s["status"] in ("approved", "rejected") and s["approver_user"]}
+    if not busy:
+        return
+    _roles = stage_roles_map(conn)
+    chain = escalation_map(conn)
+    requester = pr["requester"]
+    pending = [s for s in steps if s["status"] == "pending"]
+    holders = {s["stage"]: stage_signers(conn, s["stage"], step_roles(s, _roles))
+               for s in pending}
+    for s in pending:
+        if s["seq"] != seq:
+            continue
+        stage = s["stage"]
+        roles = step_roles(s, _roles)
+        people = holders[stage]
+        free = people - {requester}
+        if not people or not free or (free - busy):
+            continue
+        found, why = resolve_escalation(conn, stage, requester, _roles={stage: roles},
+                                        _chain=chain, _holders=holders, _busy=busy)
+        if why == "escalated":
+            esc_role, esc_from = ",".join(sorted(found)), ",".join(sorted(roles))
+            conn.execute("UPDATE pr_steps SET esc_role=?, esc_from=? WHERE id=?",
+                         (esc_role, esc_from, s["id"]))
+            audit(conn, pr_id, "system", "escalated_stage",
+                  f"{stage_label(stage)}: signing escalated from {esc_from} to {esc_role} — "
+                  f"everyone who may normally sign it already signed another rung of this "
+                  f"request, and one person may not sign two rungs.")
+        elif why == "no_superior":
+            audit(conn, pr_id, "system", "escalation_blocked",
+                  f"{stage_label(stage)} has no free signer because everyone eligible already "
+                  f"signed another rung of this request and no superior has anyone free to sign.")
+            notify_users(conn, _proc_admins(conn), "critical", "Approval stage cannot be signed",
+                         f"{pr['pr_no']}: {stage_label(stage)} can only be signed by someone who "
+                         f"already signed another rung of this request, and no superior above "
+                         f"that role has anyone free to sign it.", link=_pr_link(pr_id))
+
+
 def act_on_step(pr_id, user, decision, comment=None, ip=None):
     """Approve or reject the PR's current pending step.
     decision in {'approve','reject'}. Returns (ok, msg)."""
@@ -2774,7 +2841,7 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         # ladder. `_is_admin` is tested FIRST so the setting is only read for the
         # handful of admin signatures — same result, one fewer query for everyone.
         role = user.get("role")
-        _is_admin = role == "super_admin" or has_permission(role, "proc_admin")
+        _is_admin = role == "super_admin" or user_has_permission(user, "proc_admin")
         # DOAM §3.4: "No person may approve a transaction that also names that
         # person as requestor or beneficiary." That one is absolute — it is the
         # single control standing between one account and a self-authorised
@@ -2918,6 +2985,7 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             "SELECT COUNT(*) c FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
             (pr_id, step["seq"])).fetchone()["c"]
         if remaining > 0:
+            _reescalate_dual_role(conn, pr_id, pr, step["seq"])
             conn.commit()
             return True, "partial"
 
@@ -2929,6 +2997,7 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (nxt_seq, pr_id))
             conn.execute("UPDATE pr_steps SET activated_at=? WHERE pr_id=? AND seq=?",
                          (now, pr_id, nxt_seq))
+            _reescalate_dual_role(conn, pr_id, pr, nxt_seq)
             nxt_rows = conn.execute(
                 "SELECT * FROM pr_steps WHERE pr_id=? AND seq=?", (pr_id, nxt_seq)).fetchall()
             nxt_stages = [r["stage"] for r in nxt_rows]
@@ -3933,6 +4002,15 @@ def _due_date(payment_condition, base_date):
         return None
 
 
+def _invoice_supplier(conn, pr, po):
+    """vendor_key of the supplier an invoice bills: its split order's vendor, else
+    the request's single order, else the request's header vendor."""
+    if po is None:
+        pos = _pos_for(conn, pr)
+        po = pos[0] if len(pos) == 1 else None
+    return C.vendor_key((po or {}).get("vendor") or _pr_field(pr, "vendor") or "")
+
+
 def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64=None, ip=None):
     """Record a vendor invoice, then (re)run the 3-way match for the PR.
 
@@ -3963,14 +4041,29 @@ def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64
                 return False, "exceeds_po"
         inv_no = (data.get("invoice_no") or "").strip()
         if inv_no:
-            # Dedup on (vendor, invoice_no) across ALL PRs — the same supplier invoice
-            # number must not be booked (and paid) twice, even against a different PR.
-            dup = conn.execute(
-                "SELECT v.id FROM pr_invoices v JOIN pr_requests p ON p.id=v.pr_id "
-                "WHERE v.invoice_no=? AND COALESCE(TRIM(p.vendor),'')=COALESCE(TRIM(?),'')",
-                (inv_no, pr["vendor"])).fetchone()
-            if dup:
-                return False, "duplicate_invoice"
+            # Dedup on (resolved order supplier, normalized invoice number) across all PRs.
+            # Normalized in Python: SQLite's LOWER() folds ASCII only, so a SQL
+            # filter would let a non-ASCII number through on SQLite.
+            # shortcut: scans every invoice number, add a normalized column if this grows large.
+            norm = inv_no.lower()
+            candidates = [r for r in conn.execute(
+                "SELECT pr_id, po_id, invoice_no FROM pr_invoices "
+                "WHERE invoice_no IS NOT NULL").fetchall()
+                if (r["invoice_no"] or "").strip().lower() == norm]
+            mine = _invoice_supplier(conn, pr, po)
+            seen = {}
+            for r in candidates:
+                if r["pr_id"] not in seen:
+                    row = conn.execute("SELECT * FROM pr_requests WHERE id=?",
+                                       (r["pr_id"],)).fetchone()
+                    seen[r["pr_id"]] = dict(row) if row else None
+                opr = seen[r["pr_id"]]
+                if not opr:
+                    continue
+                that_po = next((p for p in _pos_for(conn, opr) if p.get("id") == r["po_id"]),
+                               None) if r["po_id"] is not None else None
+                if _invoice_supplier(conn, opr, that_po) == mine:
+                    return False, "duplicate_invoice"
         now = _now()
         conn.execute(
             """INSERT INTO pr_invoices (pr_id, po_id, invoice_no, invoice_date, amount, tax,
@@ -7516,7 +7609,7 @@ def reverse_stock_issue(pr_id, line_id, user, ip=None):
         # included deliberately: the person who made the mistake may be the one
         # person unable to come back and fix it.
         _role = (user or {}).get("role") or ""
-        _admin = _role == "super_admin" or has_permission(_role, "proc_admin")
+        _admin = _role == "super_admin" or user_has_permission(user, "proc_admin")
         if not can_act_step(user, {"stage": "warehouse", "pr_id": pr_id}) and not _admin:
             return False, "not_eligible"
 

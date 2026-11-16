@@ -447,6 +447,9 @@ with app.app_context():
 
     print("\n--- 8. the ladder itself is untouched for a normal requester ---")
     normal = mkuser(conn, "esc_normal", "normal_user")
+    # A SECOND warehouse manager, so neither warehouse rung has one sole signer:
+    # with only esc_wm, the Warehouse Manager rung escalates at submit (8c).
+    wm2 = mkuser(conn, "esc_wm_gate", "warehouse_manager")
     shapes = {}
     for total in (0, 9999, 10000, 24999, 25000, 48000, 99999, 100000, 5_000_000):
         # A DISTINCT item per request. DOAM 3.4 aggregates same-department
@@ -476,7 +479,6 @@ with app.app_context():
     # buyer and is always on, so the walk needs its signature before purchasing
     # becomes current. A DIFFERENT person signs it: wm has already signed the
     # store rung and segregation of duties refuses him a second.
-    wm2 = mkuser(conn, "esc_wm_gate", "warehouse_manager")
     okk, msg = svc.act_on_step(prg, wm2, "approve")             # warehouse manager
     okk, msg = svc.act_on_step(prg, pm, "approve")              # purchasing, unpriced
     ok("PRICING GATE still blocks the purchasing stage while unpriced (%s)" % msg,
@@ -540,6 +542,54 @@ with app.app_context():
     ok("with the CFO already spoken for, the same climb reaches {ceo} (%s)" % why,
        why == "escalated" and found == {"ceo"})
     activate("esc_fmg", on=0)
+
+    print("\n--- 8c. one warehouse manager, no storekeeper -> no dual-role strand")
+    activate("esc_wm_gate", on=0)
+    prd, _ = svc.create_pr({"title": "Sole WM", "department": "Production", "currency": "EGP"},
+                           [{"item": "Sole WM item", "qty": 1, "unit_price": 0}], normal,
+                           submit=True)
+    sd = steps_of(conn, prd)
+    ok("submit escalates the Warehouse Manager rung off the sole manager (%r)" % sd[1]["esc_role"],
+       sd[0]["esc_role"] is None and sd[1]["stage"] == "warehouse_manager"
+       and sd[1]["esc_role"] == "factory_manager")
+    ok("wm signs the store rung", svc.act_on_step(prd, wm, "approve")[0])
+    okk, msg = svc.act_on_step(prd, fm, "approve")
+    ok("the factory manager signs the escalated WM rung (%s)" % msg, okk)
+    # After a signature: a storekeeper exists at submit, so nothing escalates,
+    # but wm signs the store rung himself and must not strand his own rung.
+    activate("esc_store2")
+    pre, _ = svc.create_pr({"title": "WM signs store", "department": "Production",
+                            "currency": "EGP"},
+                           [{"item": "WM store item", "qty": 1, "unit_price": 0}], normal,
+                           submit=True)
+    ok("no escalation at submit while a storekeeper is active",
+       all(s["esc_role"] is None for s in steps_of(conn, pre)))
+    svc.act_on_step(pre, wm, "approve")
+    se = steps_of(conn, pre)[1]
+    ok("after wm signed the store rung, his own rung re-escalates (%r)" % se["esc_role"],
+       se["esc_role"] == "factory_manager")
+    ok("...and it is audited",
+       any(e["action"] == "escalated_stage" for e in svc.get_pr(pre)["events"]))
+    ok("the factory manager can sign it", svc.act_on_step(pre, fm, "approve")[0])
+    activate("esc_store2", on=0)
+    # #13: a holder only counts if he could really sign: active and permitted.
+    ok("the sole WM is counted as a holder",
+       "esc_wm" in svc.role_holders(conn, {"warehouse_manager"}))
+    conn.execute("UPDATE users SET account_status='locked' WHERE username='esc_wm'")
+    conn.commit()
+    ok("a locked account is not a signer",
+       "esc_wm" not in svc.role_holders(conn, {"warehouse_manager"}))
+    conn.execute("UPDATE users SET account_status='active' WHERE username='esc_wm'")
+    conn.commit()
+    ok("a role without proc_approve is not a signer",
+       not svc.role_holders(conn, {"normal_user"}))
+    conn.execute("UPDATE users SET extra_perms=? WHERE username='esc_normal'",
+                 (json.dumps(["proc_approve"]),))
+    conn.commit()
+    ok("...unless the person holds proc_approve directly",
+       "esc_normal" in svc.role_holders(conn, {"normal_user"}))
+    conn.execute("UPDATE users SET extra_perms=NULL WHERE username='esc_normal'")
+    conn.commit()
 
     print("\n--- 9. the settings editor -------------------------------------")
     okk, msg = svc.set_escalation("storekeeper", "storekeeper", admin)
