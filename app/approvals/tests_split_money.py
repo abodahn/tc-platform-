@@ -248,6 +248,16 @@ def run():                                          # noqa: C901 — one linear 
             assert ok, "a supplier's own order must still be invoiceable: %s" % msg
         assert q("SELECT po_id FROM pr_invoices WHERE invoice_no='INV-G-1'"
                  )[0]["po_id"] == gamma["id"]
+        # Dedup is per SUPPLIER of the order billed, on the normalized number:
+        # another supplier on the same request may reuse A's number...
+        beta = next(p for p in mpos if p["vendor"] == B)
+        ok, msg = svc.add_invoice(money, {"invoice_no": "inv-a-1", "amount": 100,
+                                          "po_id": beta["id"]}, buyer)
+        assert ok, "supplier B was blocked by supplier A's invoice number: %s" % msg
+        # ...but A may not book its own number twice, whatever the spacing/case
+        ok, msg = svc.add_invoice(money, {"invoice_no": " Inv-A-1 ", "amount": 100,
+                                          "po_id": alpha["id"]}, buyer)
+        assert not ok and msg == "duplicate_invoice", (ok, msg)
 
         # 1,000 against a 350 order. EVERY request-level cap lets this through —
         # the request is worth 3,350 and 1,350 of it is invoiced — so only the

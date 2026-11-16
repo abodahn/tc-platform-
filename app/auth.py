@@ -49,14 +49,14 @@ def login_required(view):
     return wrapped
 
 
-def permission_required(permission):
+def permission_required(*permissions):
     def decorator(view):
         @wraps(view)
         def wrapped(*args, **kwargs):
             user = current_user()
             if not user:
                 return redirect(url_for("auth.login", next=request.path))
-            if not user_has_permission(user, permission):
+            if not any(user_has_permission(user, permission) for permission in permissions):
                 abort(403)
             return view(*args, **kwargs)
         return wrapped

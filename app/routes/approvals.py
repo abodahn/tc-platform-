@@ -693,7 +693,7 @@ def item_request_reject(req_id):
 
 @bp.route("/pr/<int:pr_id>/reverse-issue/<int:line_id>", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def reverse_stock_issue(pr_id, line_id):
     """Put back what was issued off the shelf, and restore the line."""
     ok, msg = svc.reverse_stock_issue(pr_id, line_id, _u(), ip=_ip())
@@ -718,7 +718,7 @@ def reverse_stock_issue(pr_id, line_id):
 
 @bp.route("/pr/<int:pr_id>/issue-stock", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def issue_from_stock(pr_id):
     """The store hands part of a request over off the shelf instead of buying it.
 
@@ -762,7 +762,7 @@ def issue_from_stock(pr_id):
 
 @bp.route("/pr/<int:pr_id>/warehouse", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def warehouse_revise(pr_id):
     """The warehouse rung corrects quantities and records stock on hand."""
     bundle = svc.get_pr(pr_id)
@@ -1741,7 +1741,7 @@ def add_forecast():
 
 @bp.route("/forecasts/<int:fc_id>/agree", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def agree_forecast(fc_id):
     ok, msg = svc.agree_forecast(fc_id, _u())
     if ok:
@@ -1815,7 +1815,7 @@ def escalate_now():
 
 @bp.route("/pr/<int:pr_id>/approve", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def approve(pr_id):
     ok, msg = svc.act_on_step(pr_id, _u(), "approve",
                               comment=request.form.get("comment", "").strip() or None,
@@ -1880,7 +1880,7 @@ def approve(pr_id):
 
 @bp.route("/pr/<int:pr_id>/reject", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def reject(pr_id):
     reason = request.form.get("comment", "").strip()
     ok, msg = svc.act_on_step(pr_id, _u(), "reject", comment=reason, ip=_ip())
@@ -2161,7 +2161,7 @@ def add_payment(pr_id):
 
 @bp.route("/pr/<int:pr_id>/advance", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def authorize_advance(pr_id):
     """DOAM §4.3 — Finance / CFO / MD authorises an advance before it is paid."""
     if not svc.get_pr(pr_id):
@@ -2366,7 +2366,7 @@ def settle_return(ret_id):
 
 @bp.route("/pr/<int:pr_id>/send-back", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def send_back(pr_id):
     """Send a request back to a rung the approver picks, with a reason."""
     ok, msg = svc.send_back(pr_id, request.form.get("to_seq"),
@@ -2387,7 +2387,7 @@ def send_back(pr_id):
 
 @bp.route("/pr/<int:pr_id>/hold", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def hold(pr_id):
     """Park a request without rejecting it. The reason is mandatory."""
     ok, msg = svc.hold_request(pr_id, request.form.get("hold_reason"), _u(), ip=_ip())
@@ -2405,7 +2405,7 @@ def hold(pr_id):
 
 @bp.route("/pr/<int:pr_id>/resume", methods=["POST"])
 @login_required
-@permission_required("proc_approve")
+@permission_required("proc_approve", "proc_admin")
 def resume(pr_id):
     """Lift a hold. Open to anyone who could sign the rung, not only whoever
     placed it — the person who parked it may be on leave."""
