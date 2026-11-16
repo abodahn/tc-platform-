@@ -2071,6 +2071,17 @@ def aggregated_total(conn, pr_id, pr, own_egp=None):
     return total, sibs
 
 
+def _fx_of(pr):
+    """The EGP rate a request's value is measured with (1.0 for EGP), as egp_value() does."""
+    if str(pr["currency"] or "EGP").strip().upper() == "EGP":
+        return 1.0
+    try:
+        rate = float(pr["fx_rate"] or 1)
+    except (TypeError, ValueError):
+        rate = 1.0
+    return rate if rate > 0 else 1.0
+
+
 def _commercial_terms(conn, pr_id):
     """The commercial terms an approval signature stands on."""
     pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
@@ -2084,6 +2095,7 @@ def _commercial_terms(conn, pr_id):
         "currency": (pr["currency"] or "EGP").strip().upper(),
         "payment_condition": (pr["payment_condition"] or "").strip(),
         "grand": total + total * tax_rate / 100,
+        "fx_rate": _fx_of(pr),
         "line_vendors": tuple((r["vendor"] or "").strip() for r in conn.execute(
             "SELECT vendor FROM pr_items WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()),
     }
@@ -2100,6 +2112,9 @@ def _withdraw_signatures_on_changed_terms(conn, pr, before, uname, ip, why):
             changed.append("%s: %s -> %s" % (label, before[key], after[key]))
     if abs(before["grand"] - after["grand"]) > 0.005:
         changed.append("total: %.2f -> %.2f" % (before["grand"], after["grand"]))
+    # the EGP commitment moves with the rate even when the foreign total does not
+    if abs(before.get("fx_rate", 1.0) - after["fx_rate"]) > 1e-9:
+        changed.append("FX rate: %g -> %g" % (before.get("fx_rate", 1.0), after["fx_rate"]))
     if not changed:
         return 0
 
@@ -2941,9 +2956,10 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         if decision == "reject":
             cur = conn.execute(
                 "UPDATE pr_steps SET status='rejected', approver_user=?, approver_name=?, "
-                "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=? AND status='pending'",
+                "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=? AND status='pending' "
+                "AND seq=(SELECT current_seq FROM pr_requests WHERE id=? AND status='pending')",
                 (uname, sig_name or user.get("full_name") or uname, user.get("role"),
-                 comment, sig_png, now, step["id"]))
+                 comment, sig_png, now, step["id"], pr_id))
             if cur.rowcount == 0:  # someone else signed this step a moment ago
                 conn.rollback()
                 return False, "not_pending"
@@ -2967,9 +2983,10 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         act = step_action_of(step)
         cur = conn.execute(
             "UPDATE pr_steps SET status='approved', approver_user=?, approver_name=?, "
-            "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=? AND status='pending'",
+            "approver_role=?, comment=?, sig_png=?, acted_at=? WHERE id=? AND status='pending' "
+                "AND seq=(SELECT current_seq FROM pr_requests WHERE id=? AND status='pending')",
             (uname, sig_name or user.get("full_name") or uname, user.get("role"),
-             comment, sig_png, now, step["id"]))
+             comment, sig_png, now, step["id"], pr_id))
         if cur.rowcount == 0:  # concurrent approve/reject won the race; don't double-sign
             conn.rollback()
             return False, "not_pending"
@@ -3333,11 +3350,14 @@ def set_fx(pr_id, rate, user, ip=None):
         if pr["status"] in ("approved", "po_issued", "in_transit",
                             "partially_received", "received", "closed", "cancelled"):
             return False, "locked"
+        before = _commercial_terms(conn, pr_id)
         conn.execute("UPDATE pr_requests SET fx_rate=? WHERE id=?", (rate, pr_id))
         uname = (user or {}).get("username")
         audit(conn, pr_id, uname, "fx_set",
               f"FX rate set to {rate:g} ({pr['currency'] or 'EGP'} -> EGP)", ip)
         if pr["status"] == "pending":
+            _withdraw_signatures_on_changed_terms(
+                conn, pr, before, uname or "system", ip, "FX rate changed while approval was pending")
             _reconcile_value_ladder(conn, pr_id, pr["department"], pr["total"])
             # The EGP figure just moved, so the budget verdict can have moved too.
             apply_budget_state(conn, pr_id, ip=ip)
