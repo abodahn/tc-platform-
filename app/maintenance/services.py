@@ -114,14 +114,31 @@ def _requester_usernames(conn, ticket_id):
     return _usernames_for(conn, [ticket["requester"]])
 
 
+_PENDING_NOTES = {}
+
+
 def _notify_people(conn, usernames, title, message, link):
-    if not usernames:
+    """Queue a personal bell notice; _flush_notes sends it AFTER the workflow commits.
+    Writing it mid-transaction risked a failed INSERT rolling back the workflow on
+    PostgreSQL (the shared connection rolls back the whole transaction on error)."""
+    if usernames:
+        _PENDING_NOTES.setdefault(conn, []).append((list(usernames), title, message, link))
+
+
+def _flush_notes(conn):
+    notes = _PENDING_NOTES.pop(conn, [])
+    if not notes:
         return
     try:
         from app.approvals.services import notify_users
-        notify_users(conn, usernames, "info", title, message, link=link, module="maintenance")
+        for usernames, title, message, link in notes:
+            notify_users(conn, usernames, "info", title, message, link=link, module="maintenance")
+        conn.commit()
     except Exception:
-        pass
+        try:
+            conn.rollback()  # only the notices are lost; the workflow is already committed
+        except Exception:
+            pass
 
 
 # --- status helpers --------------------------------------------------------
@@ -329,6 +346,7 @@ def review_assign(ticket_id, technician, priority, response_due, resolution_due,
                        f"{doc_no('MNT', ticket_id)} assigned to you",
                        f"/maintenance/tickets/{ticket_id}")
         conn.commit()
+        _flush_notes(conn)
         return True, ""
     finally:
         conn.close()
@@ -481,6 +499,7 @@ def create_request(ticket_id, items, reason, urgency, user, ip=None):
                                f"{doc_no('SPR', rid)} needs your approval", "/maintenance/approvals")
         audit(conn, user, "request_create", "request", rid, None, doc_no("SPR", rid), ip=ip)
         conn.commit()
+        _flush_notes(conn)
         return rid, ""
     finally:
         conn.close()
@@ -529,6 +548,7 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             audit(conn, user, "approval_reject", "request", rid, None, "rejected",
                   comment=comment, ip=ip)
             conn.commit()
+            _flush_notes(conn)
             return True, ""
 
         if decision == "return":
@@ -547,6 +567,7 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             audit(conn, user, "approval_return", "request", rid, None, "returned",
                   comment=comment, ip=ip)
             conn.commit()
+            _flush_notes(conn)
             return True, ""
 
         # approve
@@ -622,6 +643,7 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
                                f"{doc_no('SPR', rid)} needs your approval", "/maintenance/approvals")
         audit(conn, user, "approval_approve", "request", rid, None, "approved", comment=comment, ip=ip)
         conn.commit()
+        _flush_notes(conn)
         return True, ""
     finally:
         conn.close()
@@ -807,6 +829,7 @@ def close_ticket(ticket_id, user, ip=None):
             conn.execute("UPDATE mnt_machines SET status='running' WHERE id=?", (t["machine_id"],))
         audit(conn, user, "ticket_close", "ticket", ticket_id, t["status"], "closed", ip=ip)
         conn.commit()
+        _flush_notes(conn)
         return True, ""
     finally:
         conn.close()
