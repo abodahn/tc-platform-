@@ -1013,6 +1013,27 @@
       <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.grn.pdf">GRN PDF</span></a>
     {% endif %}
 
+    {% if stock_issues %}
+    <div class="mt-3">
+      <b class="badge b-rejected" data-i18n="proc.stockpost.title">Stock posting failed</b>
+      <p class="muted" data-i18n="proc.stockpost.hint">These received quantities have not reached stock yet. Retry, or check the store before retrying a line stuck in 'posting'.</p>
+      <table class="tbl"><thead><tr><th data-i18n="proc.stockpost.item">Item</th><th data-i18n="proc.stockpost.target">Target</th><th data-i18n="proc.stockpost.qty">Qty</th><th data-i18n="proc.stockpost.status">Status</th><th data-i18n="proc.stockpost.attempts">Attempts</th><th data-i18n="proc.stockpost.error">Last error</th></tr></thead>
+        <tbody>{% for issue in stock_issues %}<tr>
+          <td>{{ issue.item or issue.item_id }}</td>
+          <td data-i18n="proc.stockpost.{{ issue.target }}">{{ issue.target }}</td>
+          <td>{{ '%g'|format(issue.qty) }}</td>
+          <td><span class="badge b-rejected" data-i18n="proc.stockpost.{{ issue.status }}">{{ issue.status }}</span></td>
+          <td>{{ issue.attempts }}</td><td>{{ issue.last_error or '' }}</td>
+        </tr>{% endfor %}</tbody>
+      </table>
+      {% if can_purchasing %}
+      <form method="post" action="{{ url_for('approvals.retry_stock_postings', pr_id=pr.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button class="btn btn-sm" type="submit" data-i18n="proc.stockpost.retry">Retry posting</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
     {# --- Over-delivery quarantine --- #}
     {% if b.quarantine %}
     <div class="mt-3" style="margin-top:16px"><b data-i18n="proc.quar.title">Over-delivery quarantine</b></div>

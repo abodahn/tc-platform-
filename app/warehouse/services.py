@@ -1060,6 +1060,25 @@ def _resolve_material(conn, text):
     return None
 
 
+def post_line_to_material(material_id, qty, price, pr_no, user):
+    conn = get_db()
+    try:
+        mat = conn.execute("SELECT id, roll_tracked FROM wh_materials WHERE id=?",
+                           (material_id,)).fetchone()
+    finally:
+        conn.close()
+    if not mat:
+        return False, "material_not_found"
+    if mat["roll_tracked"]:
+        return receive_roll(mat["id"], {
+            "length_m": qty, "unit_cost": price, "grn_ref": pr_no,
+            "width_cm": 0, "notes": f"Goods receipt {pr_no} — label shade lot on arrival",
+        }, user)
+    else:
+        return receive_qty(mat["id"], qty, price, user, grn_ref=pr_no,
+                              notes=f"Goods receipt {pr_no}")
+
+
 def post_receipt_to_material(pr_id, receipts, user=None, free=False):
     """Reverse leg of the procurement bridge: push a goods receipt into material stock.
 
@@ -1101,14 +1120,7 @@ def post_receipt_to_material(pr_id, receipts, user=None, free=False):
             if not mat:
                 continue                      # not a warehouse material — silently skip
             price = 0.0 if free else _f(_col(it, "unit_price"))
-            if mat["roll_tracked"]:
-                ok, msg = receive_roll(mat["id"], {
-                    "length_m": add, "unit_cost": price, "grn_ref": pr_no,
-                    "width_cm": 0, "notes": f"Goods receipt {pr_no} — label shade lot on arrival",
-                }, user)
-            else:
-                ok, msg = receive_qty(mat["id"], add, price, user, grn_ref=pr_no,
-                                      notes=f"Goods receipt {pr_no}")
+            ok, msg = post_line_to_material(mat["id"], add, price, pr_no, user)
             if ok:
                 posted += add
             else:

@@ -4152,5 +4152,18 @@
   "earlier_level_pending": "Önceki bir onay seviyesi hâlâ bekliyor. Önce o imzalanmalı.",
   "wrong_role": "Bu onay seviyesi başka bir role ait.",
   "proc.short_close_reason": "Eksik teslimatla kapatma nedeni",
-  "proc.short_close_ph": "Siparişin kalanı neden gelmeyecek?"
+  "proc.short_close_ph": "Siparişin kalanı neden gelmeyecek?",
+  "proc.stockpost.title": "Stok aktarımı başarısız",
+  "proc.stockpost.item": "Kalem",
+  "proc.stockpost.target": "Hedef",
+  "proc.stockpost.qty": "Miktar",
+  "proc.stockpost.status": "Durum",
+  "proc.stockpost.attempts": "Denemeler",
+  "proc.stockpost.error": "Son hata",
+  "proc.stockpost.spare": "yedek parça",
+  "proc.stockpost.material": "malzeme",
+  "proc.stockpost.failed": "başarısız",
+  "proc.stockpost.posting": "aktarılıyor",
+  "proc.stockpost.hint": "Teslim alınan bu miktarlar henüz stoğa ulaşmadı. Yeniden deneyin veya 'aktarılıyor' durumunda kalan bir kalemi tekrar denemeden önce depoyu kontrol edin.",
+  "proc.stockpost.retry": "Aktarımı yeniden dene"
 }

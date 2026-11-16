@@ -1199,6 +1199,7 @@ def detail(pr_id):
     if not bundle:
         abort(404)
     user = _u()
+    svc.post_stock_postings(pr_id, user)   # opportunistic retry; never raises
     pr = bundle["pr"]
     # Escalation stamp -> one readable sentence per step, in the reader's language
     # (the stored value is a role-key list, so it cannot use data-i18n).
@@ -1300,6 +1301,7 @@ def detail(pr_id):
     # Requesters don't see commercial figures until Purchasing has priced the PR.
     show_commercial = is_priced or can_purchasing
     return render_template("approvals/detail.html", active="proc_list",
+                           stock_issues=svc.stock_posting_issues(pr_id),
                            fields=svc.visible_fields(),
                            # Approved suppliers, for the per-line supplier boxes
                            # at the pricing gate. Free text is still allowed —
@@ -1390,6 +1392,18 @@ def detail(pr_id):
                            # and the explanatory sentences are resolved server-side.
                            L=svc.labels(_lang),
                            is_owner=(pr["requester"] == (user or {}).get("username")))
+
+
+@bp.route("/pr/<int:pr_id>/stock-postings/retry", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def retry_stock_postings(pr_id):
+    r = svc.post_stock_postings(pr_id, _u(), manual=True)
+    if r["failed"] or svc.stock_posting_issues(pr_id):
+        flash("Some stock postings still need attention. Check the store before retrying.", "error")
+    else:
+        flash("Stock posting retry completed.", "success")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
 # --------------------------------------------------------------------------
