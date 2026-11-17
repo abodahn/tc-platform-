@@ -511,6 +511,32 @@ with app.app_context():
        row("SELECT status FROM mnt_requests WHERE id=?", rs_rid)["status"] == "waiting_approval"
        and len(rungs(rs_rid)) == len(first))
 
+    c = db()
+    try:
+        c.execute("UPDATE mnt_settings SET value='0' WHERE key='auto_reorder_pr'")
+        c.commit()
+    finally:
+        c.close()
+    try:
+        off_tid, _ = new_ticket("Kill switch regression")
+        pr_before = row("SELECT COUNT(*) n FROM pr_requests")["n"]
+        audit_before = row("SELECT COUNT(*) n FROM mnt_audit WHERE entity_type='ticket' AND entity_id=? "
+                           "AND action IN ('replenishment_pr','replenishment_linked')", off_tid)["n"]
+        avail = spare("SP-001")["stock_qty"] - (spare("SP-001")["reserved_qty"] or 0)
+        off_rid, _ = svc.create_request(off_tid, [{"spare_id": sp1["id"], "qty": avail + 1}], "Needs stock", "normal", MGR)
+        ck("kill switch off: short request still waits out of stock", row("SELECT status FROM mnt_requests WHERE id=?", off_rid)["status"] == "out_of_stock")
+        ck("kill switch off: no PR raised for short request", row("SELECT COUNT(*) n FROM pr_requests")["n"] == pr_before)
+        ck("kill switch off: no replenishment audit on ticket",
+           row("SELECT COUNT(*) n FROM mnt_audit WHERE entity_type='ticket' AND entity_id=? "
+               "AND action IN ('replenishment_pr','replenishment_linked')", off_tid)["n"] == audit_before)
+    finally:
+        c = db()
+        try:
+            c.execute("UPDATE mnt_settings SET value='1' WHERE key='auto_reorder_pr'")
+            c.commit()
+        finally:
+            c.close()
+
 with app.test_client() as cl:
     with cl.session_transaction() as session:
         session["uid"] = tech_id

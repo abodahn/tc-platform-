@@ -172,6 +172,8 @@ def raise_for_request(request_id):
     try:
         conn = get_db()
         try:
+            if not _enabled(conn):
+                return  # admin turned automatic reorder PRs off
             req = conn.execute("SELECT ticket_id FROM mnt_requests WHERE id=?", (request_id,)).fetchone()
             if not req:
                 return
