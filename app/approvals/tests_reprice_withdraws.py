@@ -96,6 +96,18 @@ def run():
 
         reset = [s for s in original if s["seq"] > pivot and s["status"] == "approved"]
         assert reset
+        conn = get_db()
+        for step in reset:
+            conn.execute("UPDATE pr_steps SET escalated=1, escalated_at=?, escalated2_at=? WHERE id=?",
+                         ("2026-01-01", "2026-01-01", step["id"]))
+        reopened = min(reset, key=lambda s: s["seq"])
+        # A second eligible signer must hear about the reopened rung; the original
+        # signer gets the re-approval notice instead.
+        conn.execute("INSERT INTO users (username, password_hash, full_name, role, is_active) VALUES (?,?,?,?,1)",
+                     ("rp_alternate", "x", "Alternate", signer[reopened["stage"]]["role"]))
+        before_notice = conn.execute("SELECT COALESCE(MAX(id),0) AS id FROM notifications").fetchone()["id"]
+        conn.commit()
+        conn.close()
         ok, msg = svc.price_pr(pid, {line: 610000}, meta, signer["purchasing"])
         assert ok, msg
         pr, steps = look()
@@ -107,8 +119,15 @@ def run():
             assert by_id[step["id"]]["status"] == "pending"
             assert by_id[step["id"]]["approver_user"] is None
             assert by_id[step["id"]]["sig_png"] is None
+            assert by_id[step["id"]]["escalated"] == 0
+            assert by_id[step["id"]]["escalated_at"] is None
+            assert by_id[step["id"]]["escalated2_at"] is None
         assert pr["current_seq"] == min(s["seq"] for s in reset)
         conn = get_db()
+        assert conn.execute("SELECT id FROM notifications WHERE id>? AND target_user=? AND title=?",
+                            (before_notice, "rp_alternate", "New request to sign")).fetchone()
+        assert not conn.execute("SELECT id FROM notifications WHERE id>? AND target_user=? AND title=?",
+                                (before_notice, reopened["approver_user"], "New request to sign")).fetchone()
         assert conn.execute("SELECT id FROM pr_events WHERE pr_id=? AND "
                             "action='signatures_recollected'", (pid,)).fetchone()
         conn.close()

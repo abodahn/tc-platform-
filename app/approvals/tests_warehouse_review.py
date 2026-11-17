@@ -422,6 +422,24 @@ def run():
     chk("reversing twice puts nothing back a second time",
         not okC and msgC == "nothing_issued", msgC)
 
+    with app.app_context():
+        rejected, _ = svc.create_pr(
+            {"title": "Rejected issue", "department": "IT"},
+            [{"item": "Needle plate", "qty": 3}], reqr, priced=False)
+        conn = get_db()
+        rejected_line = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (rejected,)).fetchone()["id"]
+        conn.close()
+        assert svc.issue_from_stock(rejected, {rejected_line: {"code": "SP-ISS-1", "qty": 1}}, signer["warehouse"])[0]
+        conn = get_db()
+        conn.execute("UPDATE pr_requests SET status='rejected' WHERE id=?", (rejected,))
+        conn.commit()
+        conn.close()
+        assert svc.reverse_stock_issue(rejected, rejected_line, signer["warehouse"]) == (True, "reversed")
+        conn = get_db()
+        assert conn.execute("SELECT status FROM pr_requests WHERE id=?", (rejected,)).fetchone()["status"] == "rejected"
+        assert conn.execute("SELECT issued_qty FROM pr_items WHERE id=?", (rejected_line,)).fetchone()["issued_qty"] == 0
+        conn.close()
+
     # Not once the request carries money.
     with app.app_context():
         from app.db import get_db

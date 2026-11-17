@@ -4193,5 +4193,9 @@
   "wh.imp.code": "Code",
   "wh.imp.status": "Status",
   "wh.imp.reason": "Reason / note",
-  "wh.imp.confirm": "Confirm import"
+  "wh.imp.confirm": "Confirm import",
+  "proc.stockpost.resolve": "Resolve",
+  "proc.stockpost.mark_posted": "Mark posted",
+  "proc.stockpost.mark_failed": "Mark failed",
+  "proc.stockpost.note_ph": "Store check note"
 }

@@ -390,6 +390,8 @@ def can_act(user, stage, _deleg=None, _roles=None):
     instead of one per stage."""
     if not user:
         return False
+    if (user.get("account_status") or "active") != "active":
+        return False
     role = user.get("role")
     if role == "super_admin" or user_has_permission(user, "proc_admin"):
         return True
@@ -2137,20 +2139,32 @@ def _withdraw_signatures_on_changed_terms(conn, pr, before, uname, ip, why):
     for step in steps:
         conn.execute(
             "UPDATE pr_steps SET status='pending', approver_user=NULL, approver_name=NULL, "
-            "approver_role=NULL, sig_png=NULL, acted_at=NULL, comment=NULL WHERE id=?",
+            "approver_role=NULL, sig_png=NULL, acted_at=NULL, comment=NULL, "
+            "escalated=0, escalated_at=NULL, escalated2_at=NULL WHERE id=?",
             (step["id"],))
+    reapproval_users = {s["approver_user"] for s in steps if s["approver_user"]} | {pr["requester"]}
     new_seq = min(step["seq"] for step in steps)
     if new_seq < (pr["current_seq"] or 0):
         conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (new_seq, pr["id"]))
         conn.execute("UPDATE pr_steps SET activated_at=? WHERE pr_id=? AND seq=?",
                      (now, pr["id"], new_seq))
+        rows = conn.execute(
+            "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr["id"], new_seq)).fetchall()
+        targets = set()
+        for r in rows:
+            targets |= set(eligible_approvers(
+                conn, r["stage"], roles=_csv_set(_pr_field(r, "esc_role")) or None))
+        notify_users(conn, targets - reapproval_users, "warning", "New request to sign",
+                     f"{pr['pr_no']} needs your "
+                     f"{' + '.join(stage_label(r['stage']) for r in rows)} approval.",
+                     link=_pr_link(pr["id"]))
     who = ", ".join("%s (%s)" % (stage_label(s["stage"]), s["approver_user"] or "")
                     for s in steps)
     audit(conn, pr["id"], uname, "signatures_recollected",
           "%s: the commercial terms changed (%s), so these signatures are withdrawn "
           "and must be given again: %s" % (why, "; ".join(changed), who), ip)
-    notify_users(conn, [s["approver_user"] for s in steps if s["approver_user"]]
-                 + [pr["requester"]], "warning",
+    notify_users(conn, reapproval_users, "warning",
                  "Re-approval needed on %s" % (pr["pr_no"] or "a request"),
                  "The commercial terms changed after you approved, so your approval "
                  "was withdrawn and is needed again.", link=_pr_link(pr["id"]))
@@ -2766,8 +2780,9 @@ def _reescalate_dual_role(conn, pr_id, pr, seq):
     steps = conn.execute("SELECT * FROM pr_steps WHERE pr_id=?", (pr_id,)).fetchall()
     busy = {s["approver_user"] for s in steps
             if s["status"] in ("approved", "rejected") and s["approver_user"]}
+    escalated = []
     if not busy:
-        return
+        return escalated
     _roles = stage_roles_map(conn)
     chain = escalation_map(conn)
     requester = pr["requester"]
@@ -2786,9 +2801,11 @@ def _reescalate_dual_role(conn, pr_id, pr, seq):
         found, why = resolve_escalation(conn, stage, requester, _roles={stage: roles},
                                         _chain=chain, _holders=holders, _busy=busy)
         if why == "escalated":
-            esc_role, esc_from = ",".join(sorted(found)), ",".join(sorted(roles))
+            esc_role = ",".join(sorted(found))
+            esc_from = _pr_field(s, "esc_from") or ",".join(sorted(roles))
             conn.execute("UPDATE pr_steps SET esc_role=?, esc_from=? WHERE id=?",
                          (esc_role, esc_from, s["id"]))
+            escalated.append({"stage": stage, "esc_role": esc_role})
             audit(conn, pr_id, "system", "escalated_stage",
                   f"{stage_label(stage)}: signing escalated from {esc_from} to {esc_role} — "
                   f"everyone who may normally sign it already signed another rung of this "
@@ -2801,6 +2818,7 @@ def _reescalate_dual_role(conn, pr_id, pr, seq):
                          f"{pr['pr_no']}: {stage_label(stage)} can only be signed by someone who "
                          f"already signed another rung of this request, and no superior above "
                          f"that role has anyone free to sign it.", link=_pr_link(pr_id))
+    return escalated
 
 
 def act_on_step(pr_id, user, decision, comment=None, ip=None):
@@ -3002,7 +3020,12 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             "SELECT COUNT(*) c FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
             (pr_id, step["seq"])).fetchone()["c"]
         if remaining > 0:
-            _reescalate_dual_role(conn, pr_id, pr, step["seq"])
+            for r in _reescalate_dual_role(conn, pr_id, pr, step["seq"]):
+                notify_users(conn, eligible_approvers(
+                    conn, r["stage"], roles=_csv_set(r["esc_role"])),
+                    "warning", "New request to sign",
+                    f"{pr['pr_no']} needs your {stage_label(r['stage'])} approval.",
+                    link=_pr_link(pr_id))
             conn.commit()
             return True, "partial"
 
@@ -4006,6 +4029,36 @@ def stock_posting_issues(pr_id):
             conn.close()
     except Exception:
         return []
+
+
+def resolve_stuck_posting(pr_id, posting_id, outcome, note, user, ip=None):
+    """A person checked the store for a row stuck in 'posting' (outcome unknown):
+    record what they found. Never touches stock; 'failed' lets a manual retry run."""
+    if outcome not in ("posted", "failed"):
+        return False, "bad_outcome"
+    note = (note or "").strip()
+    if not note:
+        return False, "note_required"
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE pr_stock_postings SET status=?, posted_at=?, last_error=? "
+            "WHERE id=? AND pr_id=? AND status='posting'",
+            (outcome, _now() if outcome == "posted" else None,
+             None if outcome == "posted" else ("Resolved manually: " + note)[:300],
+             posting_id, pr_id))
+        if cur.rowcount == 0:
+            return False, "not_stuck"
+        row = conn.execute(
+            "SELECT p.target, p.qty, i.item FROM pr_stock_postings p "
+            "LEFT JOIN pr_items i ON i.id=p.item_id WHERE p.id=?", (posting_id,)).fetchone()
+        audit(conn, pr_id, (user or {}).get("username") or "system", "stock_posting_resolved",
+              f"{row['item'] or '-'} -> {row['target']} x{float(row['qty'] or 0):g}: "
+              f"marked {outcome} after checking the store - {note}", ip)
+        conn.commit()
+        return True, outcome
+    finally:
+        conn.close()
 
 
 def _due_date(payment_condition, base_date):
@@ -7622,7 +7675,7 @@ def reverse_stock_issue(pr_id, line_id, user, ip=None):
         # people have since signed, priced or bought against.
         if (_pr_field(pr, "pricing_status") or "unpriced") == "priced":
             return False, "already_priced"
-        if (pr["status"] or "") not in ("pending", "closed"):
+        if (pr["status"] or "") not in ("pending", "closed", "rejected"):
             return False, "not_reversible"
         # The storekeeper who could have issued it, or a procurement admin — the
         # same pair who can unstick anything else in this module. An admin is

@@ -683,6 +683,8 @@ def po_line_for(grn_ref, material_id):
         # outstanding == 0 the caller quarantines the whole lot and stocks none.
         if not pr or pr["status"] in ("closed", "cancelled"):
             return None
+        if pr["status"] == "rejected":
+            return {"rejected": True, "pr_id": pr["id"]}
         if pr["status"] not in ("po_issued", "in_transit", "partially_received", "received"):
             return {"no_po": True, "pr_id": pr["id"]}
         for it in conn.execute("SELECT id, item, qty, received_qty FROM pr_items "

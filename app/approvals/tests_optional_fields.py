@@ -169,9 +169,18 @@ def run():
         ok2, reason2 = svc.cost_object_check(
             conn, pid2, conn.execute("SELECT * FROM pr_requests WHERE id=?",
                                      (pid2,)).fetchone())
+        # Citing nothing is allowed since 15f70cd (cost object optional); what the
+        # gate still does, hidden or not, is refuse a reference that does not exist.
+        conn.execute("UPDATE pr_requests SET so_no='SO-DOES-NOT-EXIST' WHERE id=?", (pid2,))
+        conn.commit()
+        ok3, reason3 = svc.cost_object_check(
+            conn, pid2, conn.execute("SELECT * FROM pr_requests WHERE id=?",
+                                     (pid2,)).fetchone())
         conn.close()
-    chk("and one with none is STILL refused — the gate is untouched",
-        not ok2, reason2)
+    chk("one that cites nothing passes — citing a cost object is optional",
+        ok2, reason2)
+    chk("and an unknown sales order is STILL refused — the gate is untouched",
+        not ok3 and reason3 == "so_unknown", reason3)
 
     for key, _l, _w in C.OPTIONAL_FIELDS:
         set_switch(key, True)

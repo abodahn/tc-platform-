@@ -27,6 +27,13 @@ def _u():
     return current_user()
 
 
+def _proc_flash(msg, cat):
+    """Flash a procurement-side receiving message in the reader's language."""
+    from app.approvals.messages import translate
+    lang = (current_user() or {}).get("lang_pref") or "en"
+    flash(translate(msg, lang), cat)
+
+
 def _sweep_throttled():
     now = time.time()
     if now - _SWEEP_AT[0] > _SWEEP_EVERY:
@@ -240,9 +247,13 @@ def receive_post():
     # its own GRN number allocated. post_stock=False because we book the stock
     # ourselves right after, keeping the roll/lot detail the bridge cannot carry.
     line = svc.po_line_for(form.get("grn_ref"), mid)
+    if line and line.get("rejected"):
+        _proc_flash("That reference belongs to a purchase request that was rejected. Nothing "
+                    "can be received against it - receive here without the reference.", "error")
+        return redirect(url_for("warehouse.receive"))
     if line and line.get("no_po"):
-        flash("That reference belongs to a purchase request that has no purchase order yet. "
-              "Issue the PO first, or receive here without the reference.", "error")
+        _proc_flash("That reference belongs to a purchase request that has no purchase order yet. "
+                    "Issue the PO first, or receive here without the reference.", "error")
         return redirect(url_for("warehouse.receive"))
     delivered = svc.qty_of(form.get("length_m") if roll else form.get("qty"))
     asked, quarantined = delivered, 0.0
@@ -253,9 +264,9 @@ def receive_post():
         # here after being refused on the procurement door. Refuse instead of
         # quietly booking free stock the order never hears about.
         if not user_can("proc_purchasing"):
-            flash("That reference belongs to a purchase order. Receiving against a "
-                  "PO needs purchasing rights — use the Receiving tab on the "
-                  "request, or receive here without the PO reference.", "error")
+            _proc_flash("That reference belongs to a purchase order. Receiving against a "
+                        "PO needs purchasing rights — use the Receiving tab on the "
+                        "request, or receive here without the PO reference.", "error")
             return redirect(url_for("warehouse.receive"))
         quarantined = max(0.0, delivered - line["outstanding"])
         asked = min(delivered, line["outstanding"])
@@ -285,11 +296,11 @@ def receive_post():
         pok, pmsg = psvc.receive_items(line["pr_id"], {line["item_id"]: delivered}, _u(),
                                        notes=form.get("notes") or None, post_stock=False)
         if not pok:
-            flash(f"Stock booked, but the purchase order refused the receipt ({pmsg}).",
-                  "error")
+            _proc_flash(f"Stock booked, but the purchase order refused the receipt ({pmsg}).",
+                        "error")
         elif quarantined > 0:
-            flash(f"{quarantined:g} over the ordered quantity was quarantined, not "
-                  f"added to stock.", "warning")
+            _proc_flash(f"Quarantined, not added to stock - over the ordered quantity: "
+                        f"{quarantined:g}", "warning")
     return redirect(url_for("warehouse.rolls" if roll else "warehouse.materials"))
 
 

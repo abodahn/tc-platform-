@@ -173,6 +173,14 @@ def run():
         assert wsvc.po_line_for("NOT-A-PO-9999", trim["id"]) is None, \
             "unknown ref must not match a PO"
 
+        rejected, _ = make("Rejected reference", trim["name"], 1, 20)
+        conn = get_db()
+        conn.execute("UPDATE pr_requests SET status='rejected' WHERE id=?", (rejected,))
+        conn.commit()
+        conn.close()
+        rejected_no = one("SELECT pr_no FROM pr_requests WHERE id=?", rejected)["pr_no"]
+        assert wsvc.po_line_for(rejected_no, trim["id"])["rejected"] is True
+
         # ---- and now through the HTTP doors a real user actually clicks ------
         cl = app.test_client()
         tok = "t" * 64

@@ -4193,5 +4193,9 @@
   "wh.imp.code": "Kod",
   "wh.imp.status": "Durum",
   "wh.imp.reason": "Neden / not",
-  "wh.imp.confirm": "İçe aktarmayı onayla"
+  "wh.imp.confirm": "İçe aktarmayı onayla",
+  "proc.stockpost.resolve": "Çözümle",
+  "proc.stockpost.mark_posted": "Aktarıldı olarak işaretle",
+  "proc.stockpost.mark_failed": "Başarısız olarak işaretle",
+  "proc.stockpost.note_ph": "Depo kontrolü notu"
 }

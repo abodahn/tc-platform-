@@ -1341,7 +1341,7 @@ def detail(pr_id):
                            # exactly the case that needs unwinding.
                            can_reverse_issue=bool(
                                (not is_priced)
-                               and pr["status"] in ("pending", "closed")
+                               and pr["status"] in ("pending", "closed", "rejected")
                                and ((actionable
                                      and actionable["stage"] == "warehouse")
                                     or user_can("proc_admin")
@@ -1403,6 +1403,23 @@ def retry_stock_postings(pr_id):
         flash("Some stock postings still need attention. Check the store before retrying.", "error")
     else:
         flash("Stock posting retry completed.", "success")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/stock-postings/<int:posting_id>/resolve", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing", "proc_admin")
+def resolve_stuck_posting(pr_id, posting_id):
+    ok, code = svc.resolve_stuck_posting(
+        pr_id, posting_id, request.form.get("outcome"), request.form.get("note"), _u(), ip=_ip())
+    messages = {
+        "posted": "Stock posting marked as posted after checking the store.",
+        "failed": "Stock posting marked as failed. You can retry it now.",
+        "bad_outcome": "Choose posted or failed to resolve the stock posting.",
+        "note_required": "Enter a note about checking the store.",
+        "not_stuck": "This stock posting is no longer stuck in posting.",
+    }
+    flash(messages[code], "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 

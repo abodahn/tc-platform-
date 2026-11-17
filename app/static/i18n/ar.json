@@ -4193,5 +4193,9 @@
   "wh.imp.code": "الكود",
   "wh.imp.status": "الحالة",
   "wh.imp.reason": "السبب / ملاحظة",
-  "wh.imp.confirm": "تأكيد الاستيراد"
+  "wh.imp.confirm": "تأكيد الاستيراد",
+  "proc.stockpost.resolve": "تسوية الحالة",
+  "proc.stockpost.mark_posted": "تحديد الحالة كمرحّل",
+  "proc.stockpost.mark_failed": "تحديد الحالة كفاشل",
+  "proc.stockpost.note_ph": "ملاحظة التحقق من المخزن"
 }

@@ -79,6 +79,11 @@ with app.app_context():
             "SELECT * FROM pr_steps WHERE pr_id=? ORDER BY seq, id", (pr_id,)).fetchall()]
 
     wm = mk("ab_wm", "warehouse_manager")          # the sole warehouse-role holder
+    assert svc.can_act(wm, "warehouse")
+    for status in ("locked", "suspended"):
+        assert not svc.can_act(dict(wm, account_status=status), "warehouse")
+    for status in (None, "active"):
+        assert svc.can_act(dict(wm, account_status=status), "warehouse")
     prod = mk("ab_prod", "production_manager")     # exists, but cannot approve anything
 
     print("\n--- 1. a superior an admin picked that cannot sign a rung -------")

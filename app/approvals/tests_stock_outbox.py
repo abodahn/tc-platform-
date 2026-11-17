@@ -150,6 +150,13 @@ def checks():
     assert svc.post_stock_postings(door, manual=True)["posted"] == 0
     assert svc.stock_posting_issues(door)[0]["status"] == "posting"
     assert material_stock() == 6
+    posting = svc.stock_posting_issues(door)[0]["id"]
+    assert svc.resolve_stuck_posting(door, posting, "failed", "  ", buyer) == (False, "note_required")
+    assert svc.resolve_stuck_posting(door, posting, "failed", "No stock movement found", buyer) == (True, "failed")
+    assert one("SELECT status FROM pr_stock_postings WHERE id=?", posting)["status"] == "failed"
+    assert one("SELECT id FROM pr_events WHERE pr_id=? AND action='stock_posting_resolved'", door)
+    assert svc.resolve_stuck_posting(door, posting, "posted", "Checked again", buyer) == (False, "not_stuck")
+    assert material_stock() == 6
 
     tid, err = msvc.create_ticket({"description": "Waiting for outbox spare"}, store)
     assert tid, err

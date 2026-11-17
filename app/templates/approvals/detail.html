@@ -1023,7 +1023,19 @@
           <td data-i18n="proc.stockpost.{{ issue.target }}">{{ issue.target }}</td>
           <td>{{ '%g'|format(issue.qty) }}</td>
           <td><span class="badge b-rejected" data-i18n="proc.stockpost.{{ issue.status }}">{{ issue.status }}</span></td>
-          <td>{{ issue.attempts }}</td><td>{{ issue.last_error or '' }}</td>
+          <td>{{ issue.attempts }}</td><td>{{ issue.last_error or '' }}
+            {% if issue.status == 'posting' and can_purchasing %}
+            <form method="post" action="{{ url_for('approvals.resolve_stuck_posting', pr_id=pr.id, posting_id=issue.id) }}" style="display:inline-flex;gap:4px;flex-wrap:wrap">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <select name="outcome" aria-label="Resolution">
+                <option value="posted" data-i18n="proc.stockpost.mark_posted">Mark posted</option>
+                <option value="failed" data-i18n="proc.stockpost.mark_failed">Mark failed</option>
+              </select>
+              <input type="text" name="note" required placeholder="Store check note" data-i18n-ph="proc.stockpost.note_ph" aria-label="Store check note">
+              <button class="btn btn-sm" type="submit" data-i18n="proc.stockpost.resolve">Resolve</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>{% endfor %}</tbody>
       </table>
       {% if can_purchasing %}

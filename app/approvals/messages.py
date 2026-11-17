@@ -908,6 +908,16 @@ MESSAGES = {
         "ar": "تعذّر التحقق من التبرير الهندسي، لذا لا يمكن اعتماد هذا الطلب الآن. أبلغ قسم تقنية المعلومات.",
         "tr": "Mühendislik gerekçesi kontrol edilemedi, bu yüzden bu talep şimdilik onaylanamaz. Bilgi İşlem'e bildirin.",
     },
+    'Stock posting marked as posted after checking the store.': {"ar": 'تم تحديد ترحيل المخزون كمرحّل بعد التحقق من المخزن.', "tr": 'Depo kontrolünden sonra stok aktarımı aktarıldı olarak işaretlendi.'},
+    'Stock posting marked as failed. You can retry it now.': {"ar": 'تم تحديد ترحيل المخزون كفاشل. يمكنك إعادة المحاولة الآن.', "tr": 'Stok aktarımı başarısız olarak işaretlendi. Şimdi yeniden deneyebilirsiniz.'},
+    'Choose posted or failed to resolve the stock posting.': {"ar": 'اختر مرحّلاً أو فاشلاً لتسوية حالة ترحيل المخزون.', "tr": 'Stok aktarımını çözümlemek için aktarıldı veya başarısız seçin.'},
+    'Enter a note about checking the store.': {"ar": 'أدخل ملاحظة حول التحقق من المخزن.', "tr": 'Depo kontrolü hakkında bir not girin.'},
+    'This stock posting is no longer stuck in posting.': {"ar": 'لم يعد ترحيل المخزون هذا عالقاً في حالة الترحيل.', "tr": 'Bu stok aktarımı artık aktarılıyor durumunda takılı değil.'},
+    'That reference belongs to a purchase request that has no purchase order yet. Issue the PO first, or receive here without the reference.': {"ar": 'هذا المرجع يخص طلب شراء لم يصدر له أمر شراء بعد. أصدر أمر الشراء أولاً، أو سجّل الاستلام هنا دون المرجع.', "tr": 'Bu referans henüz satınalma siparişi olmayan bir satınalma talebine ait. Önce siparişi düzenleyin veya burada referans olmadan teslim alın.'},
+    'That reference belongs to a purchase request that was rejected. Nothing can be received against it - receive here without the reference.': {"ar": 'هذا المرجع يخص طلب شراء مرفوض. لا يمكن تسجيل أي استلام عليه - سجّل الاستلام هنا دون المرجع.', "tr": 'Bu referans reddedilmiş bir satınalma talebine ait. Bu talebe karşı teslim alınamaz - burada referans olmadan teslim alın.'},
+    'That reference belongs to a purchase order. Receiving against a PO needs purchasing rights — use the Receiving tab on the request, or receive here without the PO reference.': {"ar": 'هذا المرجع يخص أمر شراء. يتطلب الاستلام على أمر شراء صلاحيات المشتريات — استخدم علامة تبويب الاستلام في الطلب، أو سجّل الاستلام هنا دون مرجع أمر الشراء.', "tr": 'Bu referans bir satınalma siparişine ait. Siparişe karşı teslim almak satınalma yetkisi gerektirir — talepteki Teslim Alma sekmesini kullanın veya burada sipariş referansı olmadan teslim alın.'},
+    'Stock booked, but the purchase order refused the receipt (': {"ar": 'تم تسجيل المخزون، لكن أمر الشراء رفض الاستلام (', "tr": 'Stok kaydedildi ancak satınalma siparişi teslim almayı reddetti ('},
+    'Quarantined, not added to stock - over the ordered quantity: ': {"ar": 'تم عزل الكمية الزائدة ولم تُضف إلى المخزون - الزيادة عن الكمية المطلوبة: ', "tr": 'Karantinaya alındı, stoğa eklenmedi - sipariş miktarını aşan: '},
 }
 
 
