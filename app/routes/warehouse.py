@@ -258,14 +258,11 @@ def receive_post():
     delivered = svc.qty_of(form.get("length_m") if roll else form.get("qty"))
     asked, quarantined = delivered, 0.0
     if line and delivered > 0:
-        # Booking a receipt onto a PO writes pr_requests.status and received_qty,
-        # mints a GRN and opens the payment path — a proc_purchasing action. This
-        # route is only wh_manage, so a storekeeper could close a PO for payment
-        # here after being refused on the procurement door. Refuse instead of
-        # quietly booking free stock the order never hears about.
-        if not user_can("proc_purchasing"):
+        # Booking a PO receipt requires receiving rights as well as wh_manage.
+        # Refuse instead of quietly booking unreferenced free stock.
+        if not (user_can("proc_purchasing") or user_can("proc_receive")):
             _proc_flash("That reference belongs to a purchase order. Receiving against a "
-                        "PO needs purchasing rights — use the Receiving tab on the "
+                        "PO needs receiving rights — use the Receiving tab on the "
                         "request, or receive here without the PO reference.", "error")
             return redirect(url_for("warehouse.receive"))
         quarantined = max(0.0, delivered - line["outstanding"])

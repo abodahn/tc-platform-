@@ -1204,7 +1204,9 @@ def my_work():
     user = current_user()
     data = {"sign_queue": [], "maint_approvals": [], "prob_pending": [],
             "my_prs": [], "my_tickets": [], "my_pm": [], "alerts": [],
-            "cmp_caps": [], "cmp_expiring": [], "late_milestones": []}
+            "cmp_caps": [], "cmp_expiring": [], "late_milestones": [],
+            "recv_queue": [], "store_issue": [], "po_queue": [],
+            "stuck_postings": [], "pay_queue": []}
 
     if user_has_permission(user, "proc_view"):
         try:
@@ -1212,6 +1214,59 @@ def my_work():
             data["sign_queue"] = proc.my_queue(user)[:15]
             data["my_prs"] = [p for p in proc.list_prs(requester=user["username"], limit=10)
                               if p.get("status") not in ("closed", "cancelled")][:8]
+        except Exception:
+            pass
+
+    if user_has_permission(user, "proc_receive") or user_has_permission(user, "proc_purchasing"):
+        try:
+            conn = get_db()
+            try:
+                data["recv_queue"] = conn.execute(
+                    "SELECT id, pr_no, title, status, po_no FROM pr_requests WHERE is_active=1 AND status "
+                    "IN ('po_issued','in_transit','partially_received') ORDER BY id ASC LIMIT 10").fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    if user_has_permission(user, "maint_store"):
+        try:
+            conn = get_db()
+            try:
+                data["store_issue"] = conn.execute(
+                    "SELECT id, request_no, reason, status FROM mnt_requests WHERE status='approved' ORDER "
+                    "BY id ASC LIMIT 10").fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    if user_has_permission(user, "proc_purchasing"):
+        try:
+            conn = get_db()
+            try:
+                data["po_queue"] = conn.execute(
+                    "SELECT id, pr_no, title, status FROM pr_requests WHERE is_active=1 AND "
+                    "status='approved' ORDER BY id ASC LIMIT 10").fetchall()
+                data["stuck_postings"] = conn.execute(
+                    "SELECT DISTINCT r.id, r.pr_no, r.title, r.status FROM pr_stock_postings p JOIN "
+                    "pr_requests r ON r.id=p.pr_id WHERE p.status IN ('failed','posting') ORDER BY r.id "
+                    "ASC LIMIT 10").fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    if user_has_permission(user, "proc_pay"):
+        try:
+            conn = get_db()
+            try:
+                data["pay_queue"] = conn.execute(
+                    "SELECT id, pr_no, title, payment_status FROM pr_requests WHERE is_active=1 AND status "
+                    "IN ('partially_received','received','closed') AND COALESCE(payment_status,'unpaid') <> 'paid' "
+                    "ORDER BY id ASC LIMIT 10").fetchall()
+            finally:
+                conn.close()
         except Exception:
             pass
 
@@ -1322,6 +1377,9 @@ def my_work():
 
     total_actions = (len(data["sign_queue"]) + len(data["maint_approvals"])
                      + len(data["prob_pending"]) + len(data["late_milestones"])
-                     + len(data["cmp_caps"]) + len(data["cmp_expiring"]))
+                     + len(data["cmp_caps"]) + len(data["cmp_expiring"])
+                     + len(data["recv_queue"]) + len(data["store_issue"])
+                     + len(data["po_queue"]) + len(data["stuck_postings"])
+                     + len(data["pay_queue"]))
     return render_template("my_work.html", user=user, total_actions=total_actions,
                            active="my_work", today=_date.today().isoformat(), **data)

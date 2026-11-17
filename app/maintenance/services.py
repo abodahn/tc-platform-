@@ -71,16 +71,19 @@ def audit(conn, user, action, entity_type, entity_id,
 
 
 def notify(conn, target_role, title, message, entity_type, entity_id,
-           severity="info", action_url=None):
+           severity="info", action_url=None, exclude=None):
     conn.execute(
         """INSERT INTO mnt_notifications (target_role,title,message,entity_type,
            entity_id,severity,action_url,is_read,created_at) VALUES (?,?,?,?,?,?,?,0,?)""",
         (target_role, title, message, entity_type, entity_id, severity, action_url, _now()))
     # also surface critical/warning items on the platform bell
     if severity in ("critical", "warning"):
-        conn.execute(
-            "INSERT INTO notifications (severity,module,title,message,created_at) "
-            "VALUES (?,?,?,?,?)", (severity, "maintenance", title, message, _now()))
+        # role-targeted, one row per user (own read state); nobody left -> super_admin
+        usernames = ([u for u in _role_usernames(conn, target_role) if u != exclude]
+                     or _role_usernames(conn, "super_admin"))
+        if usernames:
+            _PENDING_NOTES.setdefault(conn, []).append(
+                (usernames, title, message, (), action_url, severity, False))
 
 
 def _usernames_for(conn, names):
@@ -128,7 +131,7 @@ def _notify_people(conn, usernames, title, message, link, args=(), actor=None):
     usernames = list(dict.fromkeys(name for name in usernames
                                    if name != (actor or {}).get("username")))
     if usernames:
-        _PENDING_NOTES.setdefault(conn, []).append((usernames, title, message, args, link))
+        _PENDING_NOTES.setdefault(conn, []).append((usernames, title, message, args, link, "info", True))
 
 
 def _flush_notes(conn):
@@ -138,7 +141,13 @@ def _flush_notes(conn):
     try:
         from app.approvals.services import notify_users
         from app.maintenance.messages import translate
-        for usernames, title, message, args, link in notes:
+        # a user already getting the personal notice skips the same-titled role copy
+        personal = {(u, n[1]) for n in notes if n[6] for u in n[0]}
+        for usernames, title, message, args, link, severity, email in notes:
+            if not email:
+                usernames = [u for u in usernames if (u, title) not in personal]
+                if not usernames:
+                    continue
             placeholders = ",".join("?" for _ in usernames)
             groups = {}
             for row in conn.execute(
@@ -149,8 +158,17 @@ def _flush_notes(conn):
                 text = translate(message, lang)
                 if args:
                     text = text % tuple(args)
-                notify_users(conn, group, "info", translate(title, lang), text,
-                             link=link, module="maintenance")
+                if email:
+                    notify_users(conn, group, severity, translate(title, lang), text,
+                                 link=link, module="maintenance")
+                else:
+                    for username in group:
+                        conn.execute(
+                            "INSERT INTO notifications "
+                            "(severity, module, title, message, target_user, link, created_at) "
+                            "VALUES (?,?,?,?,?,?,?)",
+                            (severity, "maintenance", translate(title, lang), text,
+                             username, link, _now()))
         conn.commit()
     except Exception:
         try:
@@ -340,6 +358,7 @@ def create_ticket(data, user, ip=None, submit=True):
                    f"{doc_no('MNT', tid)} on {data.get('machine_code') or 'a machine'}",
                    "ticket", tid, "warning", f"/maintenance/tickets/{tid}")
         conn.commit()
+        _flush_notes(conn)
         return tid, ""
     finally:
         conn.close()
@@ -513,7 +532,8 @@ def create_request(ticket_id, items, reason, urgency, user, ip=None):
                       if name != user.get("username")]
             notify(conn, first_role, "Spare request awaiting approval",
                    f"{doc_no('SPR', rid)} needs your approval", "request", rid,
-                   "info" if people else "warning", "/maintenance/approvals")
+                   "info" if people else "warning", "/maintenance/approvals",
+                   exclude=user.get("username"))
             _notify_people(conn, people, "Spare request awaiting approval",
                            "%s needs your approval", "/maintenance/approvals",
                            args=(doc_no('SPR', rid),), actor=user)
@@ -950,6 +970,7 @@ def sync_stock_alerts(conn=None):
                 if existing:  # restocked -> resolve
                     conn.execute("UPDATE mnt_notifications SET is_read=1 WHERE id=?", (existing["id"],))
         conn.commit()
+        _flush_notes(conn)
         # Close the replenishment loop: anything at/below reorder gets a deduped
         # auto-PR to Procurement (also catches reservation-driven availability drops).
         try:
@@ -1008,6 +1029,7 @@ def sync_sla_breaches(conn=None):
 
         if flagged:
             conn.commit()
+            _flush_notes(conn)
         return flagged
     finally:
         if own:

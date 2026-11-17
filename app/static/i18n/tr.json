@@ -4203,5 +4203,11 @@
   "admin.all_status": "Tüm durumlar",
   "admin.user_col": "Kullanıcı",
   "admin.has_extra": "+ ek",
-  "admin.no_match": "Bu filtrelere uyan kullanıcı yok."
+  "admin.no_match": "Bu filtrelere uyan kullanıcı yok.",
+  "mywork.recv_queue": "Teslimat bekleyen siparişler",
+  "mywork.store_issue": "Çıkış bekleyen onaylı yedek parça talepleri",
+  "mywork.po_queue": "Satın alma siparişi bekleyen onaylı talepler",
+  "mywork.stuck_postings": "Stoğa aktarılmayan mal kabulleri",
+  "mywork.pay_queue": "Ödemesi bekleyen teslim alınmış siparişler",
+  "mywork.view_all": "Tümünü gör"
 }

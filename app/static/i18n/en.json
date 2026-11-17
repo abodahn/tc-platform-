@@ -4203,5 +4203,11 @@
   "admin.all_status": "All statuses",
   "admin.user_col": "User",
   "admin.has_extra": "+ extra",
-  "admin.no_match": "No users match these filters."
+  "admin.no_match": "No users match these filters.",
+  "mywork.recv_queue": "Orders awaiting delivery",
+  "mywork.store_issue": "Approved spare requests to issue",
+  "mywork.po_queue": "Approved requests awaiting a PO",
+  "mywork.stuck_postings": "Receipts that did not reach stock",
+  "mywork.pay_queue": "Received orders with payment due",
+  "mywork.view_all": "View all"
 }

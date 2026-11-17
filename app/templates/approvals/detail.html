@@ -888,7 +888,7 @@
 {% endif %}
 
 {# ===== Fulfilment & payment (procure-to-pay back half) ===== #}
-{% if pr.status in ('approved','po_issued','partially_received','received','closed') %}
+{% if pr.status in ('approved','po_issued','in_transit','partially_received','received','closed') %}
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="proc.fulfilment">Fulfilment &amp; payment</h3>
     <div class="flex gap center">
@@ -948,7 +948,7 @@
     </form>
     {% endif %}
 
-    {% if pr.status in ('po_issued','in_transit','partially_received','received') and can_purchasing %}
+    {% if pr.status in ('po_issued','in_transit','partially_received','received') and can_receive %}
     <form method="post" action="{{ url_for('approvals.receive', pr_id=pr.id) }}" style="overflow-x:auto">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <table class="tbl" style="margin-bottom:10px">

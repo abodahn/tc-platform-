@@ -4203,5 +4203,11 @@
   "admin.all_status": "كل الحالات",
   "admin.user_col": "المستخدم",
   "admin.has_extra": "+ صلاحيات إضافية",
-  "admin.no_match": "لا يوجد مستخدمون مطابقون لهذا الفلتر."
+  "admin.no_match": "لا يوجد مستخدمون مطابقون لهذا الفلتر.",
+  "mywork.recv_queue": "طلبات بانتظار التسليم",
+  "mywork.store_issue": "طلبات قطع غيار معتمدة للصرف",
+  "mywork.po_queue": "طلبات معتمدة بانتظار أمر شراء",
+  "mywork.stuck_postings": "استلامات لم تُرحّل إلى المخزون",
+  "mywork.pay_queue": "طلبات مستلمة مستحقة الدفع",
+  "mywork.view_all": "عرض الكل"
 }

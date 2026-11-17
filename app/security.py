@@ -271,6 +271,8 @@ from app.maintenance.constants import (  # noqa: E402
     MAINT_PERMISSIONS, MAINT_ROLE_PERMS, MAINT_ROLE_LABELS)
 from app.approvals.constants import (  # noqa: E402
     PROC_PERMISSIONS, PROC_ROLE_PERMS, PROC_ROLE_LABELS)
+from app.warehouse.constants import (  # noqa: E402
+    WH_PERMISSIONS, WH_ROLE_PERMS, WH_ROLE_LABELS)
 from app.probation.constants import (  # noqa: E402
     HR_PERMISSIONS, HR_ROLE_PERMS, HR_ROLE_LABELS)
 from app.accounts.constants import (  # noqa: E402
@@ -278,6 +280,7 @@ from app.accounts.constants import (  # noqa: E402
 
 _merge_module_rbac(MAINT_PERMISSIONS, MAINT_ROLE_PERMS, MAINT_ROLE_LABELS)
 _merge_module_rbac(PROC_PERMISSIONS, PROC_ROLE_PERMS, PROC_ROLE_LABELS)
+_merge_module_rbac(WH_PERMISSIONS, WH_ROLE_PERMS, WH_ROLE_LABELS)
 _merge_module_rbac(HR_PERMISSIONS, HR_ROLE_PERMS, HR_ROLE_LABELS)
 _merge_module_rbac(USERS_PERMISSIONS, USERS_ROLE_PERMS, USERS_ROLE_LABELS)
 
@@ -349,6 +352,7 @@ PERMISSION_LABELS = {
     "proc_create": "Procurement: raise requests",
     "proc_approve": "Procurement: approve stages",
     "proc_purchasing": "Procurement: purchasing / PO / vendors",
+    "proc_receive": "Procurement: book goods receipts against issued POs",
     "proc_pay": "Procurement: release payments to suppliers",
     "proc_catalogue": "Procurement: maintain the item master",
     "proc_admin": "Procurement: admin (any stage, budgets)",
@@ -419,6 +423,7 @@ PERMISSION_DESC = {
     "proc_create": "Raise purchase requests.",
     "proc_approve": "Approve/reject a stage you're eligible for.",
     "proc_purchasing": "Issue POs, manage vendors and quotes.",
+    "proc_receive": "Book a goods receipt against an issued PO, nothing else.",
     "proc_pay": "Release payments to suppliers. DOAM §7.3.4 puts payment "
                 "control with the Financial Director, deliberately NOT with the "
                 "buyer who committed the spend.",

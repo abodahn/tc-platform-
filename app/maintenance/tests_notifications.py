@@ -74,6 +74,41 @@ def checks():
     assert one(count_personal, tech["username"])["c"] == 1
     execute("DELETE FROM notifications WHERE target_user=?", tech["username"])
 
+    # Role warnings are personal, deferred, localized, and independently readable.
+    first = user("test_receiver_a", "Receiver A", "test_warning_role")
+    second = user("test_receiver_b", "Receiver B", "test_warning_role", lang="ar")
+    user("test_receiver_inactive", "Inactive receiver", "test_warning_role", active=0)
+    conn = get_db()
+    try:
+        svc.notify(conn, "test_warning_role", "SLA breached", "Test role warning",
+                   "ticket", tid, "warning", "/maintenance/tickets/%s" % tid)
+        assert conn.execute("SELECT COUNT(*) c FROM notifications WHERE message=?",
+                            ("Test role warning",)).fetchone()["c"] == 0
+        conn.commit()
+        assert one("SELECT COUNT(*) c FROM notifications WHERE message=?",
+                   "Test role warning")["c"] == 0
+        svc._flush_notes(conn)
+        rows = conn.execute("SELECT * FROM notifications WHERE message=?",
+                            ("Test role warning",)).fetchall()
+        assert {r["target_user"] for r in rows} == {first["username"], second["username"]}
+        assert all(r["severity"] == "warning" and r["link"].endswith(str(tid)) for r in rows)
+        assert next(r for r in rows if r["target_user"] == second["username"])["title"] == translate("SLA breached", "ar")
+        conn.execute("UPDATE notifications SET is_read=1 WHERE message=? AND target_user=?",
+                     ("Test role warning", first["username"]))
+        conn.commit()
+        assert one("SELECT COUNT(*) c FROM notifications WHERE message=? AND target_user=? AND is_read=0",
+                   "Test role warning", second["username"])["c"] == 1
+        svc.notify(conn, "test_empty_role", "Fallback warning", "No role users",
+                   "ticket", tid, "critical")
+        conn.commit()
+        svc._flush_notes(conn)
+        fallback = conn.execute("SELECT target_user FROM notifications WHERE title=?",
+                                ("Fallback warning",)).fetchall()
+        assert {r["target_user"] for r in fallback} == set(svc._role_usernames(conn, "super_admin"))
+        assert fallback
+    finally:
+        conn.close()
+
     spare = execute("INSERT INTO mnt_spare_parts (code,name,stock_qty,reserved_qty,avg_cost) "
                     "VALUES (?,?,20,0,1)", "TEST-NOTICE-SPARE", "Test notification spare")
     items = [{"spare_id": spare, "qty": 1}]
@@ -87,21 +122,23 @@ def checks():
     assert tid, err
     rid, err = svc.create_request(tid, items, "Test parts", "normal", tech)
     assert rid, err
-    assert one(count_personal, approver["username"])["c"] == 1
+    assert one(count_personal + " AND title='Spare request awaiting approval'", approver["username"])["c"] == 1
     assert one("SELECT COUNT(*) c FROM notifications WHERE target_user IS NULL "
                "AND title='Spare request awaiting approval'")["c"] == 0
     assert one("SELECT COUNT(*) c FROM mnt_notifications WHERE entity_type='request' "
                "AND entity_id=? AND title='Spare request awaiting approval'", rid)["c"] == 1
 
-    # Only the actor fills this rung: preserve the broadcast fallback, omit their personal notice.
+    # Only the actor fills this rung: the warning goes to super_admin, never back to the actor.
     execute("UPDATE users SET is_active=0 WHERE role=? AND username<>?", approver["role"], approver["username"])
     self_tid, err = svc.create_ticket({"description": "Test approver self request"}, approver)
     assert self_tid, err
     self_rid, err = svc.create_request(self_tid, items, "Self request", "normal", approver)
     assert self_rid, err
-    assert one(count_personal, approver["username"])["c"] == 1
+    assert one(count_personal + " AND title='Spare request awaiting approval'", approver["username"])["c"] == 1
+    assert one("SELECT COUNT(*) c FROM notifications n JOIN users u ON u.username=n.target_user "
+               "WHERE u.role='super_admin' AND n.title='Spare request awaiting approval'")["c"] >= 1
     assert one("SELECT COUNT(*) c FROM notifications WHERE target_user IS NULL "
-               "AND title='Spare request awaiting approval'")["c"] == 1
+               "AND title='Spare request awaiting approval'")["c"] == 0
     # Restore the technician for system-triggered stock notices.
     execute("UPDATE users SET is_active=1 WHERE username=?", tech["username"])
     execute("UPDATE mnt_requests SET status='out_of_stock' WHERE id=?", rid)

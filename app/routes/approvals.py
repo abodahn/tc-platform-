@@ -1259,6 +1259,7 @@ def detail(pr_id):
                "request. The Plant Director does not sign it." if l2_dom else "")
     cur_label = " + ".join(C.stage_label(s) for s in current_stages) if current_stages else None
     can_purchasing = user_can("proc_purchasing")
+    can_receive = can_purchasing or user_can("proc_receive")
     is_priced = (pr.get("pricing_status") or "priced") == "priced"
     # Cross-module mesh: live warehouse availability for spare-linked lines and
     # a clickable origin (the maintenance ticket / spare this PR came from).
@@ -1323,7 +1324,7 @@ def detail(pr_id):
                            match=svc.three_way_match(pr_id),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
                            budget=svc.budget_status(pr.get("department")),
-                           can_purchasing=can_purchasing, is_priced=is_priced,
+                           can_purchasing=can_purchasing, can_receive=can_receive, is_priced=is_priced,
                            # Offering a form the viewer cannot submit is worse
                            # than hiding it: Purchasing no longer releases payment.
                            can_pay=user_can("proc_pay"),
@@ -2057,7 +2058,7 @@ _RECEIVE_ERR = {
 
 @bp.route("/pr/<int:pr_id>/receive", methods=["POST"])
 @login_required
-@permission_required("proc_purchasing")
+@permission_required("proc_purchasing", "proc_receive")
 def receive(pr_id):
     f = request.form
     ids = f.getlist("recv_item_id[]")
