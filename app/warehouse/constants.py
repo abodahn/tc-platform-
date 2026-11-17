@@ -24,7 +24,7 @@ SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL"]
 WIDTH_TOLERANCE_CM = 0.5
 
 COUNT_REASONS = ["stock_take", "damaged", "lost", "found", "entry_error", "other"]
-WH_SETTING_DEFAULTS = {"count_auto_approve_pct": "2"}
+WH_SETTING_DEFAULTS = {"count_auto_approve_pct": "2", "issue_approval_limit": "5000"}
 DEST_KINDS = ["department", "cost_centre", "maintenance", "sample"]
 
 WH_PERMISSIONS = [

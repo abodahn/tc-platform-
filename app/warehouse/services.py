@@ -1627,18 +1627,37 @@ def get_setting(key):
         conn.close()
 
 
+def _put_setting(conn, key, value):
+    conn.execute("UPDATE wh_settings SET value=? WHERE key=?", (str(value), key))
+    if not conn.execute("SELECT key FROM wh_settings WHERE key=?", (key,)).fetchone():
+        conn.execute("INSERT INTO wh_settings (key,value) VALUES (?,?)", (key, str(value)))
+
+
+def issue_limit():
+    return _f(get_setting("issue_approval_limit"), 5000)
+
+
+def set_issue_limit(value, user):
+    value = _f(value, -1)
+    if value < 0:
+        return False, "bad_limit"
+    conn = get_db()
+    try:
+        _put_setting(conn, "issue_approval_limit", value)
+        conn.commit()
+        return True, "saved"
+    finally:
+        conn.rollback()
+        conn.close()
+
+
 def set_count_threshold(pct, user):
     pct = _f(pct, -1)
     if not 0 <= pct <= 100:
         return False, "bad_pct"
     conn = get_db()
     try:
-        conn.execute("UPDATE wh_settings SET value=? WHERE key=?",
-                     (str(pct), "count_auto_approve_pct"))
-        if not conn.execute("SELECT key FROM wh_settings WHERE key=?",
-                            ("count_auto_approve_pct",)).fetchone():
-            conn.execute("INSERT INTO wh_settings (key,value) VALUES (?,?)",
-                         ("count_auto_approve_pct", str(pct)))
+        _put_setting(conn, "count_auto_approve_pct", pct)
         conn.commit()
         return True, "saved"
     finally:
@@ -1650,7 +1669,7 @@ def count_auto_pct():
     return _f(get_setting("count_auto_approve_pct"), 2)
 
 
-def _count_notice(count_no, exclude=None):
+def _count_notice(count_no, exclude=None, title=None, message=None, link="/warehouse/counts"):
     conn = None
     try:
         conn = get_db()
@@ -1665,8 +1684,8 @@ def _count_notice(count_no, exclude=None):
             conn.execute(
                 "INSERT INTO notifications (severity,module,title,message,target_user,link,created_at) "
                 "VALUES (?,?,?,?,?,?,?)",
-                ("warning", "warehouse", f"Stock count awaiting approval: {count_no}",
-                 "Review the stock-count adjustment.", username, "/warehouse/counts", _now()))
+                ("warning", "warehouse", title or f"Stock count awaiting approval: {count_no}",
+                 message or "Review the stock-count adjustment.", username, link, _now()))
         conn.commit()
     except Exception:
         if conn:
@@ -1911,6 +1930,8 @@ def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id
         return False, "destination_required"
     if not reason or len(reason) > 200:
         return False, "reason_required"
+    limit = issue_limit() if dest_kind == "department" else 0
+    pending_no = None
     conn = get_db()
     try:
         if roll_id:
@@ -1923,17 +1944,112 @@ def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id
             r = conn.execute("SELECT status FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
             if r["status"] == "quarantine":
                 return False, "roll_quarantined"
-        ok, msg = _move_stock(conn, "issue", -qty, user, material_id=material_id, roll_id=roll_id,
-                              unit_cost=_unit_cost(conn, material_id, roll_id),
-                              ref=f"{dest_kind}:{dest_name}", notes=reason)
-        if not ok:
-            conn.rollback()
-            return False, msg
+        cost = _unit_cost(conn, material_id, roll_id)
+        value = qty * cost
+        if dest_kind == "department" and cost > 0 and value > limit:
+            m = conn.execute("SELECT roll_tracked FROM wh_materials WHERE id=?", (material_id,)).fetchone()
+            if not m:
+                return False, "material_not_found"
+            if m["roll_tracked"] and not roll_id:
+                return False, "roll_required"
+            cur = conn.execute(
+                "INSERT INTO wh_issue_requests (material_id,roll_id,qty,unit_cost,value,"
+                "dest_kind,dest_name,reason,requested_by,requested_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (material_id, roll_id, qty, cost, value, dest_kind, dest_name, reason, _user(user), _now()))
+            pending_no = doc_no("ISR", cur.lastrowid)
+            conn.execute("UPDATE wh_issue_requests SET req_no=? WHERE id=?", (pending_no, cur.lastrowid))
+        else:
+            if dest_kind == "department" and cost <= 0:
+                reason += " [value unknown: no unit cost]"
+            ok, msg = _move_stock(conn, "issue", -qty, user, material_id=material_id, roll_id=roll_id,
+                                  unit_cost=cost, ref=f"{dest_kind}:{dest_name}", notes=reason)
+            if not ok:
+                conn.rollback()
+                return False, msg
         conn.commit()
-        return True, "issued"
     finally:
         conn.rollback()
         conn.close()
+    if pending_no:
+        _count_notice(pending_no, exclude=_user(user),
+                      title=f"Internal issue awaiting approval: {pending_no}",
+                      message="Review the internal-issue request.", link="/warehouse/counts")
+    return True, "pending" if pending_no else "issued"
+
+
+def _decide_issue(req_id, user, status, note):
+    from app.security import user_has_permission
+    if not user_has_permission(user, "wh_approve"):
+        return False, "not_allowed"
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM wh_issue_requests WHERE id=?", (req_id,)).fetchone()
+        if not row or row["status"] != "pending":
+            return False, "not_pending"
+        if status == "approved" and row["requested_by"] == _user(user):
+            return False, "own_request"
+        cur = conn.execute(
+            "UPDATE wh_issue_requests SET status=?, decided_by=?, decided_at=?, decision_note=? "
+            "WHERE id=? AND status='pending'", (status, _user(user), _now(), note, req_id))
+        rc = getattr(cur, "rowcount", None)
+        if rc is None:
+            rc = getattr(getattr(cur, "_raw", None), "rowcount", None)
+        if rc is None:
+            claimed = conn.execute("SELECT status,decided_by FROM wh_issue_requests WHERE id=?",
+                                   (req_id,)).fetchone()
+            rc = 1 if claimed and claimed["status"] == status and claimed["decided_by"] == _user(user) else 0
+        if rc != 1:
+            conn.rollback()
+            return False, "not_pending"
+        if status == "approved":
+            _lock(conn, row["material_id"], row["roll_id"])
+            if row["roll_id"]:
+                roll = conn.execute("SELECT status FROM wh_rolls WHERE id=?", (row["roll_id"],)).fetchone()
+                if roll["status"] == "quarantine":
+                    conn.rollback()
+                    return False, "roll_quarantined"
+            ok, msg = _move_stock(
+                conn, "issue", -row["qty"], user, material_id=row["material_id"], roll_id=row["roll_id"],
+                unit_cost=_unit_cost(conn, row["material_id"], row["roll_id"]),
+                ref=f"{row['dest_kind']}:{row['dest_name']}",
+                notes=f"{row['reason']} (approved {row['req_no']})")
+            if not ok:
+                conn.rollback()
+                return False, msg
+        conn.commit()
+        return True, status
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def approve_issue_request(req_id, user, note=None):
+    return _decide_issue(req_id, user, "approved", note)
+
+
+def reject_issue_request(req_id, user, note=None):
+    return _decide_issue(req_id, user, "rejected", note)
+
+
+def _issue_requests(where, args, limit):
+    conn = get_db()
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT c.*, m.code, m.uom, r.roll_no FROM wh_issue_requests c "
+            "JOIN wh_materials m ON m.id=c.material_id LEFT JOIN wh_rolls r ON r.id=c.roll_id "
+            + where + " ORDER BY c.id DESC LIMIT ?", list(args) + [int(limit)]).fetchall()]
+    finally:
+        conn.close()
+
+
+def list_issue_requests(status=None, limit=100):
+    if isinstance(status, (tuple, list)):
+        return _issue_requests("WHERE c.status IN (" + ",".join("?" for _ in status) + ")", status, limit)
+    return _issue_requests("WHERE c.status=?" if status else "", [status] if status else [], limit)
+
+
+def pending_issue_requests_for(user):
+    return _issue_requests("WHERE c.status='pending' AND COALESCE(c.requested_by,'')<>?", [_user(user)], 10)
 
 
 def move_bin(new_bin, user, material_id=None, roll_id=None):

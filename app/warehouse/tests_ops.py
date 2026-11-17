@@ -236,6 +236,116 @@ with app.app_context():
             (THR,)) is None and svc.issued_for_order(ORD)["qty"] == iss0)
     check("roll-tracked internal issue needs a roll",
           not svc.issue_internal(NVY, 1, "sample", "Proto", "sample", A)[0])
+    print("\n--- 5a. internal-issue value approval ---")
+    IA = dict(A, role="normal_user", extra_perms='["wh_approve"]')
+    IB = dict(B, role="normal_user", extra_perms='["wh_approve"]')
+    manager = {"username": "wh_mgr_c", "role": "warehouse_manager"}
+    c = get_db()
+    issue_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
+        "VALUES ('TRM-ISSUE-LIMIT','Issue limit test','trim',0,'pcs',100,100)").lastrowid
+    c.commit(); c.close()
+    check("below-limit department issue applies immediately",
+          svc.issue_internal(issue_mid, 10, "department", "Cutting", "supplies", IA)
+          == (True, "issued") and stock(issue_mid) == 90)
+    check("above-limit department issue waits without moving stock",
+          svc.issue_internal(issue_mid, 60, "department", "Cutting", "supplies", IA)
+          == (True, "pending") and stock(issue_mid) == 90)
+    request_row = q("SELECT * FROM wh_issue_requests WHERE material_id=? ORDER BY id DESC LIMIT 1", (issue_mid,))
+    req_id = request_row["id"]
+    check("pending issue records quantity and valuation", request_row["status"] == "pending"
+          and request_row["qty"] == 60 and request_row["unit_cost"] == 100 and request_row["value"] == 6000)
+    check("issue bell targets approvers and excludes requester",
+          q("SELECT COUNT(*) FROM notifications WHERE title LIKE 'Internal issue awaiting%' "
+            "AND target_user='wh_mgr_c'") >= 1
+          and q("SELECT COUNT(*) FROM notifications WHERE title LIKE 'Internal issue awaiting%' "
+                "AND target_user=?", (IA["username"],)) == 0)
+    check("non-department issue bypasses value approval",
+          svc.issue_internal(issue_mid, 60, "maintenance", "Line 1", "supplies", IA)
+          == (True, "issued") and stock(issue_mid) == 30)
+    c = get_db()
+    c.execute("UPDATE wh_materials SET stock_qty=90 WHERE id=?", (issue_mid,))
+    c.commit(); c.close()
+    check("self-approval of issue refused", svc.approve_issue_request(req_id, IA)
+          == (False, "own_request") and stock(issue_mid) == 90)
+    check("issue decision requires wh_approve", svc.approve_issue_request(
+          req_id, {"username": "count_observer", "role": "normal_user"})
+          == (False, "not_allowed") and stock(issue_mid) == 90)
+    check("other approver applies issue", svc.approve_issue_request(req_id, IB) == (True, "approved")
+          and stock(issue_mid) == 30
+          and q("SELECT status FROM wh_issue_requests WHERE id=?", (req_id,)) == "approved")
+    check("issue cannot be approved twice", svc.approve_issue_request(req_id, IB)
+          == (False, "not_pending") and stock(issue_mid) == 30)
+    c = get_db()
+    c.execute("UPDATE wh_materials SET stock_qty=100 WHERE id=?", (issue_mid,))
+    c.commit(); c.close()
+    svc.issue_internal(issue_mid, 60, "department", "Cutting", "supplies", IA)
+    reject_id = q("SELECT MAX(id) FROM wh_issue_requests WHERE material_id=?", (issue_mid,))
+    check("rejecting own issue leaves stock unchanged",
+          svc.reject_issue_request(reject_id, IA, "cancelled") == (True, "rejected")
+          and stock(issue_mid) == 100
+          and q("SELECT status FROM wh_issue_requests WHERE id=?", (reject_id,)) == "rejected")
+    svc.issue_internal(issue_mid, 60, "department", "Cutting", "supplies", IA)
+    short_id = q("SELECT MAX(id) FROM wh_issue_requests WHERE material_id=?", (issue_mid,))
+    c = get_db()
+    c.execute("UPDATE wh_materials SET stock_qty=20 WHERE id=?", (issue_mid,))
+    c.commit(); c.close()
+    check("issue approval rechecks availability and rolls back claim",
+          not svc.approve_issue_request(short_id, manager)[0] and stock(issue_mid) == 20
+          and q("SELECT status FROM wh_issue_requests WHERE id=?", (short_id,)) == "pending")
+    check("my-work issues exclude own and include others",
+          all(r["id"] != short_id for r in svc.pending_issue_requests_for(IA))
+          and any(r["id"] == short_id for r in svc.pending_issue_requests_for(IB))
+          and any(r["id"] == short_id for r in svc.pending_issue_requests_for(manager)))
+    c = get_db()
+    unknown_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
+        "VALUES ('TRM-ISSUE-UNKNOWN','Unknown cost test','trim',0,'pcs',2000,0)").lastrowid
+    c.commit(); c.close()
+    check("unknown-cost department issue applies with a note",
+          svc.issue_internal(unknown_mid, 1000, "department", "Cutting", "supplies", IA)
+          == (True, "issued") and stock(unknown_mid) == 1000
+          and "value unknown" in q("SELECT notes FROM wh_movements WHERE material_id=? "
+                                   "ORDER BY id DESC LIMIT 1", (unknown_mid,)))
+    check("negative issue limit refused", svc.set_issue_limit(-1, IB) == (False, "bad_limit"))
+    check("non-finite issue limits refused", all(svc.set_issue_limit(v, IB) == (False, "bad_limit")
+                                               for v in ("nan", "inf", "-inf", "invalid")))
+    check("issue limit saved", svc.set_issue_limit(100000, IB) == (True, "saved")
+          and svc.issue_limit() == 100000)
+    svc.set_issue_limit(5000, IB)
+    check("issue decision lists support multiple statuses", {r["id"] for r in
+          svc.list_issue_requests(("approved", "rejected"))} >= {req_id, reject_id})
+    c = get_db()
+    issue_roll_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
+        "VALUES ('FAB-ISSUE-LIMIT','Issue roll test','fabric',1,'m',100,100)").lastrowid
+    issue_rid = c.execute(
+        "INSERT INTO wh_rolls (material_id,roll_no,remaining_m,unit_cost,status) "
+        "VALUES (?,'ISSUE-ROLL',100,100,'available')", (issue_roll_mid,)).lastrowid
+    c.commit(); c.close()
+    check("above-limit issue still requires a roll",
+          svc.issue_internal(issue_roll_mid, 60, "department", "Cutting", "supplies", IA)
+          == (False, "roll_required"))
+    check("roll issue uses roll valuation and waits",
+          svc.issue_internal(issue_roll_mid, 60, "department", "Cutting", "supplies", IA,
+                             roll_id=issue_rid) == (True, "pending"))
+    roll_req = q("SELECT MAX(id) FROM wh_issue_requests WHERE material_id=?", (issue_roll_mid,))
+    c = get_db()
+    c.execute("UPDATE wh_rolls SET status='quarantine' WHERE id=?", (issue_rid,))
+    c.commit(); c.close()
+    check("issue approval rechecks quarantine and rolls back claim",
+          svc.approve_issue_request(roll_req, manager) == (False, "roll_quarantined")
+          and stock(issue_roll_mid) == 100
+          and q("SELECT status FROM wh_issue_requests WHERE id=?", (roll_req,)) == "pending")
+    c = get_db()
+    c.execute("UPDATE wh_rolls SET status='available',unit_cost=125 WHERE id=?", (issue_rid,))
+    c.commit(); c.close()
+    check("approved issue uses current roll cost",
+          svc.approve_issue_request(roll_req, manager) == (True, "approved")
+          and stock(issue_roll_mid) == 40
+          and q("SELECT unit_cost FROM wh_movements WHERE roll_id=? ORDER BY id DESC LIMIT 1",
+                (issue_rid,)) == 125)
+
     n0, s0 = q("SELECT COUNT(*) FROM wh_movements"), stock(THR)
     check("bin move", svc.move_bin("B-07", A, material_id=THR)[0]
           and q("SELECT bin FROM wh_materials WHERE id=?", (THR,)) == "B-07"

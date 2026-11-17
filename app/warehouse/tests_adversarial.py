@@ -503,7 +503,7 @@ with app.app_context():
                                        r"def (\w+)", src):
         ck("@login_required" in decs, f"{name}: login_required")
         ck("permission_required" in decs, f"{name}: permission_required")
-    ck(src.count("methods=[\"POST\"]") == 18, "18 state-changing routes, all POST-only",
+    ck(src.count("methods=[\"POST\"]") == 21, "21 state-changing routes, all POST-only",
        str(src.count("methods=[\"POST\"]")))
     ck("execute(" not in src, "routes contain no SQL at all")
 

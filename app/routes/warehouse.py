@@ -518,7 +518,10 @@ def issue_all_reserved(order_id):
 def counts():
     recent = svc.list_counts(("applied", "approved", "rejected"), limit=50)
     return render_template("warehouse/counts.html", active="wh_materials",
-                           pending=svc.list_counts("pending"), recent=recent, pct=svc.count_auto_pct())
+                           pending=svc.list_counts("pending"), recent=recent, pct=svc.count_auto_pct(),
+                           issue_pending=svc.list_issue_requests("pending"),
+                           issue_recent=svc.list_issue_requests(("approved", "rejected"), limit=50),
+                           issue_limit=svc.issue_limit())
 
 
 @bp.route("/counts/settings", methods=["POST"])
@@ -545,6 +548,33 @@ def count_approve(count_id):
 def count_reject(count_id):
     ok, msg = svc.reject_count(count_id, _u(), request.form.get("note"))
     flash("Count rejected." if ok else f"Rejection failed ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/issue-requests/<int:req_id>/approve", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def issue_request_approve(req_id):
+    ok, msg = svc.approve_issue_request(req_id, _u(), request.form.get("note"))
+    flash("Issue approved." if ok else f"Approval rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/issue-requests/<int:req_id>/reject", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def issue_request_reject(req_id):
+    ok, msg = svc.reject_issue_request(req_id, _u(), request.form.get("note"))
+    flash("Issue rejected." if ok else f"Rejection failed ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/issue-limit", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def issue_limit():
+    ok, msg = svc.set_issue_limit(request.form.get("limit"), _u())
+    flash("Limit saved." if ok else f"Limit rejected ({msg}).", "success" if ok else "error")
     return redirect(url_for("warehouse.counts"))
 
 
@@ -583,7 +613,10 @@ def issue_internal():
     ok, msg = svc.issue_internal(_int(request.form.get("material_id")), request.form.get("qty"),
                                  request.form.get("dest_kind"), request.form.get("dest_name"),
                                  request.form.get("reason"), _u(), _int(request.form.get("roll_id")))
-    flash("Material issued." if ok else f"Issue rejected ({msg}).", "success" if ok else "error")
+    if ok and msg == "pending":
+        flash("Issue sent for approval: value is above the approval limit.", "success")
+    else:
+        flash("Material issued." if ok else f"Issue rejected ({msg}).", "success" if ok else "error")
     return redirect(request.referrer or url_for("warehouse.issue"))
 
 

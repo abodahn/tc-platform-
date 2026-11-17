@@ -119,6 +119,17 @@ CREATE TABLE IF NOT EXISTS wh_counts (
 );
 CREATE INDEX IF NOT EXISTS ix_wh_count_status ON wh_counts(status);
 
+CREATE TABLE IF NOT EXISTS wh_issue_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    req_no TEXT UNIQUE,
+    material_id INTEGER NOT NULL, roll_id INTEGER,
+    qty REAL DEFAULT 0, unit_cost REAL DEFAULT 0, value REAL DEFAULT 0,
+    dest_kind TEXT, dest_name TEXT, reason TEXT, status TEXT DEFAULT 'pending',
+    requested_by TEXT, requested_at TEXT,
+    decided_by TEXT, decided_at TEXT, decision_note TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_wh_issue_request_status ON wh_issue_requests(status);
+
 """
 
 
