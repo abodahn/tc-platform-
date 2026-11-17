@@ -6,6 +6,7 @@ spare-part issue is fully transactional (rolls back on any failure) and stock
 can never go negative. Status transitions are guarded.
 """
 import logging
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -13,7 +14,7 @@ from werkzeug.utils import secure_filename
 
 from config import Config
 from app.db import get_db
-from app.maintenance.constants import TICKET_TRANSITIONS
+from app.maintenance.constants import TICKET_TRANSITIONS, PM_FREQUENCY_DAYS
 from app.maintenance import workflow as wf
 
 log = logging.getLogger("tc.maintenance")
@@ -52,6 +53,46 @@ def _parse_dt(s):
 
 def _year():
     return datetime.now(timezone.utc).year
+
+
+def _minutes_between(a, b):
+    start, end = _parse_dt(a), _parse_dt(b)
+    if start is None or end is None:
+        return None
+    return max(0, int((end - start).total_seconds() // 60))
+
+
+def repair_minutes(row):
+    minutes = _minutes_between(row["repair_started_at"], row["repair_done_at"])
+    return minutes if minutes and minutes > 0 else row["total_downtime_min"] or None
+
+
+def complete_pm_wo(wid, notes, user, ip=None):
+    conn = get_db()
+    try:
+        now = _now()
+        claimed = conn.execute(
+            "UPDATE mnt_pm_work_orders SET status='completed', completed_at=?, notes=? "
+            "WHERE id=? AND COALESCE(status,'')<>'completed'", (now, notes, wid))
+        if claimed.rowcount != 1:
+            return False, "already_completed"
+        plan = conn.execute(
+            "SELECT p.* FROM mnt_pm_plans p JOIN mnt_pm_work_orders w ON w.plan_id=p.id "
+            "WHERE w.id=?", (wid,)).fetchone()
+        next_due = None
+        if plan:
+            interval = plan["interval_days"]
+            if interval is None or interval <= 0:
+                interval = PM_FREQUENCY_DAYS.get(plan["frequency"], 30)
+            completed = _parse_dt(now).date()
+            next_due = (completed + timedelta(days=interval)).isoformat()
+            conn.execute("UPDATE mnt_pm_plans SET last_done=?, next_due=? WHERE id=?",
+                         (completed.isoformat(), next_due, plan["id"]))
+        audit(conn, user, "pm_complete", "pm_wo", wid, None, next_due, ip=ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
 
 
 def doc_no(prefix, n):
@@ -373,8 +414,9 @@ def review_assign(ticket_id, technician, priority, response_due, resolution_due,
         wo = doc_no("WO", ticket_id)
         conn.execute(
             "UPDATE mnt_tickets SET assigned_to=?, work_order_no=?, priority=COALESCE(?,priority),"
-            " response_due=?, resolution_due=?, reviewed_at=COALESCE(reviewed_at,?) WHERE id=?",
-            (technician, wo, priority or None, response_due, resolution_due, _now(), ticket_id))
+            " response_due=COALESCE(?,response_due), resolution_due=COALESCE(?,resolution_due), "
+            "reviewed_at=COALESCE(reviewed_at,?) WHERE id=?",
+            (technician, wo, priority or None, response_due or None, resolution_due or None, _now(), ticket_id))
         audit(conn, user, "ticket_assign", "ticket", ticket_id, None, technician, ip=ip)
         notify(conn, "maintenance_technician", "Work order assigned",
                f"{doc_no('MNT', ticket_id)} assigned to you", "ticket", ticket_id,
@@ -797,11 +839,40 @@ def repair_proof(ticket_id, d, user, ip=None):
         return False, "bad_ticket_id"
     conn = get_db()
     try:
+        now = _now()
+        rate = wf.num(conn, "labour_rate_per_hour")
+        # No-op UPDATE claims the row: a double submit (already in testing) charges labour once.
+        if rate > 0 and conn.execute(
+                "UPDATE mnt_tickets SET status=status WHERE id=? AND status='repair'",
+                (ticket_id,)).rowcount == 1:
+            t = conn.execute(
+                "SELECT repair_started_at,diag_started_at,diag_done_at,reopened_at "
+                "FROM mnt_tickets WHERE id=?", (ticket_id,)).fetchone()
+            try:
+                hours = float(d.get("labour_hours"))
+            except (ValueError, TypeError):
+                hours = 0
+            if math.isfinite(hours) and hours > 0:
+                hours = min(hours, 1000)
+            else:
+                minutes = _minutes_between(t["repair_started_at"], now) if t else 0
+                minutes = minutes or 0
+                if t:
+                    reopened = _parse_dt(t["reopened_at"])
+                    diag_start = _parse_dt(t["diag_started_at"])
+                    diag_end = _parse_dt(t["diag_done_at"])
+                    if diag_start and diag_end and (not t["reopened_at"] or
+                            (reopened and diag_start >= reopened and diag_end >= reopened)):
+                        minutes += _minutes_between(t["diag_started_at"], t["diag_done_at"]) or 0
+                hours = minutes / 60
+            conn.execute("UPDATE mnt_tickets SET cost=COALESCE(cost,0)+? WHERE id=?",
+                         (round(hours * rate, 2), ticket_id))
+            audit(conn, user, "labour_cost", "ticket", ticket_id, None, f"{hours:.2f}h x {rate}", ip=ip)
         conn.execute(
             "UPDATE mnt_tickets SET action_performed=?, old_part_returned=?, machine_running=?, "
             "final_notes=?, repair_done_at=? WHERE id=?",
             (d.get("action_performed"), 1 if d.get("old_part_returned") else 0,
-             d.get("machine_running"), d.get("final_notes"), _now(), ticket_id))
+             d.get("machine_running"), d.get("final_notes"), now, ticket_id))
         set_ticket_status(conn, ticket_id, "testing", user, ip, force=True)
         audit(conn, user, "repair_complete", "ticket", ticket_id, None, "testing", ip=ip)
         notify(conn, "production_supervisor", "Repair complete - testing required",
@@ -837,7 +908,8 @@ def close_ticket(ticket_id, user, ip=None):
         return False, "bad_ticket_id"
     conn = get_db()
     try:
-        t = conn.execute("SELECT status,machine_id,created_at,cost,production_stopped,machine_rolled "
+        t = conn.execute("SELECT status,machine_id,created_at,cost,production_stopped,machine_rolled, "
+                         "testing_done_at,repair_done_at,cost_rolled "
                          "FROM mnt_tickets WHERE id=?", (ticket_id,)).fetchone()
         if not t:
             return False, "not_found"
@@ -847,13 +919,14 @@ def close_ticket(ticket_id, user, ip=None):
         # requests: their reservations would otherwise strand stock as
         # unavailable forever (the release used to happen only on reject).
         _release_ticket_reservations(conn, ticket_id)
-        # compute elapsed time from creation to now (minutes)
-        created = _parse_dt(t["created_at"])
-        downtime = int((datetime.now(timezone.utc).replace(tzinfo=None) - created).total_seconds() // 60) \
-            if created else 0
-        downtime = max(downtime, 0)
+        now = _now()
+        end = t["testing_done_at"] or t["repair_done_at"] or now
+        downtime = _minutes_between(t["created_at"], end)
+        if downtime is None:
+            downtime = _minutes_between(t["created_at"], now) or 0
+        cost = round(t["cost"] or 0, 2)
         conn.execute("UPDATE mnt_tickets SET status='closed', closed_at=?, total_downtime_min=? WHERE id=?",
-                     (_now(), downtime, ticket_id))
+                     (now, downtime, ticket_id))
         _notify_people(conn, _requester_usernames(conn, ticket_id), "Ticket closed",
                        "%s has been closed", f"/maintenance/tickets/{ticket_id}",
                        args=(doc_no('MNT', ticket_id),), actor=user)
@@ -868,9 +941,15 @@ def close_ticket(ticket_id, user, ip=None):
             conn.execute(
                 "UPDATE mnt_machines SET status='running', breakdowns=breakdowns+1, "
                 "total_downtime_min=total_downtime_min+?, cost_to_date=cost_to_date+? WHERE id=?",
-                (machine_downtime, t["cost"] or 0, t["machine_id"]))
-            conn.execute("UPDATE mnt_tickets SET machine_rolled=1 WHERE id=?", (ticket_id,))
+                (machine_downtime, cost, t["machine_id"]))
+            conn.execute("UPDATE mnt_tickets SET machine_rolled=1, cost_rolled=? WHERE id=?",
+                         (cost, ticket_id))
         elif t["machine_id"]:
+            delta = round(cost - (t["cost_rolled"] if t["cost_rolled"] is not None else cost), 2)
+            if delta != 0:
+                conn.execute("UPDATE mnt_machines SET cost_to_date=cost_to_date+? WHERE id=?",
+                             (delta, t["machine_id"]))
+            conn.execute("UPDATE mnt_tickets SET cost_rolled=? WHERE id=?", (cost, ticket_id))
             conn.execute("UPDATE mnt_machines SET status='running' WHERE id=?", (t["machine_id"],))
         audit(conn, user, "ticket_close", "ticket", ticket_id, t["status"], "closed", ip=ip)
         conn.commit()

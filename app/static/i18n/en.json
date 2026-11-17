@@ -4209,5 +4209,17 @@
   "mywork.po_queue": "Approved requests awaiting a PO",
   "mywork.stuck_postings": "Receipts that did not reach stock",
   "mywork.pay_queue": "Received orders with payment due",
-  "mywork.view_all": "View all"
+  "mywork.view_all": "View all",
+  "m.add_pm_plan": "Add PM plan",
+  "m.title": "Title",
+  "m.interval_days": "Interval (days)",
+  "m.checklist_item": "Checklist item",
+  "m.photo_required": "Photo required",
+  "m.labour_hours": "Labour hours (optional)",
+  "m_pm_already_completed": "This PM work order is already completed.",
+  "m_pm_plan_exists": "A PM plan with this title already exists for this machine.",
+  "m_pm_title_required": "A PM plan title is required.",
+  "m_pm_item_required": "A checklist item is required.",
+  "m_pm_schedule_invalid": "Enter a positive interval and a valid due date (YYYY-MM-DD).",
+  "m_pm_machine_unknown": "No machine with that code."
 }

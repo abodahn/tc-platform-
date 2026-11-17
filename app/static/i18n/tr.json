@@ -4209,5 +4209,17 @@
   "mywork.po_queue": "Satın alma siparişi bekleyen onaylı talepler",
   "mywork.stuck_postings": "Stoğa aktarılmayan mal kabulleri",
   "mywork.pay_queue": "Ödemesi bekleyen teslim alınmış siparişler",
-  "mywork.view_all": "Tümünü gör"
+  "mywork.view_all": "Tümünü gör",
+  "m.add_pm_plan": "Önleyici bakım planı ekle",
+  "m.title": "Başlık",
+  "m.interval_days": "Aralık (gün)",
+  "m.checklist_item": "Kontrol listesi maddesi",
+  "m.photo_required": "Fotoğraf gerekli",
+  "m.labour_hours": "İşçilik saati (isteğe bağlı)",
+  "m_pm_already_completed": "Bu önleyici bakım iş emri zaten tamamlandı.",
+  "m_pm_plan_exists": "Bu makine için bu başlıkta bir önleyici bakım planı zaten var.",
+  "m_pm_title_required": "Önleyici bakım planı başlığı gereklidir.",
+  "m_pm_item_required": "Kontrol listesi maddesi gereklidir.",
+  "m_pm_schedule_invalid": "Pozitif bir aralık ve geçerli bir son tarih girin (YYYY-MM-DD).",
+  "m_pm_machine_unknown": "Bu koda sahip makine yok."
 }

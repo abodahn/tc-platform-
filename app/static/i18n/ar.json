@@ -4209,5 +4209,17 @@
   "mywork.po_queue": "طلبات معتمدة بانتظار أمر شراء",
   "mywork.stuck_postings": "استلامات لم تُرحّل إلى المخزون",
   "mywork.pay_queue": "طلبات مستلمة مستحقة الدفع",
-  "mywork.view_all": "عرض الكل"
+  "mywork.view_all": "عرض الكل",
+  "m.add_pm_plan": "إضافة خطة صيانة وقائية",
+  "m.title": "العنوان",
+  "m.interval_days": "الفترة (بالأيام)",
+  "m.checklist_item": "بند قائمة الفحص",
+  "m.photo_required": "صورة مطلوبة",
+  "m.labour_hours": "ساعات العمل (اختياري)",
+  "m_pm_already_completed": "أمر عمل الصيانة الوقائية مكتمل بالفعل.",
+  "m_pm_plan_exists": "توجد بالفعل خطة صيانة وقائية بهذا العنوان لهذه الماكينة.",
+  "m_pm_title_required": "عنوان خطة الصيانة الوقائية مطلوب.",
+  "m_pm_item_required": "بند قائمة الفحص مطلوب.",
+  "m_pm_schedule_invalid": "أدخل فترة موجبة وتاريخ استحقاق صالحاً (YYYY-MM-DD).",
+  "m_pm_machine_unknown": "لا توجد ماكينة بهذا الكود."
 }

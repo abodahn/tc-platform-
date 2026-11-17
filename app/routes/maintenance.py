@@ -93,6 +93,11 @@ def _require(perm):
         abort(403)
 
 
+def _require_any(*perms):
+    if not any(_can(perm) for perm in perms):
+        abort(403)
+
+
 def _can(perm):
     """Role permissions PLUS the extras granted on the user record.
 
@@ -227,10 +232,17 @@ def dashboard():
             "cost_month": c("SELECT COALESCE(SUM(cost),0) c FROM mnt_tickets "
                             "WHERE COALESCE(closed_at, created_at) >= ?", (month_start,)),
         }
-        # MTTR (avg downtime of closed) & breakdown count
-        mttr = conn.execute("SELECT AVG(total_downtime_min) a FROM mnt_tickets WHERE status='closed' AND total_downtime_min>0").fetchone()["a"]
-        kpis["mttr"] = round(mttr) if mttr else 0
-        kpis["sla"] = 92  # computed placeholder until enough history
+        repair_times = [svc.repair_minutes(row) for row in conn.execute(
+            "SELECT repair_started_at,repair_done_at,total_downtime_min "
+            "FROM mnt_tickets WHERE status='closed'").fetchall()]
+        repair_times = [minutes for minutes in repair_times if minutes and minutes > 0]
+        kpis["mttr"] = round(sum(repair_times) / len(repair_times)) if repair_times else 0
+        sla = conn.execute(
+            "SELECT COUNT(*) total, SUM(CASE WHEN COALESCE(testing_done_at,closed_at) "
+            "<= resolution_due THEN 1 ELSE 0 END) met FROM mnt_tickets "
+            "WHERE status='closed' AND closed_at >= ? AND resolution_due IS NOT NULL",
+            (month_start,)).fetchone()
+        kpis["sla"] = round(100 * sla["met"] / sla["total"]) if sla["total"] else None
 
         by_status = conn.execute("SELECT status, COUNT(*) c FROM mnt_tickets GROUP BY status ORDER BY c DESC").fetchall()
         by_priority = conn.execute("SELECT priority, COUNT(*) c FROM mnt_tickets GROUP BY priority").fetchall()
@@ -569,6 +581,7 @@ def ticket_repair(tid):
         "action_performed": f.get("action_performed"),
         "old_part_returned": f.get("old_part_returned") == "on",
         "machine_running": f.get("machine_running"), "final_notes": f.get("final_notes"),
+        "labour_hours": f.get("labour_hours"),
     }, _u(), request.remote_addr)
     svc.save_attachments(request.files.getlist("photos"), "ticket", tid, "repair", _u())
     flash("m_saved", "success")
@@ -724,7 +737,7 @@ MACHINE_LIST_CAP = 500
 def machines():
     _require("maint_view")
     if request.method == "POST":
-        _require("maint_admin")
+        _require_any("maint_manage", "maint_admin")
         f = request.form
         code = (f.get("code") or "").strip()
         if not code:
@@ -819,7 +832,7 @@ def machine_profile(mid):
 @bp.route("/machines/<int:mid>/asset-tag", methods=["POST"])
 @login_required
 def machine_asset_tag(mid):
-    _require("maint_admin")
+    _require_any("maint_manage", "maint_admin")
     if not _one("SELECT id FROM mnt_machines WHERE id=?", (mid,)):
         abort(404)
     conn = _db()
@@ -1070,7 +1083,7 @@ def needle_costs():
 def spares():
     _require("maint_view")
     if request.method == "POST":
-        _require("maint_store")
+        _require_any("maint_store", "maint_manage")
         f = request.form
         code = (f.get("code") or "").strip()
         if not code:
@@ -1317,6 +1330,83 @@ def pm():
                            wos=wos, total_wos=total_wos, active="maint_pm")
 
 
+@bp.route("/pm/new", methods=["POST"])
+@login_required
+def pm_plan_new():
+    _require_any("maint_manage", "maint_admin")
+    from datetime import datetime, timedelta
+    f = request.form
+    conn = _db()
+    try:
+        machine = conn.execute("SELECT id FROM mnt_machines WHERE code=?",
+                               ((f.get("machine_code") or "").strip(),)).fetchone()
+        title = (f.get("title") or "").strip()
+        frequency = f.get("frequency")
+        if frequency not in C.PM_FREQUENCIES:
+            frequency = "monthly"
+        if not machine:
+            flash("m_pm_machine_unknown", "error")
+        elif not title:
+            flash("m_pm_title_required", "error")
+        elif conn.execute("SELECT id FROM mnt_pm_plans WHERE machine_id=? AND title=?",
+                          (machine["id"], title)).fetchone():
+            flash("m_pm_plan_exists", "error")
+        else:
+            try:
+                raw_interval = (f.get("interval_days") or "").strip()
+                interval = int(raw_interval) if raw_interval else C.PM_FREQUENCY_DAYS[frequency]
+                if interval <= 0:
+                    raise ValueError
+                raw_due = (f.get("next_due") or "").strip()
+                if raw_due:
+                    due = datetime.strptime(raw_due, "%Y-%m-%d").date()
+                    if due.isoformat() != raw_due:
+                        raise ValueError
+                else:
+                    due = svc._parse_dt(svc._now()).date() + timedelta(days=interval)
+            except (ValueError, OverflowError):
+                flash("m_pm_schedule_invalid", "error")
+            else:
+                cur = conn.execute(
+                    "INSERT INTO mnt_pm_plans (machine_id,title,frequency,interval_days,"
+                    "assigned_to,next_due,active,created_at) VALUES (?,?,?,?,?,?,1,datetime('now'))",
+                    (machine["id"], title, frequency, interval,
+                     (f.get("assigned_to") or "").strip() or None, due.isoformat()))
+                svc.audit(conn, _u(), "pm_plan_add", "pm_plan", cur.lastrowid,
+                          None, title, ip=request.remote_addr)
+                conn.commit()
+                flash("m_saved", "success")
+    finally:
+        conn.close()
+    return redirect(url_for("maintenance.pm"))
+
+
+@bp.route("/pm/<int:pid>/checklist", methods=["POST"])
+@login_required
+def pm_checklist_add(pid):
+    _require_any("maint_manage", "maint_admin")
+    conn = _db()
+    try:
+        if not conn.execute("SELECT id FROM mnt_pm_plans WHERE id=?", (pid,)).fetchone():
+            abort(404)
+        item = (request.form.get("item") or "").strip()
+        if not item:
+            flash("m_pm_item_required", "error")
+        else:
+            sort = conn.execute(
+                "SELECT COALESCE(MAX(sort),-1)+1 n FROM mnt_pm_checklist WHERE plan_id=?",
+                (pid,)).fetchone()["n"]
+            conn.execute(
+                "INSERT INTO mnt_pm_checklist (plan_id,item,required,photo_required,sort) "
+                "VALUES (?,?,1,?,?)",
+                (pid, item, 1 if request.form.get("photo_required") == "on" else 0, sort))
+            conn.commit()
+            flash("m_saved", "success")
+    finally:
+        conn.close()
+    return redirect(url_for("maintenance.pm"))
+
+
 @bp.route("/pm/<int:pid>/generate", methods=["POST"])
 @login_required
 def pm_generate(pid):
@@ -1342,14 +1432,8 @@ def pm_generate(pid):
 @login_required
 def pm_complete(wid):
     _require("maint_technician")
-    conn = _db()
-    try:
-        conn.execute("UPDATE mnt_pm_work_orders SET status='completed', completed_at=datetime('now'), "
-                     "notes=? WHERE id=?", (request.form.get("notes"), wid))
-        conn.commit()
-        flash("m_saved", "success")
-    finally:
-        conn.close()
+    ok, msg = svc.complete_pm_wo(wid, request.form.get("notes"), _u(), request.remote_addr)
+    flash("m_saved" if ok else "m_pm_already_completed", "success" if ok else "error")
     return redirect(url_for("maintenance.pm"))
 
 

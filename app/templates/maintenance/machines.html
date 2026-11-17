@@ -6,11 +6,11 @@
     <h1 data-i18n="nav.maint_machines">Machine Registry</h1></div>
   <div class="flex gap">
     {% if mcan('maint_admin') %}<a class="btn btn-ghost" href="{{ url_for('maintenance.import_page', kind='machines') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.import">Import</span></a>{% endif %}
-    {% if mcan('maint_admin') %}<button class="btn btn-primary" onclick="document.getElementById('mAdd').style.display='block'"><svg class="ico"><use href="#i-factory"></use></svg><span data-i18n="m.add">Add</span></button>{% endif %}
+    {% if mcan('maint_admin') or mcan('maint_manage') %}<button class="btn btn-primary" onclick="document.getElementById('mAdd').style.display='block'"><svg class="ico"><use href="#i-factory"></use></svg><span data-i18n="m.add">Add</span></button>{% endif %}
   </div>
 </div>
 
-{% if mcan('maint_admin') %}
+{% if mcan('maint_admin') or mcan('maint_manage') %}
 <div class="panel accent" id="mAdd" style="margin-bottom:18px;display:none" class="menu">
   <div class="panel-head"><h3 data-i18n="m.add">Add machine</h3></div>
   <form method="post" class="panel-pad"><div class="grid cols-4">

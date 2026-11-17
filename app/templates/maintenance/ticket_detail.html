@@ -220,6 +220,7 @@
         {% elif t.status=='repair' and mcan('maint_technician') %}
           <form method="post" enctype="multipart/form-data" action="{{ url_for('maintenance.ticket_repair', tid=t.id) }}">
             <div class="field"><label data-i18n="m.action_performed">Action performed</label><input name="action_performed" required></div>
+            <div class="field"><label data-i18n="m.labour_hours">Labour hours (optional)</label><input type="number" name="labour_hours" step="0.25" min="0"></div>
             <div class="field"><label data-i18n="m.machine_running">Machine running</label>
               <select name="machine_running"><option>Yes</option><option>Partial</option><option>No</option></select></div>
             <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px"><input type="checkbox" name="old_part_returned" style="width:auto;height:auto"> Old part returned</label>

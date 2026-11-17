@@ -97,6 +97,7 @@ UOM = ["pcs", "set", "m", "kg", "l", "roll", "box"]
 
 # --- Preventive maintenance -------------------------------------------------
 PM_FREQUENCIES = ["daily", "weekly", "monthly", "quarterly", "yearly"]
+PM_FREQUENCY_DAYS = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 90, "yearly": 365}
 PM_STATUSES = ["scheduled", "due_soon", "overdue", "in_progress", "completed",
                "missed", "cancelled"]
 

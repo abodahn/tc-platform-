@@ -341,6 +341,9 @@ _MIGRATIONS = [
     # counters are rolled up from a ticket exactly once.
     ("mnt_tickets", "machine_rolled",
      "ALTER TABLE mnt_tickets ADD COLUMN machine_rolled INTEGER DEFAULT 0"),
+    ("mnt_tickets", "cost_rolled", (
+        "ALTER TABLE mnt_tickets ADD COLUMN cost_rolled REAL",
+        "UPDATE mnt_tickets SET cost_rolled=COALESCE(cost,0) WHERE machine_rolled=1")),
     # --- Machine register import (app/maintenance/machine_import.py). Five ALTERs,
     # no index, no other boot work: gunicorn runs --preload, so everything here
     # happens BEFORE the port binds over a slow external PostgreSQL link.
@@ -389,7 +392,8 @@ def create_and_seed(conn):
         except Exception:
             conn.rollback()   # PostgreSQL aborts the transaction on a failed query
         try:
-            conn.execute(_ddl)
+            for statement in (_ddl if isinstance(_ddl, tuple) else (_ddl,)):
+                conn.execute(statement)
             conn.commit()
         except Exception:
             conn.rollback()

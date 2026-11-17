@@ -40,7 +40,7 @@
         <tr><td class="muted" data-i18n="m.brand">Brand</td><td>{{ m.brand }} {{ m.model }}</td></tr>
         <tr><td class="muted">Serial</td><td>{{ m.serial }}</td></tr>
         <tr><td class="muted" data-i18n="m.asset_tag">Asset tag</td><td>{{ m.asset_tag or '—' }}
-          {% if mcan('maint_admin') %}
+          {% if mcan('maint_admin') or mcan('maint_manage') %}
           <form method="post" action="{{ url_for('maintenance.machine_asset_tag', mid=m.id) }}" class="flex gap center mt-2">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <input name="asset_tag" maxlength="60" value="{{ m.asset_tag or '' }}" aria-label="Asset tag">

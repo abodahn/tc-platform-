@@ -2,7 +2,28 @@
 {% block title %}Preventive Maintenance{% endblock %}
 {% block content %}
 <div class="page-head"><div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
-  <h1 data-i18n="nav.maint_pm">Preventive Maintenance</h1></div></div>
+  <h1 data-i18n="nav.maint_pm">Preventive Maintenance</h1></div>
+  {% if mcan('maint_manage') or mcan('maint_admin') %}
+  <button class="btn btn-primary" onclick="var p=document.getElementById('pmAdd');p.style.display=p.style.display==='none'?'block':'none'" data-i18n="m.add_pm_plan">Add PM plan</button>
+  {% endif %}</div>
+
+{% if mcan('maint_manage') or mcan('maint_admin') %}
+<div class="panel accent" id="pmAdd" style="margin-bottom:18px;display:none">
+  <div class="panel-head"><h3 data-i18n="m.add_pm_plan">Add PM plan</h3></div>
+  <form method="post" action="{{ url_for('maintenance.pm_plan_new') }}" class="panel-pad">
+    <div class="grid cols-4">
+      <div class="field"><label data-i18n="m.machine_code">Machine code</label><input name="machine_code" required></div>
+      <div class="field"><label data-i18n="m.title">Title</label><input name="title" required></div>
+      <div class="field"><label data-i18n="m.frequency">Frequency</label><select name="frequency">
+        {% for f in C.PM_FREQUENCIES %}<option value="{{ f }}" {{ 'selected' if f=='monthly' }} data-i18n="mx.{{ f }}">{{ f|mtext }}</option>{% endfor %}
+      </select></div>
+      <div class="field"><label data-i18n="m.interval_days">Interval (days)</label><input name="interval_days" type="number" min="1" step="1"></div>
+      <div class="field"><label data-i18n="m.assigned_to">Assigned to</label><input name="assigned_to"></div>
+      <div class="field"><label data-i18n="m.next_due">Next due</label><input name="next_due" type="date"></div>
+    </div><button class="btn btn-primary btn-sm" data-i18n="m.save">Save</button>
+  </form>
+</div>
+{% endif %}
 
 <div class="grid cols-2">
   {% for p in plans %}
@@ -14,6 +35,13 @@
       <div class="mt-3"><b style="font-size:12.5px" data-i18n="m.checklist">Checklist</b>
         {% for ci in checklists[p.id] %}<div class="mhealth"><svg class="ico" style="width:15px;height:15px;color:var(--muted)"><use href="#i-check"></use></svg>
           <span style="font-size:12.5px">{{ ci.item }}{% if ci.photo_required %} <span class="tag">photo</span>{% endif %}</span></div>{% endfor %}</div>
+      {% if mcan('maint_manage') or mcan('maint_admin') %}
+      <form method="post" action="{{ url_for('maintenance.pm_checklist_add', pid=p.id) }}" class="mt-3 flex gap wrap center">
+        <div class="field"><label data-i18n="m.checklist_item">Checklist item</label><input name="item" required></div>
+        <label class="flex gap center"><input type="checkbox" name="photo_required" style="width:auto;height:auto"><span data-i18n="m.photo_required">Photo required</span></label>
+        <button class="btn btn-ghost btn-sm" data-i18n="m.add">Add</button>
+      </form>
+      {% endif %}
       {% if mcan('maint_manage') %}
       <form method="post" action="{{ url_for('maintenance.pm_generate', pid=p.id) }}" class="mt-3">
         <button class="btn btn-primary btn-sm"><svg class="ico"><use href="#i-refresh"></use></svg>Generate work order</button></form>
