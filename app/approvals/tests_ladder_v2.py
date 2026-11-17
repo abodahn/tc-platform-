@@ -277,6 +277,33 @@ def run():
                                      "factory_manager", "control", "cfo", "ceo"],
             (msg, steps(late)))
 
+        print("\n7c2. deviation rungs land in ladder order, never below a signed/current rung")
+        real_findings = svc.deviation_findings
+
+        def deviate(pid, stages):
+            svc.deviation_findings = lambda conn, _pid: {"lines": [], "stages": stages}
+            conn = get_db()
+            try:
+                pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pid,)).fetchone()
+                svc.apply_deviation_stages(conn, pid, pr)
+                conn.commit()
+            finally:
+                svc.deviation_findings = real_findings
+                conn.close()
+        dv = make("Deviation order", 30_000)
+        seed_old(dv, [("warehouse", "approved", "ladder"), ("purchasing", "pending", "ladder"),
+                      ("cfo", "pending", "ladder"), ("ceo", "pending", "ladder")], 2)
+        deviate(dv, ["factory_manager", "control"])
+        chk("appended deviation rungs re-sorted before cfo / ceo",
+            steps(dv) == ["warehouse", "purchasing", "factory_manager", "control", "cfo", "ceo"],
+            steps(dv))
+        dv2 = make("Deviation late", 30_000)
+        seed_old(dv2, [("warehouse", "approved", "ladder"), ("purchasing", "approved", "ladder"),
+                       ("cfo", "pending", "ladder"), ("ceo", "pending", "ladder")], 3)
+        deviate(dv2, ["control"])
+        chk("a deviation rung ranked below the current cfo is skipped, not appended",
+            steps(dv2) == ["warehouse", "purchasing", "cfo", "ceo"], steps(dv2))
+
         print("\n7d. boot refreshes untouched old workflow texts, never admin-edited ones")
         from app.approvals import schema as SC
         from app.approvals.superseded_text import SUPERSEDED

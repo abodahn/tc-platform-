@@ -419,7 +419,7 @@ def can_act(user, stage, _deleg=None, _roles=None):
 # --------------------------------------------------------------------------
 # Segregation-of-duties escalation: WHO signs a rung whose only eligible
 # signer is the originator. Nothing here changes WHICH rungs exist, their
-# order, the amount thresholds or any gate.
+# order or any gate.
 # --------------------------------------------------------------------------
 def escalation_map(conn=None):
     """{role_key: superior_role} as CONFIGURED. proc_escalations is authoritative:
@@ -2243,6 +2243,26 @@ def _withdraw_signatures_on_changed_terms(conn, pr, before, uname, ip, why):
     return len(steps)
 
 
+def _ladder_floor(steps, cur_seq):
+    """Rank of the highest signed or current rung. A rung ranked at/below it would
+    sign out of order (control after cfo, anything after ceo), so none is added."""
+    return max([C.ladder_rank(r["stage"]) for r in steps
+                if r["status"] == "approved" or (cur_seq and r["seq"] == cur_seq)] or [-1])
+
+
+def _resort_future_rungs(conn, pr_id, cur_seq):
+    """Put the pending rungs after the current one into LADDER_RANK order."""
+    # Shared sequence numbers represent parallel rungs; preserve those groups.
+    if cur_seq and not C.PARALLEL_GROUPS:
+        future = conn.execute(
+            "SELECT id, seq, stage FROM pr_steps WHERE pr_id=? AND status='pending' AND seq>?",
+            (pr_id, cur_seq)).fetchall()
+        future = sorted(future, key=lambda r: (C.ladder_rank(r["stage"]), r["seq"], r["id"]))
+        for seq, r in enumerate(future, cur_seq + 1):
+            if r["seq"] != seq:
+                conn.execute("UPDATE pr_steps SET seq=? WHERE id=?", (seq, r["id"]))
+
+
 def _reconcile_value_ladder(conn, pr_id, department, total):
     """Restore missing post-pricing rungs and prune future retired ladder rungs.
     Preserve completed and currently active steps; order future sequential rungs
@@ -2346,11 +2366,7 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                 for s in dict.fromkeys(_live + list(target))}
     _busy = {r["approver_user"] for r in existing
              if r["status"] in ("approved", "rejected") and r["approver_user"]}
-    # A rung ranked at/below the current one or below a signed one would sign out
-    # of order (control after cfo, anything after ceo): such a request keeps its steps.
-    _floor = max([C.ladder_rank(r["stage"]) for r in existing
-                  if r["status"] == "approved" or (cur_seq and r["seq"] == cur_seq)]
-                 or [-1])
+    _floor = _ladder_floor(existing, cur_seq)
     for s in target:
         if s not in have and C.ladder_rank(s) > _floor:
             nxt += 1
@@ -2379,15 +2395,7 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                              f"this request ({requester} raised it, or the signer already "
                              f"signed another rung) and no superior above that role has "
                              f"anyone free to sign it.", link=_pr_link(pr_id))
-    # Shared sequence numbers represent parallel rungs; preserve those groups.
-    if cur_seq and not C.PARALLEL_GROUPS:
-        future = conn.execute(
-            "SELECT id, seq, stage, COALESCE(origin,'ladder') AS origin "
-            "FROM pr_steps WHERE pr_id=? AND status='pending' AND seq>?",
-            (pr_id, cur_seq)).fetchall()
-        future = sorted(future, key=lambda r: (C.ladder_rank(r["stage"]), r["seq"], r["id"]))
-        for seq, r in enumerate(future, cur_seq + 1):
-            conn.execute("UPDATE pr_steps SET seq=? WHERE id=?", (seq, r["id"]))
+    _resort_future_rungs(conn, pr_id, cur_seq)
     # The ladder's shape just changed, so the Table 5 letters move with it: the
     # rung that WAS the top (and so the Approve) is now a Review below the
     # director pricing pulled in.
@@ -4965,15 +4973,22 @@ def apply_deviation_stages(conn, pr_id, pr):
     _master_moved_by_requester(conn, pr_id, pr, dev)
     if not dev["stages"]:
         return dev
-    rows = conn.execute("SELECT seq, stage FROM pr_steps WHERE pr_id=? ORDER BY seq",
+    rows = conn.execute("SELECT seq, stage, status FROM pr_steps WHERE pr_id=? ORDER BY seq",
                         (pr_id,)).fetchall()
+    # re-read: a re-price may have withdrawn signatures and moved current_seq
+    cur_seq = conn.execute("SELECT current_seq FROM pr_requests WHERE id=?",
+                           (pr_id,)).fetchone()["current_seq"] or 0
     have = {r["stage"] for r in rows}
     seq = max([r["seq"] for r in rows] or [0])
+    floor = _ladder_floor(rows, cur_seq)
     _roles = stage_roles_map(conn)
     _chain = escalation_map(conn)
-    added = []
+    added, skipped = [], []
     for st in dev["stages"]:
         if st in have:
+            continue
+        if C.ladder_rank(st) <= floor:      # same out-of-order guard as the re-price
+            skipped.append(st)
             continue
         seq += 1
         e_role, e_from, why = _esc_columns(conn, st, pr["requester"], _roles, _chain)
@@ -5000,12 +5015,15 @@ def apply_deviation_stages(conn, pr_id, pr):
             l["coverage"]["on_order"], l["coverage"]["net_need"],
             l["coverage"]["excess"])
         for l in dev["lines"] if l.get("over_plan"))
-    detail = "DOAM §4.4 deviation (%s): %s%s" % (
+    on_ladder = [s for s in dev["stages"] if s not in added and s not in skipped]
+    detail = "DOAM §4.4 deviation (%s): %s%s%s" % (
         grades,
         ("added %s on top of the value ladder."
          % ", ".join(stage_label(s) for s in added)) if added else
         ("%s already on the ladder — no rung added."
-         % ", ".join(stage_label(s) for s in dev["stages"])),
+         % ", ".join(stage_label(s) for s in on_ladder)) if on_ladder else "no rung added.",
+        "".join(" %s not added: the ladder is already signed past it." % stage_label(s)
+                for s in skipped),
         cov)
     # This runs again at every rung from Purchasing up, so an unchanged reading
     # must not file the same form twice.
@@ -5014,6 +5032,7 @@ def apply_deviation_stages(conn, pr_id, pr):
             "AND detail=?", (pr_id, detail)).fetchone():
         audit(conn, pr_id, "system", "deviation_approval", detail)
     if added:
+        _resort_future_rungs(conn, pr_id, cur_seq)
         stamp_step_actions(conn, pr_id)     # the new rungs are Table 5 endorsements
     return dev
 
