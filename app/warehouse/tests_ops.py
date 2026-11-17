@@ -110,6 +110,17 @@ with app.app_context():
           str(wht_row))
 
     print("\n--- 3. stock counts ---")
+    from app.security import user_has_permission
+    c = get_db()
+    for username, role, perms, active, status in (
+            ("store_a", "normal_user", '["wh_approve"]', 1, "active"),
+            ("mgr_b", "normal_user", '["wh_approve"]', 1, "active"),
+            ("count_observer", "normal_user", '[]', 1, "active"),
+            ("count_inactive", "super_admin", '[]', 0, "active"),
+            ("count_locked", "super_admin", '[]', 1, "locked")):
+        c.execute("INSERT INTO users (username,password_hash,role,extra_perms,is_active,account_status) "
+                  "VALUES (?,?,?,?,?,?)", (username, "unused", role, perms, active, status))
+    c.commit(); c.close()
     check("reason required", svc.submit_count(THR, 1, "", "", A) == (False, "reason_required"))
     check("note required for 'other'", svc.submit_count(THR, 1, "other", "", A)
           == (False, "note_required"))
@@ -160,6 +171,32 @@ with app.app_context():
     check("auto-applied counts older than the window do not count",
           svc.submit_count(count_mid, stock(count_mid) * 0.0199, "found", "", A)
           == (True, "applied"))
+
+    c = get_db()
+    roll_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty) "
+        "VALUES ('FAB-COUNT-WINDOW','Roll count window test','fabric',1,'m',100)").lastrowid
+    parent = c.execute(
+        "INSERT INTO wh_rolls (roll_no,material_id,length_m,remaining_m) "
+        "VALUES ('COUNT-PARENT',?,100,100)", (roll_mid,)).lastrowid
+    c.commit(); c.close()
+    check("small positive roll count auto-applies",
+          svc.submit_count(roll_mid, 1.5, "found", "", A, roll_id=parent) == (True, "applied"))
+    check("counted roll can split", svc.split_roll(parent, [51.5, 50], A)[0])
+    child = q("SELECT id FROM wh_rolls WHERE material_id=? AND id<>?", (roll_mid, parent))
+    check("split child count uses the material-wide auto-apply window",
+          svc.submit_count(roll_mid, 0.9, "found", "", A, roll_id=child) == (True, "pending")
+          and q("SELECT remaining_m FROM wh_rolls WHERE id=?", (child,)) == 50)
+    c = get_db()
+    notices = c.execute("SELECT n.target_user,u.role,u.extra_perms,u.is_active,u.account_status "
+                        "FROM notifications n LEFT JOIN users u ON u.username=n.target_user "
+                        "WHERE n.title LIKE 'Stock count awaiting%'").fetchall()
+    c.close()
+    check("pending-count bells target active approvers and exclude the submitter",
+          bool(notices) and any(r["target_user"] == B["username"] for r in notices)
+          and all(r["target_user"] is not None and r["target_user"] != A["username"]
+                  and r["is_active"] == 1 and r["account_status"] == "active"
+                  and user_has_permission(dict(r), "wh_approve") for r in notices))
 
     print("\n--- 4. stock card + daily report ---")
     card = svc.stock_card(THR, "2000-01-01", "2999-12-31")

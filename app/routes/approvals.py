@@ -8,6 +8,7 @@ approval actions are additionally gated by the per-stage authority check.
 """
 import base64
 import io
+import math
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
                    abort, jsonify, send_file, current_app)
@@ -2099,6 +2100,8 @@ def receive(pr_id):
         for i, iid in enumerate(ids):
             try:
                 q = float(vals[i]) if i < len(vals) and vals[i] else 0
+                if not math.isfinite(q):
+                    q = 0
             except ValueError:
                 q = 0
             if q > 0:

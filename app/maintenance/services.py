@@ -1085,7 +1085,8 @@ def record_test(ticket_id, d, user, ip=None):
             ticket = conn.execute("SELECT ticket_no,assigned_to FROM mnt_tickets WHERE id=?", (ticket_id,)).fetchone()
             audit(conn, user, "test_failed", "ticket", ticket_id, comment=reason, ip=ip)
             notify(conn, "maintenance_technician", "Repair test failed",
-                   f"{ticket['ticket_no']} failed its test: {reason}", "ticket", ticket_id, "warning", link)
+                   f"{ticket['ticket_no']} failed its test: {reason}", "ticket", ticket_id, "warning", link,
+                   exclude=(user or {}).get("username"))
             _notify_people(conn, _usernames_for(conn, [ticket["assigned_to"]]), "Repair test failed",
                            "%s failed its test: %s", link, args=(ticket["ticket_no"], reason), actor=user)
         else:

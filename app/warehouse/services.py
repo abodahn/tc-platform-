@@ -1649,12 +1649,23 @@ def count_auto_pct():
     return _f(get_setting("count_auto_approve_pct"), 2)
 
 
-def _count_notice(count_no):
+def _count_notice(count_no, exclude=None):
     conn = None
     try:
         conn = get_db()
-        _bell(conn, "warning", f"Stock count awaiting approval: {count_no}",
-              "Review the stock-count adjustment.", "/warehouse/counts")
+        from app.security import user_has_permission
+        rows = conn.execute("SELECT username, role, extra_perms FROM users WHERE is_active=1 "
+                            "AND COALESCE(account_status,'active')='active'").fetchall()
+        users = [dict(r) for r in rows if r["username"] != exclude]
+        recipients = [u["username"] for u in users if user_has_permission(u, "wh_approve")]
+        if not recipients:
+            recipients = [u["username"] for u in users if u["role"] == "super_admin"]
+        for username in recipients:
+            conn.execute(
+                "INSERT INTO notifications (severity,module,title,message,target_user,link,created_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                ("warning", "warehouse", f"Stock count awaiting approval: {count_no}",
+                 "Review the stock-count adjustment.", username, "/warehouse/counts", _now()))
         conn.commit()
     except Exception:
         if conn:
@@ -1713,8 +1724,8 @@ def submit_count(material_id, delta, reason, note, user, roll_id=None):
             recent_auto = conn.execute(
                 "SELECT COALESCE(SUM(delta),0) AS recent_auto FROM wh_counts "
                 "WHERE material_id=? AND status='applied' AND decided_by='auto' "
-                "AND submitted_at >= ? AND roll_id=?",
-                (material_id, window_start, roll_id)).fetchone()["recent_auto"]
+                "AND submitted_at >= ?",
+                (material_id, window_start)).fetchone()["recent_auto"]
         else:
             recent_auto = conn.execute(
                 "SELECT COALESCE(SUM(delta),0) AS recent_auto FROM wh_counts "
@@ -1745,7 +1756,7 @@ def submit_count(material_id, delta, reason, note, user, roll_id=None):
         conn.rollback()
         conn.close()
     if pending_no:
-        _count_notice(pending_no)
+        _count_notice(pending_no, exclude=(user or {}).get("username"))
     return True, "pending" if pending_no else "applied"
 
 

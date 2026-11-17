@@ -47,6 +47,8 @@ def plan(conn):
             why = "has real stock movements"
         elif _count(conn, "SELECT COUNT(*) c FROM wh_allocations WHERE material_id=?", (m["id"],)):
             why = "has reservations"
+        elif _count(conn, "SELECT COUNT(*) c FROM wh_counts WHERE material_id=?", (m["id"],)):
+            why = "has stock counts"
         elif rids and (_count(conn, "SELECT COUNT(*) c FROM cut_lay_rolls WHERE roll_id IN (%s)"
                                     % _in(rids), rids)
                        or _count(conn, "SELECT COUNT(*) c FROM sf_bundles WHERE roll_id IN (%s)"
