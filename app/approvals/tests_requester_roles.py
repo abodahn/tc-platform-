@@ -156,11 +156,15 @@ def run():
         chk("he can raise it, and it prices", pr_id and okp, msgp)
         own = [s for s in steps if s["stage"] in ("factory_manager", "scd")]
         chk("it carries a director rung", own, [s["stage"] for s in steps])
+        # Owner's ladder (2026-11-17): the CEO rung is on every request and this
+        # site has ONE CEO, so the CEO may not take the director's rung as well
+        # (dual_role would then strand the CEO rung). The rung is PARKED for an
+        # admin or a delegation; act_on_step still refuses the requester.
+        _admin = {"username": "admin", "role": "super_admin"}
         for s in own:
-            chk("%s rung is re-pointed to the CEO (esc_role=%r)" % (s["stage"], s["esc_role"]),
-                (s["esc_role"] or "") == "ceo")
-            chk("...the Plant Director cannot sign it", not svc.can_act_step(pd, s))
-            chk("...the CEO can", svc.can_act_step(ceo, s))
+            chk("%s rung is parked, not re-pointed onto the sole CEO (esc_role=%r)"
+                % (s["stage"], s["esc_role"]), s["esc_role"] == "")
+            chk("...an admin can sign it", svc.can_act_step(_admin, s))
 
         # ---- 4. the CFO --------------------------------------------------------
         print("\n4. the CFO raises a 600,000 request")
@@ -169,10 +173,9 @@ def run():
         cfo_rung = [s for s in steps if s["stage"] == "cfo"]
         chk("it carries the CFO rung", cfo_rung, [s["stage"] for s in steps])
         for s in cfo_rung:
-            chk("the CFO rung is re-pointed to the CEO (esc_role=%r)" % s["esc_role"],
-                (s["esc_role"] or "") == "ceo")
-            chk("...the CFO cannot sign it", not svc.can_act_step(cfo, s))
-            chk("...the CEO can", svc.can_act_step(ceo, s))
+            chk("the CFO rung is parked, not re-pointed onto the sole CEO (esc_role=%r)"
+                % s["esc_role"], s["esc_role"] == "")
+            chk("...an admin can sign it", svc.can_act_step(_admin, s))
 
         # ---- 5. the top of the chart ----------------------------------------
         print("\n5. the CEO raises a 3,000,000 request (nobody above the CEO)")

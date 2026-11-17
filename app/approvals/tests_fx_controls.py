@@ -75,7 +75,9 @@ def run():
                 "SELECT stage FROM pr_steps WHERE pr_id=? AND origin='deviation'",
                 (pid,)).fetchall()]
             conn.close()
-            return dev["lines"][0], rungs
+            # Owner's ladder (2026-11-17): CFO and CEO already sign every request,
+            # so the signatures §4.4 demands are compared, not only added rungs.
+            return dev["lines"][0], (rungs, dev["stages"])
 
         # 1,200 EGP is 20% over a 1,000 target -> more than 15% over.
         egp_line, egp_rungs = graded("EGP", 1.0, 1200.0)
@@ -89,7 +91,7 @@ def run():
         assert abs((usd_line["pct_over"] or 0) - (egp_line["pct_over"] or 0)) < 0.5, (
             "percentage over target differs by currency: %s vs %s"
             % (egp_line["pct_over"], usd_line["pct_over"]))
-        assert usd_rungs == egp_rungs and usd_rungs, (
+        assert usd_rungs == egp_rungs and usd_rungs[1], (
             "the foreign order bought different signatures: EGP %s vs USD %s"
             % (egp_rungs, usd_rungs))
 
@@ -97,7 +99,7 @@ def run():
         # must not make everything escalate.
         on_target, on_rungs = graded("USD", 50.0, 20.0)      # 20 x 50 = 1,000
         assert on_target["grade"] == "on_plan", on_target
-        assert on_rungs == [], on_rungs
+        assert on_rungs == ([], []), on_rungs
 
         # ---- §7.3.3 tolerance is an EGP floor -------------------------------
         assert C.match_tolerance_value(1000.0) == 500.0, "EGP unchanged"

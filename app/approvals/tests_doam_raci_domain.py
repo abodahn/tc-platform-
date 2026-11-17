@@ -53,6 +53,17 @@ def _mkuser(conn, username, role):
     return dict(conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone())
 
 
+# Owner's ladder (2026-11-17): every request signs the same seven rungs, the
+# Supply Chain Director is retired from new requests, so the Table 4 L2 split
+# has nothing left to drop -- the Plant Director signs EVERY request. Table 5:
+# every rung below the CFO is a Review; CFO and CEO are a joint Approve.
+FULL = ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
+        "control", "cfo", "ceo"]
+OPEX_ACTS = [("warehouse", "review"), ("warehouse_manager", "review"),
+             ("purchasing", "review"), ("factory_manager", "review"),
+             ("control", "review"), ("cfo", "approve"), ("ceo", "approve")]
+
+
 def run():
     app = _app()
     with app.app_context():
@@ -87,27 +98,21 @@ def run():
         assert svc.link_source(a, "maintenance", "ticket:41", tech)
         price(a, 18000)
         conn = get_db(); la = _stages(conn, a); conn.close()
-        assert "factory_manager" in la, "PD must sign a maintenance commitment: %s" % la
-        assert "scd" not in la, (
-            "the Supply Chain Director signed a maintenance commitment — Table 4 "
-            "gives PD production and maintenance: %s" % la)
+        assert la == FULL, "PD must sign a maintenance commitment: %s" % la
 
         # 2. An inventory replenishment above 10,000 -> Supply Chain Director only.
         b, _ = unpriced("Stores replenishment", "Warehouse", "Pallet wrap")
         price(b, 14000)
         conn = get_db(); lb = _stages(conn, b); conn.close()
-        assert "scd" in lb, "SC-D must sign an inventory replenishment: %s" % lb
-        assert "factory_manager" not in lb, (
-            "the Plant Director signed a stores replenishment — Table 4 gives "
-            "SC-D operational and inventory replenishment: %s" % lb)
+        assert lb == FULL, (
+            "a stores replenishment keeps the PD (SC-D retired): %s" % lb)
 
         # 3. THE CASE THE CONTROL MUST NOT TOUCH: no domain signal at all.
         #    Never drop a signature on a guess — an unreadable request keeps both.
         c, _ = unpriced("Office laptops", "IT", "Laptop")
         price(c, 40000)
         conn = get_db(); lc = _stages(conn, c); conn.close()
-        assert "factory_manager" in lc and "scd" in lc, (
-            "an IT purchase names neither domain, so BOTH directors must stay: %s" % lc)
+        assert lc == FULL, "an IT purchase signs the full ladder: %s" % lc
 
         # 4. ...and the other ambiguous shape: signals pointing BOTH ways at once.
         #    The warehouse restocking a maintenance spare is genuinely both an
@@ -123,16 +128,13 @@ def run():
                         qty=10, spare_id=sid)
         price(d, 1500)                      # 15,000 — clears the L2 tier
         conn = get_db(); ld = _stages(conn, d); conn.close()
-        assert "factory_manager" in ld and "scd" in ld, (
-            "a maintenance spare bought by the warehouse points both ways, so "
-            "BOTH directors must stay: %s" % ld)
+        assert ld == FULL, "a both-ways request keeps the full ladder: %s" % ld
 
         # 5. Below the tier nothing changes either way (no L2 rung to split).
         e, _ = unpriced("Small belt", "General Maintenance", "V-belt A31")
         price(e, 900)
         conn = get_db(); le = _stages(conn, e); conn.close()
-        assert "factory_manager" not in le and "scd" not in le, (
-            "900 EGP is tier 1 — no director signs at all: %s" % le)
+        assert le == FULL, "900 EGP signs the full ladder too: %s" % le
 
         # 6. CAPEX is untouched: §4.2 names PD *and* SC-D by role, not by amount,
         #    so the domain split must not reach it.
@@ -142,8 +144,7 @@ def run():
                              tech, priced=False)
         price(f, 300000)
         conn = get_db(); lf = _stages(conn, f); conn.close()
-        assert "factory_manager" in lf and "scd" in lf, (
-            "the CAPEX ladder is a joint approval — both directors stay: %s" % lf)
+        assert lf == FULL, "CAPEX routes the same ladder: %s" % lf
 
         # 7. A department that configured the dropped director KEEPS them: the
         #    department said so deliberately, and the split is an efficiency fix.
@@ -154,8 +155,8 @@ def run():
         g, _ = unpriced("Stores replenishment 2", "Warehouse", "Strapping band")
         price(g, 14000)
         conn = get_db(); lg = _stages(conn, g); conn.close()
-        assert "factory_manager" in lg and "scd" in lg, (
-            "an explicit department matrix row must survive the domain split: %s" % lg)
+        assert lg == FULL, (
+            "a department matrix row adds no duplicate PD rung: %s" % lg)
 
         # 8. THE CASE THAT MATTERS MOST HERE: a production department buying a
         #    DIRECT MATERIAL. Fabric/yarn/thread wording is a keyword heuristic
@@ -180,15 +181,14 @@ def run():
             assert okk, "%s could not raise a fabric requisition: %s" % (_dept, msg)
             price(p, 50000)
             conn = get_db(); lp = _stages(conn, p); conn.close()
-            assert "factory_manager" in lp and "scd" in lp, (
-                "%s buying fabric lost a director to the wording of the line "
-                "item — the department names no domain, so both must sign: %s"
+            assert lp == FULL, (
+                "%s buying fabric lost a rung to the wording of the line item: %s"
                 % (_dept, lp))
 
         # the reason is on the record, not only in the shape of the ladder
         conn = get_db(); eva = _events(conn, a); conn.close()
         dom = [dt for ac, dt in eva if ac == "l2_domain"]
-        assert dom and "Plant Director" in dom[0] and "maintenance_origin" in dom[0], dom
+        assert dom == [], "nothing was dropped, so no split is recorded: %s" % dom
 
         # =================================================================
         # (A) Table 5 — Review, Approve and Endorse are distinct signatures
@@ -204,12 +204,9 @@ def run():
         # whole point of this assertion: the TOP rung is the Approve and every
         # rung beneath it is a Review, however many of them there are.
         conn = get_db(); aa = _acts(conn, a); conn.close()
-        assert [s for s, _ in aa] == ["warehouse", "warehouse_manager",
-                                      "purchasing", "factory_manager"], aa
-        assert aa == [("warehouse", "review"), ("warehouse_manager", "review"),
-                      ("purchasing", "review"), ("factory_manager", "approve")], (
-            "the top rung of the value ladder is the Approve and every rung below "
-            "it a Review: %s" % aa)
+        assert aa == OPEX_ACTS, (
+            "CFO and CEO are the joint Approve and every rung below them a "
+            "Review: %s" % aa)
 
         # An unpriced request submits with Purchasing on top, so Purchasing IS
         # the Approve — and pricing moving a director in above it must move the
@@ -220,14 +217,12 @@ def run():
         # The Warehouse Manager rung (added 2026-10-13, always on) sits between
         # the store and the buyer. Purchasing is still the Approve; the rung
         # count below it is not what this assertion is about.
-        assert before == [("warehouse", "review"), ("warehouse_manager", "review"),
-                          ("purchasing", "approve")], before
+        # Owner's ladder: an unpriced request already carries every rung, so
+        # Purchasing is a Review from the start and pricing moves no letter.
+        assert before == OPEX_ACTS, before
         price(h, 30000)
         conn = get_db(); after = _acts(conn, h); conn.close()
-        assert ("purchasing", "review") in after, (
-            "pricing put two directors above Purchasing; Purchasing is no longer "
-            "the final authority: %s" % after)
-        assert sum(1 for _, act in after if act == "approve") == 1, after
+        assert after == OPEX_ACTS, after
 
         # E — a rung a CONTROL added ABOVE the value tier endorses; it does not
         # replace the Approve the value ladder already carries.
@@ -237,11 +232,8 @@ def run():
                                          {"username": "purch", "id": 3})
         assert okk, msg
         conn = get_db(); ai = _acts(conn, i); conn.close()
-        assert ai[-1][1] == "endorse", (
-            "the §4.3 rung is senior support for a decision taken at the value "
-            "tier — Table 5 E, not a second A: %s" % ai)
-        assert sum(1 for _, act in ai if act == "approve") == 1, ai
-        assert sum(1 for _, act in ai if act == "endorse") == 1, ai
+        # The ladder already ends at the CEO; §4.3 adds no rung, no E.
+        assert ai == OPEX_ACTS, ai
 
         # ...and the SAME business fact must print the SAME letters whichever way
         # it was recorded. Purchasing may put the justification on the DRAFT —
@@ -261,10 +253,7 @@ def run():
         okk, msg = svc.submit_pr(i2, tech)
         assert okk, msg
         conn = get_db(); ai2 = _acts(conn, i2); conn.close()
-        assert ai2[-1][1] == "endorse", (
-            "a §4.3 rung appended at SUBMIT is the same control rung as one "
-            "appended after pricing — Table 5 E, not the value tier's A: %s" % ai2)
-        assert sum(1 for _, act in ai2 if act == "approve") == 1, ai2
+        assert ai2 == OPEX_ACTS, ai2
         price(i2, 60000)                  # and the pricing gate must not eat it
         conn = get_db()
         ai2p = _acts(conn, i2)
@@ -272,10 +261,7 @@ def run():
             "SELECT stage, COALESCE(origin,'ladder') AS origin FROM pr_steps "
             "WHERE pr_id=? ORDER BY seq, id", (i2,)).fetchall()]
         conn.close()
-        assert ("cfo", "single_source") in oi2, (
-            "pricing deleted the §4.3 escalation: %s" % oi2)
-        assert sum(1 for _, act in ai2p if act == "endorse") == 1, ai2p
-        assert sum(1 for _, act in ai2p if act == "approve") == 1, ai2p
+        assert oi2 == [(s, "ladder") for s in FULL], oi2
         assert sorted(ai2p) == sorted(ai), (
             "same purchase, same signatures, different letters depending only on "
             "WHEN the waiver was typed: %s vs %s" % (ai2p, ai))
@@ -291,10 +277,7 @@ def run():
         # The Warehouse Manager rung (2026-10-13) sits at seq 2, always on. What
         # this asserts is that the sequence is DENSE and in ladder order — no
         # gaps, no reordering — which the extra rung does not change.
-        assert shape == list(enumerate(
-            ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
-             "scd", "cfo"],
-            start=1)), shape
+        assert shape == list(enumerate(FULL, start=1)), shape
 
         # ---- the audit trail: a Review is visibly a different event ----------
         # The store rung and the manager rung are different signatures now
@@ -303,13 +286,13 @@ def run():
         sk = _mkuser_ctx(get_db, "sk_rev", "storekeeper")
         wh = _mkuser_ctx(get_db, "wh_rev", "warehouse_manager")
         pm = _mkuser_ctx(get_db, "pm_app", "purchasing_manager")
+        pd = _mkuser_ctx(get_db, "pd_rev", "factory_manager")
+        fc = _mkuser_ctx(get_db, "fc_rev", "financial_controller")
+        cf = _mkuser_ctx(get_db, "cfo_app", "cfo")
         j, _ = unpriced("Trail", "IT", "Keyboard")
         price(j, 5000)
         conn = get_db(); aj = _acts(conn, j); conn.close()
-        # +warehouse_manager: the rung added 2026-10-13, always on, a Review
-        # like the store beneath it. Purchasing is still the Approve.
-        assert aj == [("warehouse", "review"), ("warehouse_manager", "review"),
-                      ("purchasing", "approve")], aj
+        assert aj == OPEX_ACTS, aj
         svc.add_quote(j, {"vendor": "Quote Vendor", "amount": 5000}, buyer)  # §4.3 band 1
         okk, msg = svc.act_on_step(j, sk, "approve")      # store rung
         assert okk, msg
@@ -317,6 +300,9 @@ def run():
         assert okk, msg
         okk, msg = svc.act_on_step(j, pm, "approve")
         assert okk, msg
+        for who in (pd, fc, cf):                          # PD, Control, CFO (A)
+            okk, msg = svc.act_on_step(j, who, "approve")
+            assert okk, "%s: %s" % (who["role"], msg)
         conn = get_db(); evj = _events(conn, j); conn.close()
         acts = [ac for ac, _ in evj]
         assert "reviewed" in acts, (
@@ -335,10 +321,7 @@ def run():
             "SELECT stage, action FROM pr_sign_events WHERE pr_id=? ORDER BY id",
             (j,)).fetchall()]
         conn.close()
-        # +warehouse_manager: the rung added 2026-10-13, always on, a Review
-        # like the store beneath it. Purchasing is still the Approve.
-        assert sev == [("warehouse", "review"), ("warehouse_manager", "review"),
-                      ("purchasing", "approve")], sev
+        assert sev == OPEX_ACTS[:6], sev
 
         # ---- the case the trail must NOT relabel: a rejection stays a rejection
         k, _ = unpriced("Bounce", "IT", "Mouse")
@@ -365,8 +348,8 @@ def run():
         print("ambiguous (IT)       ->", " -> ".join(lc))
         print("Table 5 on (a)       ->", ", ".join("%s=%s" % x for x in aa))
         print("single source        ->", ", ".join("%s=%s" % x for x in ai))
-        print("PASS: Table 4 L2 splits by domain and never on a guess; Table 5 "
-              "R / A / E are recorded, printed and auditable.")
+        print("PASS: the owner's ladder keeps every director on every request; "
+              "Table 5 R / A are recorded, printed and auditable.")
         return True
 
 

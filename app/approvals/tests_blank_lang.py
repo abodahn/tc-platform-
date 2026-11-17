@@ -145,38 +145,38 @@ def main():
     print("\n--- 5. a genuinely NULL column still gets seeded ----------------")
     # a database deployed before the *_ar column existed: the feature must work
     conn = get_db()
-    conn.execute("UPDATE proc_stage_meta SET explanation_ar=NULL WHERE stage='scd'")
+    conn.execute("UPDATE proc_stage_meta SET explanation_ar=NULL WHERE stage='control'")
     conn.execute("UPDATE proc_role_meta SET explanation_tr=NULL WHERE role_key='cfo'")
     conn.execute("UPDATE proc_doc SET body_ar=NULL WHERE section='budget_gate'")
     conn.commit()
     conn.close()
     reseed(1)
     conn = get_db()
-    st = row(conn, "proc_stage_meta", "stage", "scd", ("explanation_ar",))
+    st = row(conn, "proc_stage_meta", "stage", "control", ("explanation_ar",))
     rl = row(conn, "proc_role_meta", "role_key", "cfo", ("explanation_tr",))
     dc = row(conn, "proc_doc", "section", "budget_gate", ("body_ar",))
     conn.close()
-    ok("NULL stage Arabic was seeded", st["explanation_ar"] == T.STAGE_AR["scd"])
+    ok("NULL stage Arabic was seeded", st["explanation_ar"] == T.STAGE_AR["control"])
     ok("NULL role Turkish was seeded", rl["explanation_tr"] == T.ROLE_TR["cfo"])
     ok("NULL doc Arabic was seeded", dc["body_ar"] == T.DOC_AR["budget_gate"])
 
     print("\n--- 6. an admin-AUTHORED translation survives re-seeding --------")
-    AUTH_AR = "نص المسؤول لمرحلة سلسلة الإمداد — لا يجوز استبداله."
+    AUTH_AR = "نص المسؤول لمرحلة الكنترول المالي — لا يجوز استبداله."
     r = client.post("/procurement/workflow/stage",
-                    data={"_csrf": "tok", "stage": "scd",
-                          "explanation": C.STAGE_EXPLAIN["scd"],
+                    data={"_csrf": "tok", "stage": "control",
+                          "explanation": C.STAGE_EXPLAIN["control"],
                           "explanation_ar": AUTH_AR,
-                          "explanation_tr": T.STAGE_TR["scd"]})
+                          "explanation_tr": T.STAGE_TR["control"]})
     ok("POST saving an authored Arabic -> 302 (raw)", r.status_code == 302, r.status_code)
     reseed(3)
     conn = get_db()
-    auth = row(conn, "proc_stage_meta", "stage", "scd", COLS)
+    auth = row(conn, "proc_stage_meta", "stage", "control", COLS)
     conn.close()
     ok("the admin's Arabic is untouched after 3x create_and_seed",
        auth["explanation_ar"] == AUTH_AR, repr(auth["explanation_ar"])[:60])
     ok("an Arabic reader sees the admin's own wording",
        {s["stage"]: s for s in svc.workflow_view(None, "ar")["stages"]
-        }["scd"]["explanation"] == AUTH_AR)
+        }["control"]["explanation"] == AUTH_AR)
 
     print("\n--- 7. clearing works on roles and docs too --------------------")
     conn = get_db()

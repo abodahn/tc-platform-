@@ -51,6 +51,13 @@ def _unpriced(svc, title, dept, item, qty=1):
                          {"username": "tech", "id": 9}, priced=False)
 
 
+# Owner's ladder (2026-11-17): every request already carries the CFO and the
+# CEO (L1), so Table 4's unbudgeted escalation adds NO rung any more. What this
+# file still proves: the budget state is decided and recorded the same way, the
+# approver is told, the request page shows it, and nothing is refused.
+FULL = ["warehouse", "warehouse_manager", "purchasing", "factory_manager", "control", "cfo", "ceo"]
+
+
 def run():
     app = _app()
     with app.app_context():
@@ -86,19 +93,18 @@ def run():
         la, sa, oa, _st, _n = look(a)
         assert sa == "budgeted", "5,000 inside a 1,000,000 budget is budgeted: %r" % sa
         assert oa is None, "nothing is over: %r" % oa
-        assert "cfo" not in la, "a budgeted 5,000 is tier 1 and must NOT reach L1: %s" % la
+        assert la == FULL, "every request signs the full ladder: %s" % la
 
         # ---- the SAME value with no budget set: escalates to L1 --------------
         b, _ = _unpriced(svc, "Belts", "Cutting", "V-belt A42")
         price(b, 5000)
         lb, sb, ob, stb, nb = look(b)
         assert sb == "no_budget", "Cutting has no budget row: %r" % sb
-        assert "cfo" in lb, (
-            "§4.1 is the BUDGETED ladder — 5,000 with no approved budget behind "
-            "it is an L1 commitment under Table 4: %s" % lb)
-        assert la != lb, "the same 5,000 must route differently in and out of budget"
+        assert lb == FULL, "the L1 signature is already on the ladder: %s" % lb
         assert "UNBUDGETED" in nb and "no approved" in nb, (
-            "the approver must be told WHY the CFO is on this ladder: %r" % nb)
+            "the approver must be told the spend is unbudgeted: %r" % nb)
+        assert "added to the ladder" not in nb, (
+            "the note must not claim a rung was added when none was: %r" % nb)
 
         # ---- tips the department past its budget: escalates, and says by how much
         svc.set_budget("Finishing", 10_000)
@@ -106,7 +112,7 @@ def run():
         price(prior, 8000)
         lp, sp, _op, _stp, _np = look(prior)
         assert sp == "budgeted", "8,000 of a 10,000 budget still fits: %r" % sp
-        assert "cfo" not in lp, "and routes tier 1: %s" % lp
+        assert lp == FULL, "and routes the full ladder: %s" % lp
         conn = get_db()                       # it is signed off -> committed spend
         conn.execute("UPDATE pr_requests SET status='approved' WHERE id=?", (prior,))
         conn.commit(); conn.close()
@@ -116,7 +122,7 @@ def run():
         lc, sc, oc, _stc, nc = look(c)
         assert sc == "over_budget", "13,000 against a 10,000 budget: %r" % sc
         assert abs((oc or 0) - 3000) < 0.01, "over by 3,000, got %r" % oc
-        assert "cfo" in lc, "spend past the budget is an L1 commitment: %s" % lc
+        assert lc == FULL, "spend past the budget keeps the full ladder: %s" % lc
         assert "3,000.00" in nc, "the note must state the overage: %r" % nc
 
         # ---- give the department a budget with room: the rung comes back off --
@@ -124,15 +130,14 @@ def run():
         price(b, 5000)                        # same price, re-saved
         lb2, sb2, _ob2, _stb2, _nb2 = look(b)
         assert sb2 == "budgeted", "Cutting now has room for it: %r" % sb2
-        assert "cfo" not in lb2, (
-            "a control that never lets go is a control nobody keeps: %s" % lb2)
+        assert lb2 == FULL, "re-pricing keeps the full ladder: %s" % lb2
 
         # ---- and it is NOT refused: the unbudgeted request signs all the way --
         # §4.3's lowest sourcing band still wants one recorded quote; that gate is
         # not this control's business, so satisfy it and let the ladder run.
         svc.add_quote(c, {"vendor": "Lamp Co", "amount": 5000}, buyer)
         for i, admin in enumerate(({"username": "boss%d" % n, "role": "super_admin",
-                                    "id": 100 + n} for n in range(1, 6))):
+                                    "id": 100 + n} for n in range(1, 9))):
             ok, msg = svc.act_on_step(c, admin, "approve")
             if msg == "not_pending":
                 break
@@ -155,15 +160,16 @@ def run():
 
         d = priced_draft("Gauges", "Embroidery", "Pressure gauge", 7000)
         ld, sd, _od, _std, nd = look(d)
-        assert sd == "no_budget" and "cfo" in ld, (
+        assert sd == "no_budget" and ld == FULL, (
             "submit-time routing must run the same check: %r / %s" % (sd, ld))
         assert "UNBUDGETED" in nd, "and record why at submit too: %r" % nd
 
         svc.set_budget("Embroidery", 100_000)
         e = priced_draft("Gauges 2", "Embroidery", "Vacuum gauge", 7000)
         le, se, _oe, _ste, _ne = look(e)
-        assert se == "budgeted" and "cfo" not in le, (
-            "with a budget in place the same submit routes tier 1: %r / %s" % (se, le))
+        assert se == "budgeted" and le == FULL, (
+            "with a budget in place the same submit routes the full ladder: %r / %s"
+            % (se, le))
 
         # ---- and it is on the REQUEST PAGE, not just in the database ---------
         conn = get_db()
@@ -208,8 +214,8 @@ def run():
         print("re-priced after a budget was set ->", " -> ".join(lb2))
         print("priced-then-submitted 7,000 Embroidery ->", " -> ".join(ld),
               "| with a budget:", " -> ".join(le))
-        print("PASS: DOAM Table 4 routes budgeted and unbudgeted spend differently, "
-              "on the real flow, and refuses neither")
+        print("PASS: DOAM Table 4 records budgeted and unbudgeted spend, tells the "
+              "approver, and refuses neither (the owner's ladder already carries L1)")
         return True
 
 

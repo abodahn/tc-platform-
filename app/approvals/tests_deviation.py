@@ -42,7 +42,7 @@ def run():
         # overspend is still graded and still co-signed.
         assert C.deviation_grade(20)["stages"] == ["cfo", "ceo"]
         assert C.deviation_grade(None, over_ceiling=True)["stages"] == \
-            ["factory_manager", "scd"]
+            ["factory_manager"]   # SC-D retired from new requests (2026-11-17)
         # No target on file must not be graded as infinitely over.
         assert C.price_deviation_pct(500, 0) is None
         assert C.price_deviation_pct(500, None) is None
@@ -83,7 +83,9 @@ def run():
         assert abs(dev["lines"][0]["pct_over"] - 20.0) < 0.05, dev["lines"][0]
         assert "ceo" in after, \
             "a price 20%% over target must pull in the Managing Director: %s" % after
-        assert "ceo" not in before, "the MD was already there before pricing: %s" % before
+        # Owner's ladder (2026-11-17): the CEO signs every request, so the
+        # deviation adds no duplicate rung — the ladder stays as it was.
+        assert after == before, "no duplicate rung: %s -> %s" % (before, after)
         assert dev["memo"] and dev["quotes"], dev
 
         # --- a line with no target on file is reported, never invented --------

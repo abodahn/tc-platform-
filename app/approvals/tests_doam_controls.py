@@ -55,13 +55,11 @@ def run():
                            (b,)).fetchone()["agg_total"]
         conn.close()
 
-        assert "factory_manager" not in first, \
-            "the first 9k request has nothing to aggregate with: %s" % first
+        # Owner's ladder (2026-11-17): every request signs the same seven rungs
+        # at any value, so splitting buys nothing; the aggregate is still kept.
+        full = list(C.DOAM_LADDER)
+        assert first == second == other == full, (first, second, other)
         assert agg and abs(agg - 18000) < 0.01, "aggregate should be 18,000, got %r" % agg
-        assert "factory_manager" in second, \
-            "the second 9k request must route on the 18k aggregate: %s" % second
-        assert other == first, \
-            "an unrelated item must not be aggregated: %s vs %s" % (other, first)
 
         # ---- §4.3: waiving competition costs one extra signature ----
         d, _ = svc.create_pr({"title": "OEM controller", "department": "Production"},
@@ -78,12 +76,10 @@ def run():
         after = _stages(conn, d)
         conn.close()
 
-        assert len(after) == len(before) + 1, \
-            "single source must add exactly one rung: %s -> %s" % (before, after)
-        added = after[-1]
-        top_level = C.DOAM_LEVEL.get(before[-1], "L4")
-        assert C.LEVEL_ORDER.index(C.DOAM_LEVEL[added]) > C.LEVEL_ORDER.index(top_level), \
-            "%s is not above %s" % (added, before[-1])
+        # The ladder already ends at the CEO (L1); the old "one level above"
+        # would be the retired Board, so no rung is added.
+        assert after == before and before[-1] == "ceo", (before, after)
+        added = "(none: CEO already signs)"
 
         # Idempotent: recording the justification twice must not buy two rungs.
         svc.set_single_source(d, "Proprietary OEM part — reworded", {"username": "purch", "id": 3})

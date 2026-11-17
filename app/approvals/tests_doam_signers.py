@@ -17,7 +17,7 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, r"D:\TC platform\tc-platform-beta")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))  # this checkout, not another worktree
 
 ok = True
 
@@ -141,24 +141,27 @@ def run():
         ladder = [r["stage"] for r in conn.execute(
             "SELECT stage FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()]
         conn.close()
-        chk("60,000 EGP routes through the scd rung (DOAM §4.1 tier 2)",
-            "scd" in ladder, ladder)
+        # Owner's ladder (2026-11-17): every request signs Financial Control
+        # before the CFO and the CEO; the Supply Chain Director rung is retired.
+        chk("60,000 EGP routes through the control rung (owner's ladder)",
+            "control" in ladder and "scd" not in ladder, ladder)
 
         # ---- 6. a user given the role can actually sign that rung ---------
-        # A FIXTURE in this throwaway database — the fix seeds roles, never
+        # FIXTURES in this throwaway database — the fix seeds roles, never
         # memberships, so no real person is given authority by this repository.
         conn = get_db()
-        conn.execute("INSERT INTO users (username, password_hash, full_name, role, "
-                     "is_active, created_at) VALUES (?,?,?,?,1,?)",
-                     ("scd_fixture", "x", "SCD Fixture", "supply_chain_director",
-                      "2026-01-01 00:00:00"))
+        for un, rl in (("fc_fixture", "financial_controller"),
+                       ("cfo_fixture", "cfo"), ("ceo_fixture", "ceo")):
+            conn.execute("INSERT INTO users (username, password_hash, full_name, role, "
+                         "is_active, created_at) VALUES (?,?,?,?,1,?)",
+                         (un, "x", un, rl, "2026-01-01 00:00:00"))
         conn.commit()
         conn.close()
         refresh_db_roles()
-        scd = {"username": "scd_fixture", "role": "supply_chain_director", "id": 4242}
-        chk("can_act() accepts the role on the scd stage", svc.can_act(scd, "scd"))
+        fc = {"username": "fc_fixture", "role": "financial_controller", "id": 4242}
+        chk("can_act() accepts the role on the control stage", svc.can_act(fc, "control"))
         chk("the rung is no longer flagged by the health check",
-            next(h for h in svc.ladder_signer_health() if h["stage"] == "scd")["ok"])
+            next(h for h in svc.ladder_signer_health() if h["stage"] == "control")["ok"])
 
         # DOAM §4.3 asks for three competing quotes at this value — record them
         # so the RFQ gate is satisfied and the ladder can actually be walked.
@@ -169,11 +172,9 @@ def run():
         conn.commit()
         conn.close()
 
-        # The Warehouse Manager rung was added above the store on 2026-10-13 and
-        # is always on, so the walk has one more signature than it used to. Each
-        # rung is signed by a DIFFERENT person, which is the property this loop
-        # actually defends — segregation of duties refuses a second rung from
-        # anyone who has already signed one.
+        # Each rung is signed by a DIFFERENT person, which is the property this
+        # loop actually defends — segregation of duties refuses a second rung
+        # from anyone who has already signed one.
         for who, role in (("store", "storekeeper"),
                           ("whmgr", "warehouse_manager"),
                           ("purchasing", "purchasing_manager"),
@@ -181,31 +182,34 @@ def run():
             good, msg = svc.act_on_step(pr_id, {"username": who, "role": role, "id": 0}, "approve")
             chk("%-11s signs their rung" % who, good, msg)
         # ---- 6b. the DENY half. Without this the whole file would still pass
-        # if can_act() returned True for everybody, or if STAGE_ROLES['scd']
+        # if can_act() returned True for everybody, or if STAGE_ROLES['control']
         # were widened by accident.
         intruder = {"username": "fin_fixture", "role": "finance_manager", "id": 7}
-        chk("a non-scd approver is refused on the scd stage",
-            not svc.can_act(intruder, "scd"))
+        chk("a non-controller approver is refused on the control stage",
+            not svc.can_act(intruder, "control"))
         bad, why = svc.act_on_step(pr_id, intruder, "approve")
-        chk("a non-scd approver cannot sign the scd rung", not bad, why)
+        chk("a non-controller approver cannot sign the control rung", not bad, why)
         conn = get_db()
         parked = conn.execute("SELECT status, approver_user FROM pr_steps "
-                              "WHERE pr_id=? AND stage='scd'", (pr_id,)).fetchone()
+                              "WHERE pr_id=? AND stage='control'", (pr_id,)).fetchone()
         conn.close()
         chk("the refused rung is untouched — still pending, still unsigned",
             parked["status"] == "pending" and not parked["approver_user"],
             dict(parked))
 
-        good, msg = svc.act_on_step(pr_id, scd, "approve")
-        chk("the Supply Chain Director signs the final tier-2 rung", good, msg)
+        good, msg = svc.act_on_step(pr_id, fc, "approve")
+        chk("the Financial Controller signs the control rung", good, msg)
+        for un, rl in (("cfo_fixture", "cfo"), ("ceo_fixture", "ceo")):
+            good, msg = svc.act_on_step(pr_id, {"username": un, "role": rl, "id": 0}, "approve")
+            chk("%-11s signs their rung" % un, good, msg)
 
         conn = get_db()
         row = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
-        signed = conn.execute("SELECT approver_user FROM pr_steps WHERE pr_id=? AND stage='scd'",
+        signed = conn.execute("SELECT approver_user FROM pr_steps WHERE pr_id=? AND stage='control'",
                               (pr_id,)).fetchone()
         conn.close()
-        chk("the scd rung carries a real signature, not an admin override",
-            signed and signed["approver_user"] == "scd_fixture",
+        chk("the control rung carries a real signature, not an admin override",
+            signed and signed["approver_user"] == "fc_fixture",
             dict(signed) if signed else None)
         chk("the request completed its ladder", row["status"] != "pending", row["status"])
 
