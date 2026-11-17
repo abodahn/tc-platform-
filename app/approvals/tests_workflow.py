@@ -100,10 +100,8 @@ with app.app_context():
               for stage, roles in C.STAGE_ROLES.items()}
     buyer = signer["purchasing"]
 
-    # DOAM §4.1 tier 4 (500,001 - 2,000,000): the last signature is the CFO's, so
-    # this one request still exercises Finance AND the CFO as the final approver.
-    # Under the paper form that was 30,000; the DOAM does not involve either at
-    # that value (§4.1 tier 2 stops at the directors).
+    # Any value walks the owner's full ladder (no value tiers since 2026-11-17);
+    # 600,000 is just a realistic figure for the end-to-end walk.
     TOTAL = 600_000.0
     print("\n   end-to-end: unpriced PR -> gates -> signatures -> PO -> payment")
     pr_id, pr_no = svc.create_pr(

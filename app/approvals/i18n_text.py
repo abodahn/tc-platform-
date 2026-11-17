@@ -208,8 +208,8 @@ ROLE_AR = {
         "أيًا كانت القيمة."),
     "managing_director": (
         "العضو المنتدب. يوقّع على مرحلة CEO — نفس الدرجة التي يوقّع عليها الرئيس التنفيذي، لأن "
-        "الدورين مرتبطان بها وأيٌّ من التوقيعين يفي بها. وهو التوقيع الأخير على "
-        "الإنفاق الكبير دون مستوى مجلس الإدارة. يملك الاطلاع والاعتماد فقط — "
+        "الدورين مرتبطان بها وأيٌّ من التوقيعين يفي بها — وهو دائمًا التوقيع الأخير "
+        "على كل طلب، أيًّا كانت قيمته. يملك الاطلاع والاعتماد فقط — "
         "يلتزم بالمبلغ ولا يشتري ولا يدفع."),
     "board": (
         "مجلس الإدارة. يوقّع على مرحلة مجلس الإدارة في أكبر الالتزامات، ولا "
@@ -272,8 +272,8 @@ ROLE_TR = {
         "son imzayı atar."),
     "managing_director": (
         "Murahhas Aza. CEO aşamasını imzalar — Genel Müdür ile aynı kademe; her iki rol de bu "
-        "aşamaya bağlıdır ve iki imzadan biri onu karşılar. Yönetim Kurulu "
-        "düzeyinin altındaki büyük harcamalarda son imzadır. Yalnızca "
+        "aşamaya bağlıdır ve iki imzadan biri onu karşılar — tutarı ne olursa olsun "
+        "her talepte son imzadır. Yalnızca "
         "görüntüleme ve onay yetkisi vardır — parayı taahhüt eder, satın almaz "
         "ve ödeme yapmaz."),
     "board": (

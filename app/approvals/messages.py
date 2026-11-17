@@ -192,9 +192,9 @@ MESSAGES = {
         "ar": "اكتب سبب رفض هذه الكمية.",
         "tr": "Reddedilen miktarın gerekçesini yazın.",
     },
-    "Above 10,000,000 EGP the DOAM requires a written business case alongside Board approval. Record it before signing.": {
-        "ar": "فوق 10,000,000 EGP يطلب الـ DOAM دراسة جدوى مكتوبة مع موافقة مجلس الإدارة. سجّلها قبل التوقيع.",
-        "tr": "10.000.000 EGP üzerinde DOAM hem Yönetim Kurulu onayı hem de yazılı iş gerekçesi ister. İmzalamadan önce kaydedin.",
+    "Above 10,000,000 EGP the DOAM requires a written business case before this request is signed. Record it first.": {
+        "ar": "فوق 10,000,000 EGP يطلب الـ DOAM دراسة جدوى مكتوبة قبل توقيع هذا الطلب. سجّلها أولًا.",
+        "tr": "10.000.000 EGP üzerinde DOAM, bu talep imzalanmadan önce yazılı bir iş gerekçesi ister. Önce kaydedin.",
     },
     "Added. %d request line(s) now point at it.": {
         "ar": "تمت الإضافة. %d من بنود الطلب مرتبطة به الآن.",

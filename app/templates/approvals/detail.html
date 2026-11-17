@@ -98,7 +98,7 @@
 
 {# DOAM Table 4 — budgeted or unbudgeted, and if unbudgeted, by how much. The
    panel now renders for a department with NO budget row too: "nothing is set"
-   is precisely the fact that put the extra signature on this ladder. #}
+   is the fact the CFO and CEO rungs are signing against. #}
 {% if pr.budget_state or (budget and budget.amount) %}
 <div class="panel mt-2"><div class="panel-pad">
   <div class="flex between center wrap gap" style="margin-bottom:8px">
@@ -135,7 +135,7 @@
     {% else %}
       <b style="color:var(--crit)" data-i18n="proc.unbud_none">No approved budget is set for this department and period.</b>
     {% endif %}
-    <div class="muted mt-1" data-i18n="proc.unbud_why">DOAM Table 4: unbudgeted spend is approved at L1, so this request carries one extra signature. It is not refused — it needs higher authority.</div>
+    <div class="muted mt-1" data-i18n="proc.unbud_why">DOAM Table 4: unbudgeted spend is approved at L1 — the CFO and the CEO, who sign every request. It is not refused — it needs that authority.</div>
   </div>
   {% elif pr.budget_state == 'budgeted' %}
   <div class="muted mt-2" style="font-size:12px" data-i18n="proc.budgeted_why">Within the department's approved budget for this period — routed on the §4.1 budgeted ladder.</div>
@@ -1529,7 +1529,7 @@
             value stays on the record and reappears the moment it is unhidden. -#}
         {% if fields.show_expenditure_kind and pr.expenditure_kind == 'capex' %}<span class="tag" data-i18n="proc.kind_capex_tag">CAPEX · capital</span>{% endif %}
         {% if show_commercial and pr.agg_total %}<span class="tag" title="{{ pr.agg_total }}"><span data-i18n="proc.agg_tag">Routed on 30-day aggregate</span> · {{ '{:,.0f}'.format(pr.agg_total) }}</span>{% endif %}
-        {% if pr.single_source_reason %}<span class="tag" data-i18n="proc.ss_tag">Single source · signed one level up</span>{% endif %}
+        {% if pr.single_source_reason %}<span class="tag" data-i18n="proc.ss_tag">Single source · justification on file</span>{% endif %}
         {# DOAM §5 — the cost object this spend is costed against, on every document. #}
         {% if fields.show_sales_order and pr.so_no %}<span class="tag"><span data-i18n="proc.so_tag">SO</span> {{ pr.so_no }}</span>{% endif %}
         {% if fields.show_forecast_ref and pr.forecast_ref %}<span class="tag"><span data-i18n="proc.fc_tag">Agreed forecast</span> {{ pr.forecast_ref }}</span>{% endif %}
@@ -1887,8 +1887,8 @@
         </div>
         {% endif %}
 
-        {# DOAM §4.1 tier 7 / §4.2 tier 4 — above 10,000,000 EGP the Board signs
-           WITH a written business case. Only rendered once the request is that
+        {# DOAM §4.1 tier 7 / §4.2 tier 4 — above 10,000,000 EGP a written business
+           case is required (the Board rung is retired; the CEO signs last). Only rendered once the request is that
            big, which is almost never. #}
         {% if business_case_required %}
         <div class="mt-2" style="margin-bottom:12px">

@@ -1888,8 +1888,8 @@ def approve(pr_id):
                                           "is signed — record it in the Coverage check / "
                                           "Deviation from plan panel.",
                "business_case_required": "Above 10,000,000 EGP the DOAM requires a written "
-                                         "business case alongside Board approval. Record it "
-                                         "before signing.",
+                                         "business case before this request is signed. "
+                                         "Record it first.",
                "no_active_step": "No active approval step.",
                # The DOAM §6 gate answers with the maintenance module's codes.
                # Without these three they reached the buyer raw, inside an
