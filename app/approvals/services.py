@@ -2343,8 +2343,13 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                 for s in dict.fromkeys(_live + list(target))}
     _busy = {r["approver_user"] for r in existing
              if r["status"] in ("approved", "rejected") and r["approver_user"]}
+    # A rung ranked at/below the current one or below a signed one would sign out
+    # of order (control after cfo, anything after ceo): such a request keeps its steps.
+    _floor = max([C.ladder_rank(r["stage"]) for r in existing
+                  if r["status"] == "approved" or (cur_seq and r["seq"] == cur_seq)]
+                 or [-1])
     for s in target:
-        if s not in have:
+        if s not in have and C.ladder_rank(s) > _floor:
             nxt += 1
             e_role, e_from, why = _esc_columns(conn, s, requester, _roles, _chain,
                                                _holders=_holders, _busy=_busy)
@@ -2377,10 +2382,7 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
             "SELECT id, seq, stage, COALESCE(origin,'ladder') AS origin "
             "FROM pr_steps WHERE pr_id=? AND status='pending' AND seq>?",
             (pr_id, cur_seq)).fetchall()
-        order = {s: i for i, s in enumerate(C.DOAM_LADDER)}
-        future = sorted(future, key=lambda r: (
-            0 if r["origin"] == "ladder" else 1,
-            order.get(r["stage"], len(order)), r["seq"], r["id"]))
+        future = sorted(future, key=lambda r: (C.ladder_rank(r["stage"]), r["seq"], r["id"]))
         for seq, r in enumerate(future, cur_seq + 1):
             conn.execute("UPDATE pr_steps SET seq=? WHERE id=?", (seq, r["id"]))
     # The ladder's shape just changed, so the Table 5 letters move with it: the

@@ -210,6 +210,101 @@ def run():
         chk("scd / bod dropped, control added before cfo, ceo last",
             steps(old) == EXPECT, steps(old))
 
+        def seed_old(pid, rungs, cur):
+            """Replace pid's steps with `rungs` [(stage, status, origin)], current = seq `cur`."""
+            conn = get_db()
+            conn.execute("DELETE FROM pr_steps WHERE pr_id=?", (pid,))
+            for i, (s, st, origin) in enumerate(rungs, start=1):
+                conn.execute("INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, "
+                             "approver_user, created_at, origin) "
+                             "VALUES (?,?,?,?,?,?,'2026-11-01',?)",
+                             (pid, i, s, st, C.stage_label(s),
+                              "lv_old_%d" % i if st == "approved" else None, origin))
+            conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (cur, pid))
+            conn.commit()
+            conn.close()
+
+        def reprice(pid, price):
+            conn = get_db()
+            row = conn.execute("SELECT tax_rate FROM pr_requests WHERE id=?", (pid,)).fetchone()
+            li = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (pid,)).fetchone()["id"]
+            conn.close()
+            return svc.price_pr(pid, {li: price}, {"tax_rate": row["tax_rate"] or 0},
+                                U["lv_buyer"])
+
+        def approved(pid):
+            conn = get_db()
+            try:
+                return [r["stage"] for r in conn.execute(
+                    "SELECT stage FROM pr_steps WHERE pr_id=? AND status='approved' "
+                    "ORDER BY seq", (pid,)).fetchall()]
+            finally:
+                conn.close()
+
+        print("\n7b. a legacy deviation 'finance' rung never lands after the CEO")
+        dev = make("Deviation legacy", 50_000)
+        seed_old(dev, [("warehouse", "pending", "ladder"), ("purchasing", "pending", "ladder"),
+                       ("finance", "pending", "deviation"), ("ceo", "pending", "deviation")], 1)
+        good, msg = svc.act_on_step(dev, U["lv_store"], "approve")
+        chk("the store signs it", good, msg)
+        good, msg = reprice(dev, 55_000)
+        chk("re-pricing succeeds", good, msg)
+        got = steps(dev)
+        chk("CEO is last, finance sorts before control/cfo",
+            got[-1] == "ceo" and got.index("finance") < got.index("control")
+            < got.index("cfo"), got)
+
+        print("\n7c. a late re-price at the same terms never appends a rung below a signed one")
+        old_six = ["warehouse", "warehouse_manager", "purchasing", "factory_manager", "cfo", "ceo"]
+        for parked in ("cfo", "ceo"):
+            late = make("Late %s" % parked, 40_000)
+            cur = old_six.index(parked) + 1
+            seed_old(late, [(s, "approved" if i < cur else "pending", "ladder")
+                            for i, s in enumerate(old_six, start=1)], cur)
+            before = approved(late)
+            good, msg = reprice(late, 40_000)
+            chk("parked at %s: same-price re-price succeeds" % parked, good, msg)
+            chk("parked at %s: no signature withdrawn" % parked, approved(late) == before,
+                approved(late))
+            chk("parked at %s: stored steps kept (no control after %s)" % (parked, parked),
+                steps(late) == old_six, steps(late))
+        late = make("Late changed", 40_000)
+        seed_old(late, [(s, "approved" if i < 5 else "pending", "ladder")
+                        for i, s in enumerate(old_six, start=1)], 5)
+        good, msg = reprice(late, 45_000)
+        chk("changed price rewinds and gains control before cfo, ceo last",
+            good and steps(late) == ["warehouse", "warehouse_manager", "purchasing",
+                                     "factory_manager", "control", "cfo", "ceo"],
+            (msg, steps(late)))
+
+        print("\n7d. boot refreshes untouched old workflow texts, never admin-edited ones")
+        from app.approvals import schema as SC
+        from app.approvals.superseded_text import SUPERSEDED
+        old_cfo = SUPERSEDED["proc_stage_meta"]["explanation"]["cfo"]
+        old_cfo_ar = SUPERSEDED["proc_stage_meta"]["explanation_ar"]["cfo"]
+        old_doc = SUPERSEDED["proc_doc"]["body"]["overview"]
+        conn = get_db()
+        conn.execute("UPDATE proc_stage_meta SET explanation=?, explanation_ar=? WHERE stage='cfo'",
+                     (old_cfo, old_cfo_ar))
+        conn.execute("UPDATE proc_stage_meta SET explanation=? WHERE stage='ceo'",
+                     ("Admin wording for the CEO",))
+        conn.execute("UPDATE proc_doc SET body=? WHERE section='overview'", (old_doc,))
+        conn.commit()
+        SC.seed_governance(conn)
+        row = conn.execute("SELECT explanation, explanation_ar FROM proc_stage_meta "
+                           "WHERE stage='cfo'").fetchone()
+        chk("old default stage text (en + ar) replaced by the new default",
+            row["explanation"] == C.STAGE_EXPLAIN["cfo"]
+            and row["explanation_ar"] == T.STAGE["ar"]["cfo"], row["explanation"][:60])
+        chk("old default doc text replaced",
+            conn.execute("SELECT body FROM proc_doc WHERE section='overview'")
+            .fetchone()["body"] == dict(C.DOC_SECTIONS)["overview"])
+        chk("admin-edited text left alone",
+            conn.execute("SELECT explanation FROM proc_stage_meta WHERE stage='ceo'")
+            .fetchone()["explanation"] == "Admin wording for the CEO")
+        chk("second boot rewrites nothing", SC.refresh_superseded_text(conn) == 0)
+        conn.close()
+
         print("\n8. the Control rung on the screen and on paper")
         chk("labels in en / ar / tr",
             C.stage_label("control") == "Financial Control"

@@ -81,6 +81,14 @@ DOAM_LADDER = ["warehouse", "warehouse_manager", "purchasing", "factory_manager"
                "control", "cfo", "ceo"]
 # Kept so requests raised before 2026-11-17 still render and complete.
 RETIRED_STAGES = ("scd", "bod")
+# One signing order for every stage, current or legacy, whatever added the rung.
+# Re-pricing sorts pending rungs by it; any other stage sorts just before cfo.
+LADDER_RANK = ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
+               "scd", "finance", "control", "cfo", "ceo", "bod"]
+
+
+def ladder_rank(stage):
+    return LADDER_RANK.index(stage) if stage in LADDER_RANK else LADDER_RANK.index("cfo") - 0.5
 
 # Rebound to the active ladder below once DOAM_IN_FORCE is known.
 LADDER = LEGACY_LADDER
@@ -579,7 +587,8 @@ def level_above(level):
 def single_source_stage(ladder, kind=None):
     """DOAM §4.3 — a single-source award is "approved one level above the value
     tier". Returns the ONE extra stage to append to `ladder`, or None when the
-    ladder already reaches that high (nothing to escalate to).
+    ladder already reaches that high (nothing to escalate to). On the owner's
+    fixed ladder (CEO last) it is always None; only pre-2026-11-17 ladders gain a rung.
 
     Appending at the end is correct because DOAM_LADDER is ordered by ascending
     authority: the extra signature is the last one collected, and it belongs to
@@ -1608,8 +1617,8 @@ ROLE_EXPLAIN = {
         "request, at any value."),
     "managing_director": (
         "Managing Director. Signs the CEO stage — the same rung as the Chief Executive Officer, since both "
-        "roles are mapped to it and either signature satisfies it. The last signature on "
-        "major spend below Board level. Holds view and approve only — it commits the "
+        "roles are mapped to it and either signature satisfies it — always the last "
+        "signature on every request, at any value. Holds view and approve only — it commits the "
         "money, it does not buy or pay."),
     "board": (
         "The Board of Directors. Signs the Board stage on the largest commitments, and "
