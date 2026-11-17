@@ -251,7 +251,11 @@
       // instead of trusting the cache; it is one pass over the options.
       this.items = null;
       this.syncFromSelect();
-      popup().hidden = false;
+      // A modal <dialog> sits in the browser top layer, above any z-index on <body>;
+      // host the list inside that dialog or it opens behind it.
+      var host = (this.input.closest && this.input.closest("dialog[open]")) || document.body;
+      if (popup().parentNode !== host) host.appendChild(pop);
+      pop.hidden = false;
       this.input.setAttribute("aria-expanded", "true");
       this.wrap.classList.add("is-open");
       if (selectAll) this.input.select();
