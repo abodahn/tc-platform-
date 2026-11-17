@@ -260,6 +260,55 @@ def run():
         assert svc.reverse_receipt(p_short, li_short, 10, "mismatched receipt", buyer) == (False, "stock_not_posted")
         assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 5
         assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li_short)["received_qty"]) == 10
+        # Mixed bridged/door receipts cannot each spend the same free stock.
+        c = get_db()
+        for code in ("CORR-MIX", "CORR-DEACT", "CORR-GONE"):
+            c.execute("INSERT INTO wh_materials (code,name,roll_tracked) VALUES (?,?,0)",
+                      (code, code + " material"))
+        c.commit(); c.close()
+        mid = q("SELECT id FROM wh_materials WHERE code='CORR-MIX'")["id"]
+        p, li = approve("Door mixed", qty=100, item="CORR-MIX material", department="Production")
+        assert svc.issue_po(p, buyer)[0]
+        pr_no = q("SELECT pr_no FROM pr_requests WHERE id=?", p)["pr_no"]
+        assert svc.receive_items(p, {li: 50}, store)[0]
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 50
+        assert wh.receive_qty(mid, 50, UNIT, store, grn_ref=pr_no)[0]
+        assert svc.receive_items(p, {li: 50}, store, post_stock=False)[0]
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 100
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li)["received_qty"]) == 100
+        assert wh.issue_internal(mid, 40, "department", "Sewing", "consumed", store)[0]
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 60
+        assert svc.reverse_receipt(p, li, 100, "x", buyer) == (False, "stock_not_posted")
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 60
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li)["received_qty"]) == 100
+        assert not q("SELECT 1 FROM pr_stock_postings WHERE pr_id=? "
+                     "AND (ref LIKE 'rev:%' OR ref LIKE 'door:%')", p)
+
+        # Inactive materials still reverse; missing materials must not skip stock.
+        mid = q("SELECT id FROM wh_materials WHERE code='CORR-DEACT'")["id"]
+        p, li = approve("Door inactive", qty=20, item="CORR-DEACT material", department="Production")
+        assert svc.issue_po(p, buyer)[0]
+        pr_no = q("SELECT pr_no FROM pr_requests WHERE id=?", p)["pr_no"]
+        assert wh.receive_qty(mid, 20, UNIT, store, grn_ref=pr_no)[0]
+        assert svc.receive_items(p, {li: 20}, store, post_stock=False)[0]
+        c = get_db()
+        c.execute("UPDATE wh_materials SET is_active=0 WHERE id=?", (mid,))
+        c.commit(); c.close()
+        assert svc.return_to_supplier(p, li, 20, "x", buyer) == (True, "")
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 0
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li)["received_qty"]) == 0
+
+        mid = q("SELECT id FROM wh_materials WHERE code='CORR-GONE'")["id"]
+        p, li = approve("Door missing", qty=10, item="CORR-GONE material", department="Production")
+        assert svc.issue_po(p, buyer)[0]
+        pr_no = q("SELECT pr_no FROM pr_requests WHERE id=?", p)["pr_no"]
+        assert wh.receive_qty(mid, 10, UNIT, store, grn_ref=pr_no)[0]
+        assert svc.receive_items(p, {li: 10}, store, post_stock=False)[0]
+        c = get_db()
+        c.execute("DELETE FROM wh_materials WHERE id=?", (mid,))
+        c.commit(); c.close()
+        assert svc.return_to_supplier(p, li, 10, "x", buyer) == (False, "stock_not_posted")
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li)["received_qty"]) == 10
         print("PASS: corrections — reversals, vendor master, PO gate, returns, SoD, "
               "cancel, short-close budget, EGP spend and stock cost, warehouse door corrections")
         return True

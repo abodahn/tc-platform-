@@ -7977,12 +7977,24 @@ def _unreceive(conn, pr, item, qty, ref, user):
         if (left > 1e-9 and not _pr_field(item, "spare_id")
                 and _pr_field(pr, "source_module") != "maintenance"):
             from app.warehouse.services import _resolve_material, _move_stock as wh_move
-            mat = _resolve_material(conn, item["item"])
+            def _mat(text):  # an inactive material still holds the stock its receipt booked
+                return _resolve_material(conn, text) or _resolve_material(conn, text, active_only=False)
+            mat = _mat(item["item"])
+            refs = [str(pr["pr_no"]).strip().upper()]
+            if _pr_field(pr, "po_no"):
+                refs.append(str(pr["po_no"]).strip().upper())
+            placeholders = ",".join("?" for _ in refs)
+            if not mat:
+                # Door stock for this PR that no other line explains may be this line's: refuse, never skip it.
+                others = {m["id"] for m in (_mat(o["item"]) for o in conn.execute(
+                    "SELECT item FROM pr_items WHERE pr_id=? AND id<>?",
+                    (pr["id"], item["id"])).fetchall()) if m}
+                door_rows = conn.execute(
+                    "SELECT DISTINCT material_id FROM wh_movements WHERE type='purchase_receiving' "
+                    "AND UPPER(TRIM(ref)) IN (" + placeholders + ")", refs).fetchall()
+                if any(r["material_id"] not in others for r in door_rows):
+                    return False, "stock_not_posted"
             if mat:
-                refs = [str(pr["pr_no"]).strip().upper()]
-                if _pr_field(pr, "po_no"):
-                    refs.append(str(pr["po_no"]).strip().upper())
-                placeholders = ",".join("?" for _ in refs)
                 received = conn.execute(
                     "SELECT COALESCE(SUM(qty),0) AS n FROM wh_movements "
                     "WHERE type='purchase_receiving' AND material_id=? AND UPPER(TRIM(ref)) IN ("
@@ -7999,6 +8011,9 @@ def _unreceive(conn, pr, item, qty, ref, user):
                     (pr["id"], mat["id"])).fetchone()["n"])
                 door_net = round(float(received) - float(bridged) - door_reversed, 6)
                 if door_net > 1e-9:
+                    # Both receipt paths share the same free stock; reverse them separately.
+                    if plan:
+                        return False, "stock_not_posted"
                     if door_net < left:
                         return False, "stock_not_posted"
                     if mat["roll_tracked"]:

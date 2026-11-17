@@ -1372,7 +1372,7 @@ def dashboard():
 
 
 # --- procurement bridge (reverse leg) --------------------------------------
-def _match_material(conn, text):
+def _match_material(conn, text, *, active_only=True):
     """Map a PR line's item text back to a material. Procurement's pr_items has no
     warehouse link column (spare_id is hard-typed to maintenance), and that file is not
     ours to change — so the material CODE at the head of the line is the join key, the
@@ -1392,14 +1392,15 @@ def _match_material(conn, text):
             seen.add(c)
             heads.append(c)
     first = s.split(" ")[0].strip()
+    active_filter = " AND is_active=1" if active_only else ""
     for c in heads + ([first] if first and first not in seen else []):
         r = conn.execute("SELECT id, roll_tracked, code FROM wh_materials "
-                         "WHERE UPPER(code)=UPPER(?) AND is_active=1", (c,)).fetchone()
+                         "WHERE UPPER(code)=UPPER(?)" + active_filter, (c,)).fetchone()
         if r:
             return dict(r), ""
     for c in heads:            # name match: whole head only, never the first word
         rows = conn.execute("SELECT id, roll_tracked, code FROM wh_materials "
-                            "WHERE UPPER(name)=UPPER(?) AND is_active=1", (c,)).fetchall()
+                            "WHERE UPPER(name)=UPPER(?)" + active_filter, (c,)).fetchall()
         if len(rows) > 1:
             return None, "ambiguous_material"
         if rows:
@@ -1407,8 +1408,8 @@ def _match_material(conn, text):
     return None, "no_matching_material"
 
 
-def _resolve_material(conn, text):
-    return _match_material(conn, text)[0]
+def _resolve_material(conn, text, *, active_only=True):
+    return _match_material(conn, text, active_only=active_only)[0]
 
 
 def post_line_to_material(material_id, qty, price, pr_no, user):
