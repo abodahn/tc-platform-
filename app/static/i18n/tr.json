@@ -4197,5 +4197,11 @@
   "proc.stockpost.resolve": "Çözümle",
   "proc.stockpost.mark_posted": "Aktarıldı olarak işaretle",
   "proc.stockpost.mark_failed": "Başarısız olarak işaretle",
-  "proc.stockpost.note_ph": "Depo kontrolü notu"
+  "proc.stockpost.note_ph": "Depo kontrolü notu",
+  "admin.user_search": "Ad, kullanıcı adı, e-posta ara…",
+  "admin.all_roles": "Tüm roller",
+  "admin.all_status": "Tüm durumlar",
+  "admin.user_col": "Kullanıcı",
+  "admin.has_extra": "+ ek",
+  "admin.no_match": "Bu filtrelere uyan kullanıcı yok."
 }

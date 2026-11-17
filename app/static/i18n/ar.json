@@ -4197,5 +4197,11 @@
   "proc.stockpost.resolve": "تسوية الحالة",
   "proc.stockpost.mark_posted": "تحديد الحالة كمرحّل",
   "proc.stockpost.mark_failed": "تحديد الحالة كفاشل",
-  "proc.stockpost.note_ph": "ملاحظة التحقق من المخزن"
+  "proc.stockpost.note_ph": "ملاحظة التحقق من المخزن",
+  "admin.user_search": "ابحث بالاسم أو اسم المستخدم أو الإيميل…",
+  "admin.all_roles": "كل الأدوار",
+  "admin.all_status": "كل الحالات",
+  "admin.user_col": "المستخدم",
+  "admin.has_extra": "+ صلاحيات إضافية",
+  "admin.no_match": "لا يوجد مستخدمون مطابقون لهذا الفلتر."
 }

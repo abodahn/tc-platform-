@@ -108,30 +108,48 @@
   <div class="panel">
     <div class="panel-head">
       <h3 data-i18n="admin.all_users">All users</h3>
-      <span class="badge b-info">{{ users|length }}</span>
+      <span class="badge b-info"><span id="uCount">{{ users|length }}</span> / {{ users|length }}</span>
+    </div>
+    {#- Filter bar: client-side over the rendered rows. -#}
+    <div class="u-filter">
+      <input type="search" id="uSearch" class="input" autocomplete="off"
+             placeholder="Search name, username, email…" data-i18n-ph="admin.user_search"
+             aria-label="Search users">
+      <select id="uRole" aria-label="Role">
+        <option value="" data-i18n="admin.all_roles">All roles</option>
+        {% for r in users|map(attribute='role')|unique|sort %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+      </select>
+      <select id="uStatus" aria-label="Status">
+        <option value="" data-i18n="admin.all_status">All statuses</option>
+        <option value="1" data-i18n="admin.active">Active</option>
+        <option value="0" data-i18n="admin.disabled">Disabled</option>
+      </select>
     </div>
     <div class="tbl-wrap">
-      <table class="tbl">
+      <table class="tbl u-tbl">
         <thead><tr>
-          <th>ID</th><th data-i18n="admin.username">Username</th>
-          <th data-i18n="admin.name">Name</th><th data-i18n="admin.email">Email</th>
-          <th data-i18n="admin.role">Role</th><th data-i18n="admin.signature">Signature</th>
-          <th data-i18n="admin.status">Status</th><th data-i18n="admin.action">Action</th>
+          <th data-i18n="admin.user_col">User</th>
+          <th data-i18n="admin.role">Role</th>
+          <th data-i18n="admin.status">Status</th>
+          <th data-i18n="admin.signature">Signature</th>
+          <th class="u-act" data-i18n="admin.action">Action</th>
         </tr></thead>
-        <tbody>
+        <tbody id="uBody">
           {% for u in users %}
-          <tr>
-            <td>{{ u.id }}</td>
-            <td><b>{{ u.username }}</b></td>
-            <td>{{ u.full_name or '—' }}</td>
-            <td class="muted" style="font-size:12.5px">{{ u.email or '—' }}</td>
-            <td><span class="tag">{{ u.role }}</span></td>
-            <td>{% if u.sig_png %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.signed">Signed</span></span>{% else %}<span class="tag" data-i18n="admin.no_sig">Not set</span>{% endif %}</td>
-            <td>{% if u.is_active %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.active">Active</span></span>{% else %}<span class="badge b-offline"><span class="dot"></span><span data-i18n="admin.disabled">Disabled</span></span>{% endif %}</td>
+          {% set has_extra = (u.extra_perms or '[]')|length > 2 %}
+          <tr data-u data-role="{{ u.role }}" data-active="{{ 1 if u.is_active else 0 }}"
+              data-text="{{ (u.username ~ ' ' ~ (u.full_name or '') ~ ' ' ~ (u.email or '') ~ ' ' ~ u.role)|lower }}">
             <td>
+              <b>{{ u.full_name or u.username }}</b>
+              <div class="muted" style="font-size:12px"><code>{{ u.username }}</code>{% if u.email %} &middot; {{ u.email }}{% endif %} &middot; #{{ u.id }}</div>
+            </td>
+            <td><span class="tag">{{ u.role }}</span>{% if has_extra %} <span class="tag ok" data-i18n="admin.has_extra">+ extra</span>{% endif %}</td>
+            <td>{% if u.is_active %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.active">Active</span></span>{% else %}<span class="badge b-offline"><span class="dot"></span><span data-i18n="admin.disabled">Disabled</span></span>{% endif %}</td>
+            <td>{% if u.sig_png %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.signed">Signed</span></span>{% else %}<span class="tag" data-i18n="admin.no_sig">Not set</span>{% endif %}</td>
+            <td class="u-act">
               {% if can('manage_users') %}
-              <div class="flex gap" style="gap:6px">
-                <button type="button" class="btn btn-ghost btn-sm" data-edit-user
+              <div class="flex" style="gap:6px">
+                <button type="button" class="btn btn-primary btn-sm" data-edit-user
                         data-id="{{ u.id }}" data-username="{{ u.username }}"
                         data-name="{{ u.full_name or '' }}" data-email="{{ u.email or '' }}"
                         data-role="{{ u.role }}" data-extra='{{ u.extra_perms or "[]" }}'
@@ -144,10 +162,22 @@
             </td>
           </tr>
           {% endfor %}
+          <tr id="uEmpty" style="display:none"><td colspan="5" class="muted" data-i18n="admin.no_match">No users match these filters.</td></tr>
         </tbody>
       </table>
     </div>
   </div>
+  <style>
+    .u-filter { display:flex; flex-wrap:wrap; gap:8px; padding:12px 16px; border-bottom:1px solid var(--line-2); }
+    .u-filter #uSearch { flex:1 1 260px; min-width:0; }
+    .u-filter select { flex:0 1 200px; width:auto; }
+    /* Action column stays on screen however wide the table gets. */
+    .u-tbl .u-act { position:sticky; inset-inline-end:0; background:var(--panel); white-space:nowrap; box-shadow:-1px 0 0 var(--line-2); }
+    [dir="rtl"] .u-tbl .u-act { box-shadow:1px 0 0 var(--line-2); }
+    .u-tbl tbody tr[data-u] { cursor:pointer; }
+    .u-tbl tbody tr[data-u]:hover td { background:color-mix(in srgb, var(--panel) 92%, var(--tc-red)); }
+    #userDlg { width:min(600px, 94vw); max-height:92vh; overflow:auto; }
+  </style>
 
   {% if can('manage_users') %}
   <dialog id="userDlg" class="tc-dialog">
@@ -162,7 +192,7 @@
         <select name="role" id="edRole">{% for k, lbl in roles %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></div>
       <div class="field"><label data-i18n="admin.reset_pw">Reset password (optional)</label>
         <input name="password" id="edPass" type="password" autocomplete="new-password" data-i18n-ph="admin.reset_pw_ph" placeholder="Leave blank to keep current"></div>
-      <details class="mt-2">
+      <details class="mt-2" open>
         <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="admin.extra_perms">Extra permissions (on top of the role)</summary>
         <p class="muted" style="font-size:12px;margin:6px 0" data-i18n="admin.extra_perms_hint">Grant this specific user permissions beyond what their role gives.</p>
         {{ perm_picker(perm_groups) }}
@@ -390,11 +420,34 @@
       if (window.TCPerms) window.TCPerms.syncGroups(form);
       if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','');
     }
-    document.querySelectorAll('[data-edit-user]').forEach(b => b.addEventListener('click', () => open(b)));
+    document.querySelectorAll('[data-edit-user]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); open(b); }));
+    // Whole row opens the editor (except clicks on its own buttons/forms).
+    document.querySelectorAll('#uBody tr[data-u]').forEach(r => r.addEventListener('click', e => {
+      if (e.target.closest('button, a, form, input, select')) return;
+      const b = r.querySelector('[data-edit-user]'); if (b) open(b);
+    }));
     function close(){ if (dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
     document.getElementById('edCancel').addEventListener('click', close);
     document.getElementById('edX').addEventListener('click', close);
     dlg.addEventListener('click', e => { if (e.target === dlg) close(); }); // click backdrop
+  })();
+
+  // Users filter
+  (function(){
+    const body = document.getElementById('uBody'); if(!body) return;
+    const q = document.getElementById('uSearch'), role = document.getElementById('uRole'),
+          st = document.getElementById('uStatus'), cnt = document.getElementById('uCount'),
+          empty = document.getElementById('uEmpty');
+    function apply(){
+      const t = (q.value||'').toLowerCase().trim(); let n = 0;
+      body.querySelectorAll('tr[data-u]').forEach(r => {
+        const ok = (!t || r.dataset.text.indexOf(t) >= 0) && (!role.value || r.dataset.role === role.value)
+                && (!st.value || r.dataset.active === st.value);
+        r.style.display = ok ? '' : 'none'; if(ok) n++;
+      });
+      cnt.textContent = n; empty.style.display = n ? 'none' : '';
+    }
+    [q, role, st].forEach(el => el.addEventListener(el === q ? 'input' : 'change', apply));
   })();
 
   // Permission picker: per-group select-all + live search. Works for every

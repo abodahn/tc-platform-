@@ -4197,5 +4197,11 @@
   "proc.stockpost.resolve": "Resolve",
   "proc.stockpost.mark_posted": "Mark posted",
   "proc.stockpost.mark_failed": "Mark failed",
-  "proc.stockpost.note_ph": "Store check note"
+  "proc.stockpost.note_ph": "Store check note",
+  "admin.user_search": "Search name, username, email…",
+  "admin.all_roles": "All roles",
+  "admin.all_status": "All statuses",
+  "admin.user_col": "User",
+  "admin.has_extra": "+ extra",
+  "admin.no_match": "No users match these filters."
 }
