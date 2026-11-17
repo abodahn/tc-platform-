@@ -1921,7 +1921,9 @@ def daily_report(date_from, date_to, material_id=None):
 
 def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id=None):
     qty = _f(qty)
-    dest_name, reason = (dest_name or "").strip(), (reason or "").strip()
+    # Normalised so "VAR", "var " and "Var  1" share one 24h limit; lower() (not casefold)
+    # matches what SQL LOWER() does to the legacy rows compared below.
+    dest_name, reason = " ".join((dest_name or "").split()).lower(), (reason or "").strip()
     if qty <= 0:
         return False, "bad_qty"
     if dest_kind not in DEST_KINDS:
@@ -1957,11 +1959,12 @@ def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id
             "%Y-%m-%d %H:%M:%S")
         recent = _f(conn.execute(
             "SELECT COALESCE(SUM(-qty*unit_cost),0) AS v FROM wh_movements "
-            "WHERE type='issue' AND material_id=? AND ref=? AND created_at >= ?",
+            "WHERE type='issue' AND material_id=? AND LOWER(TRIM(ref))=? AND created_at >= ?",
             (material_id, f"{dest_kind}:{dest_name}", window_start)).fetchone()["v"]) + _f(
             conn.execute(
                 "SELECT COALESCE(SUM(value),0) AS v FROM wh_issue_requests "
-                "WHERE status='pending' AND material_id=? AND dest_kind=? AND dest_name=? "
+                "WHERE status='pending' AND material_id=? AND dest_kind=? "
+                "AND LOWER(TRIM(dest_name))=? "
                 "AND requested_at >= ?",
                 (material_id, dest_kind, dest_name, window_start)).fetchone()["v"])
         if value + recent > limit:

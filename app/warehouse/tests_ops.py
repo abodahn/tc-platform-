@@ -337,7 +337,7 @@ with app.app_context():
     svc.issue_internal(split_mid, 49, "department", "Packing", "supplies", IA)
     c = get_db()
     c.execute("UPDATE wh_movements SET created_at='2000-01-01 00:00:00' "
-              "WHERE material_id=? AND ref='department:Packing'", (split_mid,))
+              "WHERE material_id=? AND ref='department:packing'", (split_mid,))
     c.commit(); c.close()
     check("issues older than 24h are not summed",
           svc.issue_internal(split_mid, 49, "department", "Packing", "supplies", IA)
@@ -346,6 +346,19 @@ with app.app_context():
           svc.issue_internal(split_mid, 49, "cost_centre", "CC-20", "supplies", IA) == (True, "issued")
           and svc.issue_internal(split_mid, 49, "cost_centre", "CC-20", "supplies", IA)
           == (True, "pending") and stock(split_mid) == 255)
+    c = get_db()
+    var_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
+        "VALUES ('TRM-ISSUE-VAR','Name variant test','trim',0,'pcs',500,100)").lastrowid
+    # a legacy row stored before normalisation still counts toward the window
+    c.execute("INSERT INTO wh_movements (type,material_id,qty,unit_cost,ref,created_at) "
+              "VALUES ('issue',?,-10,100,' Department:VAR 1 ',?)", (var_mid, svc._now()))
+    c.commit(); c.close()
+    check("name variants share the 24h issue limit",
+          svc.issue_internal(var_mid, 30, "department", "VAR  1", "supplies", IA) == (True, "issued")
+          and svc.issue_internal(var_mid, 15, "department", "var 1 ", "supplies", IA)
+          == (True, "pending")
+          and q("SELECT dest_name FROM wh_issue_requests WHERE material_id=?", (var_mid,)) == "var 1")
     check("issue decision lists support multiple statuses", {r["id"] for r in
           svc.list_issue_requests(("approved", "rejected"))} >= {req_id, reject_id})
     c = get_db()
