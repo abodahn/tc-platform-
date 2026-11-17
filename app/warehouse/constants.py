@@ -28,7 +28,7 @@ WH_SETTING_DEFAULTS = {"count_auto_approve_pct": "2"}
 DEST_KINDS = ["department", "cost_centre", "maintenance", "sample"]
 
 WH_PERMISSIONS = [
-    "wh_approve",  # approve stock-count adjustments; held by super_admin, grantable in Admin > Roles
+    "wh_approve",  # approve stock-count adjustments; held by super_admin and warehouse_manager, grantable in Admin > Roles
     "wh_view",     # dashboard, materials, rolls, FG matrix
     "wh_manage",   # receive, issue, reserve, adjust, pack/ship
 ]
@@ -36,7 +36,7 @@ WH_PERMISSIONS = [
 WH_ROLE_PERMS = {
     # existing platform / module roles that need the material store
     "storekeeper": ["wh_view", "wh_manage"],
-    "warehouse_manager": ["wh_view", "wh_manage"],
+    "warehouse_manager": ["wh_view", "wh_manage", "wh_approve"],
     "production_manager": ["wh_view", "wh_manage"],
     "production_supervisor": ["wh_view"],
     "factory_manager": ["wh_view", "wh_manage"],

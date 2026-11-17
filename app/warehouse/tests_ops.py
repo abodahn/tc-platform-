@@ -115,6 +115,7 @@ with app.app_context():
     for username, role, perms, active, status in (
             ("store_a", "normal_user", '["wh_approve"]', 1, "active"),
             ("mgr_b", "normal_user", '["wh_approve"]', 1, "active"),
+            ("wh_mgr_c", "warehouse_manager", '[]', 1, "active"),
             ("count_observer", "normal_user", '[]', 1, "active"),
             ("count_inactive", "super_admin", '[]', 0, "active"),
             ("count_locked", "super_admin", '[]', 1, "locked")):
@@ -133,6 +134,14 @@ with app.app_context():
     cid = q("SELECT id FROM wh_counts WHERE status='pending' ORDER BY id DESC LIMIT 1")
     check("a bell is raised for the pending count",
           q("SELECT COUNT(*) FROM notifications WHERE title LIKE 'Stock count awaiting%'") >= 1)
+    check("warehouse manager can approve stock counts",
+          user_has_permission({"role": "warehouse_manager"}, "wh_approve") is True)
+    check("warehouse manager receives a pending-count bell",
+          q("SELECT COUNT(*) FROM notifications WHERE title LIKE 'Stock count awaiting%' "
+            "AND target_user='wh_mgr_c'") >= 1)
+    check("warehouse manager sees the pending count",
+          any(c["id"] == cid for c in svc.pending_counts_for(
+              {"username": "wh_mgr_c", "role": "warehouse_manager"})))
     check("pending hidden from its submitter on /my-work",
           all(c["id"] != cid for c in svc.pending_counts_for(A))
           and any(c["id"] == cid for c in svc.pending_counts_for(B)))
