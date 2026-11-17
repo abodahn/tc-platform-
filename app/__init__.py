@@ -3,6 +3,7 @@ TC Platform — Flask application factory.
 
 Wires up configuration, security headers, the database, and blueprints.
 """
+import os
 import shutil
 import time
 from pathlib import Path
@@ -18,6 +19,23 @@ def create_app():
     app.config.from_object(Config)
     app.secret_key = Config.SECRET_KEY
     app.permanent_session_lifetime = Config.SESSION_MINUTES * 60
+
+    # TC_REDIRECT_TO=https://new-host  turns this instance into a pointer to the new one
+    # (e.g. an old Render service kept alive so its URL still works). Registered first so
+    # it answers before any DB work. /api/health stays local so the host keeps it healthy.
+    _redirect_to = (os.getenv("TC_REDIRECT_TO", "") or "").strip().rstrip("/")
+    if _redirect_to:
+        from flask import request as _rq, redirect as _redir
+
+        @app.before_request
+        def _redirect_to_new_host():
+            if _rq.path == "/api/health":
+                return None
+            qs = _rq.query_string.decode("latin-1")
+            # 302 not 301: browsers must not cache it, so removing the variable reverts cleanly.
+            # 307 keeps POST bodies (forms) intact.
+            return _redir(_redirect_to + _rq.path + ("?" + qs if qs else ""),
+                          code=302 if _rq.method in ("GET", "HEAD") else 307)
 
     # Error tracking via Sentry (optional — only if TC_SENTRY_DSN is set).
     if Config.SENTRY_DSN:
