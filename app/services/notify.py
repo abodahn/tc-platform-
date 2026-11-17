@@ -89,29 +89,35 @@ def sync_system_notifications(system_rows, timeout=2.5, force=False):
         return 0
     _LAST_SYNC[0] = now
 
+    collected = []
+    for row in system_rows:
+        try:
+            if not row["is_integrated"] or not row["base_url"]:
+                continue
+        except Exception:
+            continue
+        key = row["key"]
+        name = row["name_en"] or key
+        url = str(row["base_url"]).rstrip("/") + "/api/integration/notifications"
+        try:
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+        except Exception:
+            # endpoint missing / system down / bad JSON -> just skip it
+            continue
+        items = data.get("items") if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            continue
+        collected.append((key, name, items))
+    if not collected:
+        return 0
+
     inserted = 0
     conn = get_db()
     try:
-        for row in system_rows:
-            try:
-                if not row["is_integrated"] or not row["base_url"]:
-                    continue
-            except Exception:
-                continue
-            key = row["key"]
-            name = row["name_en"] or key
-            url = str(row["base_url"]).rstrip("/") + "/api/integration/notifications"
-            try:
-                resp = requests.get(url, timeout=timeout)
-                if resp.status_code != 200:
-                    continue
-                data = resp.json()
-            except Exception:
-                # endpoint missing / system down / bad JSON -> just skip it
-                continue
-            items = data.get("items") if isinstance(data, dict) else data
-            if not isinstance(items, list):
-                continue
+        for key, name, items in collected:
             for it in items[:50]:
                 if not isinstance(it, dict):
                     continue

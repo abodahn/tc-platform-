@@ -176,7 +176,7 @@ def status():
         ).fetchall()
     finally:
         conn.close()
-    return jsonify(health_svc.check_all(rows, use_cache=False))
+    return jsonify(health_svc.check_all(rows, use_cache=True))
 
 
 @bp.route("/status/<key>")

@@ -1184,6 +1184,16 @@ def init_db():
                 conn.commit()
             except Exception:
                 conn.rollback()
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_target_read ON notifications(target_user, is_read)")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_ext_key ON notifications(ext_key)")
+            conn.commit()
+        except Exception:
+            conn.rollback()
         # Migration: per-user digital signature (style, rendered PNG, name, time),
         # per-user extra permissions (JSON array) and notification preferences.
         for _col, _ddl in (

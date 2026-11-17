@@ -342,6 +342,7 @@
     const nodes = document.querySelectorAll("[data-status-key]");
     if (!nodes.length) return;
     async function poll() {
+      if (document.hidden) return;
       try {
         const res = await fetch("/api/status");
         if (!res.ok) return;
@@ -356,7 +357,12 @@
         });
       } catch (e) {}
     }
-    setInterval(poll, 20000);
+    // The page renders with fresh status, so no poll on load; none while the tab is hidden.
+    setInterval(poll, 60000);
+    let lastShown = Date.now();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && Date.now() - lastShown > 15000) { lastShown = Date.now(); poll(); }
+    });
   }
 
   /* ---------------- Live notifications (sound + popup + bell) ---------------- */
@@ -467,6 +473,7 @@
     }
 
     async function poll() {
+      if (document.hidden) return;
       try {
         const res = await fetch("/notifications/feed", { credentials: "same-origin", headers: { "X-CSRF-Token": CSRF } });
         if (!res.ok) return;
@@ -487,37 +494,12 @@
       } catch (e) {}
     }
     poll();
-    setInterval(poll, 20000);
-  }
-
-  /* ---------------- Consolidated business overview ---------------- */
-  function initBusinessOverview() {
-    const box = document.getElementById("bizOverview");
-    if (!box) return;
-    const meta = document.getElementById("bizOverviewMeta");
-    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => (
-      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-    async function load() {
-      try {
-        const res = await fetch("/api/overview", { credentials: "same-origin" });
-        if (!res.ok) return;
-        const data = await res.json();
-        const systems = (data.systems || []);
-        const online = systems.filter(s => s.online).length;
-        if (meta) meta.textContent = online + "/" + systems.length + " " + t("dash.system_health");
-        box.innerHTML = systems.map(s => {
-          const kpis = (s.kpis || []).map(k => {
-            const sev = k.severity === "crit" ? "crit" : (k.severity === "warn" ? "warn" : "");
-            return `<div class="ov-kpi ${sev}"><div class="v">${esc(k.value)}</div><div class="l">${esc(k.label)}</div></div>`;
-          }).join("");
-          return `<div class="ov-sys ${s.online ? "" : "off"}"><div class="ov-h"><span class="ov-dot"></span>${esc(s.name)}</div>`
-            + (kpis ? `<div class="ov-kpis">${kpis}</div>` : `<div class="ov-empty">${s.online ? "No data" : "Offline"}</div>`)
-            + `</div>`;
-        }).join("");
-      } catch (e) { /* leave placeholder */ }
-    }
-    load();
-    setInterval(load, 60000);
+    setInterval(poll, 60000);
+    // Catch up as soon as the tab is shown again (throttled so tab-flipping does not spam).
+    let lastShown = Date.now();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && Date.now() - lastShown > 15000) { lastShown = Date.now(); poll(); }
+    });
   }
 
   /* ---------------- Install as app (PWA) ---------------- */
@@ -655,7 +637,6 @@
     initKeyboard();
     initStatusPolling();
     initLiveNotifications();
-    initBusinessOverview();
     initPwaInstall();
     animateCounters();
 

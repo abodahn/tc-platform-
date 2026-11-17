@@ -7,6 +7,8 @@ Reports, Health, Roadmap, and user preference persistence.
 import csv
 import io
 import sys
+import threading
+import time
 import platform as pyplatform
 from datetime import date as _date, datetime as _datetime, timedelta as _timedelta, timezone as _timezone
 from zoneinfo import ZoneInfo
@@ -29,6 +31,9 @@ from app.services.notify import (health_sync_due, sync_health_notifications,
                                  sync_system_notifications)
 
 bp = Blueprint("main", __name__)
+
+_BG = {"lock": threading.Lock(), "busy": False, "last": 0.0}
+_BG_MIN_INTERVAL = 20
 
 # The factory's clock, not the process's. Render runs UTC and the plant does not,
 # so between 21:00 local and midnight every "days ago" / "days late" figure on the
@@ -1044,41 +1049,76 @@ def mark_notifications_read():
     return jsonify({"ok": True})
 
 
+def _notification_background_pass():
+    try:
+        try:
+            systems = _systems()
+        except Exception:
+            systems = []
+        has_targets = any(
+            row["is_integrated"] and (row["base_url"] or row["health_url"])
+            for row in systems
+        )
+        try:
+            if has_targets:
+                sync_system_notifications(systems)
+        except Exception:
+            pass
+        try:
+            # Outage alerts (and their auto-resolve) used to ride on a Command Center
+            # GET, which must not write. They cannot ride on /health either: that page
+            # needs view_system_health, which only the IT roles hold, so nobody else
+            # could ever raise or clear one. This poller is the endpoint that already
+            # writes, runs for every signed-in browser, and is throttled the same way
+            # — checked before check_all(), because probing four hosts is the
+            # expensive half of this, not the four SELECTs.
+            if has_targets and health_sync_due():
+                sync_health_notifications(systems, health_svc.check_all(systems))
+        except Exception:
+            pass
+        try:
+            from app.services.alerts import dispatch_pending_alerts
+            dispatch_pending_alerts()   # email/webhook any new critical alerts (once)
+        except Exception:
+            pass
+        try:
+            from app.services.auto_ticket import auto_create_tickets
+            if has_targets:
+                auto_create_tickets(systems)   # open ITSM tickets for new critical alerts (if enabled)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    finally:
+        with _BG["lock"]:
+            _BG["busy"] = False
+
+
+def _kick_notification_sync():
+    with _BG["lock"]:
+        now = time.time()
+        if _BG["busy"] or now - _BG["last"] < _BG_MIN_INTERVAL:
+            return
+        _BG["busy"] = True
+        _BG["last"] = now
+    try:
+        threading.Thread(target=_notification_background_pass,
+                         name="tc-notif-sync", daemon=True).start()
+    except Exception:
+        with _BG["lock"]:
+            _BG["busy"] = False
+
+
 @bp.route("/notifications/feed")
 @login_required
 def notifications_feed():
     """Lightweight JSON feed the top bar polls so brand-new notifications can
     chime, pop up and update the bell live without a page reload. Also pulls the
-    four systems' own notifications into the feed (throttled), so any alert from
+    four systems' own notifications into the feed in a background thread
+    (throttled), so any alert from
     ITSM / Assets / Monitoring / CommandTrack shows up here too."""
     try:
-        systems = _systems()
-    except Exception:
-        systems = []
-    try:
-        sync_system_notifications(systems)
-    except Exception:
-        pass
-    try:
-        # Outage alerts (and their auto-resolve) used to ride on a Command Center
-        # GET, which must not write. They cannot ride on /health either: that page
-        # needs view_system_health, which only the IT roles hold, so nobody else
-        # could ever raise or clear one. This poller is the endpoint that already
-        # writes, runs for every signed-in browser, and is throttled the same way
-        # — checked before check_all(), because probing four hosts is the
-        # expensive half of this, not the four SELECTs.
-        if health_sync_due():
-            sync_health_notifications(systems, health_svc.check_all(systems))
-    except Exception:
-        pass
-    try:
-        from app.services.alerts import dispatch_pending_alerts
-        dispatch_pending_alerts()   # email/webhook any new critical alerts (once)
-    except Exception:
-        pass
-    try:
-        from app.services.auto_ticket import auto_create_tickets
-        auto_create_tickets(systems)   # open ITSM tickets for new critical alerts (if enabled)
+        _kick_notification_sync()
     except Exception:
         pass
     notifs, unread = _unread_notifications((current_user() or {}).get("username"))
