@@ -23,7 +23,12 @@ SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL"]
 # preference; this is the tolerance allowed on the requested minimum width (cm).
 WIDTH_TOLERANCE_CM = 0.5
 
+COUNT_REASONS = ["stock_take", "damaged", "lost", "found", "entry_error", "other"]
+WH_SETTING_DEFAULTS = {"count_auto_approve_pct": "2"}
+DEST_KINDS = ["department", "cost_centre", "maintenance", "sample"]
+
 WH_PERMISSIONS = [
+    "wh_approve",  # approve stock-count adjustments; held by super_admin, grantable in Admin > Roles
     "wh_view",     # dashboard, materials, rolls, FG matrix
     "wh_manage",   # receive, issue, reserve, adjust, pack/ship
 ]

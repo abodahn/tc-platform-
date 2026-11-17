@@ -11,7 +11,7 @@ from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp(prefix="wh_"))
 os.chdir(TMP)
-sys.path.insert(0, r"D:\TC platform\tc-platform-render")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 os.environ["TC_SEED_DEMO"] = "1"
 os.environ["TC_ENV"] = "development"
 os.environ.pop("DATABASE_URL", None)
@@ -231,10 +231,10 @@ with app.app_context():
     r1id = conn.execute("SELECT id FROM wh_rolls WHERE material_id=? ORDER BY id LIMIT 1",
                         (WHT,)).fetchone()["id"]
     conn.close()
-    check("return the end-bit onto the SAME roll", svc.return_to_store(r1id, 50, U, ORD)[0])
+    check("return the end-bit onto the SAME roll", svc.return_to_store(WHT, 50, U, ORD, roll_id=r1id)[0])
     check("cannot return more than the roll ever held",
-          svc.return_to_store(r1id, 5000, U) == (False, "exceeds_roll_length"))
-    check("return of 0 refused", svc.return_to_store(r1id, 0, U) == (False, "bad_qty"))
+          svc.return_to_store(WHT, 5000, U, ORD, roll_id=r1id) == (False, "exceeds_roll_length"))
+    check("return of 0 refused", svc.return_to_store(WHT, 0, U, ORD, roll_id=r1id) == (False, "bad_qty"))
     conn = get_db()
     r1 = conn.execute("SELECT remaining_m, status FROM wh_rolls WHERE id=?", (r1id,)).fetchone()
     conn.close()

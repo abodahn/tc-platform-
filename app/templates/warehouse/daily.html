@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Daily report{% endblock %}
+{% block content %}
+<div class="page-head"><h1 data-i18n="wh.daily.title">Daily report</h1><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.materials') }}" data-i18n="wh.nav.materials">Material master</a></div>
+<form method="get" class="panel"><div class="panel-pad grid cols-4">
+<div class="field"><label data-i18n="wh.report.from">From</label><input type="date" name="from" value="{{ date_from }}"></div>
+<div class="field"><label data-i18n="wh.report.to">To</label><input type="date" name="to" value="{{ date_to }}"></div>
+<div class="field"><label data-i18n="wh.field.material">Material</label><select name="material_id"><option value="" data-i18n="wh.filter.all_materials">All materials</option>{% for m in materials %}<option value="{{ m.id }}" {{ 'selected' if f_material==m.id }}>{{ m.code }}</option>{% endfor %}</select></div>
+<div><button class="btn btn-primary btn-sm" data-i18n="wh.report.filter">Filter</button><button class="btn btn-ghost btn-sm" name="format" value="csv" data-i18n="wh.action.export">Export CSV</button></div>
+</div></form>
+<div class="panel mt-4"><div class="panel-pad"><table class="tbl"><thead><tr>
+<th data-i18n="wh.report.date">Date</th><th data-i18n="wh.field.code">Code</th><th data-i18n="wh.field.material">Material</th><th data-i18n="wh.field.uom">Unit</th>
+<th data-i18n="wh.report.opening">Opening</th><th data-i18n="wh.report.in">In</th><th data-i18n="wh.report.out">Out</th><th data-i18n="wh.report.closing">Closing</th>
+</tr></thead><tbody>{% for r in rows %}<tr><td>{{ r.date }}</td><td>{{ r.code }}</td><td>{{ r.name }}</td><td>{{ r.uom }}</td><td>{{ r.opening }}</td><td>{{ r['in'] }}</td><td>{{ r.out }}</td><td>{{ r.closing }}</td></tr>
+{% else %}<tr><td colspan="8" class="muted" data-i18n="wh.report.empty">No records in this range.</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

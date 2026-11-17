@@ -1202,11 +1202,18 @@ def search():
 @login_required
 def my_work():
     user = current_user()
-    data = {"sign_queue": [], "maint_approvals": [], "prob_pending": [],
+    data = {"wh_counts": [], "sign_queue": [], "maint_approvals": [], "prob_pending": [],
             "my_prs": [], "my_tickets": [], "my_pm": [], "alerts": [],
             "cmp_caps": [], "cmp_expiring": [], "late_milestones": [],
             "recv_queue": [], "store_issue": [], "po_queue": [],
             "stuck_postings": [], "pay_queue": []}
+
+    if user_has_permission(user, "wh_approve"):
+        try:
+            from app.warehouse.services import pending_counts_for
+            data["wh_counts"] = pending_counts_for(user)
+        except Exception:
+            pass
 
     if user_has_permission(user, "proc_view"):
         try:
@@ -1375,7 +1382,7 @@ def my_work():
     except Exception:
         pass
 
-    total_actions = (len(data["sign_queue"]) + len(data["maint_approvals"])
+    total_actions = (len(data["wh_counts"]) + len(data["sign_queue"]) + len(data["maint_approvals"])
                      + len(data["prob_pending"]) + len(data["late_milestones"])
                      + len(data["cmp_caps"]) + len(data["cmp_expiring"])
                      + len(data["recv_queue"]) + len(data["store_issue"])

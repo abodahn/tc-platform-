@@ -106,7 +106,8 @@ def _pg_candidates():
 
 
 # Tables whose primary key is NOT `id` (so we never append RETURNING id).
-_NO_ID_TABLES = {"mnt_settings", "ai_system_settings", "prob_settings", "auth_settings"}
+_NO_ID_TABLES = {"mnt_settings", "ai_system_settings", "prob_settings", "auth_settings",
+                  "wh_settings"}
 
 
 def translate_ddl(sql, dialect):

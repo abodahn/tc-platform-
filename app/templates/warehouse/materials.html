@@ -8,6 +8,8 @@
     <div class="sub" data-i18n="wh.mat.sub">Fabric, trims and accessories with on-hand, reserved and reorder levels.</div>
   </div>
   <div class="flex gap center">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.counts') }}" data-i18n="wh.counts.title">Stock counts</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.daily') }}" data-i18n="wh.daily.title">Daily report</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.export_csv', key='materials') }}" data-i18n="wh.action.export">Export CSV</a>
     {% if can('wh_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('warehouse.receive') }}" data-i18n="wh.action.receive">Receive material</a>
@@ -43,7 +45,7 @@
     {% for r in rows %}
       <tr>
         <td>{% if r.roll_tracked %}<a href="{{ url_for('warehouse.rolls', material_id=r.id) }}">{{ r.code }}</a>{% else %}{{ r.code }}{% endif %}</td>
-        <td>{{ r.name }}<div class="muted" style="font-size:11px">{{ r.composition or '' }}{% if r.supplier %} · {{ r.supplier }}{% endif %}</div></td>
+        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.material_card', mid=r.id) }}" data-i18n="wh.card.link">Card</a> {{ r.name }}<div class="muted" style="font-size:11px">{{ r.composition or '' }}{% if r.supplier %} · {{ r.supplier }}{% endif %}</div></td>
         <td class="muted">{{ r.kind }}</td><td class="muted">{{ r.color or '—' }}</td>
         <td style="text-align:right">{{ '{:,.1f}'.format(r.stock_qty or 0) }} {{ r.uom }}</td>
         <td style="text-align:right">{{ '{:,.1f}'.format(r.reserved_qty or 0) }}</td>
@@ -66,7 +68,8 @@
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <input type="hidden" name="material_id" value="{{ r.id }}">
           <input type="number" step="any" name="delta" style="width:80px" data-i18n-ph="wh.field.delta" placeholder="+/-">
-          <input name="reason" style="width:110px" data-i18n-ph="wh.field.reason" placeholder="Reason">
+          <select name="reason" required>{% for reason in reasons %}<option value="{{ reason }}" data-i18n="wh.reason.{{ reason }}">{{ reason|replace('_',' ')|title }}</option>{% endfor %}</select>
+          <input name="note" maxlength="200" data-i18n-ph="wh.field.notes" placeholder="Notes">
           <button class="btn btn-ghost btn-sm" data-i18n="wh.action.adjust">Adjust</button></form>
         {% endif %}</td>
         {% endif %}

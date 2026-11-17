@@ -13,12 +13,12 @@ finished goods, with the stock discipline the maintenance store earned the hard 
     reserved batch) — a stranded reservation makes real stock permanently invisible.
 """
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from math import isfinite
 
 from app.db import get_db
 from app.tabular import to_number
-from .constants import SIZES, WIDTH_TOLERANCE_CM, IMPORT_COLUMNS, MATERIAL_KINDS, UOMS
+from .constants import SIZES, WIDTH_TOLERANCE_CM, IMPORT_COLUMNS, MATERIAL_KINDS, UOMS, COUNT_REASONS, WH_SETTING_DEFAULTS, DEST_KINDS
 
 log = logging.getLogger("tc.warehouse")
 
@@ -250,6 +250,16 @@ def _claim(conn, alloc_id, new_status):
                            (alloc_id,)).fetchone()
         rc = 1 if row and row["status"] == new_status else 0
     return rc == 1
+
+
+def _lock(conn, material_id, roll_id=None):
+    """No-op UPDATE = row lock until commit (SQLite too). The roll when there is one:
+    every roll path (_try_reserve, _release, _move_stock) writes roll before header,
+    so taking the header first here could deadlock against them on PostgreSQL."""
+    if roll_id:
+        conn.execute("UPDATE wh_rolls SET id=id WHERE id=?", (roll_id,))
+    else:
+        conn.execute("UPDATE wh_materials SET id=id WHERE id=?", (material_id,))
 
 
 def _release(conn, target, row_id, qty):
@@ -502,14 +512,26 @@ def list_movements(limit=60):
         conn.close()
 
 
-def open_allocations():
+def open_allocations(order_id=None, limit=60):
     conn = get_db()
     try:
+        where = " AND a.order_id=?" if order_id is not None else ""
+        args = [order_id] if order_id is not None else []
         return [dict(r) for r in conn.execute(
             "SELECT a.*, m.code AS mat_code, m.uom, r.roll_no, r.shade_lot "
             "FROM wh_allocations a JOIN wh_materials m ON m.id=a.material_id "
             "LEFT JOIN wh_rolls r ON r.id=a.roll_id WHERE a.status='reserved' "
-            "ORDER BY a.id DESC LIMIT 60").fetchall()]
+            + where + " ORDER BY a.id DESC LIMIT ?", args + [int(limit)]).fetchall()]
+    finally:
+        conn.close()
+
+
+def count_open_allocations(order_id=None):
+    conn = get_db()
+    try:
+        where = " AND order_id=?" if order_id is not None else ""
+        return conn.execute("SELECT COUNT(*) AS n FROM wh_allocations WHERE status='reserved'"
+                            + where, [order_id] if order_id is not None else []).fetchone()["n"]
     finally:
         conn.close()
 
@@ -792,7 +814,7 @@ def issued_for_order(order_id):
             "SELECT v.material_id, m.code, m.name, m.uom, "
             "  SUM(-v.qty) AS qty, SUM(-v.qty * COALESCE(v.unit_cost,0)) AS value "
             "FROM wh_movements v JOIN wh_materials m ON m.id=v.material_id "
-            "WHERE v.order_id=? AND v.qty<0 AND v.type IN ('issue','transfer') "
+            "WHERE v.order_id=? AND ((v.qty<0 AND v.type IN ('issue','transfer')) OR v.type='return') "
             "GROUP BY v.material_id, m.code, m.name, m.uom "
             "ORDER BY value DESC", (order_id,)).fetchall()
         lines = [dict(r) for r in rows]
@@ -973,22 +995,46 @@ def receive_roll(material_id, data, user):
     return ok, msg[0] if ok else msg.removesuffix(" (row 1)")
 
 
-def return_to_store(roll_id, qty, user, order_id=None, notes=None):
-    """Book an end-bit back onto the SAME roll after cutting. Never create a second
-    roll for the balance — the movement ledger would stop reconciling with remaining_m."""
-    qty = _f(qty, -1)
+def return_to_store(material_id, qty, user, order_id, roll_id=None, notes=None):
+    """Return only material issued to this order and physical roll (or quantity pool)."""
+    qty = _f(qty)
     if qty <= 0:
         return False, "bad_qty"
+    if not order_id:
+        return False, "order_required"
     conn = get_db()
     try:
-        r = conn.execute("SELECT material_id, length_m, remaining_m FROM wh_rolls WHERE id=?",
-                         (roll_id,)).fetchone()
-        if not r:
-            return False, "roll_not_found"
-        if _f(r["remaining_m"]) + qty > _f(r["length_m"]) + _EPS:
-            return False, "exceeds_roll_length"   # you cannot return more than was cut
-        ok, msg = _move_stock(conn, "return", qty, user, material_id=r["material_id"],
-                              roll_id=roll_id, order_id=order_id,
+        if roll_id:
+            r = conn.execute("SELECT * FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
+            if not r:
+                return False, "roll_not_found"
+            material_id = r["material_id"]
+        _lock(conn, material_id, roll_id)
+        if roll_id:
+            r = conn.execute("SELECT * FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
+            if _f(r["remaining_m"]) + qty > _f(r["length_m"]) + _EPS:
+                return False, "exceeds_roll_length"
+        m = conn.execute("SELECT * FROM wh_materials WHERE id=?", (material_id,)).fetchone()
+        if m and m["roll_tracked"] and not roll_id:
+            return False, "roll_required"
+        if not m:
+            return False, "material_not_found"
+        key = "order_id=? AND material_id=? AND " + ("roll_id=?" if roll_id else "roll_id IS NULL")
+        args = [order_id, material_id] + ([roll_id] if roll_id else [])
+        issued = conn.execute(
+            "SELECT COALESCE(SUM(-qty),0) AS qty, "
+            "COALESCE(SUM(-qty*COALESCE(unit_cost,0)),0) AS value FROM wh_movements "
+            "WHERE type='issue' AND qty<0 AND " + key, args).fetchone()
+        returned = conn.execute(
+            "SELECT COALESCE(SUM(qty),0) AS qty, COALESCE(SUM(qty*COALESCE(unit_cost,0)),0) "
+            "AS value FROM wh_movements WHERE type='return' AND " + key, args).fetchone()
+        net = _f(issued["qty"]) - _f(returned["qty"])
+        if qty > net + _EPS:
+            return False, "exceeds_issued"
+        # priced at the net cost still charged to the order, so returns net it out exactly
+        cost = (_f(issued["value"]) - _f(returned["value"])) / net if net > _EPS else 0
+        ok, msg = _move_stock(conn, "return", qty, user, material_id=material_id,
+                              roll_id=roll_id, order_id=order_id, unit_cost=cost,
                               notes=notes or "Returned from cutting")
         if not ok:
             conn.rollback()
@@ -996,6 +1042,7 @@ def return_to_store(roll_id, qty, user, order_id=None, notes=None):
         conn.commit()
         return True, "returned"
     finally:
+        conn.rollback()
         conn.close()
 
 
@@ -1175,7 +1222,7 @@ def create_material(data, user):
 
 
 # --- finished goods --------------------------------------------------------
-def fg_move(order_id, style_code, color, size, qty, action, user, notes=None):
+def fg_move(order_id, style_code, color, size, qty, action, user, notes=None, manual=False):
     """Pack into (action='pack') or ship out of (action='ship') a style x colour x size.
     On-hand is packed - shipped, so shipping more than is packed is refused."""
     if action not in ("pack", "ship"):
@@ -1193,6 +1240,8 @@ def fg_move(order_id, style_code, color, size, qty, action, user, notes=None):
         return False, "order_required"
     if not _order_exists(order_id):
         return False, "order_not_found"   # unshippable finished goods against a ghost order
+    if manual and action == "ship" and _shipping_owns_order(order_id):
+        return False, "shipping_owns_order"
     conn = get_db()
     try:
         row = conn.execute("SELECT id FROM wh_fg WHERE order_id=? AND style_code=? AND color=? "
@@ -1549,7 +1598,7 @@ def export_dataset(key):
                 "SELECT v.order_id, m.code, m.name, m.uom, "
                 "  SUM(-v.qty) AS qty, SUM(-v.qty * COALESCE(v.unit_cost,0)) AS value "
                 "FROM wh_movements v JOIN wh_materials m ON m.id=v.material_id "
-                "WHERE v.order_id IS NOT NULL AND v.qty<0 AND v.type IN ('issue','transfer') "
+                "WHERE v.order_id IS NOT NULL AND ((v.qty<0 AND v.type IN ('issue','transfer')) OR v.type='return') "
                 "GROUP BY v.order_id, m.code, m.name, m.uom "
                 "ORDER BY v.order_id, value DESC").fetchall()
         finally:
@@ -1562,3 +1611,339 @@ def export_dataset(key):
                  for r in rows])
 
     return (None, None)
+
+
+# --- stock counts and operational ledger views -----------------------------
+def get_setting(key):
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT value FROM wh_settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else WH_SETTING_DEFAULTS.get(key)
+    finally:
+        conn.close()
+
+
+def set_count_threshold(pct, user):
+    pct = _f(pct, -1)
+    if not 0 <= pct <= 100:
+        return False, "bad_pct"
+    conn = get_db()
+    try:
+        conn.execute("UPDATE wh_settings SET value=? WHERE key=?",
+                     (str(pct), "count_auto_approve_pct"))
+        if not conn.execute("SELECT key FROM wh_settings WHERE key=?",
+                            ("count_auto_approve_pct",)).fetchone():
+            conn.execute("INSERT INTO wh_settings (key,value) VALUES (?,?)",
+                         ("count_auto_approve_pct", str(pct)))
+        conn.commit()
+        return True, "saved"
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def count_auto_pct():
+    return _f(get_setting("count_auto_approve_pct"), 2)
+
+
+def _count_notice(count_no):
+    conn = None
+    try:
+        conn = get_db()
+        _bell(conn, "warning", f"Stock count awaiting approval: {count_no}",
+              "Review the stock-count adjustment.", "/warehouse/counts")
+        conn.commit()
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        log.warning("Stock-count notification failed for %s", count_no, exc_info=True)
+    finally:
+        if conn:
+            conn.close()
+
+
+def _count_movement(conn, row, user):
+    ok, msg = _move_stock(conn, "adjustment", row["delta"], user,
+                          material_id=row["material_id"], roll_id=row["roll_id"],
+                          ref=row["count_no"], notes=f"{row['reason']}: {row['note'] or ''}")
+    if ok and row["delta"] > 0:
+        conn.execute("UPDATE wh_materials SET low_alerted=0 WHERE id=?", (row["material_id"],))
+    return ok, msg
+
+
+def submit_count(material_id, delta, reason, note, user, roll_id=None):
+    delta, note = _f(delta), (note or "").strip()
+    if not delta:
+        return False, "zero_qty"
+    if reason not in COUNT_REASONS:
+        return False, "reason_required"
+    if reason == "other" and not note:
+        return False, "note_required"
+    if len(note) > 200:
+        return False, "note_too_long"
+    pct = count_auto_pct()
+    conn = get_db()
+    pending_no = None
+    try:
+        if roll_id:
+            r = conn.execute("SELECT material_id FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
+            if not r:
+                return False, "roll_not_found"
+            material_id = r["material_id"]
+        _lock(conn, material_id, roll_id)
+        m = conn.execute("SELECT * FROM wh_materials WHERE id=?", (material_id,)).fetchone()
+        if not m:
+            return False, "material_not_found"
+        if m["roll_tracked"] and not roll_id:
+            return False, "roll_required"
+        book = _f(m["stock_qty"])
+        if roll_id:
+            book = _f(conn.execute("SELECT remaining_m FROM wh_rolls WHERE id=?",
+                                   (roll_id,)).fetchone()["remaining_m"])
+        cur = conn.execute(
+            "INSERT INTO wh_counts (material_id,roll_id,book_qty,delta,reason,note,submitted_by,"
+            "submitted_at) VALUES (?,?,?,?,?,?,?,?)",
+            (material_id, roll_id, book, delta, reason, note, _user(user), _now()))
+        count_id = cur.lastrowid
+        count_no = doc_no("CNT", count_id)
+        conn.execute("UPDATE wh_counts SET count_no=? WHERE id=?", (count_no, count_id))
+        pending = delta < 0 or book <= 0 or delta > book * pct / 100
+        if not pending:
+            row = conn.execute("SELECT * FROM wh_counts WHERE id=?", (count_id,)).fetchone()
+            ok, msg = _count_movement(conn, row, user)
+            if not ok:
+                conn.rollback()
+                return False, msg
+            conn.execute("UPDATE wh_counts SET status='applied', decided_by='auto', decided_at=? "
+                         "WHERE id=?", (_now(), count_id))
+        conn.commit()
+        if pending:
+            pending_no = count_no
+    finally:
+        conn.rollback()
+        conn.close()
+    if pending_no:
+        _count_notice(pending_no)
+    return True, "pending" if pending_no else "applied"
+
+
+def _decide_count(count_id, user, status, note):
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM wh_counts WHERE id=?", (count_id,)).fetchone()
+        if not row or row["status"] != "pending":
+            return False, "not_pending"
+        if status == "approved" and row["submitted_by"] == _user(user):
+            return False, "own_count"
+        cur = conn.execute(
+            "UPDATE wh_counts SET status=?, decided_by=?, decided_at=?, decision_note=? "
+            "WHERE id=? AND status='pending'", (status, _user(user), _now(), note, count_id))
+        rc = getattr(cur, "rowcount", None)
+        if rc is None:
+            rc = getattr(getattr(cur, "_raw", None), "rowcount", None)
+        if rc is None:
+            claimed = conn.execute("SELECT status,decided_by FROM wh_counts WHERE id=?",
+                                   (count_id,)).fetchone()
+            rc = 1 if claimed and claimed["status"] == status and claimed["decided_by"] == _user(user) else 0
+        if rc != 1:
+            conn.rollback()
+            return False, "not_pending"
+        if status == "approved":
+            _lock(conn, row["material_id"], row["roll_id"])
+            ok, msg = _count_movement(conn, row, user)
+            if not ok:
+                conn.rollback()
+                return False, msg
+        conn.commit()
+        return True, status
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def approve_count(count_id, user, note=None):
+    return _decide_count(count_id, user, "approved", note)
+
+
+def reject_count(count_id, user, note=None):
+    return _decide_count(count_id, user, "rejected", note)
+
+
+def _counts(where, args, limit):
+    conn = get_db()
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT c.*, m.code, m.uom, r.roll_no FROM wh_counts c "
+            "JOIN wh_materials m ON m.id=c.material_id LEFT JOIN wh_rolls r ON r.id=c.roll_id "
+            + where + " ORDER BY c.id DESC LIMIT ?", list(args) + [int(limit)]).fetchall()]
+    finally:
+        conn.close()
+
+
+def list_counts(status=None, limit=100):
+    if isinstance(status, (tuple, list)):
+        return _counts("WHERE c.status IN (" + ",".join("?" for _ in status) + ")", status, limit)
+    return _counts("WHERE c.status=?" if status else "", [status] if status else [], limit)
+
+
+def pending_counts_for(user):
+    return _counts("WHERE c.status='pending' AND COALESCE(c.submitted_by,'')<>?", [_user(user)], 10)
+
+
+def date_range(date_from=None, date_to=None):
+    """Strict ISO dates; invalid inputs use the same defaults as missing inputs."""
+    def parse(value, default):
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d").date()
+            return parsed.isoformat() if parsed.isoformat() == value else default.isoformat()
+        except (TypeError, ValueError):
+            return default.isoformat()
+    today = date.today()
+    return parse(date_from, today - timedelta(days=30)), parse(date_to, today)
+
+
+def stock_card(material_id, date_from, date_to):
+    date_from, date_to = date_range(date_from, date_to)
+    conn = get_db()
+    try:
+        m = conn.execute("SELECT * FROM wh_materials WHERE id=?", (material_id,)).fetchone()
+        opening = _f(conn.execute("SELECT COALESCE(SUM(qty),0) AS qty FROM wh_movements "
+                                 "WHERE material_id=? AND substr(created_at,1,10)<?",
+                                 (material_id, date_from)).fetchone()["qty"])
+        rows = conn.execute(
+            "SELECT v.*, r.roll_no FROM wh_movements v LEFT JOIN wh_rolls r ON r.id=v.roll_id "
+            "WHERE v.material_id=? AND substr(v.created_at,1,10)>=? "
+            "AND substr(v.created_at,1,10)<=? ORDER BY v.id LIMIT 2000",
+            (material_id, date_from, date_to)).fetchall()
+        balance, total_in, total_out, out = opening, 0.0, 0.0, []
+        for row in rows:
+            r = dict(row)
+            qty = _f(r["qty"])
+            balance = round(balance + qty, 6)
+            r.update(date=(r["created_at"] or "")[:10], qty_in=round(max(qty, 0), 3),
+                     qty_out=round(max(-qty, 0), 3), balance=round(balance, 3))
+            total_in += max(qty, 0)
+            total_out += max(-qty, 0)
+            out.append(r)
+        return dict(material=dict(m) if m else None, opening=round(opening, 3), rows=out,
+                    closing=round(balance, 3), total_in=round(total_in, 3),
+                    total_out=round(total_out, 3))
+    finally:
+        conn.close()
+
+
+def daily_report(date_from, date_to, material_id=None):
+    date_from, date_to = date_range(date_from, date_to)
+    conn = get_db()
+    try:
+        where = " AND v.material_id=?" if material_id is not None else ""
+        args = [material_id] if material_id is not None else []
+        opening = conn.execute(
+            "SELECT v.material_id, SUM(v.qty) AS qty FROM wh_movements v "
+            "WHERE substr(v.created_at,1,10)<?" + where + " GROUP BY v.material_id",
+            [date_from] + args).fetchall()
+        rows = conn.execute(
+            "SELECT v.material_id, substr(v.created_at,1,10) AS day, v.qty, m.code, m.name, m.uom "
+            "FROM wh_movements v JOIN wh_materials m ON m.id=v.material_id "
+            "WHERE substr(v.created_at,1,10)>=? AND substr(v.created_at,1,10)<=?" + where
+            + " ORDER BY day, m.code, v.id", [date_from, date_to] + args).fetchall()
+        balances = {r["material_id"]: _f(r["qty"]) for r in opening}
+        groups = {}
+        for r in rows:
+            mid, qty = r["material_id"], _f(r["qty"])
+            key = (r["day"], mid)
+            if key not in groups:
+                groups[key] = dict(date=r["day"], code=r["code"], name=r["name"], uom=r["uom"],
+                                   opening=balances.get(mid, 0), **{"in": 0.0, "out": 0.0})
+            g = groups[key]
+            g["in"] += max(qty, 0)
+            g["out"] += max(-qty, 0)
+            balances[mid] = balances.get(mid, 0) + qty
+            g["closing"] = balances[mid]
+        return [{k: round(v, 3) if isinstance(v, float) else v for k, v in g.items()}
+                for g in groups.values()]
+    finally:
+        conn.close()
+
+
+def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id=None):
+    qty = _f(qty)
+    dest_name, reason = (dest_name or "").strip(), (reason or "").strip()
+    if qty <= 0:
+        return False, "bad_qty"
+    if dest_kind not in DEST_KINDS:
+        return False, "bad_destination"
+    if not dest_name or len(dest_name) > 120:
+        return False, "destination_required"
+    if not reason or len(reason) > 200:
+        return False, "reason_required"
+    conn = get_db()
+    try:
+        if roll_id:
+            r = conn.execute("SELECT material_id,status FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
+            if not r:
+                return False, "roll_not_found"
+            material_id = r["material_id"]
+        _lock(conn, material_id, roll_id)
+        if roll_id:
+            r = conn.execute("SELECT status FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
+            if r["status"] == "quarantine":
+                return False, "roll_quarantined"
+        ok, msg = _move_stock(conn, "issue", -qty, user, material_id=material_id, roll_id=roll_id,
+                              unit_cost=_unit_cost(conn, material_id, roll_id),
+                              ref=f"{dest_kind}:{dest_name}", notes=reason)
+        if not ok:
+            conn.rollback()
+            return False, msg
+        conn.commit()
+        return True, "issued"
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def move_bin(new_bin, user, material_id=None, roll_id=None):
+    new_bin = (new_bin or "").strip()
+    if not new_bin or len(new_bin) > 40:
+        return False, "bin_required"
+    conn = get_db()
+    try:
+        if roll_id:
+            r = conn.execute("SELECT material_id FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
+            if not r:
+                return False, "roll_not_found"
+            material_id = r["material_id"]
+        _lock(conn, material_id, roll_id)
+        table, qty_col, target = ("wh_rolls", "remaining_m", roll_id) if roll_id else ("wh_materials", "stock_qty", material_id)
+        row = conn.execute(f"SELECT * FROM {table} WHERE id=?", (target,)).fetchone()
+        if not row:
+            return False, "material_not_found"
+        if not roll_id and row["roll_tracked"]:
+            return False, "roll_required"
+        qty = _f(row[qty_col])
+        conn.execute(f"UPDATE {table} SET bin=? WHERE id=?", (new_bin, target))
+        # Only movement outside _move_stock: quantities do not change and it refuses zero.
+        cur = conn.execute(
+            "INSERT INTO wh_movements (type,material_id,roll_id,qty,before_qty,after_qty,performed_by,notes,created_at) "
+            "VALUES ('bin_move',?,?,0,?,?,?,?,?)",
+            (material_id, roll_id, qty, qty, _user(user), f"bin {row['bin'] or ''} -> {new_bin}", _now()))
+        conn.execute("UPDATE wh_movements SET movement_no=? WHERE id=?", (doc_no("WHM", cur.lastrowid), cur.lastrowid))
+        conn.commit()
+        return True, "moved"
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def _shipping_owns_order(order_id):
+    conn = get_db()
+    try:
+        return conn.execute("SELECT id FROM shp_shipments WHERE order_id=? "
+                            "AND COALESCE(status,'')<>'cancelled' LIMIT 1", (order_id,)).fetchone() is not None
+    except Exception:
+        return False  # Optional module; never poison the stock transaction with its read.
+    finally:
+        conn.close()

@@ -17,6 +17,14 @@
 </div>
 
 <div class="grid cols-2">
+  {% if wh_counts %}
+  <div class="panel"><div class="panel-head"><h3 data-i18n="wh.counts.awaiting">Stock counts awaiting approval</h3><span class="badge-count">{{ wh_counts|length }}</span></div>
+    <div class="panel-pad">{% for c in wh_counts %}
+      <a class="row-line" href="{{ url_for('warehouse.counts') }}" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ c.count_no }}</b> · {{ c.code }}</span><span class="tag">{{ c.delta }}</span>
+      </a>{% endfor %}</div>
+  </div>{% endif %}
+
 
   {% if recv_queue %}
   <div class="panel">
@@ -295,7 +303,7 @@
 
 </div>
 
-{% if not (sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets or my_pm
+{% if not (wh_counts or sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets or my_pm
            or late_milestones or cmp_caps or cmp_expiring
            or recv_queue or store_issue or po_queue or stuck_postings or pay_queue) %}
 <div class="panel"><div class="panel-pad muted" data-i18n="mywork.empty">

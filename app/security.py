@@ -366,6 +366,7 @@ PERMISSION_LABELS = {
     "cmp_manage": "Compliance: manage audits, CAPs & certificates",
     "wh_view": "Warehouse: view raw-material rolls & finished goods",
     "wh_manage": "Warehouse: receive, issue & adjust material",
+    "wh_approve": "Warehouse: approve stock-count adjustments",
     "cost_view": "Costing: view BOM, cost sheets & variance",
     "cost_manage": "Costing: manage BOM and cost sheets",
     "qc_view": "Quality: view inspections & defect analytics",

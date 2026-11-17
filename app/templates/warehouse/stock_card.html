@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Stock card{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1 data-i18n="wh.card.title">Stock card</h1><p>{{ card.material.code }} — {{ card.material.name }} ({{ card.material.uom }})</p></div>
+<a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.materials') }}" data-i18n="wh.nav.materials">Material master</a></div>
+<form method="get" class="panel"><div class="panel-pad grid cols-3">
+<div class="field"><label data-i18n="wh.report.from">From</label><input type="date" name="from" value="{{ date_from }}"></div>
+<div class="field"><label data-i18n="wh.report.to">To</label><input type="date" name="to" value="{{ date_to }}"></div>
+<button class="btn btn-ghost btn-sm" data-i18n="wh.report.filter">Filter</button></div></form>
+<div class="panel mt-4"><div class="panel-pad" style="overflow-x:auto">
+<p><span data-i18n="wh.report.opening">Opening</span>: {{ card.opening }}</p>
+<table class="tbl"><thead><tr>
+<th data-i18n="wh.report.date">Date</th><th data-i18n="wh.report.movement">Movement</th><th data-i18n="wh.report.type">Type</th>
+<th data-i18n="wh.report.ref">Reference</th><th data-i18n="wh.field.order">Customer order</th><th data-i18n="wh.field.rollno">Roll</th>
+<th data-i18n="wh.report.in">In</th><th data-i18n="wh.report.out">Out</th><th data-i18n="wh.report.balance">Balance</th>
+<th data-i18n="wh.report.by">Performed by</th><th data-i18n="wh.field.notes">Notes</th>
+</tr></thead><tbody>{% for r in card.rows %}<tr>
+<td>{{ r.date }}</td><td>{{ r.movement_no }}</td><td data-i18n="wh.movement.{{ r.type }}">{{ r.type|replace('_',' ')|title }}</td><td>{{ r.ref or '' }}</td><td>{{ r.order_id or '' }}</td><td>{{ r.roll_no or '' }}</td>
+<td>{{ r.qty_in }}</td><td>{{ r.qty_out }}</td><td>{{ r.balance }}</td><td>{{ r.performed_by or '' }}</td><td>{{ r.notes or '' }}</td>
+</tr>{% else %}<tr><td colspan="11" class="muted" data-i18n="wh.report.empty">No records in this range.</td></tr>{% endfor %}</tbody></table>
+<p><span data-i18n="wh.report.in">In</span>: {{ card.total_in }} · <span data-i18n="wh.report.out">Out</span>: {{ card.total_out }} · <span data-i18n="wh.report.closing">Closing</span>: {{ card.closing }}</p>
+<p class="muted" data-i18n="wh.card.cap">Up to 2000 movements; closing reflects the displayed movements.</p>
+</div></div>
+{% if can('wh_manage') and not card.material.roll_tracked %}
+<form class="panel mt-4" method="post" action="{{ url_for('warehouse.bin_move') }}"><div class="panel-pad">
+<input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="material_id" value="{{ card.material.id }}">
+<div class="field"><label data-i18n="wh.field.bin">Bin</label><input name="new_bin" maxlength="40" value="{{ card.material.bin or '' }}" required></div>
+<button class="btn btn-primary btn-sm" data-i18n="wh.bin.move">Move bin</button></div></form>{% endif %}
+{% endblock %}

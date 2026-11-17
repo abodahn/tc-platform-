@@ -14,7 +14,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 
 from app.auth import login_required, permission_required, current_user, user_can
 from app.warehouse import services as svc
-from app.warehouse.constants import MATERIAL_KINDS, ROLL_STATUS, SIZES, IMPORT_COLUMNS, UOMS
+from app.warehouse.constants import MATERIAL_KINDS, ROLL_STATUS, SIZES, IMPORT_COLUMNS, UOMS, COUNT_REASONS, DEST_KINDS
 from app.tabular import ACCEPT, TableError, read_grid
 
 bp = Blueprint("warehouse", __name__, url_prefix="/warehouse")
@@ -65,7 +65,7 @@ def materials():
     inactive = request.args.get("inactive") == "1"
     return render_template("warehouse/materials.html", active="wh_materials",
                            rows=svc.list_materials(kind, low, inactive), kinds=MATERIAL_KINDS,
-                           f_kind=kind, f_low=low, f_inactive=inactive)
+                           f_kind=kind, f_low=low, f_inactive=inactive, reasons=COUNT_REASONS)
 
 
 @bp.route("/materials", methods=["POST"])
@@ -246,7 +246,7 @@ def rolls():
                            rows=svc.list_rolls(material_id, color, shade, status),
                            materials=svc.list_materials(), lots=svc.shade_lots(material_id),
                            statuses=ROLL_STATUS, f_material=material_id, f_shade=shade,
-                           f_status=status, f_color=color)
+                           f_status=status, f_color=color, reasons=COUNT_REASONS)
 
 
 @bp.route("/rolls/<int:roll_id>/hold", methods=["POST"])
@@ -260,16 +260,15 @@ def roll_hold(roll_id):
     return redirect(request.referrer or url_for("warehouse.rolls"))
 
 
-@bp.route("/rolls/<int:roll_id>/return", methods=["POST"])
+@bp.route("/return", methods=["POST"])
 @login_required
 @permission_required("wh_manage")
-def roll_return(roll_id):
-    """Book the end-bit back onto the roll it came off after cutting."""
-    ok, msg = svc.return_to_store(roll_id, request.form.get("qty"), _u(),
-                                 _int(request.form.get("order_id")))
-    flash("Returned to store." if ok else f"Return rejected ({msg}).",
-          "success" if ok else "error")
-    return redirect(request.referrer or url_for("warehouse.rolls"))
+def return_post():
+    ok, msg = svc.return_to_store(_int(request.form.get("material_id")), request.form.get("qty"),
+                                 _u(), _int(request.form.get("order_id")),
+                                 _int(request.form.get("roll_id")), request.form.get("notes"))
+    flash("Returned to store." if ok else f"Return rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.issue"))
 
 
 @bp.route("/receive")
@@ -377,9 +376,10 @@ def receive_post():
 @permission_required("wh_manage")
 def adjust():
     mid = _int(request.form.get("material_id"))
-    ok, msg = svc.adjust_stock(mid, request.form.get("delta"), request.form.get("reason"),
-                               _u(), _int(request.form.get("roll_id")))
-    flash("Stock adjusted." if ok else f"Adjustment rejected ({msg}).",
+    ok, msg = svc.submit_count(mid, request.form.get("delta"), request.form.get("reason"),
+                               request.form.get("note"), _u(), _int(request.form.get("roll_id")))
+    flash(("Adjustment applied." if msg == "applied" else "Count submitted for approval.")
+          if ok else f"Adjustment rejected ({msg}).",
           "success" if ok else "error")
     return redirect(request.referrer or url_for("warehouse.materials"))
 
@@ -393,9 +393,14 @@ def issue():
     shade = request.args.get("shade_lot") or None
     plan = svc.plan_pick(mid, required, shade, request.args.get("min_width_cm")) \
         if (mid and required) else None
+    res_order = _int(request.args.get("res_order"))
     return render_template("warehouse/issue.html", active="wh_issue",
                            materials=svc.list_materials(), orders=svc.list_orders_lite(),
-                           lots=svc.shade_lots(mid), plan=plan, allocs=svc.open_allocations(),
+                           lots=svc.shade_lots(mid), plan=plan, allocs=svc.open_allocations(res_order),
+                           alloc_total=svc.count_open_allocations(res_order), res_order=res_order,
+                           selected_material=svc.get_material(mid),
+                           rolls=svc.list_rolls(mid) if mid else [], dest_kinds=DEST_KINDS,
+                           return_roll=_int(request.args.get("return_roll")),
                            f_material=mid, f_required=required, f_shade=shade,
                            f_width=request.args.get("min_width_cm"),
                            f_order=_int(request.args.get("order_id")))
@@ -456,8 +461,11 @@ def fg_post():
     oid = _int(request.form.get("order_id"))
     ok, msg = svc.fg_move(oid, request.form.get("style_code"), request.form.get("color"),
                           request.form.get("size"), request.form.get("qty"),
-                          request.form.get("action") or "pack", _u())
-    flash("Finished goods updated." if ok else f"Rejected ({msg}).",
+                          request.form.get("action") or "pack", _u(), manual=True)
+    flash("Finished goods updated." if ok else
+          "This order ships through the Shipping module - its dispatch posts the finished goods. "
+          "Manual ship-out is blocked to avoid a double deduction."
+          if msg == "shipping_owns_order" else f"Rejected ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("warehouse.fg", order_id=oid))
 
@@ -483,6 +491,110 @@ def api_json(key):
     if resp is None:
         abort(404)
     return resp
+
+
+
+@bp.route("/allocations/<int:alloc_id>/issue", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def allocation_issue(alloc_id):
+    ok, msg = svc.issue_reserved(_int(request.form.get("order_id")), _u(), alloc_ids=[alloc_id])
+    flash(f"Material issued ({msg})." if ok else f"Issue rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.issue"))
+
+
+@bp.route("/orders/<int:order_id>/issue-reserved", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def issue_all_reserved(order_id):
+    ok, msg = svc.issue_reserved(order_id, _u())
+    flash(f"Material issued ({msg})." if ok else f"Issue rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.issue"))
+
+
+@bp.route("/counts")
+@login_required
+@permission_required("wh_view")
+def counts():
+    recent = svc.list_counts(("applied", "approved", "rejected"), limit=50)
+    return render_template("warehouse/counts.html", active="wh_materials",
+                           pending=svc.list_counts("pending"), recent=recent, pct=svc.count_auto_pct())
+
+
+@bp.route("/counts/settings", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def count_settings():
+    ok, msg = svc.set_count_threshold(request.form.get("pct"), _u())
+    flash("Threshold saved." if ok else f"Threshold rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/counts/<int:count_id>/approve", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def count_approve(count_id):
+    ok, msg = svc.approve_count(count_id, _u(), request.form.get("note"))
+    flash("Count approved." if ok else f"Approval rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/counts/<int:count_id>/reject", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def count_reject(count_id):
+    ok, msg = svc.reject_count(count_id, _u(), request.form.get("note"))
+    flash("Count rejected." if ok else f"Rejection failed ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/materials/<int:mid>/card")
+@login_required
+@permission_required("wh_view")
+def material_card(mid):
+    start, end = svc.date_range(request.args.get("from"), request.args.get("to"))
+    card = svc.stock_card(mid, start, end)
+    if not card["material"]:
+        abort(404)
+    return render_template("warehouse/stock_card.html", active="wh_materials", card=card,
+                           date_from=start, date_to=end)
+
+
+@bp.route("/daily")
+@login_required
+@permission_required("wh_view")
+def daily():
+    start, end = svc.date_range(request.args.get("from"), request.args.get("to"))
+    mid = _int(request.args.get("material_id"))
+    rows = svc.daily_report(start, end, mid)
+    if request.args.get("format") == "csv":
+        from app.services.export import csv_file
+        keys = ["date", "code", "name", "uom", "opening", "in", "out", "closing"]
+        return csv_file(["Date", "Code", "Material", "Unit", "Opening", "In", "Out", "Closing"],
+                        [[r[k] for k in keys] for r in rows], "warehouse_daily.csv")
+    return render_template("warehouse/daily.html", active="wh_materials", rows=rows,
+                           materials=svc.list_materials(), f_material=mid, date_from=start, date_to=end)
+
+
+@bp.route("/issue-internal", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def issue_internal():
+    ok, msg = svc.issue_internal(_int(request.form.get("material_id")), request.form.get("qty"),
+                                 request.form.get("dest_kind"), request.form.get("dest_name"),
+                                 request.form.get("reason"), _u(), _int(request.form.get("roll_id")))
+    flash("Material issued." if ok else f"Issue rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.issue"))
+
+
+@bp.route("/bin", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def bin_move():
+    ok, msg = svc.move_bin(request.form.get("new_bin"), _u(),
+                           _int(request.form.get("material_id")), _int(request.form.get("roll_id")))
+    flash("Bin updated." if ok else f"Bin move rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.materials"))
 
 
 # Report declarations for the shared engine (app/services/reporting.py). Imported

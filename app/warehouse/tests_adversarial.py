@@ -295,12 +295,21 @@ with app.app_context():
     rr = q("SELECT id, length_m, remaining_m FROM wh_rolls WHERE remaining_m>0 "
            "AND remaining_m<length_m LIMIT 1")
     room = _f(rr["length_m"]) - _f(rr["remaining_m"])
-    ck(svc.return_to_store(rr["id"], room + 0.01, U)[1] == "exceeds_roll_length",
+    ck(svc.return_to_store(None, room + 0.01, U, 9001, roll_id=rr["id"])[1] == "exceeds_roll_length",
        "cannot return more than the roll ever held")
-    ck(not svc.return_to_store(rr["id"], "nan", U)[0], "return of 'nan' refused")
-    ck(svc.return_to_store(999999, 5, U)[1] == "roll_not_found", "return against unknown roll refused")
+    ck(not svc.return_to_store(None, "nan", U, 9001, roll_id=rr["id"])[0], "return of 'nan' refused")
+    ck(svc.return_to_store(None, 5, U, 9001, roll_id=999999)[1] == "roll_not_found", "return against unknown roll refused")
     n_rolls = q("SELECT COUNT(*) FROM wh_rolls")
-    svc.return_to_store(rr["id"], room, U)
+    # Give this order a real issue on a full roll before testing a complete return.
+    full = q("SELECT id,material_id,remaining_m FROM wh_rolls WHERE remaining_m=length_m "
+             "AND status='available' ORDER BY id LIMIT 1")
+    c = get_db()
+    ok, msg = svc._move_stock(c, "issue", -1, U, material_id=full["material_id"],
+                              roll_id=full["id"], order_id=9001)
+    c.commit()
+    c.close()
+    rr, room = full, 1
+    svc.return_to_store(None, room, U, 9001, roll_id=rr["id"])
     ck(q("SELECT COUNT(*) FROM wh_rolls") == n_rolls, "a return never creates a second roll")
     ck(q("SELECT status FROM wh_rolls WHERE id=?", (rr["id"],)) == "available",
        "a fully returned roll is 'available' again")
@@ -359,7 +368,7 @@ with app.app_context():
         svc.receive_qty(BTN, -5, 1, U)
         svc.adjust_stock(BTN, bad, "x", U)
         svc.fg_move(9001, "STY-A", "Navy", "L", bad, "pack", U)
-        svc.return_to_store(rr["id"], bad, U)
+        svc.return_to_store(None, bad, U, 9001, roll_id=rr["id"])
     ck(q("SELECT COUNT(*) FROM wh_movements") - n2 == 0,
        "no garbage quantity ever writes a movement", str(q("SELECT COUNT(*) FROM wh_movements") - n2))
 
@@ -494,7 +503,7 @@ with app.app_context():
                                        r"def (\w+)", src):
         ck("@login_required" in decs, f"{name}: login_required")
         ck("permission_required" in decs, f"{name}: permission_required")
-    ck(src.count("methods=[\"POST\"]") == 11, "11 state-changing routes, all POST-only",
+    ck(src.count("methods=[\"POST\"]") == 18, "18 state-changing routes, all POST-only",
        str(src.count("methods=[\"POST\"]")))
     ck("execute(" not in src, "routes contain no SQL at all")
 
@@ -627,7 +636,7 @@ with app.app_context():
                            "qty": "3", "action": "wipe"}),
         ("/warehouse/fg", {"order_id": "", "style_code": "", "color": "", "size": "",
                            "qty": "nan"}),
-        ("/warehouse/rolls/1/return", {"qty": "abc"}),
+        ("/warehouse/return", {"roll_id": "1", "order_id": "9001", "qty": "abc"}),
         ("/warehouse/rolls/999999/hold", {"hold": "1"}),
         ("/warehouse/allocations/999999/release", {}),
     ]

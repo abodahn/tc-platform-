@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Stock counts{% endblock %}
+{% macro count_table(rows, deciding) %}
+<div class="panel-pad" style="overflow-x:auto"><table class="tbl"><thead><tr>
+  <th data-i18n="wh.counts.number">Count no.</th><th data-i18n="wh.field.material">Material</th>
+  <th data-i18n="wh.field.rollno">Roll</th><th data-i18n="wh.report.book">Book quantity</th>
+  <th data-i18n="wh.field.delta">Delta</th><th data-i18n="wh.field.reason">Reason</th><th data-i18n="wh.field.notes">Notes</th>
+  <th data-i18n="wh.counts.submitted_by">Submitted by</th><th data-i18n="wh.counts.submitted_at">Submitted at</th>
+  <th data-i18n="wh.field.status">Status</th>
+  {% if deciding and can('wh_approve') %}<th data-i18n="wh.counts.decision">Decision</th>{% endif %}
+</tr></thead><tbody>{% for c in rows %}<tr>
+  <td>{{ c.count_no }}</td><td>{{ c.code }} {{ c.uom }}</td><td>{{ c.roll_no or '' }}</td><td>{{ c.book_qty }}</td><td>{{ c.delta }}</td>
+  <td data-i18n="wh.reason.{{ c.reason }}">{{ c.reason|replace('_',' ')|title }}</td><td>{{ c.note or '' }}</td>
+  <td>{{ c.submitted_by }}</td><td>{{ c.submitted_at }}</td><td data-i18n="wh.count_status.{{ c.status }}">{{ c.status|title }}</td>
+  {% if deciding and can('wh_approve') %}<td>
+    <form method="post" action="{{ url_for('warehouse.count_approve', count_id=c.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input name="note" maxlength="200" data-i18n-ph="wh.counts.decision_note" placeholder="Decision note">
+      <button class="btn btn-primary btn-sm" data-advance data-i18n="wh.counts.approve">Approve</button>
+      <button class="btn btn-ghost btn-sm" formaction="{{ url_for('warehouse.count_reject', count_id=c.id) }}" data-i18n="wh.counts.reject">Reject</button>
+    </form></td>{% endif %}
+</tr>{% else %}<tr><td colspan="11" class="muted" data-i18n="wh.report.empty">No records in this range.</td></tr>{% endfor %}</tbody></table></div>
+{% endmacro %}
+{% block content %}
+<div class="page-head"><h1 data-i18n="wh.counts.title">Stock counts</h1><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.materials') }}" data-i18n="wh.nav.materials">Material master</a></div>
+<div class="panel"><div class="panel-pad"><h3 data-i18n="wh.counts.pending">Pending counts</h3></div>{{ count_table(pending, true) }}</div>
+<div class="panel mt-4"><div class="panel-pad"><h3 data-i18n="wh.counts.recent">Recent decisions</h3></div>{{ count_table(recent, false) }}</div>
+{% if can('wh_approve') %}<form class="panel mt-4" method="post" action="{{ url_for('warehouse.count_settings') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}"><div class="panel-pad">
+  <div class="field"><label data-i18n="wh.counts.threshold">Automatic approval threshold (%)</label><input type="number" name="pct" min="0" max="100" step="any" value="{{ pct }}" required></div>
+  <button class="btn btn-primary btn-sm" data-i18n="wh.action.save">Save</button></div>
+</form>{% endif %}
+{% endblock %}

@@ -106,6 +106,19 @@ CREATE TABLE IF NOT EXISTS wh_fg (
 );
 CREATE INDEX IF NOT EXISTS ix_wh_fg_order ON wh_fg(order_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_wh_fg_sku ON wh_fg(order_id, style_code, color, size);
+
+CREATE TABLE IF NOT EXISTS wh_settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS wh_counts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    count_no TEXT UNIQUE,
+    material_id INTEGER NOT NULL, roll_id INTEGER,
+    book_qty REAL DEFAULT 0, delta REAL DEFAULT 0,
+    reason TEXT, note TEXT, status TEXT DEFAULT 'pending',
+    submitted_by TEXT, submitted_at TEXT,
+    decided_by TEXT, decided_at TEXT, decision_note TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_wh_count_status ON wh_counts(status);
+
 """
 
 

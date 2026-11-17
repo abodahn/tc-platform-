@@ -85,7 +85,7 @@
         <div class="field"><label data-i18n="wh.field.notes">Notes</label><input name="notes"></div>
       </div>
       <div class="flex gap center mt-2">
-        <button class="btn btn-primary btn-sm" name="action" value="issue" data-i18n="wh.action.issue">Issue now</button>
+        <button class="btn btn-primary btn-sm" name="action" value="issue" data-advance data-i18n="wh.action.issue">Issue now</button>
         <button class="btn btn-ghost btn-sm" name="action" value="reserve" data-i18n="wh.action.reserve">Reserve only</button>
       </div>
     </form>
@@ -99,6 +99,19 @@
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="wh.issue.reservations">Open reservations</h3></div>
   <div class="panel-pad">
+    <form method="get" class="flex gap center">
+      <select name="res_order" onchange="this.form.submit()">
+        <option value="" data-i18n="wh.filter.all_orders">All orders</option>
+        {% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if res_order==o.id }}>{{ o.order_no }}</option>{% endfor %}
+      </select><button class="btn btn-ghost btn-sm" data-i18n="wh.report.filter">Filter</button>
+    </form>
+    <p class="muted"><span data-i18n="wh.issue.showing">Showing</span> {{ allocs|length }} <span data-i18n="wh.issue.of">of</span> {{ alloc_total }}</p>
+    {% if res_order and can('wh_manage') %}
+    <form method="post" action="{{ url_for('warehouse.issue_all_reserved', order_id=res_order) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button class="btn btn-primary btn-sm" data-advance data-i18n="wh.issue.all_reserved">Issue all reserved for this order</button>
+    </form>{% endif %}
+
     <table class="tbl">
       <thead><tr><th data-i18n="wh.field.order">Customer order</th><th data-i18n="wh.field.material">Material</th>
         <th data-i18n="wh.field.rollno">Roll</th><th data-i18n="wh.field.shade">Shade lot</th>
@@ -110,7 +123,11 @@
           <td class="muted">{{ a.shade_lot or '—' }}</td>
           <td style="text-align:right">{{ '{:,.1f}'.format(a.qty or 0) }} {{ a.uom }}</td>
           {% if can('wh_manage') %}
-          <td><form method="post" action="{{ url_for('warehouse.allocation_release', alloc_id=a.id) }}">
+          <td><form method="post" action="{{ url_for('warehouse.allocation_issue', alloc_id=a.id) }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="order_id" value="{{ a.order_id }}">
+            <button class="btn btn-primary btn-sm" data-advance data-i18n="wh.action.issue">Issue now</button></form>
+          <form method="post" action="{{ url_for('warehouse.allocation_release', alloc_id=a.id) }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <button class="btn btn-ghost btn-sm" data-i18n="wh.action.release">Release</button></form></td>
           {% endif %}
@@ -120,4 +137,44 @@
     </table>
   </div>
 </div>
+
+{% if can('wh_manage') %}
+<form id="return" class="panel mt-4" method="post" action="{{ url_for('warehouse.return_post') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-pad"><h3 data-i18n="wh.return.title">Return from production</h3><div class="grid cols-3">
+<div class="field"><label data-i18n="wh.field.material">Material</label>
+      <select name="material_id" required onchange='window.location.href={{ url_for('warehouse.issue')|tojson }}+"?material_id="+this.value+"#return"'>
+        <option value="" data-i18n="wh.material.choose">Choose material</option>
+        {% for m in materials %}<option value="{{ m.id }}" {{ 'selected' if f_material==m.id }}>{{ m.code }} — {{ m.name }}</option>{% endfor %}
+      </select></div>
+      {% if selected_material and selected_material.roll_tracked %}
+      <div class="field"><label data-i18n="wh.field.rollno">Roll</label>
+      <select name="roll_id" required>{% for r in rolls %}<option value="{{ r.id }}" {{ 'selected' if return_roll==r.id }}>{{ r.roll_no }}</option>{% endfor %}</select></div>{% endif %}
+      <div class="field"><label data-i18n="wh.field.qty">Quantity</label><input type="number" step="any" min="0" name="qty" required></div>
+    <div class="field"><label data-i18n="wh.field.order">Customer order</label>
+      <select name="order_id" required>{% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if f_order==o.id }}>{{ o.order_no }}</option>{% endfor %}</select></div>
+    <div class="field"><label data-i18n="wh.field.notes">Notes</label><input name="notes"></div>
+    </div><button class="btn btn-primary btn-sm" data-i18n="wh.action.return">Return</button>
+  </div>
+</form>
+<form id="internal" class="panel mt-4" method="post" action="{{ url_for('warehouse.issue_internal') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-pad"><h3 data-i18n="wh.internal.title">Issue to department / maintenance / sample</h3><div class="grid cols-3">
+<div class="field"><label data-i18n="wh.field.material">Material</label>
+      <select name="material_id" required onchange='window.location.href={{ url_for('warehouse.issue')|tojson }}+"?material_id="+this.value+"#internal"'>
+        <option value="" data-i18n="wh.material.choose">Choose material</option>
+        {% for m in materials %}<option value="{{ m.id }}" {{ 'selected' if f_material==m.id }}>{{ m.code }} — {{ m.name }}</option>{% endfor %}
+      </select></div>
+      {% if selected_material and selected_material.roll_tracked %}
+      <div class="field"><label data-i18n="wh.field.rollno">Roll</label>
+      <select name="roll_id" required>{% for r in rolls %}<option value="{{ r.id }}" {{ 'selected' if return_roll==r.id }}>{{ r.roll_no }}</option>{% endfor %}</select></div>{% endif %}
+      <div class="field"><label data-i18n="wh.field.qty">Quantity</label><input type="number" step="any" min="0" name="qty" required></div>
+    <div class="field"><label data-i18n="wh.internal.kind">Destination kind</label><select name="dest_kind" required>
+      {% for kind in dest_kinds %}<option value="{{ kind }}" data-i18n="wh.dest.{{ kind }}">{{ kind|replace('_',' ')|title }}</option>{% endfor %}</select></div>
+    <div class="field"><label data-i18n="wh.internal.destination">Destination</label><input name="dest_name" maxlength="120" required></div>
+    <div class="field"><label data-i18n="wh.field.reason">Reason</label><input name="reason" maxlength="200" required></div>
+    </div><button class="btn btn-primary btn-sm" data-advance data-i18n="wh.action.issue">Issue now</button>
+  </div>
+</form>
+{% endif %}
 {% endblock %}
