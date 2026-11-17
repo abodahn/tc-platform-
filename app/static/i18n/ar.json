@@ -4305,5 +4305,19 @@
   "wh.movement.transfer": "تحويل",
   "wh.movement.bin_move": "نقل موقع التخزين",
   "wh.movement.fg_pack": "إضافة منتجات تامة",
-  "wh.movement.fg_ship": "شحن منتجات تامة"
+  "wh.movement.fg_ship": "شحن منتجات تامة",
+  "m.test_reason": "السبب (مطلوب إذا فشل الاختبار)",
+  "m.more_parts": "قطع إضافية",
+  "m.request_more_parts": "طلب قطع إضافية",
+  "m.return_parts": "إرجاع القطع إلى المخزن",
+  "m.resubmit_request": "إعادة تقديم الطلب",
+  "m_request_resubmitted": "تمت إعادة تقديم الطلب",
+  "m_parts_returned": "تم إرجاع القطع إلى المخزن",
+  "mywork.maint_to_issue": "قطع غيار جاهزة للصرف",
+  "request_closed": "هذا الطلب مغلق",
+  "not_returned": "يمكن إعادة تقديم الطلبات المعادة فقط",
+  "no_items": "اختر قطعة واحدة على الأقل",
+  "bad_qty": "أدخل كمية موجبة صحيحة",
+  "exceeds_issued": "الكمية تتجاوز القطع المصروفة",
+  "ticket_closed": "التذكرة مغلقة"
 }

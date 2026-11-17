@@ -1,5 +1,21 @@
 {% extends "base.html" %}
 {% block title %}{{ t.ticket_no }}{% endblock %}
+{% macro part_row(item=none, required=false) %}
+<div class="grid cols-2">
+  <div class="field"><label><span data-i18n="m.part">Spare part</span>
+    <select name="spare_id" {{ 'required' if required }} data-src="/api/lookup/spares">
+      <option value="">—</option>{% for s in spares %}<option value="{{ s.id }}" {{ 'selected' if item and s.id==item.spare_id }}>{{ s.code }} · {{ s.name }} ({{ s.stock_qty }} {{ s.uom }})</option>{% endfor %}
+    </select></label></div>
+  <div class="field"><label><span data-i18n="m.qty">Quantity</span><input name="qty" type="number" min="0.000001" step="any" value="{{ item.qty_requested if item else ('1' if required else '') }}" {{ 'required' if required }}></label></div>
+</div>
+{% endmacro %}
+{% macro part_lines(items=[]) %}
+  {{ part_row(items[0] if items else none, true) }}
+  <details class="mt-2"><summary data-i18n="m.more_parts">More parts</summary>
+    {% for item in items[1:] %}{{ part_row(item) }}{% endfor %}
+    {% for i in range(3) %}{{ part_row() }}{% endfor %}
+  </details>
+{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -98,6 +114,13 @@
           </div>
         </div>
         {% endif %}
+        {% if r.status=='returned' and mcan('maint_technician') %}
+        <form method="post" action="{{ url_for('maintenance.request_resubmit', rid=r.id) }}" class="mt-3">
+          {{ part_lines(req_items[r.id]) }}
+          <div class="field"><label><span data-i18n="m.reason">Reason</span><input name="reason" value="{{ r.reason or '' }}"></label></div>
+          <button class="btn btn-primary" data-advance data-i18n="m.resubmit_request">Resubmit request</button>
+        </form>
+        {% endif %}
         {% if r.status=='issued' and mcan('maint_technician') %}
         <form method="post" action="{{ url_for('maintenance.request_receive', rid=r.id) }}" class="mt-3">
           <button class="btn btn-primary btn-sm"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="m.receive">Confirm receiving</span></button></form>
@@ -105,6 +128,20 @@
       </div>
     </div>
     {% endfor %}
+
+    {% if issued_parts and mcan('maint_store') and t.status not in ['closed','cancelled','rejected'] %}
+    <div class="panel mt-4">
+      <div class="panel-head"><h3 data-i18n="m.return_parts">Return parts to store</h3></div>
+      <form class="panel-pad" method="post" action="{{ url_for('maintenance.ticket_return_parts', tid=t.id) }}">
+        <div class="field"><label><span data-i18n="m.part">Spare part</span><select name="spare_id" required>
+          {% for p in issued_parts %}<option value="{{ p.spare_id }}">{{ p.code }} · {{ p.name }} ({{ p.qty }})</option>{% endfor %}
+        </select></label></div>
+        <div class="field"><label><span data-i18n="m.qty">Quantity</span><input name="qty" type="number" min="0.000001" step="any" required></label></div>
+        <div class="field"><label><span data-i18n="m.reason">Reason</span><input name="reason" required></label></div>
+        <button class="btn btn-primary" data-advance data-i18n="m.return_parts">Return parts to store</button>
+      </form>
+    </div>
+    {% endif %}
 
     {# Photos / attachments #}
     <div class="panel mt-4">
@@ -206,10 +243,8 @@
 
         {% elif t.status=='spare_required' and mcan('maint_technician') %}
           <form method="post" action="{{ url_for('maintenance.ticket_request_parts', tid=t.id) }}">
-            <div class="field"><label data-i18n="m.part">Spare part</label>
-              <select name="spare_id" required data-src="/api/lookup/spares">{% for s in spares %}<option value="{{ s.id }}">{{ s.code }} · {{ s.name }} ({{ s.stock_qty }} {{ s.uom }})</option>{% endfor %}</select></div>
-            <div class="grid cols-2">
-              <div class="field"><label data-i18n="m.qty">Quantity</label><input name="qty" type="number" min="1" step="any" value="1" required></div>
+            {{ part_lines() }}
+            <div>
               <div class="field"><label data-i18n="m.urgency">Urgency</label>
                 <select name="urgency">{% for u in C.URGENCIES %}<option value="{{ u }}" data-i18n="mx.{{ u }}">{{ u|mtext }}</option>{% endfor %}</select></div>
             </div>
@@ -230,7 +265,15 @@
             <button class="btn btn-primary btn-block"><span data-i18n="m.complete_repair">Complete repair</span></button>
           </form>
 
-        {% elif t.status=='testing' %}
+          <details class="mt-3"><summary data-i18n="m.request_more_parts">Request more parts</summary>
+            <form method="post" action="{{ url_for('maintenance.ticket_request_parts', tid=t.id) }}" class="mt-2">
+              {{ part_lines() }}
+              <div class="field"><label><span data-i18n="m.reason">Reason</span><input name="reason"></label></div>
+              <button class="btn btn-primary btn-block" data-i18n="m.request_parts">Request spare parts</button>
+            </form>
+          </details>
+
+        {% elif t.status=='testing' and can_test %}
           <form method="post" action="{{ url_for('maintenance.ticket_test', tid=t.id) }}">
             <div class="field"><label data-i18n="m.test_result">Test result</label>
               <select name="test_result"><option>Pass</option><option>Fail</option></select></div>
@@ -238,6 +281,7 @@
               <select name="safety_check"><option>OK</option><option>Not OK</option></select></div>
             <div class="field"><label data-i18n="m.machine_running">Machine running</label>
               <select name="machine_running"><option>Yes</option><option>No</option></select></div>
+            <div class="field"><label><span data-i18n="m.test_reason">Reason (required if the test fails)</span><input name="test_reason"></label></div>
             <button class="btn btn-primary btn-block"><span data-i18n="m.record_test">Record test</span></button>
           </form>
 

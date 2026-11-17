@@ -28,6 +28,10 @@ wrong, which is the worst moment to make somebody parse a formal sentence.
 
 # English source (a TEMPLATE where the message carries data) -> {"ar", "tr"}
 MESSAGES = {
+    "Repair test failed": {"ar": "فشل اختبار الإصلاح", "tr": "Onarım testi başarısız"},
+    "%s failed its test: %s": {"ar": "فشل اختبار %s: %s", "tr": "%s testte başarısız oldu: %s"},
+    "Spare request resumed": {"ar": "تم استئناف طلب قطع الغيار", "tr": "Yedek parça talebi devam ediyor"},
+    "%s: stock arrived, the request is back in the flow": {"ar": "%s: وصل المخزون وتم استئناف إجراءات الطلب", "tr": "%s: stok geldi, talep sürece geri döndü"},
     "Work order assigned": {"ar": "تم إسناد أمر العمل", "tr": "İş emri atandı"},
     "Spare request awaiting approval": {"ar": "طلب قطع غيار بانتظار الموافقة", "tr": "Yedek parça talebi onay bekliyor"},
     "Spare request rejected": {"ar": "تم رفض طلب قطع الغيار", "tr": "Yedek parça talebi reddedildi"},

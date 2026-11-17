@@ -1285,7 +1285,7 @@ def my_work():
                     "SELECT a.id, a.level, a.approver_role, a.created_at, r.request_no, "
                     "r.id AS request_id FROM mnt_approvals a "
                     "JOIN mnt_requests r ON r.id = a.request_id "
-                    "WHERE a.status='pending' "
+                    "WHERE a.status='pending' AND r.status NOT IN ('rejected','returned','cancelled') "
                     # only the rung that is next in line, and only if it is this user's role
                     "AND NOT EXISTS (SELECT 1 FROM mnt_approvals b WHERE b.request_id=a.request_id "
                     "AND b.status='pending' AND b.level < a.level) "

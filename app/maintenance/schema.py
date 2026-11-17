@@ -335,6 +335,7 @@ CREATE TABLE IF NOT EXISTS mnt_ext_map (
 # Columns added after first release — applied as idempotent ALTERs on every boot
 # so already-deployed databases pick them up (safe: each wrapped in try/except).
 _MIGRATIONS = [
+    ("mnt_stock_movements", "unit_cost", "ALTER TABLE mnt_stock_movements ADD COLUMN unit_cost REAL"),
     ("mnt_spare_parts", "reserved_qty",
      "ALTER TABLE mnt_spare_parts ADD COLUMN reserved_qty REAL DEFAULT 0"),
     # Guards the reopen->close-again path: the machine's cost/downtime/breakdown

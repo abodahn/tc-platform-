@@ -6,6 +6,7 @@ the right maintenance permission; mutating actions enforce finer-grained perms.
 """
 import csv
 import io
+import math
 import re
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
@@ -483,6 +484,10 @@ def ticket_detail(tid):
         comments = conn.execute("SELECT * FROM mnt_comments WHERE ticket_id=? ORDER BY id", (tid,)).fetchall()
         audit = conn.execute("SELECT * FROM mnt_audit WHERE entity_type='ticket' AND entity_id=? ORDER BY id", (tid,)).fetchall()
         reqs = conn.execute("SELECT * FROM mnt_requests WHERE ticket_id=? ORDER BY id DESC", (tid,)).fetchall()
+        issued_parts = conn.execute(
+            "SELECT s.id spare_id,s.code,s.name,-SUM(m.qty) qty FROM mnt_stock_movements m "
+            "JOIN mnt_spare_parts s ON s.id=m.spare_id WHERE m.ticket_id=? AND m.type IN ('issue','return') "
+            "GROUP BY s.id,s.code,s.name HAVING -SUM(m.qty)>0 ORDER BY s.code", (tid,)).fetchall()
         req_items, approvals = {}, {}
         for r in reqs:
             req_items[r["id"]] = conn.execute("SELECT * FROM mnt_request_items WHERE request_id=?", (r["id"],)).fetchall()
@@ -509,7 +514,7 @@ def ticket_detail(tid):
                            audit=audit, reqs=reqs, req_items=req_items, approvals=approvals,
                            machine=machine, spares=spares, attachments=attachments,
                            rc_suggest=rc_suggest, tech_rec=tech_rec, mttr=mttr, sla_risk=sla_risk,
-                           proc_prs=proc_prs, active="maint_tickets")
+                           proc_prs=proc_prs, issued_parts=issued_parts, can_test=_can_test(), active="maint_tickets")
 
 
 @bp.route("/tickets/<int:tid>/assign", methods=["POST"])
@@ -548,6 +553,53 @@ def ticket_diagnosis(tid):
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
 
 
+def _can_test():
+    return _can("maint_technician") or _can("maint_manage") or _u().get("role") == "production_supervisor"
+
+
+def _parse_part_lines(form):
+    merged = {}
+    spares, quantities = form.getlist("spare_id"), form.getlist("qty")
+    for index, sid in enumerate(spares):
+        if not sid:
+            continue
+        try:
+            sid = int(sid)
+            qty = float(quantities[index])
+            if qty <= 0 or not math.isfinite(qty):
+                raise ValueError
+        except (ValueError, TypeError, IndexError):
+            return [], "m_invalid_qty"
+        merged[sid] = merged.get(sid, 0) + qty
+        if not math.isfinite(merged[sid]):
+            return [], "m_invalid_qty"
+    return [{"spare_id": sid, "qty": qty} for sid, qty in merged.items()], "" if merged else "no_items"
+
+
+@bp.route("/requests/<int:rid>/resubmit", methods=["POST"])
+@login_required
+def request_resubmit(rid):
+    _require("maint_technician")
+    req = _one("SELECT ticket_id FROM mnt_requests WHERE id=?", (rid,))
+    if not req:
+        abort(404)
+    items, err = _parse_part_lines(request.form)
+    ok, msg = (False, err) if err else svc.resubmit_request(
+        rid, items, request.form.get("reason"), _u(), request.remote_addr)
+    flash("m_request_resubmitted" if ok else msg, "success" if ok else "error")
+    return redirect(url_for("maintenance.ticket_detail", tid=req["ticket_id"]))
+
+
+@bp.route("/tickets/<int:tid>/return-parts", methods=["POST"])
+@login_required
+def ticket_return_parts(tid):
+    _require("maint_store")
+    ok, msg = svc.return_parts(tid, request.form.get("spare_id"), request.form.get("qty"),
+                               request.form.get("reason"), _u(), request.remote_addr)
+    flash("m_parts_returned" if ok else msg, "success" if ok else "error")
+    return redirect(url_for("maintenance.ticket_detail", tid=tid))
+
+
 @bp.route("/tickets/<int:tid>/request-parts", methods=["POST"])
 @login_required
 def ticket_request_parts(tid):
@@ -557,18 +609,12 @@ def ticket_request_parts(tid):
         flash("m_need_diagnosis", "error")
         return redirect(url_for("maintenance.ticket_detail", tid=tid))
     f = request.form
-    try:
-        spare_id = int(f.get("spare_id"))
-        qty = float(f.get("qty") or 0)
-    except (TypeError, ValueError):
-        flash("m_invalid_qty", "error")
-        return redirect(url_for("maintenance.ticket_detail", tid=tid))
-    if qty <= 0:
-        flash("m_invalid_qty", "error")
-        return redirect(url_for("maintenance.ticket_detail", tid=tid))
-    svc.create_request(tid, [{"spare_id": spare_id, "qty": qty, "notes": f.get("notes")}],
-                       f.get("reason"), f.get("urgency"), _u(), request.remote_addr)
-    flash("m_request_created", "success")
+    items, err = _parse_part_lines(f)
+    if err:
+        flash(err, "error")
+    else:
+        rid, err = svc.create_request(tid, items, f.get("reason"), f.get("urgency"), _u(), request.remote_addr)
+        flash(err or "m_request_created", "error" if err else "success")
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
 
 
@@ -591,11 +637,12 @@ def ticket_repair(tid):
 @bp.route("/tickets/<int:tid>/test", methods=["POST"])
 @login_required
 def ticket_test(tid):
-    _require("maint_view")  # supervisor/manager confirm
+    if not _can_test():
+        abort(403)
     f = request.form
-    svc.record_test(tid, {"test_result": f.get("test_result"), "safety_check": f.get("safety_check"),
-                          "machine_running": f.get("machine_running")}, _u(), request.remote_addr)
-    flash("m_saved", "success")
+    ok, msg = svc.record_test(tid, {"test_result": f.get("test_result"), "safety_check": f.get("safety_check"),
+                          "machine_running": f.get("machine_running"), "reason": f.get("test_reason")}, _u(), request.remote_addr)
+    flash("m_saved" if ok else msg, "success" if ok else "error")
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
 
 
@@ -1093,15 +1140,23 @@ def spares():
         else:
             conn = _db()
             try:
-                conn.execute(
+                cur = conn.execute(
                     """INSERT INTO mnt_spare_parts (code,name,category,uom,stock_qty,min_level,
                        reorder_level,max_level,avg_cost,criticality,warehouse,bin,qr_token,created_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))""",
                     (code, f.get("name"), f.get("category", "other"), f.get("uom", "pcs"),
-                     float(f.get("stock_qty") or 0), float(f.get("min_level") or 0),
+                     0, float(f.get("min_level") or 0),
                      float(f.get("reorder_level") or 0), float(f.get("max_level") or 0),
                      float(f.get("avg_cost") or 0), f.get("criticality", "medium"),
                      f.get("warehouse"), f.get("bin"), "PQR" + code.replace("-", "")))
+                qty = float(f.get("stock_qty") or 0)
+                if qty > 0:
+                    ok, msg = svc._move_stock(conn, cur.lastrowid, 'opening', qty, _u(), notes='Opening balance')
+                    if not ok:
+                        conn.rollback()
+                        flash(msg, "error")
+                        return redirect(url_for("maintenance.spares"))
+                svc.audit(conn, _u(), 'spare_create', 'spare', cur.lastrowid, None, code)
                 conn.commit()
                 flash("m_saved", "success")
             finally:
@@ -1244,7 +1299,7 @@ def approvals():
             """SELECT a.*, r.request_no, r.ticket_id, t.machine_code
                FROM mnt_approvals a JOIN mnt_requests r ON r.id=a.request_id
                LEFT JOIN mnt_tickets t ON t.id=r.ticket_id
-               WHERE a.status='pending' ORDER BY a.id""").fetchall()
+               WHERE a.status='pending' AND r.status NOT IN ('rejected','returned','cancelled') ORDER BY a.id""").fetchall()
         items = {}
         for a in rows:
             items[a["request_id"]] = conn.execute(

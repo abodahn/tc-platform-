@@ -4305,5 +4305,19 @@
   "wh.movement.transfer": "Transfer",
   "wh.movement.bin_move": "Bin move",
   "wh.movement.fg_pack": "Pack in",
-  "wh.movement.fg_ship": "Ship out"
+  "wh.movement.fg_ship": "Ship out",
+  "m.test_reason": "Reason (required if the test fails)",
+  "m.more_parts": "More parts",
+  "m.request_more_parts": "Request more parts",
+  "m.return_parts": "Return parts to store",
+  "m.resubmit_request": "Resubmit request",
+  "m_request_resubmitted": "Request resubmitted",
+  "m_parts_returned": "Parts returned to store",
+  "mywork.maint_to_issue": "Spare parts ready to issue",
+  "request_closed": "This request is closed",
+  "not_returned": "Only returned requests can be resubmitted",
+  "no_items": "Select at least one part",
+  "bad_qty": "Enter a valid positive quantity",
+  "exceeds_issued": "Quantity exceeds the parts issued",
+  "ticket_closed": "The ticket is closed"
 }

@@ -296,7 +296,7 @@ def _reserve(conn, spare_id, qty):
 
 
 def _move_stock(conn, spare_id, mtype, qty, user, ticket_id=None, request_id=None,
-                machine_id=None, notes=None, approved_by=None):
+                machine_id=None, notes=None, approved_by=None, unit_cost=None):
     """Apply a signed stock delta and record a movement. Returns (ok, msg)."""
     sp = conn.execute("SELECT stock_qty FROM mnt_spare_parts WHERE id=?", (spare_id,)).fetchone()
     if not sp:
@@ -311,10 +311,10 @@ def _move_stock(conn, spare_id, mtype, qty, user, ticket_id=None, request_id=Non
     # seed's id-based numbers (violating the UNIQUE constraint).
     cur = conn.execute(
         """INSERT INTO mnt_stock_movements (type,spare_id,qty,before_qty,
-           after_qty,ticket_id,request_id,machine_id,performed_by,approved_by,notes,created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+           after_qty,ticket_id,request_id,machine_id,performed_by,approved_by,notes,created_at,unit_cost)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (mtype, spare_id, qty, before, after, ticket_id, request_id,
-         machine_id, user.get("username") if user else "system", approved_by, notes, _now()))
+         machine_id, user.get("username") if user else "system", approved_by, notes, _now(), unit_cost))
     conn.execute("UPDATE mnt_stock_movements SET movement_no=? WHERE id=?",
                  (doc_no("STK", cur.lastrowid), cur.lastrowid))
     return True, ""
@@ -514,6 +514,61 @@ def _pick_matrix_levels(conn, items):
     return wf.approver_roles(conn, rule_key, rule)
 
 
+def _route_request(conn, rid, ticket_id, items, user, ip=None, any_out=None):
+    if any_out is None:
+        any_out = any(it["qty_requested"] > available_qty(conn, it["spare_id"])
+                  for it in conn.execute("SELECT spare_id,qty_requested FROM mnt_request_items WHERE request_id=?",
+                                         (rid,)).fetchall())
+    if any_out:
+        conn.execute("UPDATE mnt_requests SET status='out_of_stock' WHERE id=?", (rid,))
+        set_ticket_status(conn, ticket_id, "waiting_stock", user, ip, force=True)
+        notify(conn, "storekeeper", "Out-of-stock spare request",
+               f"{doc_no('SPR', rid)} needs parts not in stock", "request", rid,
+               "warning", f"/maintenance/requests")
+        notify(conn, "maintenance_manager", "Out-of-stock spare request",
+               f"{doc_no('SPR', rid)} requires purchase", "request", rid, "warning")
+    else:
+        # generate approval steps
+        roles = _pick_matrix_levels(conn, items)
+        for i, role in enumerate(roles, start=1):
+            conn.execute(
+                "INSERT INTO mnt_approvals (request_id,level,approver_role,status,created_at) "
+                "VALUES (?,?,?,?,?)", (rid, i, role, "pending", _now()))
+        conn.execute("UPDATE mnt_requests SET status='waiting_approval' WHERE id=?", (rid,))
+        set_ticket_status(conn, ticket_id, "waiting_approval", user, ip, force=True)
+        first_role = roles[0] if roles else "maintenance_manager"
+        people = [name for name in _role_usernames(conn, first_role)
+                  if name != user.get("username")]
+        notify(conn, first_role, "Spare request awaiting approval",
+               f"{doc_no('SPR', rid)} needs your approval", "request", rid,
+               "info" if people else "warning", "/maintenance/approvals",
+               exclude=user.get("username"))
+        _notify_people(conn, people, "Spare request awaiting approval",
+                       "%s needs your approval", "/maintenance/approvals",
+                       args=(doc_no('SPR', rid),), actor=user)
+    return any_out
+
+
+def _insert_request_items(conn, rid, items):
+    any_out = False
+    for it in items:
+        sp = conn.execute("SELECT code,name,uom,stock_qty FROM mnt_spare_parts WHERE id=?",
+                         (it["spare_id"],)).fetchone()
+        if not sp:
+            continue
+        # Available = physical stock minus parts already committed to other
+        # approved requests, so two requests can't both claim the last one.
+        avail = available_qty(conn, it["spare_id"])
+        if it["qty"] > avail:
+            any_out = True
+        conn.execute(
+            """INSERT INTO mnt_request_items (request_id,spare_id,part_code,part_name,
+               qty_requested,uom,available_at_request,notes) VALUES (?,?,?,?,?,?,?,?)""",
+            (rid, it["spare_id"], sp["code"], sp["name"], it["qty"], sp["uom"],
+             avail, it.get("notes")))
+    return any_out
+
+
 def create_request(ticket_id, items, reason, urgency, user, ip=None):
     """items: list of dicts {spare_id, qty, notes}."""
     if not items:
@@ -533,56 +588,193 @@ def create_request(ticket_id, items, reason, urgency, user, ip=None):
         rid = cur.lastrowid
         conn.execute("UPDATE mnt_requests SET request_no=? WHERE id=?", (doc_no("SPR", rid), rid))
 
-        any_out = False
-        for it in items:
-            sp = conn.execute("SELECT code,name,uom,stock_qty FROM mnt_spare_parts WHERE id=?",
-                             (it["spare_id"],)).fetchone()
-            if not sp:
-                continue
-            # Available = physical stock minus parts already committed to other
-            # approved requests, so two requests can't both claim the last one.
-            avail = available_qty(conn, it["spare_id"])
-            if it["qty"] > avail:
-                any_out = True
-            conn.execute(
-                """INSERT INTO mnt_request_items (request_id,spare_id,part_code,part_name,
-                   qty_requested,uom,available_at_request,notes) VALUES (?,?,?,?,?,?,?,?)""",
-                (rid, it["spare_id"], sp["code"], sp["name"], it["qty"], sp["uom"],
-                 avail, it.get("notes")))
+        any_out = _insert_request_items(conn, rid, items)
 
         conn.execute("UPDATE mnt_tickets SET parts_req_at=? WHERE id=?", (_now(), ticket_id))
 
-        if any_out:
-            conn.execute("UPDATE mnt_requests SET status='out_of_stock' WHERE id=?", (rid,))
-            set_ticket_status(conn, ticket_id, "waiting_stock", user, ip, force=True)
-            notify(conn, "storekeeper", "Out-of-stock spare request",
-                   f"{doc_no('SPR', rid)} needs parts not in stock", "request", rid,
-                   "warning", f"/maintenance/requests")
-            notify(conn, "maintenance_manager", "Out-of-stock spare request",
-                   f"{doc_no('SPR', rid)} requires purchase", "request", rid, "warning")
-        else:
-            # generate approval steps
-            roles = _pick_matrix_levels(conn, items)
-            for i, role in enumerate(roles, start=1):
-                conn.execute(
-                    "INSERT INTO mnt_approvals (request_id,level,approver_role,status,created_at) "
-                    "VALUES (?,?,?,?,?)", (rid, i, role, "pending", _now()))
-            conn.execute("UPDATE mnt_requests SET status='waiting_approval' WHERE id=?", (rid,))
-            set_ticket_status(conn, ticket_id, "waiting_approval", user, ip, force=True)
-            first_role = roles[0] if roles else "maintenance_manager"
-            people = [name for name in _role_usernames(conn, first_role)
-                      if name != user.get("username")]
-            notify(conn, first_role, "Spare request awaiting approval",
-                   f"{doc_no('SPR', rid)} needs your approval", "request", rid,
-                   "info" if people else "warning", "/maintenance/approvals",
-                   exclude=user.get("username"))
-            _notify_people(conn, people, "Spare request awaiting approval",
-                           "%s needs your approval", "/maintenance/approvals",
-                           args=(doc_no('SPR', rid),), actor=user)
+        any_out = _route_request(conn, rid, ticket_id, items, user, ip, any_out=any_out)
         audit(conn, user, "request_create", "request", rid, None, doc_no("SPR", rid), ip=ip)
         conn.commit()
         _flush_notes(conn)
+        if any_out:
+            try:
+                from app.maintenance.procure_bridge import raise_for_request
+                raise_for_request(rid)
+            except Exception:
+                pass
         return rid, ""
+    finally:
+        conn.close()
+
+
+def _reserve_request(conn, rid):
+    """Reserve every line atomically, releasing this batch if any line is short."""
+    reserved = []
+    for it in conn.execute("SELECT spare_id,qty_approved FROM mnt_request_items "
+                           "WHERE request_id=? AND spare_id IS NOT NULL", (rid,)).fetchall():
+        need = it["qty_approved"] or 0
+        if need <= 0:
+            continue
+        cur = conn.execute(
+            "UPDATE mnt_spare_parts SET reserved_qty=COALESCE(reserved_qty,0)+? "
+            "WHERE id=? AND (COALESCE(stock_qty,0)-COALESCE(reserved_qty,0))>=?",
+            (need, it["spare_id"], need))
+        if cur.rowcount != 1:
+            for sid, qty in reserved:
+                _reserve(conn, sid, -qty)
+            return False
+        reserved.append((it["spare_id"], need))
+    return True
+
+
+def resubmit_request(request_id, items, reason, user, ip=None):
+    conn = get_db()
+    try:
+        if not items:
+            return False, "no_items"
+        req = conn.execute("SELECT r.ticket_id, t.status ticket_status FROM mnt_requests r "
+                           "LEFT JOIN mnt_tickets t ON t.id=r.ticket_id WHERE r.id=?",
+                           (request_id,)).fetchone()
+        if req and req["ticket_status"] in ("closed", "cancelled", "rejected"):
+            return False, "ticket_closed"
+        # Claim first: a double-submitted form must not rebuild the ladder twice.
+        if not req or conn.execute("UPDATE mnt_requests SET reason=?,status='submitted' "
+                                   "WHERE id=? AND status='returned'",
+                                   (reason, request_id)).rowcount != 1:
+            conn.rollback()
+            return False, "not_returned"
+        conn.execute("DELETE FROM mnt_request_items WHERE request_id=?", (request_id,))
+        any_out = _insert_request_items(conn, request_id, items)
+        conn.execute("UPDATE mnt_approvals SET status='cancelled' WHERE request_id=? "
+                     "AND status IN ('pending','returned')", (request_id,))
+        any_out = _route_request(conn, request_id, req["ticket_id"], items, user, ip, any_out=any_out)
+        audit(conn, user, "request_resubmit", "request", request_id, comment=reason, ip=ip)
+        conn.commit()
+        _flush_notes(conn)
+        if any_out:
+            try:
+                from app.maintenance.procure_bridge import raise_for_request
+                raise_for_request(request_id)
+            except Exception:
+                pass
+        return True, ""
+    finally:
+        conn.close()
+
+
+def _resume_waiting_requests(spare_id, user):
+    """Resume eligible requests after stock commits; failures never undo the receipt."""
+    try:
+        conn = get_db()
+        try:
+            requests = conn.execute(
+                "SELECT r.*,t.assigned_to FROM mnt_requests r JOIN mnt_tickets t ON t.id=r.ticket_id "
+                "WHERE r.status='out_of_stock' AND t.status IN ('waiting_stock','spare_required') "
+                "AND EXISTS (SELECT 1 FROM mnt_request_items i WHERE i.request_id=r.id AND i.spare_id=?) "
+                "ORDER BY r.created_at,r.id", (spare_id,)).fetchall()
+            still_short = []
+            for req in requests:
+                rid, tid = req["id"], req["ticket_id"]
+                lines = conn.execute("SELECT spare_id,qty_requested,qty_approved FROM mnt_request_items "
+                                     "WHERE request_id=?", (rid,)).fetchall()
+                items = [dict(spare_id=i["spare_id"], qty=i["qty_requested"]) for i in lines]
+                # qty_approved is only written by the FINAL approval, so it tells a request
+                # that went short at sign-off (reserve now) from one short at creation or
+                # resubmission (still needs its ladder; old rungs of a resubmit don't count).
+                if lines and all((i["qty_approved"] or 0) > 0 for i in lines):
+                    if not _reserve_request(conn, rid):
+                        still_short.append(rid)
+                        continue
+                    cur = conn.execute("UPDATE mnt_requests SET status='approved',decided_at=? "
+                                       "WHERE id=? AND status='out_of_stock'", (_now(), rid))
+                    if cur.rowcount != 1:
+                        for i in conn.execute("SELECT spare_id,qty_approved FROM mnt_request_items WHERE request_id=?", (rid,)).fetchall():
+                            _reserve(conn, i["spare_id"], -(i["qty_approved"] or 0))
+                        continue
+                    set_ticket_status(conn, tid, "approved_issue", user, force=True)
+                    notify(conn, "storekeeper", "Spare request approved - ready to issue",
+                           f"{req['request_no']} approved", "request", rid, "warning", "/maintenance/requests")
+                    _notify_people(conn, _requester_usernames(conn, tid) + _usernames_for(conn, [req["assigned_to"]]),
+                                   "Spare request resumed", "%s: stock arrived, the request is back in the flow",
+                                   f"/maintenance/tickets/{tid}", args=(req["request_no"],))
+                elif items and not conn.execute(
+                        "SELECT 1 FROM mnt_approvals WHERE request_id=? AND status='pending'",
+                        (rid,)).fetchone() and all(i["qty"] <= available_qty(conn, i["spare_id"]) for i in items):
+                    cur = conn.execute("UPDATE mnt_requests SET status='submitted' WHERE id=? AND status='out_of_stock'", (rid,))
+                    if cur.rowcount != 1:
+                        continue
+                    _route_request(conn, rid, tid, items, user, None)
+                else:
+                    still_short.append(rid)
+                    continue
+                audit(conn, user, "request_resumed", "request", rid)
+            conn.commit()
+            _flush_notes(conn)
+            # A receipt that did not cover the request (e.g. the linked PR was smaller
+            # than the need) must not leave it with nothing on order.
+            from app.maintenance.procure_bridge import raise_for_request
+            for rid in still_short:
+                raise_for_request(rid)
+        except Exception:
+            _PENDING_NOTES.pop(conn, None)
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    except Exception:
+        log.warning("request resume failed for spare %s", spare_id, exc_info=True)
+
+
+def return_parts(ticket_id, spare_id, qty, reason, user, ip=None):
+    if not (reason or "").strip():
+        return False, "reason_required"
+    try:
+        qty = float(qty)
+    except (TypeError, ValueError):
+        return False, "bad_qty"
+    if not 0 < qty < float("inf"):
+        return False, "bad_qty"
+    if (ticket_id := _as_ticket_id(ticket_id)) is None or (spare_id := _as_ticket_id(spare_id)) is None:
+        return False, "not_found"
+    conn = get_db()
+    try:
+        # No-op write locks the ticket row, so two returns can't both pass the
+        # issued-quantity check below (SQLite takes its write lock here too).
+        conn.execute("UPDATE mnt_tickets SET cost=cost WHERE id=?", (ticket_id,))
+        t = conn.execute("SELECT * FROM mnt_tickets WHERE id=?", (ticket_id,)).fetchone()
+        if not t or t["status"] in ('closed','cancelled','rejected'):
+            conn.rollback()
+            return False, "ticket_closed"
+        issued = conn.execute("SELECT -COALESCE(SUM(qty),0) n FROM mnt_stock_movements "
+                              "WHERE ticket_id=? AND spare_id=? AND type IN ('issue','return')",
+                              (ticket_id, spare_id)).fetchone()["n"]
+        if qty > issued:
+            conn.rollback()
+            return False, "exceeds_issued"
+        sp = conn.execute("SELECT stock_qty,avg_cost FROM mnt_spare_parts WHERE id=?", (spare_id,)).fetchone()
+        cost_row = conn.execute("SELECT -SUM(qty*COALESCE(unit_cost,?)) value,-SUM(qty) qty "
+                                # net of earlier returns: what is still out, at what it cost
+                                "FROM mnt_stock_movements WHERE ticket_id=? AND spare_id=? "
+                                "AND type IN ('issue','return')",
+                                (sp["avg_cost"] or 0, ticket_id, spare_id)).fetchone()
+        cost = cost_row["value"] / cost_row["qty"] if cost_row["qty"] else (sp["avg_cost"] or 0)
+        comment = f"Returned from {t['ticket_no']}: {reason}"
+        ok, msg = _move_stock(conn, spare_id, 'return', qty, user, ticket_id=ticket_id,
+                              machine_id=t["machine_id"], notes=comment, unit_cost=cost)
+        if not ok:
+            conn.rollback()
+            return ok, msg
+        before = sp["stock_qty"] or 0
+        avg = (before * (sp["avg_cost"] or 0) + qty * cost) / (before + qty)
+        conn.execute("UPDATE mnt_spare_parts SET avg_cost=? WHERE id=?", (round(avg, 4), spare_id))
+        value = round(qty * cost, 2)
+        conn.execute("UPDATE mnt_tickets SET cost=CASE WHEN COALESCE(cost,0)-? < 0 THEN 0 "
+                     "ELSE COALESCE(cost,0)-? END WHERE id=?", (value, value, ticket_id))
+        audit(conn, user, 'parts_return', 'ticket', ticket_id, comment=comment, ip=ip)
+        audit(conn, user, 'stock_return', 'spare', spare_id, None, qty, comment=comment, ip=ip)
+        conn.commit()
+        _resume_waiting_requests(spare_id, user)
+        return True, ""
     finally:
         conn.close()
 
@@ -593,6 +785,12 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
         ap = conn.execute("SELECT * FROM mnt_approvals WHERE id=?", (approval_id,)).fetchone()
         if not ap:
             return False, "not_found"
+        rid = ap["request_id"]
+        req = conn.execute("SELECT status FROM mnt_requests WHERE id=?", (rid,)).fetchone()
+        if (req and req["status"] in ('rejected', 'returned', 'cancelled')) or conn.execute(
+                "SELECT 1 FROM mnt_approvals WHERE request_id=? AND status IN ('rejected','returned')",
+                (rid,)).fetchone():
+            return False, "request_closed"
         # Idempotency: a decided row can never be decided again. Re-approving an
         # already-approved request used to re-run the reservation loop and
         # inflate reserved_qty (double-click / refresh-repost = broken stock).
@@ -605,7 +803,6 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
         if not is_admin and ap["approver_role"] and \
                 (user or {}).get("role") != ap["approver_role"]:
             return False, "wrong_role"
-        rid = ap["request_id"]
         # Rungs sign in order: level 2 can't sign while level 1 is still pending.
         if conn.execute("SELECT 1 FROM mnt_approvals WHERE request_id=? AND status='pending' "
                         "AND level < ?", (rid, ap["level"] or 1)).fetchone():
@@ -616,6 +813,7 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             conn.execute("UPDATE mnt_approvals SET status='rejected',comment=?,decided_at=?,"
                          "approver_user=? WHERE id=?",
                          (comment, _now(), user.get("username"), approval_id))
+            conn.execute("UPDATE mnt_approvals SET status='cancelled' WHERE request_id=? AND status='pending'", (rid,))
             conn.execute("UPDATE mnt_requests SET status='rejected',decided_at=? WHERE id=?",
                          (_now(), rid))
             req = conn.execute("SELECT ticket_id FROM mnt_requests WHERE id=?", (rid,)).fetchone()
@@ -654,6 +852,7 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             _flush_notes(conn)
             return True, ""
 
+        any_out = False
         # approve
         conn.execute("UPDATE mnt_approvals SET status='approved',comment=?,decided_at=?,"
                      "approver_user=? WHERE id=?",
@@ -664,39 +863,10 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             # fully approved -> set approved qty = requested, ready for storekeeper to issue
             conn.execute("UPDATE mnt_request_items SET qty_approved=qty_requested WHERE request_id=?",
                          (rid,))
-            # Availability may have MOVED since the request was written (another
-            # request issued meanwhile). Re-check before reserving: blindly
-            # reserving beyond what exists poisons available_qty for everyone
-            # and triggers phantom auto-reorder PRs.
-            req_items = conn.execute("SELECT spare_id, qty_approved FROM mnt_request_items "
-                                     "WHERE request_id=? AND spare_id IS NOT NULL", (rid,)).fetchall()
             req = conn.execute("SELECT ticket_id FROM mnt_requests WHERE id=?", (rid,)).fetchone()
-            # Reserve ATOMICALLY: one conditional UPDATE per line reserves only if the
-            # part is still available right now (stock - reserved >= need). This closes
-            # the check-then-act race where two approvals both read available>0 and each
-            # reserve the same physical unit (over-allocation). The single statement
-            # re-evaluates reserved_qty under its own lock, so it is safe on SQLite AND
-            # Postgres (the previous read-then-_reserve was only safe under SQLite's
-            # table lock). Any line that can't be fully reserved rolls the batch back to
-            # out-of-stock — same outcome as before, just race-free.
-            reserved_done = []
-            short = False
-            for it in req_items:
-                need = it["qty_approved"] or 0
-                if need <= 0:
-                    continue
-                cur = conn.execute(
-                    "UPDATE mnt_spare_parts SET reserved_qty=COALESCE(reserved_qty,0)+? "
-                    "WHERE id=? AND (COALESCE(stock_qty,0)-COALESCE(reserved_qty,0))>=?",
-                    (need, it["spare_id"], need))
-                if (cur.rowcount or 0) >= 1:
-                    reserved_done.append((it["spare_id"], need))
-                else:
-                    short = True
-                    break
+            short = not _reserve_request(conn, rid)
             if short:
-                for sid, q in reserved_done:      # release anything reserved this pass
-                    _reserve(conn, sid, -q)
+                any_out = True
                 conn.execute("UPDATE mnt_requests SET status='out_of_stock',decided_at=? WHERE id=?",
                              (_now(), rid))
                 if req:
@@ -730,6 +900,12 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
         audit(conn, user, "approval_approve", "request", rid, None, "approved", comment=comment, ip=ip)
         conn.commit()
         _flush_notes(conn)
+        if any_out:
+            try:
+                from app.maintenance.procure_bridge import raise_for_request
+                raise_for_request(rid)
+            except Exception:
+                pass
         return True, ""
     finally:
         conn.close()
@@ -743,7 +919,10 @@ def issue_parts(request_id, received_by, user, ip=None):
         req = conn.execute("SELECT * FROM mnt_requests WHERE id=?", (request_id,)).fetchone()
         if not req:
             return False, "not_found"
-        if req["status"] != "approved":
+        cur = conn.execute("UPDATE mnt_requests SET status='issued',decided_at=? "
+                           "WHERE id=? AND status='approved'", (_now(), request_id))
+        if cur.rowcount != 1:
+            conn.rollback()
             return False, "not_approved"
         items = conn.execute("SELECT * FROM mnt_request_items WHERE request_id=?",
                             (request_id,)).fetchall()
@@ -753,10 +932,12 @@ def issue_parts(request_id, received_by, user, ip=None):
         for it in items:
             qty = it["qty_approved"] or it["qty_requested"]
             if qty <= 0:
+                conn.rollback()
                 return False, "invalid_qty"
             sp = conn.execute("SELECT stock_qty FROM mnt_spare_parts WHERE id=?",
                              (it["spare_id"],)).fetchone()
             if not sp or (sp["stock_qty"] or 0) < qty:
+                conn.rollback()
                 return False, "insufficient_stock"
         # apply
         parts_cost = 0.0
@@ -768,7 +949,7 @@ def issue_parts(request_id, received_by, user, ip=None):
                                   ticket_id=req["ticket_id"], request_id=request_id,
                                   machine_id=req["machine_id"],
                                   notes=f"Issued for {req['request_no']}",
-                                  approved_by=user.get("username"))
+                                  approved_by=user.get("username"), unit_cost=(sp["avg_cost"] or 0))
             if not ok:
                 conn.rollback()
                 return False, msg
@@ -784,8 +965,6 @@ def issue_parts(request_id, received_by, user, ip=None):
                  received_by, ticket["machine_code"] if ticket else None, _now()))
             conn.execute("UPDATE mnt_vouchers SET voucher_no=? WHERE id=?",
                          (doc_no("ISS", vc.lastrowid), vc.lastrowid))
-        conn.execute("UPDATE mnt_requests SET status='issued',decided_at=? WHERE id=?",
-                     (_now(), request_id))
         # Roll the value of the issued parts into the ticket cost. close_ticket
         # then rolls the ticket cost into the machine's cost_to_date, so spare
         # spend actually flows into maintenance cost reporting.
@@ -887,18 +1066,35 @@ def repair_proof(ticket_id, d, user, ip=None):
 def record_test(ticket_id, d, user, ip=None):
     if (ticket_id := _as_ticket_id(ticket_id)) is None:
         return False, "bad_ticket_id"
+    failed = ((d.get("test_result") or "").strip().lower() in ('fail', 'failed') or
+              (d.get("safety_check") or "").strip().lower() in ('not ok', 'fail', 'failed'))
+    reason = (d.get("reason") or "").strip()
+    if failed and not reason:
+        return False, "reason_required"
     conn = get_db()
     try:
         conn.execute("UPDATE mnt_tickets SET test_result=?, safety_check=?, machine_running=? WHERE id=?",
-                     (d.get("test_result"), d.get("safety_check"),
-                      d.get("machine_running"), ticket_id))
-        set_ticket_status(conn, ticket_id, "resolved", user, ip, force=True)
-        audit(conn, user, "test_record", "ticket", ticket_id, None, "resolved", ip=ip)
-        notify(conn, "maintenance_manager", "Ticket resolved - awaiting closure",
-               f"{doc_no('MNT', ticket_id)} resolved", "ticket", ticket_id, "info",
-               f"/maintenance/tickets/{ticket_id}")
+                     (d.get("test_result"), d.get("safety_check"), d.get("machine_running"), ticket_id))
+        ok, msg = set_ticket_status(conn, ticket_id, "repair" if failed else "resolved",
+                                    user, ip, force=not failed)
+        if not ok:
+            conn.rollback()
+            return ok, msg
+        link = f"/maintenance/tickets/{ticket_id}"
+        if failed:
+            ticket = conn.execute("SELECT ticket_no,assigned_to FROM mnt_tickets WHERE id=?", (ticket_id,)).fetchone()
+            audit(conn, user, "test_failed", "ticket", ticket_id, comment=reason, ip=ip)
+            notify(conn, "maintenance_technician", "Repair test failed",
+                   f"{ticket['ticket_no']} failed its test: {reason}", "ticket", ticket_id, "warning", link)
+            _notify_people(conn, _usernames_for(conn, [ticket["assigned_to"]]), "Repair test failed",
+                           "%s failed its test: %s", link, args=(ticket["ticket_no"], reason), actor=user)
+        else:
+            audit(conn, user, "test_record", "ticket", ticket_id, None, "resolved", ip=ip)
+            notify(conn, "maintenance_manager", "Ticket resolved - awaiting closure",
+                   f"{doc_no('MNT', ticket_id)} resolved", "ticket", ticket_id, "info", link)
         conn.commit()
-        return True, ""
+        _flush_notes(conn)
+        return ok, msg
     finally:
         conn.close()
 
@@ -1227,8 +1423,7 @@ def save_attachments(files, entity_type, entity_id, kind, user, limit=5):
 def _notify_spare_arrived(spare_id, qty, skip_ticket=None):
     """Stock arrived for a spare: tell whoever is waiting on it. Never raises.
 
-    Notify only: waiting_stock->waiting_approval needs the approval rows that only
-    create_request builds, so moving the ticket here would strand it."""
+    Requests that could resume have already left out_of_stock before this runs."""
     try:
         conn = get_db()
         try:
@@ -1305,6 +1500,7 @@ def receive_stock(spare_id, qty, price, user, ip=None, skip_ticket=None):
                          (price, round(new_avg, 4), spare_id))
         audit(conn, user, "stock_receive", "spare", spare_id, None, qty, ip=ip)
         conn.commit()
+        _resume_waiting_requests(spare_id, user)
         _notify_spare_arrived(spare_id, qty, skip_ticket=skip_ticket)
         return True, ""
     finally:

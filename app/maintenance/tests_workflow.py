@@ -21,7 +21,7 @@ from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp(prefix="wf_"))
 os.chdir(TMP)
-sys.path.insert(0, r"D:\TC platform\tc-platform-render")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 os.environ["TC_ENV"] = "development"
 os.environ.pop("DATABASE_URL", None)
 os.environ["TC_HEALTH_TIMEOUT"] = "1"
@@ -431,6 +431,119 @@ with app.app_context():
         wf.reset_setting(c, "resolution_sla_hours", ADMIN)
     finally:
         c.close()
+
+# Transaction and recovery regressions.
+with app.app_context():
+    def row(sql, *args):
+        c = db()
+        try:
+            return c.execute(sql, args).fetchone()
+        finally:
+            c.close()
+
+    def rungs(rid):
+        c = db()
+        try:
+            return c.execute("SELECT * FROM mnt_approvals WHERE request_id=? AND status='pending' ORDER BY level,id", (rid,)).fetchall()
+        finally:
+            c.close()
+
+    def approve(rid):
+        for rung in rungs(rid):
+            ck("request rung approved", svc.decide_approval(rung["id"], "approve", "Checked", ADMIN)[0])
+
+    tid, _ = new_ticket("Workflow regression")
+    sp1, sp2 = spare("SP-001"), spare("SP-006")
+    svc.receive_stock(sp1["id"], 10, 2, STORE)
+    svc.receive_stock(sp2["id"], 10, 100, STORE)
+    items = [{"spare_id": sp1["id"], "qty": 2}, {"spare_id": sp2["id"], "qty": 1}]
+    rid, err = svc.create_request(tid, items, "Repair parts", "normal", MGR)
+    ck("multi-line request has two lines", not err and row("SELECT COUNT(*) n FROM mnt_request_items WHERE request_id=?", rid)["n"] == 2)
+    ladder = rungs(rid)
+    ck("first rung rejects", svc.decide_approval(ladder[0]["id"], "reject", "Wrong parts", ADMIN)[0])
+    ck("later rung refuses closed request", svc.decide_approval(ladder[1]["id"], "approve", "Checked", ADMIN) == (False, "request_closed"))
+
+    rid, _ = svc.create_request(tid, items, "Repair parts", "normal", MGR)
+    old = rungs(rid)
+    svc.decide_approval(old[0]["id"], "approve", "Checked", ADMIN)
+    svc.decide_approval(old[1]["id"], "return", "Clarify quantity", ADMIN)
+    ck("returned request resubmits", svc.resubmit_request(rid, items, "Quantity checked", MGR)[0])
+    ck("resubmit builds fresh pending ladder", len(rungs(rid)) == len(old) and all(r["id"] > old[-1]["id"] for r in rungs(rid)))
+    ck("approved rung stays as history", row("SELECT status FROM mnt_approvals WHERE id=?", old[0]["id"])["status"] == "approved")
+    approve(rid)
+    before = spare("SP-001")["stock_qty"]
+    ck("issue approved request", svc.issue_parts(rid, "technician", STORE)[0])
+    after = spare("SP-001")["stock_qty"]
+    ck("second issue refused", svc.issue_parts(rid, "technician", STORE) == (False, "not_approved"))
+    ck("stock moved once", after == before - 2 and spare("SP-001")["stock_qty"] == after)
+    cost = row("SELECT cost FROM mnt_tickets WHERE id=?", tid)["cost"]
+    ck("return credits stock", svc.return_parts(tid, sp1["id"], 1, "Unused part", STORE)[0] and spare("SP-001")["stock_qty"] == after + 1)
+    ck("return reduces ticket cost", row("SELECT cost FROM mnt_tickets WHERE id=?", tid)["cost"] < cost)
+    ck("return refuses more than issued", svc.return_parts(tid, sp1["id"], 2, "Unused part", STORE) == (False, "exceeds_issued"))
+    svc.repair_proof(tid, {"action_performed": "Replaced parts"}, MGR)
+    ck("failed test requires reason", svc.record_test(tid, {"test_result": " Fail "}, MGR) == (False, "reason_required"))
+    ck("failed test returns to repair", svc.record_test(tid, {"test_result": "Fail", "reason": "Still vibrating"}, MGR)[0] and row("SELECT status FROM mnt_tickets WHERE id=?", tid)["status"] == "repair")
+
+    short_tid, _ = new_ticket("Waiting request regression")
+    available = spare("SP-001")["stock_qty"] - (spare("SP-001")["reserved_qty"] or 0)
+    short_rid, _ = svc.create_request(short_tid, [{"spare_id": sp1["id"], "qty": available + 1}], "Needs stock", "normal", MGR)
+    ck("creation-short request has no rungs", not rungs(short_rid) and row("SELECT status FROM mnt_requests WHERE id=?", short_rid)["status"] == "out_of_stock")
+    svc.receive_stock(sp1["id"], 1, 2, STORE)
+    ck("creation-short receipt builds approval ladder", bool(rungs(short_rid)) and row("SELECT status FROM mnt_tickets WHERE id=?", short_tid)["status"] == "waiting_approval")
+    ck("short request raised or linked replenishment on its ticket",
+       row("SELECT COUNT(*) n FROM mnt_audit WHERE entity_type='ticket' AND entity_id=? "
+           "AND action IN ('replenishment_pr','replenishment_linked')", short_tid)["n"] >= 1)
+
+    # A RESUBMITTED request that comes back short keeps its old approved rung as
+    # history; the receipt must still send it up the ladder, never straight to issue.
+    rs_tid, _ = new_ticket("Resubmit short regression")
+    rs_rid, _ = svc.create_request(rs_tid, [{"spare_id": sp2["id"], "qty": 1}], "Needs part", "normal", MGR)
+    first = rungs(rs_rid)
+    svc.decide_approval(first[0]["id"], "approve", "Checked", ADMIN)
+    svc.decide_approval(first[1]["id"], "return", "More", ADMIN)
+    big = spare("SP-006")["stock_qty"] - (spare("SP-006")["reserved_qty"] or 0) + 1
+    ck("resubmit beyond stock goes out of stock",
+       svc.resubmit_request(rs_rid, [{"spare_id": sp2["id"], "qty": big}], "More", MGR)[0]
+       and row("SELECT status FROM mnt_requests WHERE id=?", rs_rid)["status"] == "out_of_stock")
+    ck("double resubmit refused", svc.resubmit_request(rs_rid, items, "again", MGR) == (False, "not_returned"))
+    svc.receive_stock(sp2["id"], big, 100, STORE)
+    ck("resumed resubmit waits for approval, not issue",
+       row("SELECT status FROM mnt_requests WHERE id=?", rs_rid)["status"] == "waiting_approval"
+       and len(rungs(rs_rid)) == len(first))
+
+with app.test_client() as cl:
+    with cl.session_transaction() as session:
+        session["uid"] = tech_id
+        session["ep"] = 0
+    response = cl.get("/maintenance/tickets/%s" % tid)
+    ck("repair page renders multi-part form", response.status_code == 200 and b'name="spare_id"' in response.data and b'm.request_more_parts' in response.data)
+
+# Test sign-off: only technician / manager / production supervisor may record it.
+with app.app_context():
+    c = db()
+    try:
+        for un, role in (("test_req", "maintenance_requester"), ("test_sup", "production_supervisor")):
+            c.execute("INSERT INTO users (username,full_name,role,password_hash,is_active) VALUES (?,?,?,'',1)",
+                      (un, un, role))
+        c.commit()
+    finally:
+        c.close()
+    svc.repair_proof(tid, {"action_performed": "Rebalanced"}, MGR)
+    signers = {un: uid_of(un) for un in ("test_req", "test_sup")}
+for un, code in (("test_req", 403), ("test_sup", 302)):
+    with app.test_client() as cl:
+        with cl.session_transaction() as s:
+            s["uid"] = signers[un]
+            s["ep"] = 0
+        cl.get("/maintenance/tickets/%s" % tid)
+        with cl.session_transaction() as s:
+            tok = s.get("_csrf_token")
+        r = cl.post("/maintenance/tickets/%s/test" % tid,
+                    data={"_csrf": tok, "test_result": "Pass", "safety_check": "OK"})
+        ck("%s POST test == %s" % (un, code), r.status_code == code, r.status_code)
+with app.app_context():
+    ck("supervisor sign-off resolved the ticket",
+       row("SELECT status FROM mnt_tickets WHERE id=?", tid)["status"] == "resolved")
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 if FAIL:

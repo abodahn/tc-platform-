@@ -182,7 +182,9 @@ def checks():
     execute("INSERT INTO users (username,full_name,role,password_hash,is_active) VALUES (?,?,?,'',1)",
             "test_assignee", "Test Assignee", "maintenance_technician")
     req = execute("INSERT INTO mnt_requests (ticket_id,status) VALUES (?,'out_of_stock')", tid)
-    execute("INSERT INTO mnt_request_items (request_id,spare_id,qty_requested) VALUES (?,?,2)", req, spare)
+    # 20 > what this receipt brings: the request stays short, so arrival keeps
+    # notifying (a request the receipt fully covers is resumed instead).
+    execute("INSERT INTO mnt_request_items (request_id,spare_id,qty_requested) VALUES (?,?,20)", req, spare)
     assert msvc.receive_stock(spare, 2, 10, store)[0]
     assert one("SELECT status FROM mnt_tickets WHERE id=?", tid)["status"] == "waiting_stock"
     assert one("SELECT COUNT(*) c FROM mnt_notifications WHERE entity_type='ticket' AND entity_id=? AND title='Spare part arrived'", tid)["c"] == 2

@@ -245,12 +245,9 @@ def checks():
 
     def arrival_notices(tid):
         assert one("SELECT COUNT(*) c FROM notifications WHERE target_user=? "
-                   "AND title='Spare part arrived' AND link=?", tech["username"],
+                   "AND title='Spare request resumed' AND link=?", tech["username"],
                    "/maintenance/tickets/%s" % tid)["c"] == 1, (
-                       "BUG: technician did not receive exactly one spare-arrival notice")
-        assert one("SELECT COUNT(*) c FROM mnt_notifications WHERE target_role='maintenance_manager' "
-                   "AND entity_type='ticket' AND entity_id=? AND title='Spare part arrived'", tid)["c"] == 1, (
-                       "BUG: manager inbox did not receive exactly one spare-arrival notice")
+                       "BUG: technician did not receive exactly one request-resumed notice")
 
     def issue(rid, tid):
         before = spare_state()
@@ -349,18 +346,12 @@ def checks():
     assert spare_state()["stock_qty"] == 1 + qty, "BUG: posting retries duplicated spare stock"
     arrival_notices(tid)
 
-    # Arrival is notification-only: create_request builds the new approval rows.
-    assert one("SELECT status FROM mnt_requests WHERE id=?", rid)["status"] == "out_of_stock", (
-        "BUG: arrival mutated the old out-of-stock request")
-    assert ticket_state(tid)["status"] == "waiting_stock", "BUG: arrival bypassed spare re-approval"
-    rid2, approvals2 = request_spare(tid)
-    sign_maint(approvals2[0], manager)
-    sign_maint(approvals2[1], factory)
-    assert one("SELECT status FROM mnt_requests WHERE id=?", rid2)["status"] == "approved", (
-        "BUG: re-raised spare request was not approved")
-    assert spare_state()["reserved_qty"] == 2, "BUG: approval did not reserve two parts"
-    issue(rid2, tid)
-    confirm_receiving(rid2, tid)
+    assert one("SELECT status FROM mnt_requests WHERE id=?", rid)["status"] == "approved", (
+        "BUG: arrival did not resume the approved short request")
+    assert ticket_state(tid)["status"] == "approved_issue", "BUG: resumed ticket is not ready for issue"
+    assert spare_state()["reserved_qty"] == 2, "BUG: resumed request did not reserve two parts"
+    issue(rid, tid)
+    confirm_receiving(rid, tid)
     repair(tid)
     test_machine(tid)
     # Backdate the ticket two hours so downtime is measurable (a test run closes within a minute).
