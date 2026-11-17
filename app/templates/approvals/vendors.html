@@ -57,7 +57,7 @@
           <th data-i18n="proc.terms">Terms</th>
           <th data-i18n="vsc.manual">Manual rating</th>
           <th data-i18n="vsc.title">Measured performance</th>
-          <th data-i18n="proc.rtv.dues">Outstanding dues</th>{% if can_manage %}<th></th>{% endif %}
+          {% if money_full %}<th data-i18n="proc.rtv.dues">Outstanding dues</th>{% endif %}{% if can_manage %}<th></th>{% endif %}
         </tr></thead>
         <tbody>
         {% for v in vendors %}
@@ -80,9 +80,9 @@
               {% endif %}
               {{ scorecard(s) }}
             </td>
-            <td>{% if v.dues %}<span style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(v.dues) }}</span>
+            {% if money_full %}<td>{% if v.dues %}<span style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(v.dues) }}</span>
                 <div class="muted" style="font-size:12px">{{ v.dues_count }} <span data-i18n="proc.rtv.open_dn">open debit note(s)</span></div>
-                {% else %}—{% endif %}</td>
+                {% else %}—{% endif %}</td>{% endif %}
             {% if can_manage %}<td>
               <details><summary style="cursor:pointer;font-weight:600" data-i18n="proc.vendor.edit">Edit vendor</summary>
                 <form method="post" action="{{ url_for('approvals.update_vendor', vendor_id=v.id) }}">

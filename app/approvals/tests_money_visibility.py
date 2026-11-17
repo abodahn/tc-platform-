@@ -4,6 +4,7 @@ Run: python -m app.approvals.tests_money_visibility
 """
 import io
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -205,6 +206,58 @@ def run():
                 row = next(row for row in ws.iter_rows(min_row=2, values_only=True) if row[0] == pr_no)
                 chk(name + " Excel total visibility", row[7] == (4321 if level else None))
                 chk(name + " Excel payment visibility", (row[14] is not None) == (level == "full"))
+
+        # A committed request makes department spend equal its otherwise hidden total.
+        # Keep this after the pending-request/approval checks above.
+        with app.app_context():
+            chk("Department budget saved", svc.set_budget(
+                "Maintenance", 98765, user=users["admin"])[0])
+            conn = get_db()
+            try:
+                conn.execute("UPDATE pr_requests SET status='approved' WHERE id=?", (pr_id,))
+                conn.commit()
+            finally:
+                conn.close()
+            budget = svc.budget_status("Maintenance")
+            chk("Approved PR counts in current-period budget spend", budget["spent"] == 4321)
+            chk("Budget has distinctive remaining amount", budget["remaining"] == 94444)
+            chk("Vendor fixture created", svc.create_vendor(
+                {"name": "Money visibility vendor"}, users["buyer"])[0])
+
+        for name in ("A", "B", "store2", "store", "buyer", "admin"):
+            cl = app.test_client()
+            with cl.session_transaction() as session:
+                session["uid"] = users[name]["id"]
+                session["ep"] = 0
+            detail_full = name in ("store", "buyer", "admin")
+            global_full = name in ("buyer", "admin")
+            r = cl.get("/procurement/pr/%d" % pr_id)
+            html = r.get_data(as_text=True)
+            chk(name + " budget detail opens", r.status_code == 200, r.status_code)
+            chk(name + " detail budget spend visibility",
+                ('data-i18n="proc.spent">Spent</span> 4,321 /' in html) == detail_full)
+            chk(name + " detail budget amount visibility", ("98,765" in html) == detail_full)
+            chk(name + " detail budget remaining visibility", ("94,444" in html) == detail_full)
+            chk(name + " detail budget badge remains", 'data-i18n="proc.unbudgeted"' in html)
+            chk(name + " detail budget explanation remains", 'data-i18n="proc.unbud_none"' in html)
+            chk(name + " committed request money visibility",
+                ("4,321" in html) == (name != "B" and name != "store2"))
+
+            r = cl.get("/procurement/budgets")
+            html = r.get_data(as_text=True)
+            chk(name + " budgets opens", r.status_code == 200, r.status_code)
+            chk(name + " budget amount stays visible", "98,765" in html)
+            chk(name + " budgets spend visibility", ("4,321" in html) == global_full)
+            chk(name + " budgets usage visibility", ('width:4%' in html) == global_full)
+            if not global_full:
+                chk(name + " budgets spent and usage are dashes", bool(re.search(
+                    r'<td[^>]*>—</td>\s*<td[^>]*>\s*—\s*</td>', html)))
+                chk(name + " budgets hides remaining", "94,444" not in html)
+            r = cl.get("/procurement/vendors")
+            html = r.get_data(as_text=True)
+            chk(name + " vendors opens", r.status_code == 200, r.status_code)
+            chk(name + " vendor dues column visibility",
+                ('data-i18n="proc.rtv.dues"' in html) == global_full)
         print("\n" + ("RESULT: ALL GREEN" if OK[0] else "RESULT: FAILURES ABOVE"))
         return OK[0]
 

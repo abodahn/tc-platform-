@@ -1337,7 +1337,7 @@ def detail(pr_id):
                            current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
                            match=svc.three_way_match(pr_id),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
-                           budget=svc.budget_status(pr.get("department")),
+                           budget=svc.budget_status(pr.get("department")) if money == "full" else None,
                            can_purchasing=can_purchasing, can_receive=can_receive, is_priced=is_priced,
                            # Offering a form the viewer cannot submit is worse
                            # than hiding it: Purchasing no longer releases payment.
@@ -1726,14 +1726,16 @@ def quote_file(quote_id):
 @login_required
 @permission_required("proc_view")
 def budgets():
+    money_full = svc.money_view(_u()) == "full"
     rows = svc.list_budgets()
-    for b in rows:
-        st = svc.budget_status(b["department"], b["period"])
-        b["spent"] = st["spent"] if st else 0
-        b["remaining"] = st["remaining"] if st else None
-        b["pct"] = st["pct"] if st else 0
+    if money_full:
+        for b in rows:
+            st = svc.budget_status(b["department"], b["period"])
+            b["spent"] = st["spent"] if st else 0
+            b["remaining"] = st["remaining"] if st else None
+            b["pct"] = st["pct"] if st else 0
     return render_template("approvals/budgets.html", active="proc_budgets",
-                           budgets=rows, can_manage=user_can("proc_admin"))
+                           budgets=rows, money_full=money_full, can_manage=user_can("proc_admin"))
 
 
 @bp.route("/budgets", methods=["POST"])
@@ -2572,6 +2574,7 @@ def download_attachment(att_id):
 def vendors():
     return render_template("approvals/vendors.html", active="proc_vendors",
                            vendors=svc.list_vendors(active_only=False),
+                           money_full=(svc.money_view(_u()) == "full"),
                            can_manage=user_can("proc_purchasing"))
 
 
