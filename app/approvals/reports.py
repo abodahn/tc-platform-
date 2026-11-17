@@ -153,7 +153,7 @@ R.register(**_common(
               "Toplam değer (EGP)", f"SUM({_EGP})"),
         R.kpi("committed", "Committed (EGP)", "المرتبط به (ج.م)",
               "Taahhüt (EGP)",
-              f"SUM(CASE WHEN p.status IN ({_COMMITTED}) THEN {_EGP} ELSE 0 END)"),
+              f"SUM(CASE WHEN p.status IN ({_COMMITTED}) THEN ({_EGP} - COALESCE(p.budget_released,0) * (1 + COALESCE(p.tax_rate,0)/100.0) * (CASE WHEN {_IS_EGP} THEN 1 ELSE {_FX} END)) ELSE 0 END)"),
         R.kpi("waiting", "Awaiting approval", "بانتظار الاعتماد", "Onay bekleyen",
               "SUM(CASE WHEN p.status = 'pending' THEN 1 ELSE 0 END)",
               better="down"),
@@ -169,7 +169,7 @@ R.register(**_common(
 # ---------------------------------------------------------------------------
 _DEPT = "COALESCE(p.department,'')"
 _PERIOD = "substr(COALESCE(p.request_date, p.created_at), 1, 4)"
-_COMMIT_SUM = (f"SUM(CASE WHEN p.status IN ({_COMMITTED}) THEN {_EGP} ELSE 0 END)")
+_COMMIT_SUM = (f"SUM(CASE WHEN p.status IN ({_COMMITTED}) THEN ({_EGP} - COALESCE(p.budget_released,0) * (1 + COALESCE(p.tax_rate,0)/100.0) * (CASE WHEN {_IS_EGP} THEN 1 ELSE {_FX} END)) ELSE 0 END)")
 _SPENT_SUM = f"SUM({_PAID_EGP})"
 
 # EVERY (department, year) that either holds a budget or carries a request. The

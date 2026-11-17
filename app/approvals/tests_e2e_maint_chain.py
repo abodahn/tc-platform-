@@ -163,7 +163,8 @@ def checks():
     def price(pr_id, unit_price):
         lines = rows("SELECT * FROM pr_items WHERE pr_id=? ORDER BY seq", pr_id)
         result = proc.price_pr(pr_id, {line["id"]: unit_price for line in lines},
-                               {"tax_rate": 0}, buyer)
+                               # issue_po needs an active vendor-master supplier (seeded)
+                               {"tax_rate": 0, "vendor": "Delta Industrial Supplies"}, buyer)
         assert result[0], "BUG: purchasing could not price PR: %r" % (result,)
         assert one("SELECT pricing_status FROM pr_requests WHERE id=?", pr_id)[
             "pricing_status"] == "priced", "BUG: pricing gate did not persist"

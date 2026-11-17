@@ -118,7 +118,8 @@ def run():
             li = conn.execute("SELECT id FROM pr_items WHERE pr_id=?",
                               (pr_id,)).fetchone()["id"]
             conn.close()
-            ok, msg = svc.price_pr(pr_id, {li: unit}, {}, buyer)
+            # issue_po needs an active vendor-master supplier (seeded on a fresh DB)
+            ok, msg = svc.price_pr(pr_id, {li: unit}, {"vendor": "Delta Industrial Supplies"}, buyer)
             assert ok, "pricing failed: %s" % msg
 
         def sourcing(pr_id):

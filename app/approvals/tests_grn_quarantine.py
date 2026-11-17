@@ -52,7 +52,8 @@ def run():
                 [{"item": item, "qty": qty, "unit_price": 0}],
                 {"username": "tech", "id": 9}, priced=False)
             li = one("SELECT id FROM pr_items WHERE pr_id=?", pr_id)["id"]
-            ok, msg = svc.price_pr(pr_id, {li: unit}, {"tax_rate": 0}, buyer)
+            # issue_po needs an active vendor-master supplier (seeded on a fresh DB)
+            ok, msg = svc.price_pr(pr_id, {li: unit}, {"tax_rate": 0, "vendor": "Delta Industrial Supplies"}, buyer)
             assert ok, "pricing failed: %s" % msg
             return pr_id, li
 

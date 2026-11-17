@@ -1156,7 +1156,25 @@
       {% endfor %}
       </tbody>
     </table>
-    <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.rtv.note">Returned quantities were never received and never entered stock. An open debit note is deducted from what this order can be paid, and shows as an outstanding due against the vendor.</div>
+    <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.rtv.note">Returned quantities are excluded from received stock. An open debit note reduces the payable value and shows as an outstanding due against the vendor.</div>
+    {% endif %}
+
+    {% if can_purchasing and pr.status in ('partially_received','received') %}
+    <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.corr.receipt">Correct a receipt</summary>
+      <p class="muted" style="font-size:12.5px" data-i18n="proc.corr.stock_hint">Stock is taken back out. The correction is refused if the goods were already issued or reserved.</p>
+      <form method="post" action="{{ url_for('approvals.reverse_receipt', pr_id=pr.id) }}" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="proc.corr.line">Received line</label>
+            <select name="item_id" required>{% for it in b['items'] if (it.received_qty or 0) > 0 %}
+              <option value="{{ it.id }}">{{ it.item }} ({{ '%g'|format(it.received_qty) }})</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="proc.corr.qty">Quantity</label><input name="qty" type="number" step="any" min="0.000001" required></div>
+          <div class="field"><label data-i18n="proc.corr.reason">Reason</label><input name="reason" required></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="submit" formaction="{{ url_for('approvals.reverse_receipt', pr_id=pr.id) }}" data-advance data-i18n="proc.corr.reverse_receipt">Reverse receipt (entered in error)</button>
+        <button class="btn btn-ghost btn-sm" type="submit" formaction="{{ url_for('approvals.return_to_supplier', pr_id=pr.id) }}" data-advance data-i18n="proc.corr.return_supplier">Return to supplier (debit note)</button>
+      </form>
+    </details>
     {% endif %}
 
     {# --- Invoices --- #}
@@ -1174,14 +1192,22 @@
           <td style="font-weight:600">{{ iv.invoice_no }}</td>
           <td class="muted">{{ iv.invoice_date }}</td>
           <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format((iv.amount or 0)+(iv.tax or 0)) }} {{ iv.currency }}</td>
-          <td><span class="badge {{ 'b-approved' if iv.status=='matched' else ('b-rejected' if iv.status=='disputed' else 'b-pending') }}">{{ iv.status|title }}</span></td>
-          <td style="text-align:end">{% if iv.filename %}<a class="tag" href="{{ url_for('approvals.invoice_file', inv_id=iv.id) }}">📎</a>{% endif %}</td>
+          <td><span class="badge {{ 'b-approved' if iv.status=='matched' else ('b-rejected' if iv.status=='disputed' else 'b-pending') }}">{% if iv.status == 'void' %}<span data-i18n="proc.corr.void">Void</span>{% else %}{{ iv.status|title }}{% endif %}</span>
+            {% if iv.reversal_of %}<span class="muted" data-i18n="proc.corr.reversal">reversal</span>{% endif %}</td>
+          <td style="text-align:end">{% if iv.filename %}<a class="tag" href="{{ url_for('approvals.invoice_file', inv_id=iv.id) }}">📎</a>{% endif %}
+            {% if iv.status != 'void' and not iv.reversal_of and (can_purchasing or can_pay) %}
+            <form method="post" style="display:inline" action="{{ url_for('approvals.void_invoice', inv_id=iv.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input name="reason" required placeholder="Reason" data-i18n-ph="proc.corr.reason">
+              <button class="btn btn-ghost btn-sm" type="submit" data-advance data-i18n="proc.corr.void_invoice">Void invoice</button>
+            </form>
+            {% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
     {% endif %}
-    {% if can_purchasing and pr.status != 'draft' %}
+    {% if (can_purchasing or can_pay) and pr.status != 'draft' %}
     <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_invoice">+ Add invoice</summary>
       <form method="post" action="{{ url_for('approvals.add_invoice', pr_id=pr.id) }}" enctype="multipart/form-data" class="mt-2">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -1219,7 +1245,15 @@
       {% for p in b.payments %}
         <tr><td class="muted">{{ p.paid_at }}</td>
           <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.amount or 0) }} {{ p.currency }}</td>
-          <td>{{ p.method or '—' }}</td><td class="muted">{{ p.reference or '—' }}</td></tr>
+          <td>{{ p.method or '—' }}{% if p.reversal_of %} <span class="muted" data-i18n="proc.corr.reversal">reversal</span>{% endif %}</td>
+          <td class="muted">{{ p.reference or '—' }}
+            {% if can_pay and not p.reversal_of and not (b.payments|selectattr('reversal_of', 'equalto', p.id)|list) %}
+            <form method="post" style="display:inline" action="{{ url_for('approvals.reverse_payment', pay_id=p.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input name="reason" required placeholder="Reason" data-i18n-ph="proc.corr.reason">
+              <button class="btn btn-ghost btn-sm" type="submit" data-advance data-i18n="proc.corr.reverse_payment">Reverse payment</button>
+            </form>
+            {% endif %}</td></tr>
       {% endfor %}
       </tbody>
     </table>

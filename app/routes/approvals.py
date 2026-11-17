@@ -1450,14 +1450,16 @@ def add_quote(pr_id):
     if not f.get("vendor") or not f.get("amount"):
         flash("Vendor and amount are required for a quote.", "error")
         return redirect(url_for("approvals.detail", pr_id=pr_id))
-    svc.add_quote(pr_id, {
+    ok, code = svc.add_quote(pr_id, {
         "vendor": f.get("vendor", "").strip(), "amount": f.get("amount"),
         "currency": f.get("currency", "EGP"), "lead_time_days": f.get("lead_time_days"),
         "warranty": f.get("warranty", "").strip(), "notes": f.get("notes", "").strip(),
         # The RFQ this quotation came back against, when it answers one.
         "rfq_id": f.get("rfq_id", "").strip(),
     }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
-    flash("Quote added.", "success")
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash("Quote added." if ok else ui.get(str(code) + "_flash") or
+          f"Could not add quote ({code}).", "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -1994,7 +1996,12 @@ def issue_po(pr_id):
     # could see. Now the caller has to tick "override" and the reason is audited.
     _override = user_can("proc_admin") and request.form.get("override") == "1"
     ok, res = svc.issue_po(pr_id, _u(), ip=_ip(), force=_override)
-    flash(f"Purchase Order {res} issued." if ok else
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    if not ok and res in ("vendor_required", "vendor_not_in_master"):
+        flash((ui.get(str(res) + "_flash") or f"Could not issue PO ({res}).")
+              + " " + url_for("approvals.vendors"), "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    flash(f"Purchase Order {res} issued." if ok else ui.get(str(res) + "_flash") or
           {"over_budget": "The department budget for this period is exceeded — "
                           "an administrator must issue this PO (or raise the budget).",
            }.get(res, f"Could not issue PO ({res})."),
@@ -2097,7 +2104,7 @@ def receive(pr_id):
 
 @bp.route("/pr/<int:pr_id>/invoice", methods=["POST"])
 @login_required
-@permission_required("proc_purchasing")
+@permission_required("proc_purchasing", "proc_pay")
 def add_invoice(pr_id):
     if not svc.get_pr(pr_id):
         abort(404)
@@ -2223,7 +2230,8 @@ def cancel(pr_id):
     ok, msg = svc.cancel_pr(pr_id, _u(), ip=_ip(),
                             is_purchasing=user_can("proc_purchasing"),
                             is_admin=user_can("proc_admin"))
-    flash("Request cancelled." if ok else
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash("Request cancelled." if ok else ui.get(str(msg) + "_flash") or
           {"forbidden": "Only the requester (or Purchasing/an admin) can cancel this request.",
            "needs_admin": "This request is already approved — only an administrator can cancel it.",
            "already_received": "Goods were already received against this order — close it instead of cancelling.",
@@ -2538,14 +2546,10 @@ def vendors():
 @login_required
 @permission_required("proc_purchasing")
 def create_vendor():
-    data = {k: request.form.get(k, "").strip() for k in
-            ("name", "contact_person", "phone", "email", "address",
-             "payment_terms", "category", "rating", "notes")}
-    if not data["name"]:
-        flash("Vendor name is required.", "error")
-    else:
-        svc.create_vendor(data, _u(), ip=_ip())
-        flash("Vendor saved.", "success")
+    ok, code = svc.create_vendor(request.form, _u(), ip=_ip())
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash(ui["vendor_saved_flash"] if ok else ui.get(str(code) + "_flash") or
+          f"Could not save vendor ({code}).", "success" if ok else "error")
     return redirect(url_for("approvals.vendors"))
 
 
@@ -2790,3 +2794,83 @@ def verify_signature(code):
 # Report declarations for the shared reporting engine (/reporting). Imported for
 # its import-time side effect: it registers the specs and touches no database.
 from app.approvals import reports as _reports  # noqa: E402,F401
+
+
+@bp.route("/vendors/<int:vendor_id>", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def update_vendor(vendor_id):
+    ok, code = svc.update_vendor(vendor_id, request.form, _u(), ip=_ip())
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash(ui["vendor_saved_flash"] if ok else ui.get(str(code) + "_flash") or
+          f"Could not save vendor ({code}).", "success" if ok else "error")
+    return redirect(url_for("approvals.vendors"))
+
+
+@bp.route("/vendors/<int:vendor_id>/active", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def set_vendor_active(vendor_id):
+    ok, code = svc.set_vendor_active(vendor_id, request.form.get("active") == "1", _u(), ip=_ip())
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash(ui["vendor_saved_flash"] if ok else ui.get(str(code) + "_flash") or
+          f"Could not update vendor ({code}).", "success" if ok else "error")
+    return redirect(url_for("approvals.vendors"))
+
+
+def _correction_flash(ok, code):
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash(ui["correction_saved_flash"] if ok else ui.get(str(code) + "_flash") or
+          f"Could not correct record ({code}).", "success" if ok else "error")
+
+
+@bp.route("/pr/<int:pr_id>/reverse-receipt", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing", "proc_admin")
+def reverse_receipt(pr_id):
+    ok, code = svc.reverse_receipt(pr_id, request.form.get("item_id"), request.form.get("qty"),
+                                   request.form.get("reason"), _u(), ip=_ip())
+    _correction_flash(ok, code)
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/return-to-supplier", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def return_to_supplier(pr_id):
+    ok, code = svc.return_to_supplier(pr_id, request.form.get("item_id"), request.form.get("qty"),
+                                      request.form.get("reason"), _u(), ip=_ip())
+    _correction_flash(ok, code)
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/invoice/<int:inv_id>/void", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing", "proc_pay", "proc_admin")
+def void_invoice(inv_id):
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT pr_id FROM pr_invoices WHERE id=?", (inv_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    ok, code = svc.void_invoice(inv_id, request.form.get("reason"), _u(), ip=_ip())
+    _correction_flash(ok, code)
+    return redirect(url_for("approvals.detail", pr_id=row["pr_id"]))
+
+
+@bp.route("/payment/<int:pay_id>/reverse", methods=["POST"])
+@login_required
+@permission_required("proc_pay", "proc_admin")
+def reverse_payment(pay_id):
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT pr_id FROM pr_payments WHERE id=?", (pay_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    ok, code = svc.reverse_payment(pay_id, request.form.get("reason"), _u(), ip=_ip())
+    _correction_flash(ok, code)
+    return redirect(url_for("approvals.detail", pr_id=row["pr_id"]))

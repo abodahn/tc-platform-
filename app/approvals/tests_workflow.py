@@ -126,7 +126,7 @@ with app.app_context():
 
     svc.price_pr(pr_id, {}, {"tax_rate": 0}, buyer)              # still 0 -> price the line
     it = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (pr_id,)).fetchone()["id"]
-    svc.price_pr(pr_id, {it: TOTAL}, {"tax_rate": 0}, buyer)
+    svc.price_pr(pr_id, {it: TOTAL}, {"tax_rate": 0, "vendor": "Delta Industrial Supplies"}, buyer)
     steps = [r["stage"] for r in conn.execute(
         "SELECT stage FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()]
     ok("pricing reconciles the value ladder to build_ladder(%d) %r" % (TOTAL, steps),
@@ -166,11 +166,11 @@ with app.app_context():
     # its own refusal codes (tests_three_way_match covers that one).
     INVOICED = TOTAL + C.match_tolerance_value(TOTAL)
     svc.add_invoice(pr_id, {"invoice_no": "INV-1", "amount": INVOICED, "tax": 0}, admin)
-    okk, msg = svc.add_payment(pr_id, {"amount": TOTAL * 1.02}, admin)   # +2%
+    okk, msg = svc.add_payment(pr_id, {"amount": TOTAL * 1.02}, dict(admin, username="wf_payer"))   # +2%
     ok("PAYMENT CAP refuses %d on a %d PO (1%% tolerance): %s"
        % (TOTAL * 1.02, TOTAL, msg),
        not okk and msg in ("over_payment", "exceeds_invoiced"))
-    okk, msg = svc.add_payment(pr_id, {"amount": TOTAL * 1.0067}, admin)  # inside 1%
+    okk, msg = svc.add_payment(pr_id, {"amount": TOTAL * 1.0067}, dict(admin, username="wf_payer"))  # inside 1%
     ok("payment inside the 1%% tolerance is accepted: %s" % msg, okk)
 
     # ----------------------------------------------------------------- (b)
@@ -224,7 +224,7 @@ with app.app_context():
     svc.set_setting("payment_tolerance_pct", "10", admin)
     # 611,020 cumulative: past the 1% cap (606,000), inside the 10% one (660,000),
     # and still inside what the supplier invoiced, so only the knob decides it.
-    okk, msg = svc.add_payment(pr_id, {"amount": 7_000.0}, admin)
+    okk, msg = svc.add_payment(pr_id, {"amount": 7_000.0}, dict(admin, username="wf_payer"))
     ok("override payment_tolerance_pct=10 -> a payment refused at 1%% now clears: %s" % msg, okk)
 
     # ----------------------------------------------------------------- (c)

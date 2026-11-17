@@ -105,6 +105,10 @@ def run():
                 assert ok, "ladder stuck on %s: %s" % (title, msg)
                 if msg == "approved":
                     break
+            # issue_po needs every supplier on the vendor master
+            _c = get_db(); _c.execute("INSERT OR IGNORE INTO proc_vendors (name, is_active, created_at) "
+                "SELECT DISTINCT TRIM(COALESCE(i.vendor, r.vendor)), 1, '2026-01-01' FROM pr_items i "
+                "JOIN pr_requests r ON r.id=i.pr_id WHERE i.pr_id=? AND TRIM(COALESCE(i.vendor, r.vendor, ''))<>''", (pr_id,)); _c.commit(); _c.close()
             ok, msg = svc.issue_po(pr_id, buyer)
             assert ok, "PO not issued for %s: %s" % (title, msg)
             return pr_id, lids

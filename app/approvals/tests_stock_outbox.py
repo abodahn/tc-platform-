@@ -43,7 +43,7 @@ def checks():
             [{"item": item, "qty": qty, "unit_price": 0}],
             {"username": "test_requester", "id": 9}, priced=False)
         li = one("SELECT id FROM pr_items WHERE pr_id=?", pr_id)["id"]
-        ok, msg = svc.price_pr(pr_id, {li: unit}, {"tax_rate": 0}, buyer)
+        ok, msg = svc.price_pr(pr_id, {li: unit}, {"tax_rate": 0, "vendor": "Delta Industrial Supplies"}, buyer)
         assert ok, "pricing failed: %s" % msg
         return pr_id, li
 
@@ -103,7 +103,7 @@ def checks():
     lines = conn.execute("SELECT id FROM pr_items WHERE pr_id=? ORDER BY seq", (pr,)).fetchall()
     conn.close()
     ls, lm = [r["id"] for r in lines]
-    assert svc.price_pr(pr, {ls: 10, lm: 20}, {"tax_rate": 0}, buyer)[0]
+    assert svc.price_pr(pr, {ls: 10, lm: 20}, {"tax_rate": 0, "vendor": "Delta Industrial Supplies"}, buyer)[0]
     approve_all(pr)
     assert svc.receive_items(pr, {str(ls): 4, lm: 6}, store)[0]
     assert one("SELECT COUNT(*) c FROM pr_stock_postings WHERE pr_id=? AND status='posted'", pr)["c"] == 2

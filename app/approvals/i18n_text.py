@@ -922,7 +922,25 @@ UI = {
             "guarantee reference.",
         "advance_vendor_not_approved_flash":
             "No advance may be paid to a supplier off the approved vendor list "
-            "(DOAM §4.3). Add the supplier to the vendor master first."
+            "(DOAM §4.3). Add the supplier to the vendor master first.",
+        "not_reversible_flash": "Only partially or fully received orders can be corrected.",
+        "reason_required_flash": "Enter a reason for the correction.",
+        "bad_qty_flash": "Enter a positive quantity no greater than the received quantity.",
+        "posting_unsettled_flash": "Stock postings are unsettled or changed. Resolve or retry them first.",
+        "stock_unknown_flash": "Stock availability could not be checked. No correction was saved.",
+        "stock_issued_flash": "The goods were already issued or reserved; the receipt cannot be reversed.",
+        "already_void_flash": "This invoice is already void or is a reversal.",
+        "invoice_paid_flash": "Reverse the payments against this invoice before voiding it.",
+        "already_reversed_flash": "This payment is already reversed or is a reversal.",
+        "duplicate_vendor_flash": "A vendor with this name or tax ID already exists.",
+        "name_required_flash": "Vendor name is required.",
+        "vendor_inactive_flash": "This vendor is inactive. Activate it on the Vendors page before quoting.",
+        "vendor_required_flash": "Every supplier group needs a vendor. Select an active supplier from the Vendors page.",
+        "vendor_not_in_master_flash": "Every supplier must be active in the vendor master. Use the Vendors page to update it.",
+        "sod_invoice_payer_flash": "The person who recorded an invoice cannot pay it. Ask another authorised payer.",
+        "has_payments_flash": "Reverse all net payments before cancelling this request.",
+        "correction_saved_flash": "Correction recorded in the request history.",
+        "vendor_saved_flash": "Vendor saved.",
     },
     "ar": {
         "text_en": "النص (بالإنجليزية)", "text_ar": "النص (بالعربية)",
@@ -1033,7 +1051,25 @@ UI = {
             "إلى مرجع خطاب ضمان بنكي.",
         "advance_vendor_not_approved_flash":
             "لا يجوز دفع أي دفعة مقدّمة لمورد خارج قائمة الموردين المعتمدين (البند "
-            "4-3). أضف المورد إلى سجل الموردين أولًا."
+            "4-3). أضف المورد إلى سجل الموردين أولًا.",
+        "not_reversible_flash": "يمكن تصحيح الأوامر المستلمة جزئياً أو كلياً فقط.",
+        "reason_required_flash": "أدخل سبب التصحيح.",
+        "bad_qty_flash": "أدخل كمية موجبة لا تتجاوز الكمية المستلمة.",
+        "posting_unsettled_flash": "ترحيلات المخزون غير مكتملة أو تغيرت. عالجها أو أعد المحاولة أولاً.",
+        "stock_unknown_flash": "تعذر التحقق من المخزون المتاح. لم يُحفظ التصحيح.",
+        "stock_issued_flash": "صُرفت البضاعة أو حُجزت بالفعل؛ لا يمكن عكس الاستلام.",
+        "already_void_flash": "هذه الفاتورة ملغاة بالفعل أو قيد عكسي.",
+        "invoice_paid_flash": "اعكس الدفعات المرتبطة بهذه الفاتورة قبل إلغائها.",
+        "already_reversed_flash": "هذه الدفعة معكوسة بالفعل أو قيد عكسي.",
+        "duplicate_vendor_flash": "يوجد مورد بهذا الاسم أو الرقم الضريبي بالفعل.",
+        "name_required_flash": "اسم المورد مطلوب.",
+        "vendor_inactive_flash": "هذا المورد غير نشط. نشّطه من صفحة الموردين قبل إضافة عرض.",
+        "vendor_required_flash": "يجب تحديد مورد لكل مجموعة. اختر مورداً نشطاً من صفحة الموردين.",
+        "vendor_not_in_master_flash": "يجب أن يكون كل مورد نشطاً في سجل الموردين. حدّثه من صفحة الموردين.",
+        "sod_invoice_payer_flash": "لا يجوز لمن سجل الفاتورة دفعها. اطلب من مسؤول دفع آخر مخول.",
+        "has_payments_flash": "اعكس صافي الدفعات بالكامل قبل إلغاء هذا الطلب.",
+        "correction_saved_flash": "سُجل التصحيح في سجل الطلب.",
+        "vendor_saved_flash": "تم حفظ المورد.",
     },
     "tr": {
         "text_en": "Metin (İngilizce)", "text_ar": "Metin (Arapça)",
@@ -1143,6 +1179,24 @@ UI = {
             "teminat mektubu referansı gerekir.",
         "advance_vendor_not_approved_flash":
             "Onaylı tedarikçi listesi dışındaki bir tedarikçiye avans ödenemez "
-            "(DOAM §4.3). Önce tedarikçiyi tedarikçi ana kaydına ekleyin."
+            "(DOAM §4.3). Önce tedarikçiyi tedarikçi ana kaydına ekleyin.",
+        "not_reversible_flash": "Yalnızca kısmen veya tamamen teslim alınmış siparişler düzeltilebilir.",
+        "reason_required_flash": "Düzeltme gerekçesini girin.",
+        "bad_qty_flash": "Teslim alınan miktarı aşmayan pozitif bir miktar girin.",
+        "posting_unsettled_flash": "Stok kayıtları tamamlanmamış veya değişmiş. Önce bunları çözün ya da yeniden deneyin.",
+        "stock_unknown_flash": "Stok uygunluğu kontrol edilemedi. Düzeltme kaydedilmedi.",
+        "stock_issued_flash": "Mallar önceden çıkarılmış veya rezerve edilmiş; teslim alımı ters kaydedilemez.",
+        "already_void_flash": "Bu fatura zaten iptal edilmiş veya bir ters kayıttır.",
+        "invoice_paid_flash": "Faturayı iptal etmeden önce ilgili ödemeleri ters kaydedin.",
+        "already_reversed_flash": "Bu ödeme zaten ters kaydedilmiş veya bir ters kayıttır.",
+        "duplicate_vendor_flash": "Bu ada veya vergi numarasına sahip bir tedarikçi zaten var.",
+        "name_required_flash": "Tedarikçi adı gereklidir.",
+        "vendor_inactive_flash": "Bu tedarikçi pasif. Teklif eklemeden önce Tedarikçiler sayfasından etkinleştirin.",
+        "vendor_required_flash": "Her tedarikçi grubu için bir tedarikçi gerekir. Tedarikçiler sayfasından etkin bir tedarikçi seçin.",
+        "vendor_not_in_master_flash": "Her tedarikçi ana kayıtta etkin olmalıdır. Güncellemek için Tedarikçiler sayfasını kullanın.",
+        "sod_invoice_payer_flash": "Faturayı kaydeden kişi ödemesini yapamaz. Başka bir yetkili ödeme sorumlusuna başvurun.",
+        "has_payments_flash": "Bu talebi iptal etmeden önce tüm net ödemeleri ters kaydedin.",
+        "correction_saved_flash": "Düzeltme talep geçmişine kaydedildi.",
+        "vendor_saved_flash": "Tedarikçi kaydedildi.",
     }
 }

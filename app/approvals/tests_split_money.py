@@ -56,6 +56,10 @@ def _pdf_text(blob):
     return b"\n".join(out).decode("latin-1")
 
 
+# Segregation: whoever records an invoice may not pay it, so Finance pays.
+PAYER = {"username": "fin_payer", "role": "finance_manager"}
+
+
 def run():                                          # noqa: C901 — one linear story
     app = _app()
     with app.app_context():
@@ -104,6 +108,10 @@ def run():                                          # noqa: C901 — one linear 
                         pr_id, {"username": "u_%s_%s" % (role, pr_id), "role": role,
                                 "id": 100 + pr_id}, "approve", "ok")
                     assert ok, "ladder stuck at %s: %s" % (s["stage"], msg)
+            # issue_po needs every supplier on the vendor master
+            _c = get_db(); _c.execute("INSERT OR IGNORE INTO proc_vendors (name, is_active, created_at) "
+                "SELECT DISTINCT TRIM(COALESCE(i.vendor, r.vendor)), 1, '2026-01-01' FROM pr_items i "
+                "JOIN pr_requests r ON r.id=i.pr_id WHERE i.pr_id=? AND TRIM(COALESCE(i.vendor, r.vendor, ''))<>''", (pr_id,)); _c.commit(); _c.close()
             ok, res = svc.issue_po(pr_id, buyer)
             assert ok, "issue_po refused: %s" % res
             return res
@@ -262,18 +270,18 @@ def run():                                          # noqa: C901 — one linear 
         # 1,000 against a 350 order. EVERY request-level cap lets this through —
         # the request is worth 3,350 and 1,350 of it is invoiced — so only the
         # order's own ceiling can stop it.
-        ok, msg = svc.add_payment(money, {"amount": 1000, "po_id": gamma["id"]}, buyer)
+        ok, msg = svc.add_payment(money, {"amount": 1000, "po_id": gamma["id"]}, PAYER)
         assert not ok and msg == "over_payment", (
             "%s's 350 order was paid 1,000 out of another supplier's money: %s"
             % (G, msg))
-        ok, msg = svc.add_payment(money, {"amount": 100}, buyer)
+        ok, msg = svc.add_payment(money, {"amount": 100}, PAYER)
         assert not ok and msg == "po_required", (
             "a payment on a split requisition released money against no order: %s" % msg)
-        ok, msg = svc.add_payment(money, {"amount": 350, "po_id": gamma["id"]}, buyer)
+        ok, msg = svc.add_payment(money, {"amount": 350, "po_id": gamma["id"]}, PAYER)
         assert ok, "the supplier's own order must still be payable: %s" % msg
         assert q("SELECT po_id FROM pr_payments WHERE pr_id=?", money)[0]["po_id"] \
             == gamma["id"]
-        ok, msg = svc.add_payment(money, {"amount": 1000, "po_id": alpha["id"]}, buyer)
+        ok, msg = svc.add_payment(money, {"amount": 1000, "po_id": alpha["id"]}, PAYER)
         assert ok, "the other supplier's own order must still be payable: %s" % msg
 
         # =================================================================
@@ -314,7 +322,7 @@ def run():                                          # noqa: C901 — one linear 
         # no po_id anywhere: the request IS the order, exactly as before
         ok, msg = svc.add_invoice(solo, {"invoice_no": "INV-SOLO", "amount": 2500}, buyer)
         assert ok, "a single-supplier request must still invoice with no order named: %s" % msg
-        ok, msg = svc.add_payment(solo, {"amount": 2500, "method": "transfer"}, buyer)
+        ok, msg = svc.add_payment(solo, {"amount": 2500, "method": "transfer"}, PAYER)
         assert ok, "a single-supplier request must still pay with no order named: %s" % msg
         assert q("SELECT payment_status FROM pr_requests WHERE id=?",
                  solo)[0]["payment_status"] == "paid", "the solo payment did not settle"
