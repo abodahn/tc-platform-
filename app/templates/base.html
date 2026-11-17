@@ -20,6 +20,7 @@
   <script>
     window.TC_CFG = {
       staticBase: "{{ url_for('static', filename='')|trim('/') }}",
+      i18nV: {{ {'en': static_v('i18n/en.json'), 'ar': static_v('i18n/ar.json'), 'tr': static_v('i18n/tr.json')}|tojson }},
       authed: {{ 'true' if cu else 'false' }},
       lang: "{{ cu.lang_pref if cu else '' }}",
       theme: "{{ cu.theme_pref if cu else '' }}"

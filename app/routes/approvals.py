@@ -1229,7 +1229,7 @@ def detail(pr_id):
                and svc.can_act_step(user, s):
                 queued = True
                 break
-    has_sig = bool((user or {}).get("sig_png"))
+    has_sig = bool((user or {}).get("has_sig") or (user or {}).get("sig_png"))
     # DOAM Table 5 — the English source wording behind the proc.act.* i18n keys,
     # so the action box says what THIS signature is before the client swaps in
     # the reader's language (and still says it if the key is ever missing).

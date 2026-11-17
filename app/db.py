@@ -163,6 +163,10 @@ class _PGCursor:
         return (self._wrap(r) for r in self._raw)
 
     @property
+    def description(self):
+        return self._raw.description
+
+    @property
     def rowcount(self):
         """How many rows the last statement touched.
 
@@ -411,10 +415,9 @@ def _pg_pool_conn(url):
     validated as an already-configured session, so the caller knows it still
     needs its session guards applied.
 
-    The liveness probe is a full network round trip, so it only runs on a
-    connection that has been sitting idle long enough for the server to have
-    plausibly reaped it. Probing one that was handed back moments ago cost the
-    very round trip the pool exists to avoid."""
+    The autocommit liveness probe costs one round trip and preserves session
+    guards. Only idle or unrecorded connections need it; unrecorded connections
+    still need their guards applied after probing."""
     pool = _pg_pool(url)
     for _ in range(3):
         raw = pool.getconn()
@@ -426,14 +429,18 @@ def _pg_pool_conn(url):
         if last_ok is not None and (_time.monotonic() - last_ok) < _LIVENESS_IDLE_S:
             return raw, False           # recently healthy; session already set up
         try:
-            cur = raw.cursor()
-            cur.execute("SELECT 1")
-            cur.close()
-            raw.rollback()
-            # Known-good, but we have no record of its session state, so let the
-            # caller re-apply the guards.
+            # Pool returns are idle; autocommit avoids an implicit BEGIN/rollback.
+            try:
+                raw.autocommit = True
+                cur = raw.cursor()
+                try:
+                    cur.execute("SELECT 1")
+                finally:
+                    cur.close()
+            finally:
+                raw.autocommit = False
             _PG_LAST_OK[id(raw)] = _time.monotonic()
-            return raw, True
+            return raw, last_ok is None
         except Exception:
             pool.putconn(raw, close=True)
             _PG_LAST_OK.pop(id(raw), None)

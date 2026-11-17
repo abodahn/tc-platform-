@@ -107,10 +107,12 @@ def _enforce_system_scope():
     """Belt-and-suspenders for scope-locked roles (e.g. itsm_user): block every
     out-of-scope feature blueprint outright, so a hand-typed URL like /bi or
     /production can't bypass the hidden nav. Redirects them to their own system."""
+    if request.endpoint == "static":
+        return
     scope = system_scope(current_user())
     if scope is None:
         return
-    if request.endpoint == "static" or request.blueprint in _SCOPE_OK_BLUEPRINTS:
+    if request.blueprint in _SCOPE_OK_BLUEPRINTS:
         return
     return redirect(url_for("main.dashboard"))
 
@@ -122,6 +124,8 @@ _PW_CHANGE_OK = {"main.profile", "main.change_password", "main.prefs"}
 def _enforce_password_change():
     """An account created with a starting password may do nothing until it has
     chosen its own: every page sends it back to the profile's password form."""
+    if request.endpoint == "static":
+        return
     user = current_user()
     try:
         flagged = user and user["must_change_password"]
@@ -129,7 +133,7 @@ def _enforce_password_change():
         flagged = False
     if not flagged:
         return
-    if (request.endpoint == "static" or request.blueprint == "auth"
+    if (request.blueprint == "auth"
             or request.endpoint in _PW_CHANGE_OK):
         return
     if request.method == "GET" and request.accept_mimetypes.accept_html:
@@ -841,6 +845,15 @@ def api_registry_search():
 @bp.route("/profile")
 @login_required
 def profile():
+    u = current_user()
+    if u is not None and "sig_png" not in u:
+        # Only the profile needs the current user's full signature image.
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT sig_png FROM users WHERE id=?", (u["id"],)).fetchone()
+            u["sig_png"] = row["sig_png"] if row else None
+        finally:
+            conn.close()
     return render_template("profile.html", active="profile")
 
 

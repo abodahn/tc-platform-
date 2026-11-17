@@ -3,12 +3,13 @@ TC Platform — Flask application factory.
 
 Wires up configuration, security headers, the database, and blueprints.
 """
+import hashlib
 import os
 import shutil
 import time
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, request
 
 from config import Config
 from app.db import init_db
@@ -112,6 +113,8 @@ def create_app():
     def _bootstrap_schema():
         try:
             init_db()
+            from app.auth import reset_user_columns
+            reset_user_columns()  # Bootstrap can add columns after the first user lookup.
             from app.security import refresh_db_roles
             refresh_db_roles()           # load admin-managed roles overlay
             app._db_ready = True
@@ -130,6 +133,8 @@ def create_app():
 
     @app.before_request
     def _ensure_db_ready():
+        if request.endpoint == "static":
+            return
         if app._db_ready or _boot["running"] or time.monotonic() < _boot["next_try"]:
             return
         with _boot_lock:
@@ -142,6 +147,39 @@ def create_app():
     # CSRF protection for all state-changing requests
     from app.csrf import init_csrf
     init_csrf(app)
+
+    _static_versions = {}
+    _static_root = os.path.realpath(app.static_folder)
+
+    def static_v(filename):
+        if not filename:
+            return ""
+        try:
+            path = os.path.realpath(os.path.join(_static_root, filename))
+            if os.path.commonpath((_static_root, path)) != _static_root or not os.path.isfile(path):
+                return ""
+            key = (filename, os.stat(path).st_mtime_ns)
+            if key not in _static_versions:
+                # Hash once per file revision so URLs change only when content does.
+                _static_versions[key] = hashlib.md5(Path(path).read_bytes()).hexdigest()[:10]
+            return _static_versions[key]
+        except (OSError, ValueError):
+            return ""
+
+    app.jinja_env.globals["static_v"] = static_v
+
+    @app.url_defaults
+    def _version_static(endpoint, values):
+        if endpoint == "static" and "v" not in values:
+            version = static_v(values.get("filename"))
+            if version:
+                values["v"] = version
+
+    @app.after_request
+    def _cache_versioned_static(response):
+        if request.endpoint == "static" and request.args.get("v") and response.status_code in (200, 304):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
     # --- Security headers (defence in depth) ---
     @app.after_request

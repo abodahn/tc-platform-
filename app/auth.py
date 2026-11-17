@@ -9,8 +9,17 @@ from app.db import get_db
 from app.security import has_permission, role_label, user_has_permission
 
 
+_USER_COLS = None
+
+
+def reset_user_columns():
+    global _USER_COLS
+    _USER_COLS = None
+
+
 def current_user():
     """Return the logged-in user row (dict) or None. Cached on g per request."""
+    global _USER_COLS
     if "user" in g:
         return g.user
     uid = session.get("uid")
@@ -19,7 +28,19 @@ def current_user():
         return None
     conn = get_db()
     try:
-        row = conn.execute("SELECT * FROM users WHERE id = ? AND is_active = 1", (uid,)).fetchone()
+        if _USER_COLS is None:
+            try:
+                description = conn.execute("SELECT * FROM users WHERE 1=0").description
+                # Keep new schema columns without transferring the signature on every request.
+                names = [c[0] for c in description]
+                cols = ", ".join('"%s"' % n for n in names if n != "sig_png") or "*"
+                if "sig_png" in names and cols != "*":
+                    # Callers that only ask "has a signature?" read this flag instead.
+                    cols += ", (sig_png IS NOT NULL AND sig_png <> '') AS has_sig"
+                _USER_COLS = cols
+            except Exception:  # noqa: BLE001
+                _USER_COLS = "*"
+        row = conn.execute(f"SELECT {_USER_COLS} FROM users WHERE id = ? AND is_active = 1", (uid,)).fetchone()
     finally:
         conn.close()
     g.user = None

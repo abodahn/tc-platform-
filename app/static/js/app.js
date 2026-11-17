@@ -28,7 +28,10 @@
 
   async function loadDict(lang) {
     try {
-      const res = await fetch(`${STATIC}/i18n/${lang}.json`, { cache: "no-cache" });
+      const v = (cfg.i18nV || {})[lang];
+      const res = v
+        ? await fetch(`${STATIC}/i18n/${lang}.json?v=${encodeURIComponent(v)}`)
+        : await fetch(`${STATIC}/i18n/${lang}.json`, { cache: "no-cache" });
       DICT = await res.json();
     } catch (e) { DICT = {}; }
   }

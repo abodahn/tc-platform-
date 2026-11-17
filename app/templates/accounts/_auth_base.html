@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   <script>
-    window.TC_CFG = { staticBase: "{{ url_for('static', filename='')|trim('/') }}", authed: false };
+    window.TC_CFG = { staticBase: "{{ url_for('static', filename='')|trim('/') }}", i18nV: {{ {'en': static_v('i18n/en.json'), 'ar': static_v('i18n/ar.json'), 'tr': static_v('i18n/tr.json')}|tojson }}, authed: false };
     {% with msgs = get_flashed_messages(with_categories=true) %}
     window.TC_FLASH = [{% for cat, m in msgs %}{cat:"{{ cat }}", msg:"{{ m }}"}{{ "," if not loop.last }}{% endfor %}];
     {% endwith %}

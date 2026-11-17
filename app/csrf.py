@@ -31,6 +31,8 @@ def get_token():
 def init_csrf(app):
     @app.before_request
     def _protect():
+        if request.endpoint == "static":
+            return
         # Ensure a token always exists for templates to render.
         get_token()
         if request.method in _SAFE:
