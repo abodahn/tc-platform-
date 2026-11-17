@@ -112,8 +112,24 @@ with app.app_context():
     check("parent keeps first length", q("SELECT remaining_m FROM wh_rolls WHERE id=?", r1)[0]["remaining_m"] == 50)
     check("children inherit lot", all(r["shade_lot"] == "L1B" for r in
                                       q("SELECT shade_lot FROM wh_rolls WHERE roll_no IN (?,?)", *new)))
+    # The order holds 10 m net issued from r1 and r1 is back at full length, so only
+    # the roll-length rule can refuse the return below.
+    conn = get_db()
+    try:
+        order = conn.execute("SELECT id FROM ord_orders ORDER BY id LIMIT 1").fetchone()
+        order_id = order["id"] if order else conn.execute(
+            "INSERT INTO ord_orders (order_no, buyer, status) "
+            "VALUES ('T-MASTER-1', 'T', 'confirmed')").lastrowid
+        ok, msg = svc._move_stock(conn, "issue", -10, U, material_id=w,
+                                  roll_id=r1, order_id=order_id)
+        ok2, msg2 = svc._move_stock(conn, "adjustment", 10, U, roll_id=r1)
+        conn.commit()
+    finally:
+        conn.close()
+    check("parent issued to a real order", ok and ok2, (msg, msg2))
+    check("parent back at full length", q("SELECT remaining_m FROM wh_rolls WHERE id=?", r1)[0]["remaining_m"] == 50)
     check("split-off metres cannot be 'returned' to the parent",
-          svc.return_to_store(r1, 10, U) == (False, "exceeds_roll_length"))
+          svc.return_to_store(None, 10, U, order_id, roll_id=r1) == (False, "exceeds_roll_length"))
     check("parent shrinks to its share", q("SELECT length_m, status FROM wh_rolls WHERE id=?", r1)[0]
           == {"length_m": 50, "status": "available"})
     check("1 mm tolerance on the sum", svc.split_roll(q("SELECT id FROM wh_rolls WHERE roll_no=?", new[0])[0]["id"], ["10.0004", "20"], U)[0])

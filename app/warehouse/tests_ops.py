@@ -13,6 +13,7 @@ TMP = Path(tempfile.mkdtemp(prefix="wh_ops_"))
 os.chdir(TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 os.environ["TC_ENV"] = "development"
+os.environ["TC_SEED_DEMO"] = "1"
 os.environ.pop("DATABASE_URL", None)
 os.environ["TC_HEALTH_TIMEOUT"] = "1"
 os.environ["TC_AUTO_TICKET_ENABLED"] = "false"
