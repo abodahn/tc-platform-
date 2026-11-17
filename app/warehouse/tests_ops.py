@@ -313,6 +313,26 @@ with app.app_context():
     check("issue limit saved", svc.set_issue_limit(100000, IB) == (True, "saved")
           and svc.issue_limit() == 100000)
     svc.set_issue_limit(5000, IB)
+    c = get_db()
+    split_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
+        "VALUES ('TRM-ISSUE-SPLIT','Split issue test','trim',0,'pcs',500,100)").lastrowid
+    c.commit(); c.close()
+    check("split department issues sum within 24h",
+          svc.issue_internal(split_mid, 49, "department", "Sewing", "supplies", IA) == (True, "issued")
+          and svc.issue_internal(split_mid, 49, "department", "Sewing", "supplies", IA)
+          == (True, "pending") and stock(split_mid) == 451)
+    check("issues to another department are not summed",
+          svc.issue_internal(split_mid, 49, "department", "Finishing", "supplies", IA)
+          == (True, "issued") and stock(split_mid) == 402)
+    svc.issue_internal(split_mid, 49, "department", "Packing", "supplies", IA)
+    c = get_db()
+    c.execute("UPDATE wh_movements SET created_at='2000-01-01 00:00:00' "
+              "WHERE material_id=? AND ref='department:Packing'", (split_mid,))
+    c.commit(); c.close()
+    check("issues older than 24h are not summed",
+          svc.issue_internal(split_mid, 49, "department", "Packing", "supplies", IA)
+          == (True, "issued") and stock(split_mid) == 304)
     check("issue decision lists support multiple statuses", {r["id"] for r in
           svc.list_issue_requests(("approved", "rejected"))} >= {req_id, reject_id})
     c = get_db()

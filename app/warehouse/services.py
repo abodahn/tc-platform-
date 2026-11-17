@@ -1946,7 +1946,21 @@ def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id
                 return False, "roll_quarantined"
         cost = _unit_cost(conn, material_id, roll_id)
         value = qty * cost
-        if dest_kind == "department" and cost > 0 and value > limit:
+        recent = 0.0
+        if dest_kind == "department" and cost > 0:
+            # Same rolling window as counts: split issues to one department add up.
+            window_start = (datetime.utcnow() - timedelta(hours=COUNT_AUTO_WINDOW_HOURS)).strftime(
+                "%Y-%m-%d %H:%M:%S")
+            recent = _f(conn.execute(
+                "SELECT COALESCE(SUM(-qty*unit_cost),0) AS v FROM wh_movements "
+                "WHERE type='issue' AND material_id=? AND ref=? AND created_at >= ?",
+                (material_id, f"{dest_kind}:{dest_name}", window_start)).fetchone()["v"]) + _f(
+                conn.execute(
+                    "SELECT COALESCE(SUM(value),0) AS v FROM wh_issue_requests "
+                    "WHERE status='pending' AND material_id=? AND dest_kind=? AND dest_name=? "
+                    "AND requested_at >= ?",
+                    (material_id, dest_kind, dest_name, window_start)).fetchone()["v"])
+        if dest_kind == "department" and cost > 0 and value + recent > limit:
             m = conn.execute("SELECT roll_tracked FROM wh_materials WHERE id=?", (material_id,)).fetchone()
             if not m:
                 return False, "material_not_found"
