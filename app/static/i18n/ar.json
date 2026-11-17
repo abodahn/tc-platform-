@@ -4167,5 +4167,10 @@
   "proc.stockpost.failed": "فشل",
   "proc.stockpost.posting": "جاري الترحيل",
   "proc.stockpost.hint": "الكميات المستلمة دي لسه ما اتضافتش للمخزون. جرّب تاني، أو راجع المخزن قبل إعادة محاولة صنف عالق في حالة «جاري الترحيل».",
-  "proc.stockpost.retry": "إعادة محاولة الترحيل"
+  "proc.stockpost.retry": "إعادة محاولة الترحيل",
+  "m.asset_tag": "رقم الأصل",
+  "m.registry_asset": "الأصل في السجل",
+  "m.registry_not_found": "غير موجود في سجل الأصول",
+  "sf.maint_down": "ماكينات متوقفة للصيانة",
+  "sf.maint_down_none": "لا توجد ماكينات متوقفة للصيانة."
 }

@@ -357,6 +357,10 @@ _MIGRATIONS = [
     # Keeps the owner's "load everything" decision reversible: filter, don't drop.
     ("mnt_machines", "in_register_2023",
      "ALTER TABLE mnt_machines ADD COLUMN in_register_2023 INTEGER DEFAULT 0"),
+    # Links a CMMS machine to the platform asset registry.
+    ("mnt_machines", "asset_tag", "ALTER TABLE mnt_machines ADD COLUMN asset_tag TEXT"),
+    # Records the MES downtime row exported once for a closed ticket.
+    ("mnt_tickets", "mes_downtime_id", "ALTER TABLE mnt_tickets ADD COLUMN mes_downtime_id INTEGER"),
 ]
 
 

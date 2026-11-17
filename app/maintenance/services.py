@@ -830,6 +830,8 @@ def close_ticket(ticket_id, user, ip=None):
         audit(conn, user, "ticket_close", "ticket", ticket_id, t["status"], "closed", ip=ip)
         conn.commit()
         _flush_notes(conn)
+        from app.maintenance.mes_bridge import record_ticket_downtime
+        record_ticket_downtime(ticket_id)
         return True, ""
     finally:
         conn.close()

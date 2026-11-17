@@ -4167,5 +4167,10 @@
   "proc.stockpost.failed": "başarısız",
   "proc.stockpost.posting": "aktarılıyor",
   "proc.stockpost.hint": "Teslim alınan bu miktarlar henüz stoğa ulaşmadı. Yeniden deneyin veya 'aktarılıyor' durumunda kalan bir kalemi tekrar denemeden önce depoyu kontrol edin.",
-  "proc.stockpost.retry": "Aktarımı yeniden dene"
+  "proc.stockpost.retry": "Aktarımı yeniden dene",
+  "m.asset_tag": "Demirbaş etiketi",
+  "m.registry_asset": "Kayıttaki varlık",
+  "m.registry_not_found": "Varlık kaydında bulunamadı",
+  "sf.maint_down": "Bakım için duran makineler",
+  "sf.maint_down_none": "Bakım için duran makine yok."
 }

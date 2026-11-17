@@ -4167,5 +4167,10 @@
   "proc.stockpost.failed": "failed",
   "proc.stockpost.posting": "posting",
   "proc.stockpost.hint": "These received quantities have not reached stock yet. Retry, or check the store before retrying a line stuck in 'posting'.",
-  "proc.stockpost.retry": "Retry posting"
+  "proc.stockpost.retry": "Retry posting",
+  "m.asset_tag": "Asset tag",
+  "m.registry_asset": "Registry asset",
+  "m.registry_not_found": "Not found in the asset registry",
+  "sf.maint_down": "Machines down for maintenance",
+  "sf.maint_down_none": "No machines are down for maintenance."
 }

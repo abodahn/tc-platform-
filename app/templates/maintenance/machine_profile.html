@@ -39,6 +39,17 @@
       <table class="tbl">
         <tr><td class="muted" data-i18n="m.brand">Brand</td><td>{{ m.brand }} {{ m.model }}</td></tr>
         <tr><td class="muted">Serial</td><td>{{ m.serial }}</td></tr>
+        <tr><td class="muted" data-i18n="m.asset_tag">Asset tag</td><td>{{ m.asset_tag or '—' }}
+          {% if mcan('maint_admin') %}
+          <form method="post" action="{{ url_for('maintenance.machine_asset_tag', mid=m.id) }}" class="flex gap center mt-2">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input name="asset_tag" maxlength="60" value="{{ m.asset_tag or '' }}" aria-label="Asset tag">
+            <button class="btn btn-ghost btn-sm" data-i18n="m.save">Save</button>
+          </form>
+          {% endif %}</td></tr>
+        {% if reg_asset %}<tr><td class="muted" data-i18n="m.registry_asset">Registry asset</td>
+          <td><a href="{{ reg_asset.link }}">{{ reg_asset.name }} · {{ reg_asset.system_name }}</a></td></tr>
+        {% elif m.asset_tag %}<tr><td colspan="2" class="muted" data-i18n="m.registry_not_found">Not found in the asset registry</td></tr>{% endif %}
         <tr><td class="muted" data-i18n="m.location">Location</td><td>{{ m.location }}</td></tr>
         <tr><td class="muted">Next PM</td><td>{{ m.next_pm_date or '—' }}</td></tr>
         {% if m.legacy_card_no %}<tr><td class="muted" data-i18n="m.reg_card">Card no (FIRMA NO)</td><td>{{ m.legacy_card_no }}</td></tr>{% endif %}

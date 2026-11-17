@@ -27,6 +27,17 @@
   {% endfor %}
 </div>
 
+<div class="panel mt-6">
+  <div class="panel-head"><h3 data-i18n="sf.maint_down">Machines down for maintenance</h3><span class="muted">{{ maint_down|length }}</span></div>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="m.machine">Machine</th><th data-i18n="m.line">Line</th><th data-i18n="m.status">Status</th><th data-i18n="m.open_ticket">Open ticket</th></tr></thead>
+    <tbody>{% for m in maint_down %}<tr>
+      <td>{{ m.code }} · {{ m.name }}</td><td>{{ m.line_name or m.line_no or '—' }}</td><td>{{ m.status|mhuman }}</td>
+      <td>{% if m.ticket_id %}<a href="{{ url_for('maintenance.ticket_detail', tid=m.ticket_id) }}">{{ m.ticket_no }}</a>{% else %}—{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="4" class="muted" data-i18n="sf.maint_down_none">No machines are down for maintenance.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+
 {% set src_href = url_for('mes.board') %}{% set src_label = '/mes/board' %}
 {% include "smartfactory/_source.html" %}
 

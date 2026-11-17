@@ -15,7 +15,7 @@ from config import Config
 from app.db import get_db
 from app.tabular import read_grid, TableError, ACCEPT, to_number
 from app.auth import login_required, current_user
-from app.security import user_has_permission
+from app.security import user_has_permission, system_scope
 from app.maintenance import services as svc
 from app.maintenance import constants as C
 from app.maintenance import ai as ai_engine
@@ -736,12 +736,13 @@ def machines():
             try:
                 conn.execute(
                     """INSERT INTO mnt_machines (code,name,type,brand,model,serial,department,
-                       area,line_no,location,criticality,status,qr_token,created_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))""",
+                       area,line_no,location,criticality,status,qr_token,created_at,asset_tag)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (code, f.get("name"), f.get("type"), f.get("brand"), f.get("model"),
                      f.get("serial"), f.get("department"), f.get("area"), f.get("line_no"),
                      f.get("location"), f.get("criticality", "medium"), f.get("status", "running"),
-                     "MQR" + code.replace("-", "")))
+                     "MQR" + code.replace("-", ""), svc._now(),
+                     (f.get("asset_tag") or "").strip()[:60] or None))
                 conn.commit()
                 flash("m_saved", "success")
             finally:
@@ -769,8 +770,8 @@ def machines():
     if q:
         where.append("(LOWER(code) LIKE ? OR LOWER(name) LIKE ? OR LOWER(serial) LIKE ? "
                      "OR LOWER(legacy_card_no) LIKE ? OR LOWER(brand) LIKE ? "
-                     "OR LOWER(model) LIKE ?)")
-        args += ["%" + q.lower() + "%"] * 6
+                     "OR LOWER(model) LIKE ? OR LOWER(asset_tag) LIKE ?)")
+        args += ["%" + q.lower() + "%"] * 7
     w = " AND ".join(where)
     total = _one("SELECT COUNT(*) n FROM mnt_machines WHERE " + w, tuple(args))["n"]
     # ponytail: hard cap, no paging. Narrow with the search box; add pages the day
@@ -802,9 +803,34 @@ def machine_profile(mid):
             "SELECT * FROM mnt_attachments WHERE entity_type='machine' AND entity_id=? ORDER BY id", (mid,)).fetchall()
     finally:
         conn.close()
+    reg_asset = None
+    if m["asset_tag"] and system_scope(current_user()) is None:
+        try:
+            from app.services.registry import find_asset
+            reg_asset = find_asset(_all("SELECT * FROM systems WHERE enabled = 1 ORDER BY sort_order"),
+                                   m["asset_tag"])
+        except Exception:
+            pass
     return render_template("maintenance/machine_profile.html", m=m, tickets=tickets_, pm=pm,
                            spares=spares, moves=moves, health=health, health_band=health_band,
-                           attachments=attachments, active="maint_machines")
+                           attachments=attachments, reg_asset=reg_asset, active="maint_machines")
+
+
+@bp.route("/machines/<int:mid>/asset-tag", methods=["POST"])
+@login_required
+def machine_asset_tag(mid):
+    _require("maint_admin")
+    if not _one("SELECT id FROM mnt_machines WHERE id=?", (mid,)):
+        abort(404)
+    conn = _db()
+    try:
+        conn.execute("UPDATE mnt_machines SET asset_tag=? WHERE id=?",
+                     ((request.form.get("asset_tag") or "").strip()[:60] or None, mid))
+        conn.commit()
+    finally:
+        conn.close()
+    flash("m_saved", "success")
+    return redirect(url_for("maintenance.machine_profile", mid=mid))
 
 
 @bp.route("/machines/<int:mid>/attach", methods=["POST"])
@@ -1586,9 +1612,9 @@ def report_pdf(key):
 IMPORT_SPECS = {
     "machines": {
         "headers": ["code", "name", "type", "brand", "department", "area", "line_no",
-                    "criticality", "status"],
+                    "criticality", "status", "asset_tag"],
         "example": ["M-100", "Sample Sewing Machine", "Sewing", "Juki", "Production",
-                    "Hall A", "L9", "high", "running"],
+                    "Hall A", "L9", "high", "running", "AST-0100"],
     },
     "spares": {
         "headers": ["code", "name", "category", "uom", "stock_qty", "min_level",
@@ -2087,11 +2113,12 @@ def import_run(kind):
                 if kind == "machines":
                     conn.execute(
                         "INSERT INTO mnt_machines (code,name,type,brand,department,area,line_no,"
-                        "criticality,status,qr_token,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+                        "criticality,status,qr_token,created_at,asset_tag) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                         (code, d.get("name"), d.get("type"), d.get("brand"), d.get("department"),
                          d.get("area"), str(d.get("line_no") or ""),
                          (d.get("criticality") or "medium"), (d.get("status") or "running"),
-                         "MQR" + code.replace("-", "")))
+                         "MQR" + code.replace("-", ""), svc._now(),
+                         str(d.get("asset_tag") or "").strip() or None))
                 else:
                     qty = nums["stock_qty"]
                     cur = conn.execute(

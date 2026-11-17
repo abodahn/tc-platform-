@@ -1113,8 +1113,8 @@ def search():
     conn = get_db()
     try:
         if user_has_permission(user, "maint_view"):
-            for m in conn.execute("SELECT id,code,name FROM mnt_machines WHERE is_active=1"):
-                if fuzzy(f"{m['code']} {m['name']}"):
+            for m in conn.execute("SELECT id,code,name,asset_tag FROM mnt_machines WHERE is_active=1"):
+                if fuzzy(f"{m['code']} {m['name']} {m['asset_tag'] or ''}"):
                     results.append({"type": "machine", "name": f"{m['code']} · {m['name']}",
                                     "sub": "Machine", "url": url_for("maintenance.machine_profile", mid=m["id"])})
             for s in conn.execute("SELECT id,code,name FROM mnt_spare_parts WHERE is_active=1"):

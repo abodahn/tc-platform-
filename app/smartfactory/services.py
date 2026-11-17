@@ -93,6 +93,7 @@ def live_date():
 # Command center / floor board — MES + QMS + wash, one day
 # ==========================================================================
 def dashboard():
+    from app.maintenance.mes_bridge import down_machines
     from app.mes import services as mes
     from app.quality import services as qc
 
@@ -125,6 +126,7 @@ def dashboard():
                  "reject": t["reject"], "orders": orders,
                  "smv_efficiency": t["efficiency"], "downtime": m["downtime_day"]},
         "live": live, "pareto": pareto, "sustain": sustainability(),
+        "maint_down": down_machines(),
     }
 
 

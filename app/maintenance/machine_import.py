@@ -150,10 +150,10 @@ _ALIAS = {
 # Text fields carried straight through. `remarks`, `name`, `serial` and
 # `legacy_card_no` are handled separately (composed or derived).
 _TEXT = ("type", "brand", "model", "department", "area", "line_no",
-         "location", "install_date", "vendor", "needle_system", "meter_reading_at")
+         "location", "install_date", "vendor", "needle_system", "meter_reading_at", "asset_tag")
 
 _MAX_CODE = 120          # a card ref in the archive can be a whole file path
-_CHUNK = 200             # 200 rows x 23 params = 4,600 — under every driver's limit
+_CHUNK = 200             # 200 rows x 24 params = 4,800 — under every driver's limit
 _TAG = "[machine-import]"
 # NOT `\b` after the tag: ']' and ' ' are both non-word characters, so there is no
 # word boundary between them and the old line would survive — which made every
@@ -323,11 +323,11 @@ def parse_machines(src):
 # --------------------------------------------------------------------------
 _UPD = ("name", "type", "brand", "model", "serial", "department", "area", "line_no",
         "location", "install_date", "vendor", "needle_system", "legacy_card_no",
-        "meter_reading", "meter_reading_at", "in_register_2023", "remarks")
+        "meter_reading", "meter_reading_at", "in_register_2023", "remarks", "asset_tag")
 _INS_COLS = ("code, name, type, brand, model, serial, department, area, line_no, location, "
              "install_date, vendor, needle_system, meter_reading, meter_reading_at, "
              "legacy_card_no, in_register_2023, remarks, criticality, status, qr_token, "
-             "is_active, created_at")
+             "is_active, created_at, asset_tag")
 _INS_N = len(_INS_COLS.split(","))
 
 
@@ -348,7 +348,7 @@ def upsert_machines(conn, rows, user, source="import"):
     for r in conn.execute(
             "SELECT id, code, name, type, brand, model, serial, department, area, line_no, "
             "location, install_date, vendor, needle_system, meter_reading, meter_reading_at, "
-            "legacy_card_no, in_register_2023, remarks FROM mnt_machines").fetchall():
+            "legacy_card_no, in_register_2023, remarks, asset_tag FROM mnt_machines").fetchall():
         existing[r["code"]] = r
 
     inserts, updates = [], []
@@ -361,7 +361,7 @@ def upsert_machines(conn, rows, user, source="import"):
         vals = {f: _clean(it.get(f)) for f in
                 ("name", "type", "brand", "model", "serial", "department", "area",
                  "line_no", "location", "install_date", "vendor", "needle_system",
-                 "meter_reading_at", "legacy_card_no")}
+                 "meter_reading_at", "legacy_card_no", "asset_tag")}
         vals["meter_reading"] = it.get("meter_reading")
         vals["in_register_2023"] = it.get("in_register_2023")
         parts = it.get("remarks_parts") or []
@@ -377,7 +377,7 @@ def upsert_machines(conn, rows, user, source="import"):
                 vals["needle_system"], vals["meter_reading"], vals["meter_reading_at"],
                 vals["legacy_card_no"],
                 0 if vals["in_register_2023"] is None else int(vals["in_register_2023"]),
-                vals["remarks"], "medium", "running", _qr(code), 1, now))
+                vals["remarks"], "medium", "running", _qr(code), 1, now, vals["asset_tag"]))
             counts["added"] += 1
             continue
 
