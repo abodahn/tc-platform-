@@ -168,6 +168,19 @@ def create_app():
 
     app.jinja_env.globals["static_v"] = static_v
 
+    # A logged-in session is permanent and refreshed on every response, so static files
+    # would carry Set-Cookie + Vary: Cookie and the browser would revalidate them on every
+    # page despite the year-long cache. Static requests never change the session.
+    from flask.sessions import SecureCookieSessionInterface
+
+    class _NoStaticSession(SecureCookieSessionInterface):
+        def save_session(self, app_, session_, response):
+            if request.endpoint == "static":
+                return
+            super().save_session(app_, session_, response)
+
+    app.session_interface = _NoStaticSession()
+
     @app.url_defaults
     def _version_static(endpoint, values):
         if endpoint == "static" and "v" not in values:

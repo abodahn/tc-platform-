@@ -401,6 +401,8 @@ def _pg_pool_put(raw, broken=False):
         else:
             _PG_LAST_OK[id(raw)] = _time.monotonic()
         _PG_POOL.putconn(raw, close=broken)
+        if raw.closed:  # pool chose to close it: forget it, id() may be reused
+            _PG_LAST_OK.pop(id(raw), None)
     else:  # pool torn down (shouldn't happen) — just close
         try:
             raw.close()
