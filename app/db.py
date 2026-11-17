@@ -1137,18 +1137,24 @@ def apply_integration_overrides(conn):
 
 
 def widen_real_columns(conn):
-    """PostgreSQL only: ALTER every float4 (REAL) column to DOUBLE PRECISION. Returns the
-    number widened. Each column is its own transaction, so one failure skips only it."""
+    """PostgreSQL only: widen float4 (REAL) columns to DOUBLE PRECISION using a text
+    cast to keep the value the user saw (shortest float4 text). Rewrite each table
+    once in its own transaction; return the number of columns successfully widened."""
     cols = [(r["table_name"], r["column_name"]) for r in conn.execute(
         "SELECT table_name, column_name FROM information_schema.columns "
         "WHERE table_schema = current_schema() AND data_type = 'real'").fetchall()]
-    done = 0
+    tables = {}
     for table, column in cols:
+        tables.setdefault(table, []).append(column.replace('"', ''))
+    done = 0
+    for table, columns in tables.items():
         try:
-            conn.execute('ALTER TABLE "%s" ALTER COLUMN "%s" TYPE DOUBLE PRECISION'
-                         % (table.replace('"', ''), column.replace('"', '')))
+            changes = ', '.join(
+                'ALTER COLUMN "%s" TYPE DOUBLE PRECISION USING "%s"::text::double precision'
+                % (column, column) for column in columns)
+            conn.execute('ALTER TABLE "%s" %s' % (table.replace('"', ''), changes))
             conn.commit()
-            done += 1
+            done += len(columns)
         except Exception:
             conn.rollback()
     return done
@@ -1352,7 +1358,8 @@ def init_db():
                 conn.rollback()
         # PostgreSQL REAL is float4 (~7 significant digits): 500000.01 was stored as
         # 500000.0, enough to slip a value threshold. Widen every REAL column to
-        # DOUBLE PRECISION (lossless; SQLite REAL is already 8-byte). Runs last so
+        # DOUBLE PRECISION using a text cast to keep the value the user saw (shortest
+        # float4 text), rewriting each table once. SQLite REAL is already 8-byte. Runs last so
         # columns added above are covered; finds nothing on later boots.
         if _is_pg():
             widen_real_columns(conn)
