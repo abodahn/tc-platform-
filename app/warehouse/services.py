@@ -17,7 +17,8 @@ from datetime import datetime
 from math import isfinite
 
 from app.db import get_db
-from .constants import SIZES, WIDTH_TOLERANCE_CM
+from app.tabular import to_number
+from .constants import SIZES, WIDTH_TOLERANCE_CM, IMPORT_COLUMNS, MATERIAL_KINDS, UOMS
 
 log = logging.getLogger("tc.warehouse")
 
@@ -850,6 +851,112 @@ def set_roll_hold(roll_id, hold, user, notes=None):
                      (status, notes, roll_id))
         conn.commit()
         return True, status
+    finally:
+        conn.close()
+
+
+def import_materials(rows, user, commit=False, decimal=None):
+    """Validate and import one file; previews execute the same writes then roll back."""
+    result = {k: [] for k in ("added", "updated", "unchanged", "rejected")}
+    result["opening_total"] = 0.0
+    codes = [(r.get("code") or "").strip().upper() for r in rows]
+    counts = {}
+    for code in codes:
+        counts[code] = counts.get(code, 0) + 1
+    conn = get_db()
+    try:
+        for row, code in zip(rows, codes):
+            cells = {k: (row.get(k) or "").strip() for k in IMPORT_COLUMNS}
+            if not any(cells.values()):
+                continue
+            entry = {"line": row["line"], "code": code, "opening": 0}
+            reason = ""
+            if not code:
+                reason = "code is required"
+            elif counts[code] > 1:
+                reason = "duplicate code in file"
+            # no-op UPDATE = row lock (works on SQLite too), held until commit, so the
+            # history check below cannot race a concurrent receipt or a second import
+            conn.execute("UPDATE wh_materials SET code=code WHERE code=?", (code,))
+            found = conn.execute("SELECT * FROM wh_materials WHERE code=?", (code,)).fetchone()
+            old = dict(found) if found else None
+            values = {}
+            for key in ("name", "color", "composition", "supplier"):
+                if len(cells[key]) > 200:
+                    reason = reason or f"{key} exceeds 200 characters"
+                values[key] = cells[key] or (old[key] if old else (code if key == "name" else None))
+            for key, allowed, default in (("kind", MATERIAL_KINDS, "fabric"), ("uom", UOMS, "m")):
+                value = cells[key].lower()
+                if value and value not in allowed and not (
+                        key == "uom" and old and value == (old[key] or "").lower()):
+                    reason = reason or f"invalid {key}"
+                values[key] = value or (old[key] if old else default)
+                if old and key == "uom" and value == (old[key] or "").lower():
+                    values[key] = old[key]
+            for key in ("width_cm", "opening_qty"):
+                value = to_number(cells[key], None, decimal=decimal) if cells[key] else 0.0
+                if value is None or not isfinite(value) or value < 0:
+                    reason = reason or f"{key} must be a finite non-negative number"
+                values[key] = value
+            if not cells["width_cm"] and old:
+                values["width_cm"] = old["width_cm"]
+            roll = cells["roll_tracked"].lower()
+            if not roll:
+                values["roll_tracked"] = old["roll_tracked"] if old else 0
+            elif roll in ("yes", "y", "true", "1", "evet", "نعم"):
+                values["roll_tracked"] = 1
+            elif roll in ("no", "n", "false", "0", "hayir", "hayır", "لا"):
+                values["roll_tracked"] = 0
+            else:
+                values["roll_tracked"] = 0
+                reason = reason or "invalid roll_tracked"
+            history = bool(old and (_f(old["stock_qty"]) != 0 or conn.execute(
+                "SELECT id FROM wh_movements WHERE material_id=? LIMIT 1", (old["id"],)).fetchone()))
+            if history and any(values[k] != old[k] for k in ("uom", "roll_tracked")):
+                reason = reason or "unit / roll tracking cannot change once the material has stock history"
+            opening = values.pop("opening_qty")
+            if opening is not None and opening > 0 and values["roll_tracked"]:
+                reason = reason or "roll-tracked: opening stock must be received as rolls (Receive page)"
+            if reason:
+                entry["reason"] = reason
+                result["rejected"].append(entry)
+                continue
+            if old:
+                mid = old["id"]
+                changes = {k: v for k, v in values.items() if cells[k] and v != old[k]}
+                status = "updated" if changes else "unchanged"
+                if changes:
+                    conn.execute("UPDATE wh_materials SET " + ", ".join(k + "=?" for k in changes)
+                                 + " WHERE id=?", (*changes.values(), mid))
+            else:
+                cur = conn.execute(
+                    "INSERT INTO wh_materials (code,name,kind,roll_tracked,color,composition,width_cm,"
+                    "supplier,uom,stock_qty,reserved_qty,min_level,reorder_level,avg_cost,warehouse,"
+                    "bin,is_active,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,0,0,?,?,0,?,?,1,?,?)",
+                    (code, values["name"], values["kind"], values["roll_tracked"], values["color"],
+                     values["composition"], values["width_cm"], values["supplier"], values["uom"],
+                     0, 0, "RM Store", None, "Imported", _now()))
+                mid, status = cur.lastrowid, "added"
+            if opening > 0:
+                if history:
+                    entry["note"] = "opening ignored: material already has stock history"
+                else:
+                    ok, msg = _move_stock(conn, "opening", opening, user, material_id=mid,
+                                          ref="IMPORT", notes="Opening balance (import)")
+                    if not ok:   # validated above, so this is a bug: abort the whole file
+                        raise RuntimeError(f"opening for {code} refused: {msg}")
+                    entry["opening"] = round(opening, 6)
+                    status = "updated" if status == "unchanged" else status
+            result[status].append(entry)
+            result["opening_total"] += entry["opening"]
+        if commit:
+            conn.commit()
+        else:
+            conn.rollback()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

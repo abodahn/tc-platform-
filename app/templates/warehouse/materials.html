@@ -10,7 +10,8 @@
   <div class="flex gap center">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.export_csv', key='materials') }}" data-i18n="wh.action.export">Export CSV</a>
-    {% if can('wh_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('warehouse.receive') }}" data-i18n="wh.action.receive">Receive material</a>{% endif %}
+    {% if can('wh_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('warehouse.receive') }}" data-i18n="wh.action.receive">Receive material</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.material_import') }}" data-i18n="wh.imp.title">Import materials</a>{% endif %}
   </div>
 </div>
 

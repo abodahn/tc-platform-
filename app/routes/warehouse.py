@@ -4,13 +4,18 @@ Raw material at roll level (FIFO + shade-lot picking), quantity-tracked trims,
 and finished goods as a style x colour x size matrix — on platform auth, RBAC,
 CSRF, i18n, base template and the notification bell.
 """
+import csv
+import io
+import json
+import re
 import time
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, Response
 
 from app.auth import login_required, permission_required, current_user, user_can
 from app.warehouse import services as svc
-from app.warehouse.constants import MATERIAL_KINDS, ROLL_STATUS, SIZES
+from app.warehouse.constants import MATERIAL_KINDS, ROLL_STATUS, SIZES, IMPORT_COLUMNS
+from app.tabular import ACCEPT, TableError, read_grid
 
 bp = Blueprint("warehouse", __name__, url_prefix="/warehouse")
 
@@ -63,6 +68,114 @@ def material_create():
     flash("Material added." if ok else f"Could not add material ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("warehouse.materials"))
+
+
+@bp.route("/materials/import")
+@login_required
+@permission_required("wh_manage")
+def material_import():
+    return render_template("warehouse/material_import.html", active="wh_materials",
+                           columns=IMPORT_COLUMNS, accept=ACCEPT)
+
+
+@bp.route("/materials/import/template.xlsx")
+@login_required
+@permission_required("wh_manage")
+def material_import_template():
+    examples = [
+        ["FAB-EXAMPLE-01", "Cotton jersey 180gsm", "fabric", "m", "White", "100% Cotton", 180, "", "yes", ""],
+        ["TRM-EXAMPLE-01", "Button 18L", "trim", "pcs", "Navy", "Polyester", "", "", "no", 500],
+    ]
+    if (request.args.get("fmt") or "").lower() == "csv":
+        buf = io.StringIO(newline="")
+        writer = csv.writer(buf)
+        writer.writerows([IMPORT_COLUMNS] + examples)
+        return Response(buf.getvalue().encode("utf-8-sig"), mimetype="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": "attachment; filename=warehouse_materials_template.csv"})
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "materials"
+    for row in [IMPORT_COLUMNS] + examples:
+        ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(buf.getvalue(),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": "attachment; filename=warehouse_materials_template.xlsx"})
+
+
+@bp.route("/materials/import", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def material_import_run():
+    target = url_for("warehouse.material_import")
+    action = request.form.get("action")
+    if action == "confirm":
+        try:
+            payload = json.loads(request.form.get("payload", ""))
+            if not isinstance(payload, dict):
+                raise ValueError()
+            rows, dec = payload.get("rows"), payload.get("decimal")
+            if (not isinstance(rows, list) or len(rows) > 5000 or dec not in (None, ",")
+                    or any(not isinstance(r, dict) or type(r.get("line")) is not int
+                           or r["line"] < 1 or any(not isinstance(r.get(k, ""), str)
+                                                    for k in IMPORT_COLUMNS) for r in rows)):
+                raise ValueError()
+        except (ValueError, TypeError):
+            flash("Invalid import payload (maximum 5000 rows).", "error")
+            return redirect(target)
+    elif action == "preview":
+        file = request.files.get("file")
+        if not file or not file.filename:
+            flash("Choose a file to import.", "error")
+            return redirect(target)
+        try:
+            grid, meta = read_grid(file)
+        except TableError as exc:
+            flash(str(exc), "error")
+            return redirect(target)
+        hdr_i = next((i for i, r in enumerate(grid) if any((c or "").strip() for c in r)), len(grid))
+        header = grid[hdr_i] if hdr_i < len(grid) else []
+
+        def _norm(s):
+            return re.sub(r"[^a-z0-9]+", "_", (s or "").strip().lower()).strip("_")
+
+        file_cols = {}
+        for idx, name in enumerate(header):
+            key = _norm(name)
+            if key and key not in file_cols:
+                file_cols[key] = idx
+        if "code" not in file_cols:
+            flash("Missing columns: code.", "error")
+            return redirect(target)
+        data = grid[hdr_i + 1:]
+        if len(data) > 5000:
+            flash("Import is limited to 5000 data rows.", "error")
+            return redirect(target)
+        rows = []
+        for line, cells in enumerate(data, hdr_i + 2):
+            row = {k: str(cells[file_cols[k]] or "") if k in file_cols and file_cols[k] < len(cells) else ""
+                   for k in IMPORT_COLUMNS}
+            row["line"] = line
+            rows.append(row)
+        dec = "," if meta.get("delimiter") == ";" else None
+    else:
+        flash("Choose preview or confirm.", "error")
+        return redirect(target)
+    try:
+        result = svc.import_materials(rows, _u(), commit=action == "confirm", decimal=dec)
+    except Exception:
+        flash("Import failed — nothing was written.", "error")
+        return redirect(target)
+    if action == "confirm":
+        flash(f"Import: {len(result['added'])} added, {len(result['updated'])} updated, "
+              f"{len(result['unchanged'])} unchanged, {len(result['rejected'])} rejected. "
+              f"Opening stock: {result['opening_total']:g}.", "success")
+        return redirect(url_for("warehouse.materials"))
+    return render_template("warehouse/material_import.html", active="wh_materials",
+                           columns=IMPORT_COLUMNS, accept=ACCEPT, result=result,
+                           payload=json.dumps({"rows": rows, "decimal": dec}))
 
 
 @bp.route("/rolls")

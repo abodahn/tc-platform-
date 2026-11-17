@@ -5,6 +5,9 @@
 # fabric and trims into two tables would duplicate every list query, the reorder sweep,
 # the receipt path and the ledger for zero gain — the columns are identical.
 MATERIAL_KINDS = ["fabric", "trim", "accessory"]
+IMPORT_COLUMNS = ["code", "name", "kind", "uom", "color", "composition", "width_cm",
+                  "supplier", "roll_tracked", "opening_qty"]
+UOMS = ["m", "yd", "kg", "g", "pcs", "cone", "roll", "set", "pair", "box", "dz", "l"]
 
 # Stored on wh_rolls. There is deliberately NO 'reserved' status: a roll is routinely
 # PART reserved (30m committed out of 60m), so a reservation is a quantity (reserved_m),

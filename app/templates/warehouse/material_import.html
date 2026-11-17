@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Import materials{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 data-i18n="wh.imp.title">Import materials</h1>
+    <div class="sub" data-i18n="wh.imp.sub">Upload Excel or CSV to preview material changes and opening stock. Maximum 5000 data rows.</div>
+  </div>
+  <a class="btn btn-ghost" href="{{ url_for('warehouse.materials') }}" data-i18n="wh.imp.back">Back to materials</a>
+</div>
+<div class="panel"><div class="panel-pad">
+  <p data-i18n="wh.imp.help">Code is required. Blank cells keep existing values. Opening stock is booked only for materials without stock history. Receive roll-tracked opening stock as individual rolls on the Receive page.</p>
+  <p><span data-i18n="wh.imp.columns">Columns:</span> <code>{{ columns|join(', ') }}</code></p>
+  <p class="flex gap">
+    <a class="btn btn-ghost" href="{{ url_for('warehouse.material_import_template') }}" data-i18n="wh.imp.xlsx">Download Excel template</a>
+    <a class="btn btn-ghost" href="{{ url_for('warehouse.material_import_template', fmt='csv') }}" data-i18n="wh.imp.csv">Download CSV template</a>
+  </p>
+  <form method="post" action="{{ url_for('warehouse.material_import_run') }}" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="preview">
+    <div class="field"><label for="material-file" data-i18n="wh.imp.file">Excel / CSV file</label>
+      <input id="material-file" type="file" name="file" accept="{{ accept }}" required></div>
+    <button class="btn btn-primary" data-i18n="wh.imp.preview">Preview import</button>
+  </form>
+</div></div>
+{% if result %}
+<div class="panel"><div class="panel-pad">
+  <h2 data-i18n="wh.imp.results">Preview results</h2>
+  <p data-i18n="wh.imp.dryrun">Preview only: nothing has been written.</p>
+  <p class="flex gap">
+    <span class="tag"><span data-i18n="wh.imp.added">Added</span>: {{ result.added|length }}</span>
+    <span class="tag"><span data-i18n="wh.imp.updated">Updated</span>: {{ result.updated|length }}</span>
+    <span class="tag"><span data-i18n="wh.imp.unchanged">Unchanged</span>: {{ result.unchanged|length }}</span>
+    <span class="tag"><span data-i18n="wh.imp.rejected">Rejected</span>: {{ result.rejected|length }}</span>
+    <span class="tag"><span data-i18n="wh.imp.opening">Opening total</span>: {{ result.opening_total }}</span>
+  </p>
+  <table class="tbl">
+    <thead><tr><th data-i18n="wh.imp.line">Line</th><th data-i18n="wh.imp.code">Code</th>
+      <th data-i18n="wh.imp.status">Status</th><th data-i18n="wh.imp.reason">Reason / note</th></tr></thead>
+    <tbody>
+    {% for status, label in [('added', 'Added'), ('updated', 'Updated'), ('unchanged', 'Unchanged'), ('rejected', 'Rejected')] %}
+      {% for row in result[status] %}
+      <tr><td>{{ row.line }}</td><td>{{ row.code }}</td><td><span class="tag" data-i18n="wh.imp.{{ status }}">{{ label }}</span></td>
+        <td>{{ row.reason or row.note or '' }}</td></tr>
+      {% endfor %}
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if result.added or result.updated %}
+  <form method="post" action="{{ url_for('warehouse.material_import_run') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="confirm">
+    <input type="hidden" name="payload" value="{{ payload }}">
+    <button class="btn btn-primary" data-i18n="wh.imp.confirm">Confirm import</button>
+  </form>
+  {% endif %}
+</div></div>
+{% endif %}
+{% endblock %}
