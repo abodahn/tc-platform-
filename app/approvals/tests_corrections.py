@@ -309,6 +309,24 @@ def run():
         c.commit(); c.close()
         assert svc.return_to_supplier(p, li, 10, "x", buyer) == (False, "stock_not_posted")
         assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li)["received_qty"]) == 10
+
+        # A replacement material that now matches the line must not hide the old one's door stock.
+        c = get_db()
+        mid = c.execute("INSERT INTO wh_materials (code,name,roll_tracked) "
+                        "VALUES ('CORR-OLD','CORR-RENAME material',0)").lastrowid
+        c.commit(); c.close()
+        p, li = approve("Door renamed", qty=10, item="CORR-RENAME material", department="Production")
+        assert svc.issue_po(p, buyer)[0]
+        pr_no = q("SELECT pr_no FROM pr_requests WHERE id=?", p)["pr_no"]
+        assert wh.receive_qty(mid, 10, UNIT, store, grn_ref=pr_no)[0]
+        assert svc.receive_items(p, {li: 10}, store, post_stock=False)[0]
+        c = get_db()
+        c.execute("UPDATE wh_materials SET is_active=0 WHERE id=?", (mid,))
+        c.execute("INSERT INTO wh_materials (code,name,roll_tracked) VALUES ('CORR-RENAME','Replacement',0)")
+        c.commit(); c.close()
+        assert svc.return_to_supplier(p, li, 10, "x", buyer) == (False, "stock_not_posted")
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 10
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li)["received_qty"]) == 10
         print("PASS: corrections — reversals, vendor master, PO gate, returns, SoD, "
               "cancel, short-close budget, EGP spend and stock cost, warehouse door corrections")
         return True

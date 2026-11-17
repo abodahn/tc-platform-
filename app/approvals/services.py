@@ -7984,16 +7984,6 @@ def _unreceive(conn, pr, item, qty, ref, user):
             if _pr_field(pr, "po_no"):
                 refs.append(str(pr["po_no"]).strip().upper())
             placeholders = ",".join("?" for _ in refs)
-            if not mat:
-                # Door stock for this PR that no other line explains may be this line's: refuse, never skip it.
-                others = {m["id"] for m in (_mat(o["item"]) for o in conn.execute(
-                    "SELECT item FROM pr_items WHERE pr_id=? AND id<>?",
-                    (pr["id"], item["id"])).fetchall()) if m}
-                door_rows = conn.execute(
-                    "SELECT DISTINCT material_id FROM wh_movements WHERE type='purchase_receiving' "
-                    "AND UPPER(TRIM(ref)) IN (" + placeholders + ")", refs).fetchall()
-                if any(r["material_id"] not in others for r in door_rows):
-                    return False, "stock_not_posted"
             if mat:
                 received = conn.execute(
                     "SELECT COALESCE(SUM(qty),0) AS n FROM wh_movements "
@@ -8038,6 +8028,16 @@ def _unreceive(conn, pr, item, qty, ref, user):
                         if float(available or 0) < left:
                             return False, "stock_issued"
                         door.append((None, left))
+            if not mat or door_net <= 1e-9:
+                # Door stock for this PR that no line (nor this line's own material) explains may be this line's: refuse, never skip it.
+                others = {m["id"] for m in (_mat(o["item"]) for o in conn.execute(
+                    "SELECT item FROM pr_items WHERE pr_id=? AND id<>?",
+                    (pr["id"], item["id"])).fetchall()) if m} | ({mat["id"]} if mat else set())
+                door_rows = conn.execute(
+                    "SELECT DISTINCT material_id FROM wh_movements WHERE type='purchase_receiving' "
+                    "AND UPPER(TRIM(ref)) IN (" + placeholders + ")", refs).fetchall()
+                if any(r["material_id"] not in others for r in door_rows):
+                    return False, "stock_not_posted"
     except Exception:
         conn.rollback()
         return False, "stock_unknown"
