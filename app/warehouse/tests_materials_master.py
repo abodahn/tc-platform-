@@ -104,7 +104,10 @@ with app.app_context():
           and q("SELECT shade_lot, bin FROM wh_rolls WHERE id=?", r1)[0] == {"shade_lot": "L1B", "bin": "A-7"})
     check("split must sum", svc.split_roll(r1, ["50", "40"], U) == (False, "split_sum_mismatch"))
     check("split needs 2", svc.split_roll(r1, ["100"], U) == (False, "bad_split"))
+    consumed_before = q("SELECT COALESCE(SUM(-qty),0) s FROM wh_movements WHERE material_id=? AND qty<0 AND type IN ('issue','transfer')", w)[0]["s"]
     ok, new = svc.split_roll(r1, ["50", "30", "20"], U)
+    check("split is not consumption", q("SELECT COALESCE(SUM(-qty),0) s FROM wh_movements WHERE material_id=? AND qty<0 AND type IN ('issue','transfer')", w)[0]["s"] == consumed_before)
+    check("split legs typed 'split'", q("SELECT COUNT(*) c FROM wh_movements WHERE roll_id=? AND type='split'", r1)[0]["c"] == 1)
     check("split into three", ok and len(new) == 2, new)
     check("parent keeps first length", q("SELECT remaining_m FROM wh_rolls WHERE id=?", r1)[0]["remaining_m"] == 50)
     check("children inherit lot", all(r["shade_lot"] == "L1B" for r in
@@ -115,6 +118,13 @@ with app.app_context():
           == {"length_m": 50, "status": "available"})
     check("1 mm tolerance on the sum", svc.split_roll(q("SELECT id FROM wh_rolls WHERE roll_no=?", new[0])[0]["id"], ["10.0004", "20"], U)[0])
     check("header unchanged + ledger reconciles", abs(mat("JER-WHT")["stock_qty"] - 240) < 1e-6 and reconciles(w))
+    rid = q("SELECT id FROM wh_rolls WHERE material_id=? AND shade_lot='L2'", w)[0]["id"]
+    svc.update_roll(rid, {"shade_lot": "", "supplier_lot": "", "bin": ""}, U)
+    check("blank roll text is NULL", q("SELECT shade_lot, supplier_lot, bin FROM wh_rolls WHERE id=?", rid)[0]
+          == {"shade_lot": None, "supplier_lot": None, "bin": None})
+    svc.update_material(w, {"color": "", "notes": ""}, U)
+    check("blank material text is NULL", q("SELECT color, notes FROM wh_materials WHERE id=?", w)[0]
+          == {"color": None, "notes": None})
 
     print("5. quarantine is not available")
     svc.update_material(w, {"reorder_level": "200"}, U)

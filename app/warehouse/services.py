@@ -334,6 +334,8 @@ def update_material(material_id, data, user):
             conn.rollback()
             return False, reason
         values["name"] = values["name"] or m["code"]
+        for k in ("color", "composition", "supplier", "warehouse", "bin", "notes"):
+            values[k] = values[k] or None
         conn.execute("UPDATE wh_materials SET " + ", ".join(k + "=?" for k in values)
                      + " WHERE id=?", (*values.values(), material_id))
         conn.commit()
@@ -391,6 +393,7 @@ def update_roll(roll_id, data, user):
         if reason:
             conn.rollback()
             return False, reason
+        values = {k: v or None for k, v in values.items()}
         values["width_cm"] = width
         conn.execute("UPDATE wh_rolls SET " + ", ".join(k + "=?" for k in values)
                      + " WHERE id=?", (*values.values(), roll_id))
@@ -419,7 +422,7 @@ def split_roll(roll_id, lengths, user):
             conn.rollback()
             return False, reason
         moved = sum(lengths[1:])       # the parent keeps the exact rest, so the ledger reconciles
-        ok, msg = _move_stock(conn, "transfer", -moved,
+        ok, msg = _move_stock(conn, "split", -moved,
                               user, roll_id=roll_id, unit_cost=r["unit_cost"], ref=r["roll_no"])
         if not ok:
             conn.rollback()
@@ -437,7 +440,7 @@ def split_roll(roll_id, lengths, user):
         for length in lengths[1:]:
             rid, number = _insert_roll(conn, r["material_id"], data, length, r["unit_cost"],
                                        "quarantine" if r["status"] == "quarantine" else "available")
-            ok, msg = _move_stock(conn, "transfer", length, user, roll_id=rid,
+            ok, msg = _move_stock(conn, "split", length, user, roll_id=rid,
                                   unit_cost=r["unit_cost"], ref=r["roll_no"])
             if not ok:
                 conn.rollback()
