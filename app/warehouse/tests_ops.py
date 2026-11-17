@@ -260,9 +260,17 @@ with app.app_context():
             "AND target_user='wh_mgr_c'") >= 1
           and q("SELECT COUNT(*) FROM notifications WHERE title LIKE 'Internal issue awaiting%' "
                 "AND target_user=?", (IA["username"],)) == 0)
-    check("non-department issue bypasses value approval",
+    check("above-limit maintenance issue waits",
           svc.issue_internal(issue_mid, 60, "maintenance", "Line 1", "supplies", IA)
-          == (True, "issued") and stock(issue_mid) == 30)
+          == (True, "pending") and stock(issue_mid) == 90)
+    check("above-limit cost-centre issue waits",
+          svc.issue_internal(issue_mid, 60, "cost_centre", "CC-10", "supplies", IA)
+          == (True, "pending") and stock(issue_mid) == 90)
+    check("above-limit sample issue waits",
+          svc.issue_internal(issue_mid, 60, "sample", "Proto", "supplies", IA)
+          == (True, "pending") and stock(issue_mid) == 90
+          and q("SELECT COUNT(*) FROM wh_issue_requests WHERE material_id=? AND status='pending' "
+                "AND dest_kind IN ('maintenance','cost_centre','sample')", (issue_mid,)) == 3)
     c = get_db()
     c.execute("UPDATE wh_materials SET stock_qty=90 WHERE id=?", (issue_mid,))
     c.commit(); c.close()
@@ -302,11 +310,12 @@ with app.app_context():
         "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
         "VALUES ('TRM-ISSUE-UNKNOWN','Unknown cost test','trim',0,'pcs',2000,0)").lastrowid
     c.commit(); c.close()
-    check("unknown-cost department issue applies with a note",
-          svc.issue_internal(unknown_mid, 1000, "department", "Cutting", "supplies", IA)
-          == (True, "issued") and stock(unknown_mid) == 1000
-          and "value unknown" in q("SELECT notes FROM wh_movements WHERE material_id=? "
-                                   "ORDER BY id DESC LIMIT 1", (unknown_mid,)))
+    check("unpriced material issue is refused for every destination",
+          all(svc.issue_internal(unknown_mid, n, kind, "X", "supplies", IA) == (False, "no_unit_cost")
+              for kind in ("department", "cost_centre", "maintenance", "sample") for n in (1, 1000))
+          and stock(unknown_mid) == 2000
+          and q("SELECT COUNT(*) FROM wh_movements WHERE material_id=?", (unknown_mid,)) == 0
+          and q("SELECT COUNT(*) FROM wh_issue_requests WHERE material_id=?", (unknown_mid,)) == 0)
     check("negative issue limit refused", svc.set_issue_limit(-1, IB) == (False, "bad_limit"))
     check("non-finite issue limits refused", all(svc.set_issue_limit(v, IB) == (False, "bad_limit")
                                                for v in ("nan", "inf", "-inf", "invalid")))
@@ -333,6 +342,10 @@ with app.app_context():
     check("issues older than 24h are not summed",
           svc.issue_internal(split_mid, 49, "department", "Packing", "supplies", IA)
           == (True, "issued") and stock(split_mid) == 304)
+    check("split cost-centre issues sum within 24h",
+          svc.issue_internal(split_mid, 49, "cost_centre", "CC-20", "supplies", IA) == (True, "issued")
+          and svc.issue_internal(split_mid, 49, "cost_centre", "CC-20", "supplies", IA)
+          == (True, "pending") and stock(split_mid) == 255)
     check("issue decision lists support multiple statuses", {r["id"] for r in
           svc.list_issue_requests(("approved", "rejected"))} >= {req_id, reject_id})
     c = get_db()

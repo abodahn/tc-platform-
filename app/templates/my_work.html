@@ -21,7 +21,7 @@
   <div class="panel"><div class="panel-head"><h3 data-i18n="wh.issues.pending">Internal issues awaiting approval</h3><span class="badge-count">{{ wh_issues|length }}</span></div>
     <div class="panel-pad">{% for c in wh_issues %}
       <a class="row-line" href="{{ url_for('warehouse.counts') }}" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
-        <span><b>{{ c.req_no }}</b> · {{ c.code }}</span><span class="tag">{{ c.qty }}</span>
+        <span><b>{{ c.req_no }}</b> · {{ c.code }} · <span data-i18n="wh.dest.{{ c.dest_kind }}">{{ c.dest_kind|replace('_',' ')|title }}</span>: {{ c.dest_name }}</span><span class="tag">{{ c.qty }}</span>
       </a>{% endfor %}</div>
   </div>{% endif %}
 

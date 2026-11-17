@@ -615,6 +615,8 @@ def issue_internal():
                                  request.form.get("reason"), _u(), _int(request.form.get("roll_id")))
     if ok and msg == "pending":
         flash("Issue sent for approval: value is above the approval limit.", "success")
+    elif msg == "no_unit_cost":
+        flash("wh.issues.no_unit_cost", "error")
     else:
         flash("Material issued." if ok else f"Issue rejected ({msg}).", "success" if ok else "error")
     return redirect(request.referrer or url_for("warehouse.issue"))

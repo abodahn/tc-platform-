@@ -1930,7 +1930,7 @@ def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id
         return False, "destination_required"
     if not reason or len(reason) > 200:
         return False, "reason_required"
-    limit = issue_limit() if dest_kind == "department" else 0
+    limit = issue_limit()
     pending_no = None
     conn = get_db()
     try:
@@ -1944,26 +1944,27 @@ def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id
             r = conn.execute("SELECT status FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
             if r["status"] == "quarantine":
                 return False, "roll_quarantined"
+        m = conn.execute("SELECT roll_tracked FROM wh_materials WHERE id=?", (material_id,)).fetchone()
+        if not m:
+            return False, "material_not_found"
         cost = _unit_cost(conn, material_id, roll_id)
+        if cost <= 0:
+            # Policy: an issue whose value cannot be known is refused, never passed through.
+            return False, "no_unit_cost"
         value = qty * cost
-        recent = 0.0
-        if dest_kind == "department" and cost > 0:
-            # Same rolling window as counts: split issues to one department add up.
-            window_start = (datetime.utcnow() - timedelta(hours=COUNT_AUTO_WINDOW_HOURS)).strftime(
-                "%Y-%m-%d %H:%M:%S")
-            recent = _f(conn.execute(
-                "SELECT COALESCE(SUM(-qty*unit_cost),0) AS v FROM wh_movements "
-                "WHERE type='issue' AND material_id=? AND ref=? AND created_at >= ?",
-                (material_id, f"{dest_kind}:{dest_name}", window_start)).fetchone()["v"]) + _f(
-                conn.execute(
-                    "SELECT COALESCE(SUM(value),0) AS v FROM wh_issue_requests "
-                    "WHERE status='pending' AND material_id=? AND dest_kind=? AND dest_name=? "
-                    "AND requested_at >= ?",
-                    (material_id, dest_kind, dest_name, window_start)).fetchone()["v"])
-        if dest_kind == "department" and cost > 0 and value + recent > limit:
-            m = conn.execute("SELECT roll_tracked FROM wh_materials WHERE id=?", (material_id,)).fetchone()
-            if not m:
-                return False, "material_not_found"
+        # Same rolling window as counts: split issues to one destination add up.
+        window_start = (datetime.utcnow() - timedelta(hours=COUNT_AUTO_WINDOW_HOURS)).strftime(
+            "%Y-%m-%d %H:%M:%S")
+        recent = _f(conn.execute(
+            "SELECT COALESCE(SUM(-qty*unit_cost),0) AS v FROM wh_movements "
+            "WHERE type='issue' AND material_id=? AND ref=? AND created_at >= ?",
+            (material_id, f"{dest_kind}:{dest_name}", window_start)).fetchone()["v"]) + _f(
+            conn.execute(
+                "SELECT COALESCE(SUM(value),0) AS v FROM wh_issue_requests "
+                "WHERE status='pending' AND material_id=? AND dest_kind=? AND dest_name=? "
+                "AND requested_at >= ?",
+                (material_id, dest_kind, dest_name, window_start)).fetchone()["v"])
+        if value + recent > limit:
             if m["roll_tracked"] and not roll_id:
                 return False, "roll_required"
             cur = conn.execute(
@@ -1973,8 +1974,6 @@ def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id
             pending_no = doc_no("ISR", cur.lastrowid)
             conn.execute("UPDATE wh_issue_requests SET req_no=? WHERE id=?", (pending_no, cur.lastrowid))
         else:
-            if dest_kind == "department" and cost <= 0:
-                reason += " [value unknown: no unit cost]"
             ok, msg = _move_stock(conn, "issue", -qty, user, material_id=material_id, roll_id=roll_id,
                                   unit_cost=cost, ref=f"{dest_kind}:{dest_name}", notes=reason)
             if not ok:
@@ -1987,7 +1986,8 @@ def issue_internal(material_id, qty, dest_kind, dest_name, reason, user, roll_id
     if pending_no:
         _count_notice(pending_no, exclude=_user(user),
                       title=f"Internal issue awaiting approval: {pending_no}",
-                      message="Review the internal-issue request.", link="/warehouse/counts")
+                      message=f"Review the internal-issue request ({dest_kind}: {dest_name}).",
+                      link="/warehouse/counts")
     return True, "pending" if pending_no else "issued"
 
 
