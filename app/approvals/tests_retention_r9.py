@@ -212,7 +212,10 @@ def run():
         conn = get_db()
         lb = _stages(conn, big)
         conn.close()
-        assert "bod" in lb, "a 12M request must reach the Board: %s" % lb
+        # Owner's ladder (2026-11-17): the Board is retired from new requests;
+        # the CEO is the top rung and the second place the gate is enforced.
+        assert lb[-1] == "ceo" and "bod" not in lb, (
+            "a 12M request must end at the CEO: %s" % lb)
         quotes(big, 3, 12_000_000)
         pm = walk_to(big, "purchasing")
         ok, msg = svc.act_on_step(big, pm, "approve")
@@ -227,17 +230,17 @@ def run():
         assert ok, msg
         ok, msg = svc.act_on_step(big, pm, "approve")
         assert ok, "the business case did not unblock the signature: %s" % msg
-        # ...and the Board rung is the SECOND place it is enforced: strip the
-        # business case (as a re-price upward effectively does) and the Board
+        # ...and the CEO rung is the SECOND place it is enforced: strip the
+        # business case (as a re-price upward effectively does) and the CEO
         # signature is refused too.
         conn = get_db()
         conn.execute("UPDATE pr_requests SET business_case=NULL WHERE id=?", (big,))
         conn.commit()
         conn.close()
-        bod = walk_to(big, "bod")
-        ok, msg = svc.act_on_step(big, bod, "approve")
+        top = walk_to(big, "ceo")
+        ok, msg = svc.act_on_step(big, top, "approve")
         assert not ok and msg == "business_case_required", (
-            "the Board signed a 12M request with no business case: %s / %s"
+            "the CEO signed a 12M request with no business case: %s / %s"
             % (ok, msg))
         print("business case: 12,000,000 blocked, then signed once recorded")
 

@@ -70,9 +70,10 @@ def run():
     # instruction (2026-10-13). What this line is really defending is that the
     # settings screen prints real figures and not zeros, so it should not have to
     # be edited again the next time the ladder changes.
-    _priced = [v for v in C.ACTIVE_MATRIX.values() if v and v > 0]
-    chk("and shows a real threshold, not 0",
-        bool(_priced) and any("{:,.0f}".format(v) in html for v in _priced))
+    # Owner's ladder (2026-11-17): every rung is always required, so the
+    # truthful figure on the screen IS 0 for every rung.
+    chk("and shows the real threshold, 0 = always",
+        all(not v for v in C.ACTIVE_MATRIX.values()) and 'value="0"' in html)
 
     with app.app_context():
         from app.db import get_db
@@ -93,16 +94,18 @@ def run():
         svc.set_single_source(pid, "Proprietary OEM part", {"username": "purch", "id": 3})
         conn = get_db(); low = _rungs(conn, pid); conn.close()
         low_ss = [s for s, o in low if o == "single_source"]
-        chk("at 30,000 the waiver adds a rung", bool(low_ss), low)
+        # Owner's ladder: the CEO (L1) already signs every request, so the
+        # waiver adds no rung at any value; the ladder stays the full one.
+        FULL = list(C.DOAM_LADDER)
+        chk("at 30,000 the waiver adds no rung (CEO already signs)",
+            not low_ss and [s for s, _ in low] == FULL, low)
 
         svc.price_pr(pid, {li: 600000}, {}, buyer)      # the same request, repriced
         conn = get_db(); high = _rungs(conn, pid); conn.close()
         high_ss = [s for s, o in high if o == "single_source"]
         ladder = [s for s, o in high if o != "single_source"]
-        chk("re-pricing to 600,000 MOVES the waiver rung", high_ss != low_ss,
-            "%s -> %s" % (low_ss, high_ss))
-        chk("and it sits ABOVE the value ladder, which is the whole point",
-            high_ss and high_ss[0] not in ladder, "%s vs %s" % (high_ss, ladder))
+        chk("re-pricing to 600,000 still adds none", not high_ss, high_ss)
+        chk("and the ladder is unchanged", ladder == FULL, ladder)
 
         # ---- 3. the expenditure type may not downgrade silently --------------
         print("\n§4.2 an unrecognised expenditure type is not a silent OPEX")

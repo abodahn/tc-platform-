@@ -1,14 +1,8 @@
 """
-TC Platform — Procurement & Approvals constants: the approval ladder, the
-amount-threshold routing matrix, statuses, and the permission/role maps that
-extend platform RBAC. Single source of truth for the procurement workflow.
-
-Ladder (matches the paper Purchase Request Form signature blocks):
-    Requester -> Warehouse -> Factory Manager -> Purchasing -> Finance -> CFO -> CEO
-
-The requester is the originator (they "sign" by submitting). The stages after
-them are the approval ladder; which stages apply depends on the PR total via
-APPROVAL_MATRIX, so a small PR needs fewer signatures than a large one.
+TC Platform — Procurement & Approvals constants and permission/role maps.
+Owner decision 2026-11-17: every OPEX and CAPEX request requires Warehouse,
+Warehouse Manager, Purchasing, Plant Director, Financial Control, CFO and CEO,
+in that order, at any amount. CEO is always the last signature.
 """
 import re
 from datetime import date as _date, datetime as _dt, timezone as _tz
@@ -76,45 +70,27 @@ DEPARTMENTS = ["General Maintenance", "Production", "Cutting", "Sewing", "Finish
                "Human Resources", "Administration", "Procurement"]
 
 # --- The approval ladder ----------------------------------------------------
-# Ordered stage keys (excluding the requester, who is the originator).
-#
-# ORDER IS THE SIGNING ORDER, AND THE LAST INCLUDED STAGE IS THE FINAL APPROVER.
-# That is why Purchasing sits BEFORE the directors: DOAM tier 1 (up to 10,000)
-# must end on the Procurement Manager's signature, while tier 2 must end on a
-# director's. Putting the buyer first satisfies both without special cases, and
-# it matches the real sequence — the buyer sources and prices, then management
-# commits. `scd` and `bod` are new; every pre-existing stage keeps its relative
-# position, so requests already in flight are unaffected (their steps are rows
-# already written to the database).
-# The ladder in use TODAY, derived from T&C's real paper form: at 48,000 EGP it
-# produces warehouse + factory_manager + purchasing + finance + cfo, which with
-# the requester is the six signatures on the paper. DOAM v1.1 disagrees with that
-# form — at 48,000 it wants five signatures and involves NEITHER Finance NOR the
-# CFO (§4.1 tier 2 approves at Plant / Supply Chain Director). Since the DOAM is
-# still "Draft v1.0" with a blank approval line, the paper form stays
-# authoritative and the DOAM ladder is opt-in. See build_ladder().
+# Stage keys exclude the requester, whose submission is their signature.
+# Keep the paper-form ladder for the legacy branch and historic requests.
 LEGACY_LADDER = ["warehouse", "factory_manager", "purchasing", "finance", "cfo", "ceo"]
 
-# The DOAM ladder. Purchasing sits BEFORE the directors because the last included
-# stage is the final approver: tier 1 (up to 10,000) must end on the Procurement
-# Manager's signature and tier 2 on a director's, and this order satisfies both
-# without special cases. It also matches the real sequence — the buyer sources
-# and prices, then management commits.
-# The Warehouse MANAGER is a rung of its own, after the store and before the
-# buyer, and it is ALWAYS on (matrix 0). The store answers "is it on the shelf
-# and is the quantity right"; the manager answers "is this what we should be
-# buying at all, given coverage, what is already on order, and what it cost last
-# time" — which is why that rung is the one carrying the eight warehouse figures
-# and may correct every one of them.
-# Finance was removed from the ladder on instruction. Its DEFINITIONS below
-# (label, level, roles) are deliberately kept: requests already circulating
-# carry a signed `finance` step, and deleting the label would blank the signature
-# block on every one of them. Nothing NEW routes to it.
+# Owner decision 2026-11-17: every rung signs every OPEX and CAPEX request.
+# Purchasing prices before management signs; CEO is always the last signature.
+# Finance and retired stage definitions remain for historic/in-flight requests.
 DOAM_LADDER = ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
-               "scd", "cfo", "ceo", "bod"]
+               "control", "cfo", "ceo"]
+# Kept so requests raised before 2026-11-17 still render and complete.
+RETIRED_STAGES = ("scd", "bod")
+# One signing order for every stage, current or legacy, whatever added the rung.
+# Re-pricing sorts pending rungs by it; any other stage sorts just before cfo.
+LADDER_RANK = ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
+               "scd", "finance", "control", "cfo", "ceo", "bod"]
 
-# What the rest of the codebase means by "the ladder". Unchanged on purpose:
-# nothing about who signs moves until someone signs the DOAM.
+
+def ladder_rank(stage):
+    return LADDER_RANK.index(stage) if stage in LADDER_RANK else LADDER_RANK.index("cfo") - 0.5
+
+# Rebound to the active ladder below once DOAM_IN_FORCE is known.
 LADDER = LEGACY_LADDER
 
 # Human labels for each stage (EN — AR/TR carried by i18n on the client).
@@ -128,6 +104,7 @@ STAGE_LABELS = {
     "factory_manager": "Plant Director",
     "scd": "Supply Chain Director",
     "finance": "Financial Director",
+    "control": "Financial Control",
     "cfo": "CFO",
     # "CEO", as every screen already says (i18n proc stage labels). The DOAM
     # calls this level MD; at T&C the person who signs it is the CEO, and the
@@ -146,6 +123,7 @@ DOAM_LEVEL = {
     "factory_manager": "L2",
     "scd": "L2",
     "finance": "L2",
+    "control": "L1",
     "cfo": "L1",
     "ceo": "L1",
     "bod": "BOD",
@@ -224,8 +202,8 @@ CONTROL_ORIGINS = ("single_source", "unbudgeted", "deviation")
 #       which is the top rung, so only this tier needs naming.
 #
 # Nothing here moves WHO signs or in what order; build_ladder is untouched.
-# Finance removed on instruction; the CAPEX review is now Purchasing + SCD.
-CAPEX_REVIEW_STAGES = ("purchasing", "scd")
+# CAPEX reviewers include the store, its manager, Purchasing and Financial Control.
+CAPEX_REVIEW_STAGES = ("warehouse", "warehouse_manager", "purchasing", "scd", "control")
 # top rung of the value ladder -> the stages that commit ALONGSIDE it.
 OPEX_JOINT_APPROVERS = {"ceo": ("cfo",)}
 
@@ -399,6 +377,7 @@ STAGE_ROLES = {
     "factory_manager": {"factory_manager", "plant_director"},
     "scd": {"supply_chain_director"},
     "finance": {"finance_manager", "finance_user", "financial_director"},
+    "control": {"financial_controller"},
     "cfo": {"cfo"},
     "ceo": {"ceo", "managing_director"},
     "bod": {"board"},
@@ -433,6 +412,7 @@ ROLE_LEVEL = {
     # L1 — commits major spend, and unbudgeted spend to the L1 limit (Table 4).
     "ceo": "L1",
     "managing_director": "L1",
+    "financial_controller": "L1",
     "cfo": "L1",
     # L2 — the three directors of Table 4: FIN-D payment control, SC-D
     # operational and inventory replenishment, PD production and maintenance.
@@ -480,48 +460,9 @@ def holds_authority(role, stage):
         return False
 
 
-# --- Amount-threshold routing (EGP-equivalent) ------------------------------
-# A stage joins the ladder when the total EXCEEDS its threshold; a threshold of
-# 0 means always required. Exceeds, not "reaches", because the DOAM's bands are
-# written as "up to 10,000" then "10,001 to 200,000" — so 10,000 is tier 1 and
-# 10,000.01 is tier 2. Using >= here would put an exact 10,000 in the wrong tier.
-#
-# Only stages PRESENT in a matrix can ever be included, which is how CAPEX
-# leaves out Warehouse: a capital purchase is not a stores replenishment.
-
-# DOAM §4.1 — OPEX ladder (budgeted)
-#   up to 10,000          PRM                          (L4)
-#   10,001 -    200,000   Plant / Supply Chain Director (L2)
-#   200,001 -   500,000   Financial Director            (L2)
-#   500,001 - 2,000,000   MD *or* CFO                   (L1)  -> CFO carries it
-#   2,000,001 - 5,000,000 MD *and* CFO                  (L1)  -> both included
-#   5,000,001 - 10,000,000 Board
-#   above 10,000,000      Board, with a business case
-OPEX_MATRIX = {
-    "warehouse": 0,
-    "warehouse_manager": 0,          # always, at any value — a demand rung
-    "purchasing": 0,
-    "factory_manager": 10_000,
-    "scd": 10_000,
-    "cfo": 500_000,
-    "ceo": 2_000_000,
-    "bod": 5_000_000,
-}
-
-# DOAM §4.2 — CAPEX ladder. Every tier is a joint approval, which this engine
-# expresses by including both stages: each must sign before the request moves.
-#   up to 250,000          review SCD + FIND, approve PD + CFO
-#   250,001 - 2,000,000    + MD
-#   2,000,001 - 10,000,000 Board
-#   above 10,000,000       Board, with a business case
-CAPEX_MATRIX = {
-    "purchasing": 0,
-    "scd": 0,
-    "factory_manager": 0,
-    "cfo": 0,
-    "ceo": 250_000,
-    "bod": 2_000_000,
-}
+# Owner decision 2026-11-17: every rung is always required for both spend kinds.
+OPEX_MATRIX = {stage: 0 for stage in DOAM_LADDER}
+CAPEX_MATRIX = {stage: 0 for stage in DOAM_LADDER}
 
 EXPENDITURE_KINDS = ["opex", "capex"]
 MATRICES = {"opex": OPEX_MATRIX, "capex": CAPEX_MATRIX}
@@ -541,21 +482,11 @@ APPROVAL_MATRIX = {
     "ceo": 100_000,
 }
 
-# Above this, the DOAM requires a written business case in addition to Board
-# approval (§4.1 tier 7, §4.2 tier 4).
+# Above this, a written business case remains required, independently of signers.
 BUSINESS_CASE_OVER = 10_000_000
 
 
-# THE DOAM IS THE POLICY IN FORCE. Ahmed confirmed it is mandatory, so the
-# ladders in §4.1 and §4.2 now govern every request; the paper form's thresholds
-# stay in APPROVAL_MATRIX / LEGACY_LADDER so reverting is this one flag rather
-# than an archaeology exercise through the history.
-#
-# What this changed, concretely: a 48,000 EGP request used to collect Warehouse,
-# Plant Director, Purchasing, Finance and the CFO. Under DOAM §4.1 tier 2 it
-# collects Warehouse, Purchasing, Plant Director and the Supply Chain Director —
-# Finance and the CFO are NOT involved at that value, and above 5,000,000 the
-# Board is.
+# The owner's 2026-11-17 ladder is in force; the paper-form fallback is retained.
 DOAM_IN_FORCE = True
 
 
@@ -598,11 +529,8 @@ def build_ladder(total, kind=None, matrix=None):
     An unrecognised kind falls back to DOAM OPEX rather than to no approvals: a
     blank or fat-fingered value must never be the cheap path through the gate.
 
-    `matrix` overrides the amount each rung joins at. Production passes the LIVE
-    matrix (services.live_matrix -> matrix_for below), so an admin who edits a
-    threshold on the governance screen changes the routing without a code edit;
-    omitted, the DOAM numbers in this module apply, which is what every
-    governance screen and check module wants.
+    `matrix` selects available stages; amounts are intentionally ignored under
+    the owner's 2026-11-17 rule, even if an old admin threshold remains stored.
     """
     try:
         t = float(total or 0)
@@ -612,8 +540,7 @@ def build_ladder(total, kind=None, matrix=None):
         # The pre-DOAM paper form: inclusive thresholds, legacy stage order.
         return [s for s in LEGACY_LADDER if t >= APPROVAL_MATRIX.get(s, 0)]
     matrix = matrix or MATRICES.get((kind or "opex").strip().lower(), OPEX_MATRIX)
-    return [s for s in DOAM_LADDER
-            if s in matrix and (matrix[s] <= 0 or t > matrix[s])]
+    return [s for s in DOAM_LADDER if s in matrix]
 
 
 def threshold_key(kind, stage):
@@ -622,29 +549,11 @@ def threshold_key(kind, stage):
 
 
 def matrix_for(kind="opex", get=None):
-    """{stage: amount} for `kind`, with the admin's override applied per rung.
-
-    `get(key)` returns the value in force for a settings key — in production
-    services.num_setting, which already falls back to the default below when the
-    row is absent, blank or out of bounds. With no getter this is the DOAM matrix
-    unchanged, so nothing that imports constants alone changes behaviour.
-
-    A stage is NOT dropped when its knob is missing: the rung list is the
-    matrix's, and only the number is configurable. Removing a signature from the
-    ladder is a DOAM amendment, not a settings edit.
-    """
+    """Return the fixed matrix for `kind`; retain `get` for existing callers."""
     k = (kind or "opex").strip().lower()
     base = MATRICES.get(k, OPEX_MATRIX)
-    if get is None:
-        return dict(base)
-    out = {}
-    for stage, at in base.items():
-        try:
-            v = get(threshold_key(k, stage))
-            out[stage] = float(at if v is None else v)
-        except (TypeError, ValueError):
-            out[stage] = float(at)
-    return out
+    # Stored admin thresholds cannot restore amount gating to the owner's ladder.
+    return dict(base)
 
 
 def final_approver_level(total, kind="opex"):
@@ -678,7 +587,8 @@ def level_above(level):
 def single_source_stage(ladder, kind=None):
     """DOAM §4.3 — a single-source award is "approved one level above the value
     tier". Returns the ONE extra stage to append to `ladder`, or None when the
-    ladder already reaches that high (nothing to escalate to).
+    ladder already reaches that high (nothing to escalate to). On the owner's
+    fixed ladder (CEO last) it is always None; only pre-2026-11-17 ladders gain a rung.
 
     Appending at the end is correct because DOAM_LADDER is ordered by ascending
     authority: the extra signature is the last one collected, and it belongs to
@@ -735,19 +645,11 @@ def unbudgeted_stage(ladder, kind=None):
 
 
 # --- Pricing gate (controlled Procure-to-Pay) -------------------------------
-# A purchase request is raised WITHOUT any commercial value: the requester only
-# states what they need (item, qty, unit, spec). Pricing is entered later, by
-# Purchasing, at the purchasing stage — that's the "pricing gate". Only then do
-# the value-based financial approvals (Finance / CFO / CEO) join the ladder.
+# The requester supplies demand; Purchasing supplies the commercial value.
+# Every rung is required, and the request cannot pass Purchasing unpriced.
 PRICING_STATUSES = ["unpriced", "priced"]
 
-# Stages always required regardless of value (threshold 0): the "demand
-# approval" part of the ladder, which runs BEFORE pricing.
-#
-# These MUST derive from whichever ladder is in force. Leaving them on the paper
-# form while build_ladder() followed the DOAM would put a stage in the demand
-# list that the DOAM makes value-gated, and the pricing gate would then wait for
-# a signature that the ladder never asks for — a request stuck with no error.
+# Split the active ladder at the pricing gate, independently of amount.
 _ACTIVE_LADDER = DOAM_LADDER if DOAM_IN_FORCE else LEGACY_LADDER
 _ACTIVE_MATRIX = OPEX_MATRIX if DOAM_IN_FORCE else APPROVAL_MATRIX
 
@@ -762,16 +664,17 @@ _ACTIVE_MATRIX = OPEX_MATRIX if DOAM_IN_FORCE else APPROVAL_MATRIX
 LADDER = _ACTIVE_LADDER
 ACTIVE_MATRIX = _ACTIVE_MATRIX
 
-DEMAND_STAGES = [s for s in _ACTIVE_LADDER if _ACTIVE_MATRIX.get(s, 1) <= 0]
-
-# Value-gated stages: they join only once Purchasing has priced the request and
-# the total clears their threshold.
-VALUE_STAGES = [s for s in _ACTIVE_LADDER
-                if s in _ACTIVE_MATRIX and _ACTIVE_MATRIX[s] > 0]
-
-# The stage at which Purchasing enters pricing (the gate). A request cannot pass
-# this stage until it has been priced.
+# Purchasing enters pricing here; the request cannot pass this rung unpriced.
 PRICING_GATE_STAGE = "purchasing"
+
+if DOAM_IN_FORCE:
+    DEMAND_STAGES = _ACTIVE_LADDER[:_ACTIVE_LADDER.index(PRICING_GATE_STAGE) + 1]
+    # Post-pricing rungs; retired future ladder rungs are pruned on re-pricing.
+    VALUE_STAGES = _ACTIVE_LADDER[_ACTIVE_LADDER.index(PRICING_GATE_STAGE) + 1:] + list(RETIRED_STAGES)
+else:
+    DEMAND_STAGES = [s for s in _ACTIVE_LADDER if _ACTIVE_MATRIX.get(s, 1) <= 0]
+    VALUE_STAGES = [s for s in _ACTIVE_LADDER
+                    if s in _ACTIVE_MATRIX and _ACTIVE_MATRIX[s] > 0]
 
 # Commercial fields the requester must NEVER set (enforced server-side): they are
 # stripped on create/edit for anyone without proc_purchasing, and only Purchasing
@@ -868,6 +771,7 @@ DEFAULT_ESCALATION = {
     "purchasing_manager": "cfo",
     "finance_user": "finance_manager",
     "finance_manager": "cfo",
+    "financial_controller": "cfo",
     "cfo": "ceo",
     "ceo": "",                       # the top of the chart: nobody above
 }
@@ -904,6 +808,7 @@ PROC_ROLE_PERMS = {
     # be a requester"). That costs no control: DOAM §3.4 self-approval is
     # absolute, so their own rung goes one level up the escalation chain below
     # rather than to them.
+    "financial_controller": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
     "cfo": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
     "ceo": ["proc_view", "proc_create", "proc_approve"],
     # proc_catalogue is the item master. The store is the only function that
@@ -945,6 +850,7 @@ PROC_ROLE_PERMS = {
 PROC_ROLE_LABELS = {
     "purchasing_manager": "Purchasing Manager",
     "finance_manager": "Finance Manager",
+    "financial_controller": "Financial Controller",
     "cfo": "Chief Financial Officer",
     "ceo": "Chief Executive Officer",
     "warehouse_manager": "Warehouse Manager",
@@ -1305,7 +1211,7 @@ def cost_object_required(texts):
 # adds signatures ON TOP of the value ladder:
 #
 #   on plan                     qty within ceiling, price <= target   nothing
-#   over the stock ceiling      qty pushes stock past max_level       PD + SCD, memo
+#   over the stock ceiling      qty pushes stock past max_level       PD, memo
 #   price up to  5% over target                                       3 quotes, memo
 #   price  5-15% over target                                          FIN-D, memo, quotes
 #   price   >15% over target                                          FIN-D + MD, memo
@@ -1344,8 +1250,7 @@ def price_deviation_pct(unit_price, target):
 
 # DOAM §3.4 — "A quantity above plan ... requires a justification memo and a
 # higher approval per Section 4.4." One authority above the value tier is the
-# Plant Director: one rung lighter than pushing stock past its ceiling outright,
-# which the row below it already costs PD + SCD.
+# Plant Director; exceeding the stock ceiling also requires that director.
 DEVIATION_OVER_PLAN_STAGES = ["factory_manager"]
 
 
@@ -1368,7 +1273,7 @@ def deviation_grade(pct_over, over_ceiling=False, over_plan=False):
                 break
     if not (over_ceiling or over_plan):
         return grade
-    qty_stages = (["factory_manager", "scd"] if over_ceiling
+    qty_stages = (["factory_manager"] if over_ceiling
                   else list(DEVIATION_OVER_PLAN_STAGES))
     grade["grade"] = "over_ceiling" if over_ceiling else "over_plan"
     grade["stages"] = qty_stages + [s for s in grade["stages"] if s not in qty_stages]
@@ -1566,23 +1471,7 @@ WORKFLOW_SETTINGS = {
     "aging_overdue_days": {"kind": "int", "min": 1, "default": 4},
 }
 
-# --- the amount each rung joins at (DOAM 4.1 OPEX / 4.2 CAPEX) -------------
-# Generated rather than typed out: one knob per ladder rung per expenditure
-# kind, keyed thr_<kind>_<stage>, defaulting to the DOAM number above. Asked for
-# directly — "I need to control the value for each approval from the settings" —
-# and until now that number could only be changed by editing this file, or
-# LOWERED per department through the responsibility matrix.
-#
-# 0 means "always on, at any value", which is what the demand rungs ship as.
-# min is 0 and there is no max: a company that wants the Board on every purchase
-# sets 0, and one that raises a tier to 50,000,000 is making a policy decision,
-# not fat-fingering a gate open. What the floor still refuses is a NEGATIVE
-# amount, which would read as "always on" by accident.
-for _kind, _matrix in (("opex", OPEX_MATRIX), ("capex", CAPEX_MATRIX)):
-    for _stage, _at in _matrix.items():
-        WORKFLOW_SETTINGS[threshold_key(_kind, _stage)] = {
-            "kind": "num", "min": 0, "default": float(_at)}
-del _kind, _matrix, _stage, _at
+# All rungs are always required; governance offers no amount-threshold knobs.
 
 # The optional fields an admin may hide, and the HONEST consequence of hiding
 # each. The settings screen prints `warn` next to the switch: a control that
@@ -1631,19 +1520,20 @@ STAGE_EXPLAIN = {
         "on the shelf, how much was last ordered and at what price. This is a demand "
         "stage — always required, whatever the request is worth."),
     "factory_manager": (
-        "The Factory Manager confirms the request is operationally necessary and "
-        "correctly specified for the asset, machine or line it is raised for. Demand "
-        "stage — always required, whatever the request is worth."),
+        "The Factory Manager confirms the request is operationally necessary and correctly "
+        "specified for the asset, machine or line it is raised for. Always required, at any "
+        "value."),
     "scd": (
-        "The Supply Chain Director owns operational and inventory replenishment: confirms "
-        "the request really is a replenishment need, correctly sourced and correctly timed "
-        "against stock. Value stage on operating spend — it joins the ladder only when the "
-        "EGP-equivalent total exceeds its threshold — while on a capital request it signs "
-        "whatever the value. When a request is positively identified as a production or "
-        "maintenance commitment, the Factory Manager stage carries that level instead and "
-        "this stage is dropped; when it is both, or cannot be told apart, both directors "
-        "sign. By default only the Supply Chain Director role signs here, and it approves "
-        "only — it does not price, buy or pay."),
+        "Retired from new requests on 2026-11-17 -- kept only so requests raised earlier "
+        "still show and complete. The Supply Chain Director owns operational and inventory "
+        "replenishment: confirms the request really is a replenishment need, correctly "
+        "sourced and correctly timed against stock. Value stage on operating spend — it "
+        "joins the ladder only when the EGP-equivalent total exceeds its threshold — while "
+        "on a capital request it signs whatever the value. When a request is positively "
+        "identified as a production or maintenance commitment, the Factory Manager stage "
+        "carries that level instead and this stage is dropped; when it is both, or cannot "
+        "be told apart, both directors sign. By default only the Supply Chain Director role "
+        "signs here, and it approves only — it does not price, buy or pay."),
     "purchasing": (
         "Purchasing owns the commercial side: choose the vendor, enter the pricing, set "
         "the exchange rate on a foreign-currency request, collect competing quotes (or "
@@ -1655,25 +1545,29 @@ STAGE_EXPLAIN = {
         "payment terms before the money is committed. Value stage — it joins the ladder "
         "only when the EGP-equivalent total reaches its threshold."),
     "cfo": (
-        "The CFO authorises significant committed spend and confirms it is funded. "
-        "Value stage — it joins the ladder only when the EGP-equivalent total reaches "
-        "its threshold."),
+        "The CFO authorises committed spend and confirms it is funded. Always required, at "
+        "any value."),
     "ceo": (
-        "The CEO is the final authority on major spend. Value stage — it joins the "
-        "ladder only when the EGP-equivalent total reaches its threshold. When this "
-        "last signature lands the request becomes Approved and a Purchase Order number "
-        "is drafted automatically."),
-    "bod": (
-        "The Board of Directors is the highest authority on the ladder: it signs the "
-        "largest commitments and there is nothing above it to escalate to. Value stage — "
-        "it joins the ladder only when the EGP-equivalent total exceeds its threshold, "
-        "which is lower for a capital request than for operating spend. Above 10,000,000 "
-        "EGP committed the Board cannot approve until a written business case is recorded "
-        "on the request; the same condition is checked earlier at Purchasing, so a request "
-        "that size never circulates without one. By default only the Board role signs "
-        "here, and it approves only — it does not price, buy or pay. When this last "
-        "signature lands the request becomes Approved and a Purchase Order number is "
+        "The CEO is always the last signature on every request, at any value. When this "
+        "last signature lands the request becomes Approved and a Purchase Order number is "
         "drafted automatically."),
+    "bod": (
+        "Retired from new requests on 2026-11-17 -- kept only so requests raised earlier "
+        "still show and complete. The Board of Directors is the highest authority on the "
+        "ladder: it signs the largest commitments and there is nothing above it to escalate "
+        "to. Value stage — it joins the ladder only when the EGP-equivalent total exceeds "
+        "its threshold, which is lower for a capital request than for operating spend. "
+        "Above 10,000,000 EGP committed the Board cannot approve until a written business "
+        "case is recorded on the request; the same condition is checked earlier at "
+        "Purchasing, so a request that size never circulates without one. By default only "
+        "the Board role signs here, and it approves only — it does not price, buy or pay. "
+        "When this last signature lands the request becomes Approved and a Purchase Order "
+        "number is drafted automatically."),
+    "control": (
+        "Financial Control reviews the priced request — budget, tax, payment terms and "
+        "funding — before the CFO. Always required, at any value. By default only the "
+        "Financial Controller role signs here, and it approves only — it does not price, "
+        "buy or pay."),
 }
 
 # Default explanation per role that signs somewhere in the cycle.
@@ -1716,47 +1610,51 @@ ROLE_EXPLAIN = {
         "who committed the spend. Holds view, approve and pay; it cannot price a request "
         "or issue a Purchase Order."),
     "cfo": (
-        "Chief Financial Officer. Signs the CFO stage for significant committed spend "
-        "and is the authority on budget breaches."),
+        "Chief Financial Officer. Signs the CFO stage on every request, at any value, and "
+        "is the authority on budget breaches."),
     "ceo": (
-        "Chief Executive Officer. Signs the CEO stage — the final authority on the "
-        "largest purchases."),
+        "Chief Executive Officer. Signs the CEO stage — always the last signature on every "
+        "request, at any value."),
     "managing_director": (
         "Managing Director. Signs the CEO stage — the same rung as the Chief Executive Officer, since both "
-        "roles are mapped to it and either signature satisfies it. The last signature on "
-        "major spend below Board level. Holds view and approve only — it commits the "
+        "roles are mapped to it and either signature satisfies it — always the last "
+        "signature on every request, at any value. Holds view and approve only — it commits the "
         "money, it does not buy or pay."),
     "board": (
         "The Board of Directors. Signs the Board stage on the largest commitments, and "
         "cannot approve one above 10,000,000 EGP until a written business case is "
         "recorded on the request. Holds view and approve only — no purchasing and no "
         "payment rights."),
+    "financial_controller": (
+        "Signs the Financial Control stage, before the CFO. Holds the same procurement "
+        "permissions as the CFO: view, raise requests, approve and release payments."),
 }
 
 # Default body per free-text documentation block (proc_doc sections).
 DOC_SECTIONS = {
     "overview": (
-        "A purchase request starts as pure demand: the requester says WHAT is needed, "
-        "never what it costs. It is then routed up a ladder of signatures. Warehouse, "
-        "Factory Manager and Purchasing always sign. Purchasing enters the pricing, and "
-        "only then do the value-based approvals (Finance, CFO, CEO) join the ladder — "
-        "each one from its own amount upwards, compared on the EGP-equivalent total so a "
-        "foreign-currency request is converted first. Every approver stamps their saved "
-        "digital signature, and every signature is recorded as a separately verifiable "
-        "event. When the last stage approves, a Purchase Order is drafted automatically; "
-        "Purchasing issues it (subject to the department budget), the goods are received "
-        "line by line, the vendor invoice is registered, the 3-way match runs, and only "
-        "then can a payment be recorded — capped by what was ordered and what was billed."),
+        "A purchase request starts as pure demand: the requester says WHAT is needed, never "
+        "what it costs. It is then routed up a ladder of signatures. Warehouse, Warehouse "
+        "Manager, Purchasing, Plant Director, Financial Control, CFO and CEO sign every "
+        "request, at any amount. Purchasing enters the price and the request cannot pass "
+        "Purchasing unpriced. Re-pricing a request that is already circulating brings any "
+        "missing rung of the current ladder onto it and drops a not-yet-reached Supply "
+        "Chain Director / Board ladder rung. Every approver stamps their saved digital "
+        "signature, and every signature is recorded as a separately verifiable event. When "
+        "the last stage approves, a Purchase Order is drafted automatically; Purchasing "
+        "issues it (subject to the department budget), the goods are received line by line, "
+        "the vendor invoice is registered, the 3-way match runs, and only then can a "
+        "payment be recorded — capped by what was ordered and what was billed."),
     "pricing_gate": (
         "The Purchasing stage cannot be approved while the request is still unpriced. "
-        "This is what stops a zero-value request slipping past the value-based Finance / "
-        "CFO / CEO approvals. When pricing is entered on a request that is already "
-        "circulating, the value rungs are recalculated against the new total: the ones "
-        "now required are appended, and value rungs that no longer qualify and have not "
-        "been reached yet are removed. Stages that are already approved, rejected or "
-        "currently active are never touched, so an in-flight signature is never "
-        "disturbed. A non-EGP request must also carry a real exchange rate before it can "
-        "be priced, otherwise its value would route on the raw foreign figure."),
+        "Warehouse, Warehouse Manager, Purchasing, Plant Director, Financial Control, CFO "
+        "and CEO sign every request, at any amount. Purchasing enters the price. Re-pricing "
+        "a request that is already circulating brings any missing rung of the current "
+        "ladder onto it and drops a not-yet-reached Supply Chain Director / Board ladder "
+        "rung. Stages that are already approved, rejected or currently active are never "
+        "touched, so an in-flight signature is never disturbed. A non-EGP request must also "
+        "carry a real exchange rate before it can be priced, otherwise its value would "
+        "route on the raw foreign figure."),
     "rfq": (
         "A priced request whose EGP-equivalent total reaches the RFQ threshold must carry "
         "at least the minimum number of quotes from DISTINCT vendors before Purchasing "

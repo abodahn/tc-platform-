@@ -760,7 +760,37 @@ def seed_governance(conn):
                      (section, body))
         n += 1
     seed_translations(conn)
+    refresh_superseded_text(conn)
     conn.commit()
+    return n
+
+
+def refresh_superseded_text(conn):
+    """Move a stored workflow text to the new default while it still equals the
+    pre-2026-11-17 built-in default EXACTLY; an admin-edited text never matches,
+    so it is left alone. One SELECT per table per boot (slow PostgreSQL link);
+    UPDATEs only for rows that still match, so a second boot writes nothing.
+    Returns the number of columns rewritten."""
+    from app.approvals import i18n_text as T
+    from app.approvals.constants import STAGE_EXPLAIN, ROLE_EXPLAIN, DOC_SECTIONS
+    from app.approvals.superseded_text import SUPERSEDED
+    tables = {"proc_stage_meta": ("stage", STAGE_EXPLAIN, T.STAGE),
+              "proc_role_meta": ("role_key", ROLE_EXPLAIN, T.ROLE),
+              "proc_doc": ("section", dict(DOC_SECTIONS), T.DOC)}
+    n = 0
+    for table, cols in SUPERSEDED.items():
+        keycol, en, other = tables[table]
+        rows = [dict(r) for r in conn.execute(f"SELECT * FROM {table}").fetchall()]
+        for r in rows:
+            for col, olds in cols.items():
+                lang = col[-2:] if col[-3:] in ("_ar", "_tr") else ""
+                new = (other.get(lang, {}) if lang else en).get(r[keycol])
+                old = olds.get(r[keycol])
+                # a column this database does not have yet is simply absent from r
+                if old is not None and new and new != old and r.get(col) == old:
+                    conn.execute(f"UPDATE {table} SET {col}=? WHERE {keycol}=? AND {col}=?",
+                                 (new, r[keycol], old))
+                    n += 1
     return n
 
 

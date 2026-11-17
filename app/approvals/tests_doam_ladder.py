@@ -9,7 +9,7 @@ so every band edge is tested from BOTH sides.
 """
 import sys
 
-sys.path.insert(0, r"D:\TC platform\tc-platform-beta")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))  # this checkout, not another worktree
 import app.approvals.constants as C   # noqa: E402
 
 ok = True
@@ -26,63 +26,20 @@ def final(total, kind="opex"):
     return l[-1] if l else None
 
 
-# ---------------------------------------------------------------- OPEX §4.1
-print("DOAM §4.1 — OPEX ladder: who carries the final signature")
-OPEX = [
-    #  total,        expected final approver stage,   DOAM tier
-    (1,              "purchasing",     "1  PRM (L4)"),
-    (10_000,         "purchasing",     "1  PRM, at the band edge"),
-    (10_000.01,      "scd",            "2  PD/SCD (L2), one piastre over"),
-    (200_000,        "scd",            "2  PD/SCD, at the band edge"),
-    (200_000.01,     "scd",            "3  Supply Chain Director (L2)"),
-    (500_000,        "scd",            "3  SCD, at the band edge"),
-    (500_000.01,     "cfo",            "4  MD or CFO (L1)"),
-    (2_000_000,      "cfo",            "4  CFO, at the band edge"),
-    (2_000_000.01,   "ceo",            "5  MD and CFO (L1)"),
-    (5_000_000,      "ceo",            "5  MD+CFO, at the band edge"),
-    (5_000_000.01,   "bod",            "6  Board"),
-    (10_000_000,     "bod",            "6  Board, at the band edge"),
-    (25_000_000,     "bod",            "7  Board + business case"),
-]
-for total, want, tier in OPEX:
-    got = final(total, "opex")
-    chk(f"tier {tier:<34} {total:>13,.2f} -> {C.STAGE_LABELS.get(got, got)}",
-        got == want, f"expected {want}, got {got}")
-
-print("\n  joint approval at tier 5 means BOTH sign (DOAM: 'MD and CFO')")
-t5 = C.build_ladder(3_000_000, "opex")
-chk("CFO and MD are both in the tier-5 ladder", {"cfo", "ceo"} <= set(t5), t5)
-chk("Board is NOT pulled in below 5,000,000", "bod" not in t5, t5)
-
-print("\n  tier 1 is short: a small buy does not collect directors")
-t1 = C.build_ladder(5_000, "opex")
-# The Warehouse Manager rung joined above the store on 2026-10-13 and is always
-# on, so tier 1 is three demand rungs rather than two. What tier 1 MEANS is
-# unchanged: no value rung, nobody above the buyer.
-chk("tier 1 ladder is the demand rungs only",
-    t1 == ["warehouse", "warehouse_manager", "purchasing"], t1)
-
-# ---------------------------------------------------------------- CAPEX §4.2
-print("\nDOAM §4.2 — CAPEX ladder (every tier is a joint approval)")
-CAPEX = [
-    (100_000,      {"purchasing", "scd", "factory_manager", "cfo"}, "1  SCD+FIND review, PD+CFO approve"),
-    (250_000,      {"purchasing", "scd", "factory_manager", "cfo"}, "1  at the band edge"),
-    (250_000.01,   {"purchasing", "scd", "factory_manager", "cfo", "ceo"}, "2  + MD"),
-    (2_000_000,    {"purchasing", "scd", "factory_manager", "cfo", "ceo"}, "2  at the band edge"),
-    (2_000_000.01, {"purchasing", "scd", "factory_manager", "cfo", "ceo", "bod"}, "3  Board"),
-]
-for total, want, tier in CAPEX:
-    got = set(C.build_ladder(total, "capex"))
-    chk(f"tier {tier:<34} {total:>13,.2f} -> {len(got)} signatures",
-        got == want, f"missing {want - got or '-'} extra {got - want or '-'}")
-
-chk("CAPEX never routes through Warehouse (not a stores replenishment)",
-    all("warehouse" not in C.build_ladder(v, "capex") for v in (1, 10**6, 10**8)))
-
-print("\n  the same money is treated differently as CAPEX than as OPEX")
-chk("300,000 OPEX ends at the Supply Chain Director",
-    final(300_000, "opex") == "scd")
-chk("300,000 CAPEX ends at Managing Director", final(300_000, "capex") == "ceo")
+# ------------------------------------------------- owner's ladder (2026-11-17)
+# The DOAM §4.1 / §4.2 value tiers no longer decide WHO signs: the owner made
+# every rung always-required, for OPEX and CAPEX alike, with the CEO last and no
+# Supply Chain Director or Board on a new request.
+NEW = ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
+       "control", "cfo", "ceo"]
+print("owner's ladder: the same seven signatures at every value, both kinds")
+for total in (1, 10_000, 10_000.01, 500_000.01, 2_000_000.01, 5_000_000.01, 25_000_000):
+    for kind in ("opex", "capex"):
+        got = C.build_ladder(total, kind)
+        chk(f"{kind} {total:>13,.2f} -> {len(got)} signatures, ends at {final(total, kind)}",
+            got == NEW, got)
+chk("neither the Supply Chain Director nor the Board is on any new ladder",
+    not ({"scd", "bod"} & set(C.DOAM_LADDER)))
 
 # ---------------------------------------------------------------- safety
 print("\nfail-safe behaviour")
@@ -127,12 +84,15 @@ chk("a band carries ONLY the rule this system enforces",
     "'mode'/'governance' named off-system procedures and nothing read them")
 
 print("\n  single source must be approved ONE LEVEL ABOVE the value tier (§4.3)")
-for total, want in ((5_000, "L2"), (100_000, "L1"), (300_000, "L1"),
-                    (1_000_000, "BOD"), (6_000_000, "BOD")):
+# Every ladder now ends at the CEO (L1), so one level above is the Board's level
+# — and single_source_stage() finds no rung there to add (the Board is retired).
+for total, want in ((5_000, "BOD"), (100_000, "BOD"), (6_000_000, "BOD")):
     lvl = C.final_approver_level(total, "opex")
     up = C.level_above(lvl)
     chk(f"{total:>11,} normally {lvl:<3} -> single source needs {up}", up == want, f"expected {want}")
 chk("nothing escalates above the Board", C.level_above("BOD") == "BOD")
+chk("single source adds no rung to the full ladder (no Board to add)",
+    C.single_source_stage(C.build_ladder(5_000, "opex"), "opex") is None)
 
 # ---------------------------------------------------------------- §7.3.3
 print("\nDOAM §7.3.3 — match tolerance is 2% or 500 EGP, whichever is GREATER")
@@ -156,25 +116,22 @@ chk("DOAM_IN_FORCE is set", C.DOAM_IN_FORCE is True)
 chk("a bare build_ladder() call now uses the DOAM, not the paper form",
     C.build_ladder(48_000) == C.build_ladder(48_000, "opex"), C.build_ladder(48_000))
 
-# The pre-DOAM paper form, unchanged — it is a historical record of what the
-# company signed before the DOAM, not a live ladder, so Finance stays on it.
-paper = ["warehouse", "factory_manager", "purchasing", "finance", "cfo"]
-now = C.build_ladder(48_000)
-print("     48,000 EGP was : %d approvers  %r" % (len(paper), paper))
-print("     48,000 EGP now : %d approvers  %r" % (len(now), now))
-chk("Finance and the CFO no longer sign a 48,000 request (tier 2 stops at L2)",
-    "finance" not in now and "cfo" not in now, now)
-chk("the Supply Chain Director carries it instead", now[-1] == "scd", now)
-chk("above 5,000,000 the Board is required", C.build_ladder(6_000_000)[-1] == "bod")
+chk("a 48,000 request now collects the owner's seven signatures",
+    C.build_ladder(48_000) == NEW, C.build_ladder(48_000))
+chk("the Financial Director (finance) stays off the ladder",
+    "finance" not in C.build_ladder(48_000))
 
 print(str())
 print("  demand and value stages follow the ACTIVE ladder")
-chk("demand stages == the ladder at zero value",
-    C.build_ladder(0) == C.DEMAND_STAGES, (C.build_ladder(0), C.DEMAND_STAGES))
+# DEMAND_STAGES now means "the rungs up to the pricing gate" (every rung is
+# always on, so the ladder at zero value is the whole ladder).
+chk("demand stages are the rungs up to and including the pricing gate",
+    C.DEMAND_STAGES == ["warehouse", "warehouse_manager", "purchasing"], C.DEMAND_STAGES)
 chk("no stage is both demand and value-gated",
     not (set(C.DEMAND_STAGES) & set(C.VALUE_STAGES)))
-chk("every value stage is reachable at some amount",
-    all(s in C.build_ladder(10**9) for s in C.VALUE_STAGES), C.VALUE_STAGES)
+chk("every live value stage is on the ladder at any amount (retired ones aside)",
+    all(s in C.build_ladder(1) for s in C.VALUE_STAGES if s not in C.RETIRED_STAGES),
+    C.VALUE_STAGES)
 
 print(str())
 print("  the paper form stays expressible, so reverting is one flag")

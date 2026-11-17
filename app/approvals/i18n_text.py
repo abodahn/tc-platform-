@@ -36,21 +36,19 @@ STAGE_AR = {
         "المخزن والكمية — لكن ليس السعر ولا المورّد، فهما يدخلان عند بوابة "
         "المشتريات وحدها. مرحلة دائمة، أيًا كانت قيمة الطلب."),
     "factory_manager": (
-        "مدير المصنع يؤكّد أن الطلب ضروري تشغيليًا وأن مواصفاته صحيحة للأصل أو "
-        "الماكينة أو الخط الذي طُلب من أجله. مرحلة احتياج — مطلوبة دائمًا، أيًا "
-        "كانت قيمة الطلب."),
+        "مدير المصنع يؤكّد أن الطلب ضروري تشغيليًا وأن مواصفاته صحيحة للأصل أو الماكينة أو "
+        "الخط الذي طُلب من أجله. مطلوب دائمًا، أيًا كانت القيمة."),
     "scd": (
-        "مدير سلسلة الإمداد مسؤول عن التشغيل وإعادة تدبير المخزون: يؤكّد أن "
-        "الطلب حاجة تجديد فعلية، وأن مصدره وتوقيته صحيحان مقابل الرصيد. مرحلة "
-        "قيمة في المصروفات التشغيلية — لا تُضاف إلى سلسلة الموافقات إلا عندما "
-        "يتجاوز الإجمالي المكافئ بالجنيه المصري (EGP) الحد الخاص بها — أما في "
-        "الطلبات الرأسمالية فهو يوقّع أيًا كانت القيمة. وإذا تبيّن بوضوح أن "
-        "الطلب التزام إنتاجي أو خاص بالصيانة، فإن مرحلة مدير المصنع تحمل هذا "
-        "المستوى بدلًا منها وتُسقَط هذه المرحلة؛ وإذا جمع الطلب الأمرين معًا أو "
-        "تعذّر التمييز، فإن المديرين كليهما يوقّعان. لا يوقّع على هذه المرحلة "
-        "افتراضيًا "
-        "سوى دور مدير سلسلة الإمداد، وهو يعتمد فقط — لا يُسعّر ولا يشتري ولا "
-        "يدفع."),
+        "أُوقفت هذه المرحلة للطلبات الجديدة في 2026-11-17 — وأُبقيت فقط لكي تظل الطلبات "
+        "المقدّمة قبل ذلك ظاهرة وقابلة للإكمال. مدير سلسلة الإمداد مسؤول عن التشغيل وإعادة "
+        "تدبير المخزون: يؤكّد أن الطلب حاجة تجديد فعلية، وأن مصدره وتوقيته صحيحان مقابل "
+        "الرصيد. مرحلة قيمة في المصروفات التشغيلية — لا تُضاف إلى سلسلة الموافقات إلا عندما "
+        "يتجاوز الإجمالي المكافئ بالجنيه المصري (EGP) الحد الخاص بها — أما في الطلبات "
+        "الرأسمالية فهو يوقّع أيًا كانت القيمة. وإذا تبيّن بوضوح أن الطلب التزام إنتاجي أو "
+        "خاص بالصيانة، فإن مرحلة مدير المصنع تحمل هذا المستوى بدلًا منها وتُسقَط هذه "
+        "المرحلة؛ وإذا جمع الطلب الأمرين معًا أو تعذّر التمييز، فإن المديرين كليهما "
+        "يوقّعان. لا يوقّع على هذه المرحلة افتراضيًا سوى دور مدير سلسلة الإمداد، وهو يعتمد "
+        "فقط — لا يُسعّر ولا يشتري ولا يدفع."),
     "purchasing": (
         "المشتريات مسؤولة عن الجانب التجاري: اختيار المورّد، وإدخال الأسعار، "
         "وتحديد سعر الصرف (FX) في الطلب بعملة أجنبية، وجمع عروض الأسعار "
@@ -64,25 +62,27 @@ STAGE_AR = {
         "الموافقات إلا عندما يبلغ الإجمالي المكافئ بالجنيه المصري (EGP) الحد "
         "الخاص بها."),
     "cfo": (
-        "المدير المالي (CFO) يعتمد الإنفاق الملتزم به الكبير ويؤكّد توفّر "
-        "التمويل له. مرحلة قيمة — لا تُضاف إلى سلسلة الموافقات إلا عندما يبلغ "
-        "الإجمالي المكافئ بالجنيه المصري (EGP) الحد الخاص بها."),
+        "المدير المالي (CFO) يعتمد الإنفاق الملتزم به ويؤكّد توفّر التمويل له. مطلوب "
+        "دائمًا، أيًا كانت القيمة."),
     "ceo": (
-        "الرئيس التنفيذي (CEO) هو السلطة النهائية على الإنفاق الكبير. مرحلة قيمة "
-        "— لا تُضاف إلى سلسلة الموافقات إلا عندما يبلغ الإجمالي المكافئ بالجنيه "
-        "المصري (EGP) الحد الخاص بها. وبمجرد وصول هذا التوقيع الأخير يصبح الطلب "
-        "معتمدًا ويُجهَّز رقم أمر الشراء تلقائيًا."),
+        "الرئيس التنفيذي (CEO) هو دائمًا صاحب التوقيع الأخير على كل طلب، أيًا كانت القيمة. "
+        "وبمجرد وصول هذا التوقيع الأخير يصبح الطلب معتمدًا ويُجهَّز رقم أمر الشراء "
+        "تلقائيًا."),
     "bod": (
-        "مجلس الإدارة هو أعلى سلطة في سلسلة الموافقات: يوقّع على أكبر "
-        "الالتزامات، وليس فوقه جهة يُصعَّد إليها. مرحلة قيمة — لا تُضاف إلى "
-        "سلسلة الموافقات إلا عندما يتجاوز الإجمالي المكافئ بالجنيه المصري (EGP) "
-        "الحد الخاص بها، وهذا الحد في الطلبات الرأسمالية أقل منه في المصروفات "
-        "التشغيلية. وفوق 10,000,000 جنيه من قيمة الالتزام لا يستطيع المجلس "
-        "الاعتماد قبل تسجيل دراسة جدوى مكتوبة على الطلب، ويُفحص الشرط نفسه "
-        "مبكرًا عند مرحلة المشتريات حتى لا يدور طلب بهذا الحجم بدونها. لا يوقّع "
-        "على هذه المرحلة افتراضيًا سوى دور مجلس الإدارة، وهو يعتمد فقط — لا "
-        "يُسعّر ولا يشتري ولا يدفع. وبمجرد وصول هذا التوقيع الأخير يصبح الطلب "
-        "معتمدًا ويُجهَّز رقم أمر الشراء تلقائيًا.")
+        "أُوقفت هذه المرحلة للطلبات الجديدة في 2026-11-17 — وأُبقيت فقط لكي تظل الطلبات "
+        "المقدّمة قبل ذلك ظاهرة وقابلة للإكمال. مجلس الإدارة هو أعلى سلطة في سلسلة "
+        "الموافقات: يوقّع على أكبر الالتزامات، وليس فوقه جهة يُصعَّد إليها. مرحلة قيمة — لا "
+        "تُضاف إلى سلسلة الموافقات إلا عندما يتجاوز الإجمالي المكافئ بالجنيه المصري (EGP) "
+        "الحد الخاص بها، وهذا الحد في الطلبات الرأسمالية أقل منه في المصروفات التشغيلية. "
+        "وفوق 10,000,000 جنيه من قيمة الالتزام لا يستطيع المجلس الاعتماد قبل تسجيل دراسة "
+        "جدوى مكتوبة على الطلب، ويُفحص الشرط نفسه مبكرًا عند مرحلة المشتريات حتى لا يدور "
+        "طلب بهذا الحجم بدونها. لا يوقّع على هذه المرحلة افتراضيًا سوى دور مجلس الإدارة، "
+        "وهو يعتمد فقط — لا يُسعّر ولا يشتري ولا يدفع. وبمجرد وصول هذا التوقيع الأخير يصبح "
+        "الطلب معتمدًا ويُجهَّز رقم أمر الشراء تلقائيًا."),
+    "control": (
+        "الكنترول المالي يراجع الطلب المسعَّر — الموازنة والضريبة وشروط الدفع والتمويل — "
+        "قبل المدير المالي (CFO). مطلوب دائمًا، أيًا كانت القيمة. لا يوقّع هنا افتراضيًا "
+        "سوى دور المراقب المالي، وهو يعتمد فقط — لا يُسعّر ولا يشتري ولا يدفع."),
 }
 
 STAGE_TR = {
@@ -107,21 +107,22 @@ STAGE_TR = {
         "ancak fiyatı ve tedarikçiyi değil; onlar yalnızca Satın Alma kapısında "
         "girilir. Tutarı ne olursa olsun her zaman gereklidir."),
     "factory_manager": (
-        "Fabrika Müdürü, talebin işletme açısından gerekli olduğunu ve talep "
-        "edildiği varlık, makine veya hat için doğru tanımlandığını teyit eder. "
-        "İhtiyaç aşaması — talebin tutarı ne olursa olsun her zaman gereklidir."),
+        "Fabrika Müdürü, talebin işletme açısından gerekli olduğunu ve talep edildiği "
+        "varlık, makine veya hat için doğru tanımlandığını teyit eder. Tutar ne olursa "
+        "olsun her zaman gereklidir."),
     "scd": (
-        "Tedarik Zinciri Direktörü, operasyonel ve stok ikmalinin sahibidir: "
-        "talebin gerçekten bir ikmal ihtiyacı olduğunu, doğru kaynaktan ve stoka "
-        "göre doğru zamanda istendiğini teyit eder. İşletme harcamalarında tutar "
-        "aşaması — yalnızca EGP karşılığı toplam kendi eşiğini aştığında onay "
-        "zincirine katılır — sermaye harcaması niteliğindeki bir talepte ise "
-        "tutar ne olursa olsun imzalar. Bir talep açıkça üretim veya bakım "
-        "taahhüdü olarak belirlendiğinde bu kademeyi Fabrika Müdürü aşaması "
-        "taşır ve bu aşama düşer; talep ikisi birden olduğunda ya da ayırt "
-        "edilemediğinde her iki direktör de imzalar. Bu aşamayı varsayılan "
-        "olarak yalnızca Tedarik Zinciri Direktörü rolü imzalar ve yalnızca "
-        "onaylar — fiyatlandırmaz, satın almaz, ödeme yapmaz."),
+        "2026-11-17 tarihinde yeni taleplerden kaldırılmıştır — yalnızca daha önce açılan "
+        "taleplerin görünmeye ve tamamlanmaya devam etmesi için korunmuştur. Tedarik "
+        "Zinciri Direktörü, operasyonel ve stok ikmalinin sahibidir: talebin gerçekten bir "
+        "ikmal ihtiyacı olduğunu, doğru kaynaktan ve stoka göre doğru zamanda istendiğini "
+        "teyit eder. İşletme harcamalarında tutar aşaması — yalnızca EGP karşılığı toplam "
+        "kendi eşiğini aştığında onay zincirine katılır — sermaye harcaması niteliğindeki "
+        "bir talepte ise tutar ne olursa olsun imzalar. Bir talep açıkça üretim veya bakım "
+        "taahhüdü olarak belirlendiğinde bu kademeyi Fabrika Müdürü aşaması taşır ve bu "
+        "aşama düşer; talep ikisi birden olduğunda ya da ayırt edilemediğinde her iki "
+        "direktör de imzalar. Bu aşamayı varsayılan olarak yalnızca Tedarik Zinciri "
+        "Direktörü rolü imzalar ve yalnızca onaylar — fiyatlandırmaz, satın almaz, ödeme "
+        "yapmaz."),
     "purchasing": (
         "Satın Alma ticari tarafın sahibidir: tedarikçiyi seçer, fiyatları girer, "
         "döviz cinsinden bir talepte kur (FX) oranını belirler, rekabetçi "
@@ -135,27 +136,30 @@ STAGE_TR = {
         "yalnızca EGP karşılığı toplam kendi eşiğine ulaştığında onay zincirine "
         "katılır."),
     "cfo": (
-        "CFO, önemli tutarlı taahhüt edilen harcamayı yetkilendirir ve kaynağının "
-        "bulunduğunu teyit eder. Tutar aşaması — yalnızca EGP karşılığı toplam "
-        "kendi eşiğine ulaştığında onay zincirine katılır."),
+        "CFO, taahhüt edilen harcamayı yetkilendirir ve kaynağının bulunduğunu teyit eder. "
+        "Tutar ne olursa olsun her zaman gereklidir."),
     "ceo": (
-        "CEO, büyük harcamalarda son yetkilidir. Tutar aşaması — yalnızca EGP "
-        "karşılığı toplam kendi eşiğine ulaştığında onay zincirine katılır. Bu "
-        "son imza geldiğinde talep Onaylandı durumuna geçer ve otomatik olarak "
-        "bir Satın alma emri numarası hazırlanır."),
+        "CEO, tutar ne olursa olsun her talepte daima son imzayı atar. Bu son imza "
+        "geldiğinde talep Onaylandı durumuna geçer ve otomatik olarak bir Satın alma emri "
+        "numarası hazırlanır."),
     "bod": (
-        "Yönetim Kurulu, onay zincirindeki en üst yetkidir: en büyük taahhütleri "
-        "imzalar ve üzerinde yükseltilebilecek bir merci yoktur. Tutar aşaması — "
-        "yalnızca EGP karşılığı toplam kendi eşiğini aştığında onay zincirine "
-        "katılır; bu eşik sermaye harcamalarında işletme harcamalarına göre daha "
-        "düşüktür. Taahhüt edilen tutar 10.000.000 EGP'yi aştığında Yönetim "
-        "Kurulu, talebe yazılı bir iş gerekçesi kaydedilmeden onay veremez; aynı "
-        "koşul daha önce Satın Alma aşamasında da kontrol edilir, böylece bu "
-        "büyüklükte bir talep gerekçesiz dolaşıma girmez. Bu aşamayı varsayılan "
-        "olarak yalnızca Yönetim Kurulu rolü imzalar ve yalnızca onaylar — "
-        "fiyatlandırmaz, satın almaz, ödeme yapmaz. Bu son imza geldiğinde talep "
-        "Onaylandı durumuna geçer ve otomatik olarak bir Satın alma emri "
-        "numarası hazırlanır.")
+        "2026-11-17 tarihinde yeni taleplerden kaldırılmıştır — yalnızca daha önce açılan "
+        "taleplerin görünmeye ve tamamlanmaya devam etmesi için korunmuştur. Yönetim "
+        "Kurulu, onay zincirindeki en üst yetkidir: en büyük taahhütleri imzalar ve "
+        "üzerinde yükseltilebilecek bir merci yoktur. Tutar aşaması — yalnızca EGP "
+        "karşılığı toplam kendi eşiğini aştığında onay zincirine katılır; bu eşik sermaye "
+        "harcamalarında işletme harcamalarına göre daha düşüktür. Taahhüt edilen tutar "
+        "10.000.000 EGP'yi aştığında Yönetim Kurulu, talebe yazılı bir iş gerekçesi "
+        "kaydedilmeden onay veremez; aynı koşul daha önce Satın Alma aşamasında da kontrol "
+        "edilir, böylece bu büyüklükte bir talep gerekçesiz dolaşıma girmez. Bu aşamayı "
+        "varsayılan olarak yalnızca Yönetim Kurulu rolü imzalar ve yalnızca onaylar — "
+        "fiyatlandırmaz, satın almaz, ödeme yapmaz. Bu son imza geldiğinde talep Onaylandı "
+        "durumuna geçer ve otomatik olarak bir Satın alma emri numarası hazırlanır."),
+    "control": (
+        "Finansal Kontrol, fiyatlandırılmış talebi — bütçe, vergi, ödeme koşulları ve "
+        "finansman açısından — CFO öncesinde inceler. Tutar ne olursa olsun her zaman "
+        "gereklidir. Varsayılan olarak bu aşamayı yalnızca Finansal Kontrolör rolü imzalar "
+        "ve yalnızca onaylar — fiyatlandırmaz, satın almaz, ödeme yapmaz."),
 }
 
 # --- Roles (proc_role_meta.explanation_ar / _tr) ---------------------------
@@ -197,21 +201,25 @@ ROLE_AR = {
         "إصدار "
         "أمر شراء (PO)."),
     "cfo": (
-        "المدير المالي. يوقّع على مرحلة CFO للإنفاق الملتزم به الكبير، وهو صاحب "
-        "القرار في حالات تجاوز الموازنة."),
+        "المدير المالي. يوقّع على مرحلة CFO على كل طلب، أيًا كانت القيمة، وهو صاحب القرار "
+        "في حالات تجاوز الموازنة."),
     "ceo": (
-        "الرئيس التنفيذي. يوقّع على مرحلة CEO — السلطة النهائية على أكبر عمليات "
-        "الشراء."),
+        "الرئيس التنفيذي. يوقّع على مرحلة CEO — وهو دائمًا صاحب التوقيع الأخير على كل طلب، "
+        "أيًا كانت القيمة."),
     "managing_director": (
         "العضو المنتدب. يوقّع على مرحلة CEO — نفس الدرجة التي يوقّع عليها الرئيس التنفيذي، لأن "
-        "الدورين مرتبطان بها وأيٌّ من التوقيعين يفي بها. وهو التوقيع الأخير على "
-        "الإنفاق الكبير دون مستوى مجلس الإدارة. يملك الاطلاع والاعتماد فقط — "
+        "الدورين مرتبطان بها وأيٌّ من التوقيعين يفي بها — وهو دائمًا التوقيع الأخير "
+        "على كل طلب، أيًّا كانت قيمته. يملك الاطلاع والاعتماد فقط — "
         "يلتزم بالمبلغ ولا يشتري ولا يدفع."),
     "board": (
         "مجلس الإدارة. يوقّع على مرحلة مجلس الإدارة في أكبر الالتزامات، ولا "
         "يستطيع اعتماد التزام يتجاوز 10,000,000 جنيه قبل تسجيل دراسة جدوى "
         "مكتوبة على الطلب. يملك الاطلاع والاعتماد فقط — بلا صلاحيات شراء ولا "
-        "صرف.")
+        "صرف."),
+    "financial_controller": (
+        "يوقّع على مرحلة الكنترول المالي قبل المدير المالي (CFO). يحمل صلاحيات المشتريات "
+        "نفسها التي يحملها المدير المالي (CFO): الاطلاع ورفع الطلبات والاعتماد وصرف "
+        "المدفوعات."),
 }
 
 ROLE_TR = {
@@ -257,47 +265,51 @@ ROLE_TR = {
         "Görüntüleme, onay ve ödeme yetkileri vardır; talebi fiyatlandıramaz ve "
         "satın alma emri açamaz."),
     "cfo": (
-        "Mali İşler Direktörü (CFO). Önemli tutarlı taahhüt edilen harcama için "
-        "CFO aşamasını imzalar ve bütçe aşımlarında yetkili kişidir."),
+        "Mali İşler Direktörü (CFO). Tutar ne olursa olsun her talepte CFO aşamasını "
+        "imzalar ve bütçe aşımlarında yetkili kişidir."),
     "ceo": (
-        "Genel Müdür (CEO). CEO aşamasını imzalar — en büyük satın almalarda son "
-        "yetkili."),
+        "Genel Müdür (CEO). CEO aşamasını imzalar — tutar ne olursa olsun her talepte daima "
+        "son imzayı atar."),
     "managing_director": (
         "Murahhas Aza. CEO aşamasını imzalar — Genel Müdür ile aynı kademe; her iki rol de bu "
-        "aşamaya bağlıdır ve iki imzadan biri onu karşılar. Yönetim Kurulu "
-        "düzeyinin altındaki büyük harcamalarda son imzadır. Yalnızca "
+        "aşamaya bağlıdır ve iki imzadan biri onu karşılar — tutarı ne olursa olsun "
+        "her talepte son imzadır. Yalnızca "
         "görüntüleme ve onay yetkisi vardır — parayı taahhüt eder, satın almaz "
         "ve ödeme yapmaz."),
     "board": (
         "Yönetim Kurulu. En büyük taahhütlerde Yönetim Kurulu aşamasını imzalar "
         "ve 10.000.000 EGP'yi aşan bir taahhüdü, talebe yazılı bir iş gerekçesi "
         "kaydedilmeden onaylayamaz. Yalnızca görüntüleme ve onay yetkisi vardır "
-        "— satın alma ve ödeme yetkisi yoktur.")
+        "— satın alma ve ödeme yetkisi yoktur."),
+    "financial_controller": (
+        "CFO öncesinde Finansal Kontrol aşamasını imzalar. CFO ile aynı satın alma "
+        "yetkilerine sahiptir: görüntüleme, talep açma, onaylama ve ödemeleri serbest "
+        "bırakma."),
 }
 
 # --- Free-text blocks: overview + one per gate (proc_doc.body_ar / _tr) ----
 DOC_AR = {
     "overview": (
-        "يبدأ طلب الشراء كاحتياج خالص: مقدّم الطلب يحدّد «ما» هو المطلوب، ولا "
-        "يحدّد تكلفته أبدًا. ثم يُوجَّه الطلب صاعدًا في سلسلة من التوقيعات. المخزن "
-        "ومدير المصنع والمشتريات يوقّعون دائمًا. تُدخل المشتريات التسعير، وبعد "
-        "ذلك فقط تُضاف الموافقات المبنية على القيمة (الإدارة المالية، CFO، CEO) "
-        "إلى السلسلة — كل واحدة من الحد الخاص بها وما فوقه، والمقارنة تكون على "
-        "الإجمالي المكافئ بالجنيه المصري (EGP)، أي أن الطلب بعملة أجنبية يُحوَّل "
-        "أولًا. كل معتمد يضع توقيعه الرقمي المحفوظ، ويُسجَّل كل توقيع كحدث قابل "
-        "للتحقق منه بشكل مستقل. وعند موافقة المرحلة الأخيرة يُجهَّز أمر الشراء "
-        "تلقائيًا؛ تصدره المشتريات (بشرط موازنة القسم)، ثم تُستلم الأصناف سطرًا "
-        "بسطر، وتُسجَّل فاتورة المورّد، وتُجرى المطابقة الثلاثية، وبعد ذلك فقط "
-        "يمكن إثبات الدفع — بحدٍّ أقصى هو ما طُلب وما تمت الفاتورة به."),
+        "يبدأ طلب الشراء كاحتياج خالص: مقدّم الطلب يحدّد «ما» هو المطلوب، ولا يحدّد تكلفته "
+        "أبدًا. ثم يُوجَّه الطلب صاعدًا في سلسلة من التوقيعات. المخزن ومدير المخزن "
+        "والمشتريات ومدير المصنع والكنترول المالي والمدير المالي (CFO) والرئيس التنفيذي "
+        "(CEO) يوقّعون على كل طلب، أيًا كانت قيمته. تُدخل المشتريات السعر، ولا يمكن للطلب "
+        "تجاوز مرحلة المشتريات دون تسعير. إعادة تسعير طلب يدور بالفعل في الدورة تُضيف إليه "
+        "أي مرحلة ناقصة من السلسلة الحالية وتحذف مرحلة مدير سلسلة الإمداد أو مجلس الإدارة "
+        "التي لم يحن دورها بعد وكانت من مراحل السلسلة. كل معتمد يضع توقيعه الرقمي المحفوظ، "
+        "ويُسجَّل كل توقيع كحدث قابل للتحقق منه بشكل مستقل. وعند موافقة المرحلة الأخيرة "
+        "يُجهَّز أمر الشراء تلقائيًا؛ تصدره المشتريات (بشرط موازنة القسم)، ثم تُستلم "
+        "الأصناف سطرًا بسطر، وتُسجَّل فاتورة المورّد، وتُجرى المطابقة الثلاثية، وبعد ذلك "
+        "فقط يمكن إثبات الدفع — بحدٍّ أقصى هو ما طُلب وما تمت الفاتورة به."),
     "pricing_gate": (
-        "لا يمكن اعتماد مرحلة المشتريات ما دام الطلب غير مسعَّر. هذا ما يمنع طلبًا "
-        "بقيمة صفر من التسلّل عبر الموافقات المبنية على القيمة (الإدارة المالية / "
-        "CFO / CEO). وعند إدخال التسعير على طلب يدور بالفعل في الدورة، يُعاد حساب "
-        "مراحل القيمة على الإجمالي الجديد: تُضاف المراحل التي أصبحت مطلوبة، "
-        "وتُحذف مراحل القيمة التي لم تعد مستحقة ولم يُوصل إليها بعد. أما المراحل "
-        "المعتمدة أو المرفوضة أو النشطة حاليًا فلا تُمَس أبدًا، حتى لا يتأثر "
-        "توقيع جارٍ. كما يجب أن يحمل الطلب بعملة غير الجنيه المصري سعر صرف "
-        "حقيقيًا قبل تسعيره، وإلا لتم توجيه قيمته على الرقم الأجنبي كما هو."),
+        "لا يمكن اعتماد مرحلة المشتريات ما دام الطلب غير مسعَّر. المخزن ومدير المخزن "
+        "والمشتريات ومدير المصنع والكنترول المالي والمدير المالي (CFO) والرئيس التنفيذي "
+        "(CEO) يوقّعون على كل طلب، أيًا كانت قيمته. تُدخل المشتريات السعر. إعادة تسعير طلب "
+        "يدور بالفعل في الدورة تُضيف إليه أي مرحلة ناقصة من السلسلة الحالية وتحذف مرحلة "
+        "مدير سلسلة الإمداد أو مجلس الإدارة التي لم يحن دورها بعد وكانت من مراحل السلسلة. "
+        "أما المراحل المعتمدة أو المرفوضة أو النشطة حاليًا فلا تُمَس أبدًا، حتى لا يتأثر "
+        "توقيع جارٍ. كما يجب أن يحمل الطلب بعملة غير الجنيه المصري سعر صرف حقيقيًا قبل "
+        "تسعيره، وإلا لتم توجيه قيمته على الرقم الأجنبي كما هو."),
     "rfq": (
         "الطلب المسعَّر الذي يبلغ إجماليه المكافئ بالجنيه المصري (EGP) حد طلب عروض "
         "الأسعار (RFQ) يجب أن يحمل الحد الأدنى من عروض الأسعار من مورّدين "
@@ -367,30 +379,29 @@ DOC_AR = {
 
 DOC_TR = {
     "overview": (
-        "Bir satın alma talebi saf ihtiyaç olarak başlar: talep eden NEyin "
-        "gerektiğini yazar, maliyetini asla yazmaz. Sonra talep bir imza zinciri "
-        "boyunca yukarı yönlendirilir. Depo, Fabrika Müdürü ve Satın Alma her "
-        "zaman imzalar. Fiyatlandırmayı Satın Alma girer; ancak ondan sonra "
-        "tutara bağlı onaylar (Finans, CFO, CEO) zincire katılır — her biri kendi "
-        "tutarından itibaren ve karşılaştırma EGP karşılığı toplam üzerinden "
-        "yapılır, yani döviz cinsinden bir talep önce çevrilir. Her onaylayan "
-        "kayıtlı dijital imzasını basar ve her imza ayrıca doğrulanabilir bir "
-        "olay olarak kaydedilir. Son aşama onayladığında otomatik olarak bir "
-        "Satın alma emri hazırlanır; Satın Alma bunu açar (departman bütçesine "
-        "bağlı olarak), mallar satır satır teslim alınır, tedarikçi faturası "
-        "kaydedilir, 3'lü mutabakat çalışır ve ancak ondan sonra bir ödeme "
-        "kaydedilebilir — sipariş edilen ve faturalanan tutarla sınırlı olarak."),
+        "Bir satın alma talebi saf ihtiyaç olarak başlar: talep eden NEyin gerektiğini "
+        "yazar, maliyetini asla yazmaz. Sonra talep bir imza zinciri boyunca yukarı "
+        "yönlendirilir. Depo, Depo Müdürü, Satın Alma, Fabrika Direktörü, Finansal Kontrol, "
+        "CFO ve CEO tutar ne olursa olsun her talebi imzalar. Fiyatı Satın Alma girer ve "
+        "talep fiyatlandırılmadan Satın Alma aşamasını geçemez. Dolaşımdaki bir talep "
+        "yeniden fiyatlandırıldığında mevcut zincirin eksik basamakları eklenir ve henüz "
+        "sırası gelmemiş, zincirden kaynaklanan Tedarik Zinciri Direktörü veya Yönetim "
+        "Kurulu basamağı kaldırılır. Her onaylayan kayıtlı dijital imzasını basar ve her "
+        "imza ayrıca doğrulanabilir bir olay olarak kaydedilir. Son aşama onayladığında "
+        "otomatik olarak bir Satın alma emri hazırlanır; Satın Alma bunu açar (departman "
+        "bütçesine bağlı olarak), mallar satır satır teslim alınır, tedarikçi faturası "
+        "kaydedilir, 3'lü mutabakat çalışır ve ancak ondan sonra bir ödeme kaydedilebilir — "
+        "sipariş edilen ve faturalanan tutarla sınırlı olarak."),
     "pricing_gate": (
-        "Talep fiyatlandırılmamışken Satın Alma aşaması onaylanamaz. Sıfır "
-        "tutarlı bir talebin, tutara bağlı Finans / CFO / CEO onaylarını atlayarak "
-        "geçmesini engelleyen kural budur. Zaten dolaşımda olan bir talebe fiyat "
-        "girildiğinde, tutara bağlı basamaklar yeni toplama göre yeniden "
-        "hesaplanır: artık gereken basamaklar eklenir, artık gerekmeyen ve henüz "
-        "sıra gelmemiş tutar basamakları kaldırılır. Onaylanmış, reddedilmiş veya "
-        "şu anda aktif olan aşamalara asla dokunulmaz; böylece devam eden bir "
-        "imza hiç bozulmaz. EGP dışı bir talep, fiyatlandırılabilmesi için gerçek "
-        "bir kur oranı da taşımak zorundadır; aksi hâlde tutarı ham döviz rakamı "
-        "üzerinden yönlendirilirdi."),
+        "Talep fiyatlandırılmamışken Satın Alma aşaması onaylanamaz. Depo, Depo Müdürü, "
+        "Satın Alma, Fabrika Direktörü, Finansal Kontrol, CFO ve CEO tutar ne olursa olsun "
+        "her talebi imzalar. Fiyatı Satın Alma girer. Dolaşımdaki bir talep yeniden "
+        "fiyatlandırıldığında mevcut zincirin eksik basamakları eklenir ve henüz sırası "
+        "gelmemiş, zincirden kaynaklanan Tedarik Zinciri Direktörü veya Yönetim Kurulu "
+        "basamağı kaldırılır. Onaylanmış, reddedilmiş veya şu anda aktif olan aşamalara "
+        "asla dokunulmaz; böylece devam eden bir imza hiç bozulmaz. EGP dışı bir talep, "
+        "fiyatlandırılabilmesi için gerçek bir kur oranı da taşımak zorundadır; aksi hâlde "
+        "tutarı ham döviz rakamı üzerinden yönlendirilirdi."),
     "rfq": (
         "EGP karşılığı toplamı RFQ eşiğine ulaşan fiyatlandırılmış bir talep, "
         "Satın Alma imzalayabilmeden önce en az asgari sayıda teklifi FARKLI "
@@ -525,17 +536,20 @@ DOC = {
 STAGE_LABEL = {
     "en": {"requester": "Requester", "warehouse": "Warehouse",
            "warehouse_manager": "Warehouse Manager",
+           "control": "Financial Control",
            "factory_manager": "Factory Manager", "purchasing": "Purchasing",
            "finance": "Finance", "cfo": "CFO", "ceo": "CEO",
            "scd": "Supply Chain Director", "bod": "Board of Directors"},
     "ar": {"requester": "مقدّم الطلب", "warehouse": "المخزن",
            "warehouse_manager": "مدير المخزن",
+           "control": "الكنترول المالي",
            "factory_manager": "مدير المصنع", "purchasing": "المشتريات",
            "finance": "الإدارة المالية", "cfo": "المدير المالي (CFO)",
            "ceo": "الرئيس التنفيذي (CEO)",
            "scd": "مدير سلسلة الإمداد", "bod": "مجلس الإدارة"},
     "tr": {"requester": "Talep eden", "warehouse": "Depo",
            "warehouse_manager": "Depo Müdürü",
+           "control": "Finansal Kontrol",
            "factory_manager": "Fabrika Müdürü", "purchasing": "Satın Alma",
            "finance": "Finans", "cfo": "CFO", "ceo": "CEO",
            "scd": "Tedarik Zinciri Direktörü", "bod": "Yönetim Kurulu"}
@@ -682,7 +696,9 @@ def _thr_keys():
     out = []
     for kind, matrix in (("opex", C.OPEX_MATRIX), ("capex", C.CAPEX_MATRIX)):
         for stage, at in matrix.items():
-            out.append((C.threshold_key(kind, stage), kind, stage, float(at)))
+            key = C.threshold_key(kind, stage)
+            if key in C.WORKFLOW_SETTINGS:
+                out.append((key, kind, stage, float(at)))
     return out
 
 
@@ -722,6 +738,7 @@ del _lg
 # same principle as an admin-edited explanation.
 ROLE_LABEL = {
     "ar": {
+        "financial_controller": "المراقب المالي",
         "super_admin": "مسؤول النظام الأعلى",
         "it_director": "مدير عام تقنية المعلومات",
         "it_manager": "مدير تقنية المعلومات",
@@ -759,6 +776,7 @@ ROLE_LABEL = {
         "hr_probation_admin": "مسؤول فترة الاختبار (الموارد البشرية)"
     },
     "tr": {
+        "financial_controller": "Finansal Kontrolör",
         "super_admin": "Süper Yönetici",
         "it_director": "BT Direktörü",
         "it_manager": "BT Müdürü",

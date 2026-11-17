@@ -55,18 +55,18 @@ def run():
         ok, msg = svc.set_dept_matrix("Production", raised, {"username": "admin"})
         assert not ok and C.stage_label("cfo") in msg, msg
 
-        # --- a matrix that only ADDS is accepted ------------------------------
-        stronger = [{"stage": s, "threshold": v} for s, v in C.OPEX_MATRIX.items()]
-        stronger[stronger.index(next(r for r in stronger if r["stage"] == "cfo"))] = \
-            {"stage": "cfo", "threshold": 50_000}          # the CFO signs EARLIER
-        ok, msg = svc.set_dept_matrix("Production", stronger, {"username": "admin"})
-        assert ok, "a strictly stronger matrix was refused: %s" % msg
+        # --- a matrix that matches the floor is accepted ----------------------
+        # Owner's ladder (2026-11-17): every rung already starts at 0, so no
+        # department can be "stronger" by signing earlier; the floor itself is
+        # the strongest matrix there is, and it must still be accepted.
+        floor_rows = [{"stage": s, "threshold": v} for s, v in C.OPEX_MATRIX.items()]
+        ok, msg_ok = svc.set_dept_matrix("Production", floor_rows, {"username": "admin"})
+        assert ok, "the floor matrix itself was refused: %s" % msg_ok
 
         conn = get_db()
         ladder = svc.dept_ladder(conn, "Production", 120_000, "opex")
         conn.close()
-        assert "cfo" in ladder, \
-            "the department asked for the CFO at 50k; at 120k it must be there: %s" % ladder
+        assert ladder == C.build_ladder(120_000, "opex"), ladder
 
         # --- the READ enforces the floor even against a legacy bad row --------
         conn = get_db()

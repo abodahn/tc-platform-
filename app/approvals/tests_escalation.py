@@ -139,6 +139,11 @@ with app.app_context():
     # stuck one rung further down instead of at the first one). Every real company
     # has somebody above him; here that is the CEO.
     ceo = mkuser(conn, "esc_ceo", "ceo")
+    # Owner's ladder (2026-11-17): the CEO rung is on EVERY request, so a sole CEO
+    # is the only signer of that rung and the climb may not hand him the warehouse
+    # rung too (he would then be refused his own: dual_role). A Managing Director
+    # also signs the CEO rung, which frees the CEO to take the escalation here.
+    md = mkuser(conn, "esc_md", "managing_director")
     # The buyer. DOAM §4.1 makes Purchasing a DEMAND rung, and a rung with no
     # holder at all is left alone by the climb — so without him nothing could
     # walk this ladder past rung 2, and "the deadlock is gone, not moved" would
@@ -274,6 +279,7 @@ with app.app_context():
     okk, msg = svc.act_on_step(pr1c, fm2, "approve")
     ok("factory manager #2 signs it instead (%s)" % msg, okk and msg == "advanced")
     activate("esc_fm2", on=0)
+    activate("esc_md", on=0)
 
     print("\n--- 2. REGRESSION: a SECOND storekeeper -> nothing changes -----")
     store2 = mkuser(conn, "esc_store2", "storekeeper")
@@ -285,10 +291,14 @@ with app.app_context():
     # point of this regression. The Warehouse Manager rung above it (2026-10-13)
     # still has exactly one holder, who is the requester, so it escalates on its
     # own account: a second storekeeper is not a second manager.
+    # Owner's ladder (2026-11-17): the Plant Director and CEO rungs are now on
+    # every request and each has ONE holder, so the climb may hand the manager
+    # rung to neither (dual_role) — it is PARKED for an admin/delegate instead.
     ok("the store rung no longer escalates once a colleague holds it",
        st2[0]["esc_role"] is None and st2[0]["esc_from"] is None)
-    ok("and nothing else escalates except the manager rung the requester holds",
-       [s["stage"] for s in st2 if s["esc_from"]] == ["warehouse_manager"])
+    ok("nothing escalates; only the manager rung the requester holds is parked",
+       not [s["stage"] for s in st2 if s["esc_role"]]
+       and [s["stage"] for s in st2 if s["esc_role"] == ""] == ["warehouse_manager"])
     ok("the warehouse rung is signed by the stage's own roles",
        svc.step_roles(st2[0]) == set(C.STAGE_ROLES["warehouse"]))
     ok("the colleague can sign it", svc.can_act_step(store2, st2[0]))
@@ -470,8 +480,10 @@ with app.app_context():
     # pricing gate + value-ladder reconciliation, unchanged
     prg, _ = svc.create_pr({"title": "Gate", "department": "Production", "currency": "EGP"},
                            [{"item": "Pump", "qty": 1, "unit_price": 0}], normal, submit=True)
-    ok("an unpriced PR routes the demand stages only",
-       [s for _, s in ladder_shape(conn, prg)] == C.DEMAND_STAGES)
+    # Owner's ladder (2026-11-17): no rung is value-gated, so even an unpriced
+    # request carries every rung from submit.
+    ok("an unpriced PR routes the full ladder",
+       [s for _, s in ladder_shape(conn, prg)] == C.build_ladder(0))
     # One person per rung: SOD_ADMIN_EXEMPT is False, so one account cannot sign
     # two rungs of the same request and a single admin can no longer walk a ladder.
     okk, msg = svc.act_on_step(prg, wm, "approve")              # warehouse (store)
@@ -511,10 +523,12 @@ with app.app_context():
     prr, _ = svc.create_pr({"title": "Priced later", "department": "Production",
                             "currency": "EGP"},
                            [{"item": "Cutter", "qty": 1, "unit_price": 0}], cfo, submit=True)
-    ok("it submitted with the demand ladder only",
-       [s for _, s in ladder_shape(conn, prr)] == C.DEMAND_STAGES)
-    ok("the demand rungs were NOT escalated (others hold those roles)",
-       all(s["esc_from"] is None for s in steps_of(conn, prr)))
+    # Owner's ladder (2026-11-17): the CFO rung is on the request from submit, so
+    # it escalates THEN; pricing must leave that escalation exactly as it is.
+    ok("it submitted with the full ladder",
+       [s for _, s in ladder_shape(conn, prr)] == C.build_ladder(0))
+    ok("only the requester's own CFO rung escalated (others hold the rest)",
+       [s["stage"] for s in steps_of(conn, prr) if s["esc_from"]] == ["cfo"])
     svc.act_on_step(prr, wm, "approve")                      # warehouse
     itr = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (prr,)).fetchone()["id"]
     # §4.1 tier 4: Finance AND the CFO both join here, which is what this case
@@ -551,10 +565,12 @@ with app.app_context():
     sd = steps_of(conn, prd)
     ok("submit escalates the Warehouse Manager rung off the sole manager (%r)" % sd[1]["esc_role"],
        sd[0]["esc_role"] is None and sd[1]["stage"] == "warehouse_manager"
-       and sd[1]["esc_role"] == "factory_manager")
+       and sd[1]["esc_role"] == "ceo")
+    # Owner's ladder (2026-11-17): the sole Plant Director is needed on his own
+    # rung of THIS request, so the climb passes him and lands on the CEO.
     ok("wm signs the store rung", svc.act_on_step(prd, wm, "approve")[0])
-    okk, msg = svc.act_on_step(prd, fm, "approve")
-    ok("the factory manager signs the escalated WM rung (%s)" % msg, okk)
+    okk, msg = svc.act_on_step(prd, ceo, "approve")
+    ok("the CEO signs the escalated WM rung (%s)" % msg, okk)
     # After a signature: a storekeeper exists at submit, so nothing escalates,
     # but wm signs the store rung himself and must not strand his own rung.
     activate("esc_store2")
@@ -567,10 +583,10 @@ with app.app_context():
     svc.act_on_step(pre, wm, "approve")
     se = steps_of(conn, pre)[1]
     ok("after wm signed the store rung, his own rung re-escalates (%r)" % se["esc_role"],
-       se["esc_role"] == "factory_manager")
+       se["esc_role"] == "ceo")
     ok("...and it is audited",
        any(e["action"] == "escalated_stage" for e in svc.get_pr(pre)["events"]))
-    ok("the factory manager can sign it", svc.act_on_step(pre, fm, "approve")[0])
+    ok("the CEO can sign it", svc.act_on_step(pre, ceo, "approve")[0])
     activate("esc_store2", on=0)
     # #13: a holder only counts if he could really sign: active and permitted.
     ok("the sole WM is counted as a holder",

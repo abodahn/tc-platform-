@@ -104,11 +104,18 @@ def run():
                             "_csrf": "tok"}).status_code
 
     # ---- 0. the downgrade being prevented is a real one ---------------------
-    print("the two ladders really do differ, so guessing one costs signatures")
+    # Owner's ladder (2026-11-17): OPEX and CAPEX route the SAME rungs; the kind
+    # still decides what the Plant Director's signature IS (Table 5: a Review on
+    # OPEX, part of the joint Approve on CAPEX), so guessing it is still wrong.
+    print("the two kinds sign differently, so guessing one changes the record")
     l_opex = C.build_ladder(900_000, "opex")
     l_capex = C.build_ladder(900_000, "capex")
-    chk("900,000 routes differently as CAPEX than as OPEX", l_opex != l_capex,
+    chk("900,000 routes the same rungs either way", l_opex == l_capex,
         "%s vs %s" % (l_opex, l_capex))
+    _pd = [C.step_action("ladder", False, "factory_manager", "ceo", k)
+           for k in ("opex", "capex")]
+    chk("but the Plant Director signs a different Table 5 letter",
+        _pd == ["review", "approve"], _pd)
     chk("and an unrecognised value falls to the OPEX side — which is exactly "
         "why it may not be silent",
         C.normalise_expenditure_kind("capitol") == ("opex", False))

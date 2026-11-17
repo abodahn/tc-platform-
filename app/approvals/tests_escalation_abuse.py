@@ -133,33 +133,27 @@ with app.app_context():
     okk, msg = svc.submit_pr(pr2, wm)
     ok("the warehouse manager's UNPRICED request routes (%s)" % (msg or "ok"), okk)
     own_step = [s for s in steps(pr2) if s["stage"] == "warehouse"][0]
-    ok("his own rung escalated (%s)" % own_step["esc_role"], bool(own_step["esc_role"]))
-    escalated_to = own_step["esc_role"]
-    signer = next((u for u in U.values() if u["role"] in escalated_to.split(",")), None)
-    ok("the escalated-to human exists and can sign it",
-       signer is not None and svc.can_act_step(signer, own_step))
-    for who in (wm["username"], signer["username"] if signer else ""):
-        row = conn.execute("SELECT * FROM users WHERE username=?", (who,)).fetchone()
-        if row:
-            svc.act_on_step(pr2, dict(row), "approve")
-    ok("the escalated rung is signed by that human, not the requester",
+    # Owner's ladder (2026-11-17): the Plant Director and CEO rungs are on this
+    # same request from submit and each has ONE holder, so the climb may hand
+    # the store rung to neither (dual_role would then strand their own rung).
+    # It is PARKED — visible, audited, and never signable by the requester.
+    ok("his own rung is parked, not handed to a sole signer of another rung (%r)"
+       % own_step["esc_role"], own_step["esc_role"] == "")
+    ok("the requester cannot sign the parked rung",
+       svc.act_on_step(pr2, wm, "approve")[1] == "self_approval")
+    ok("a platform admin clears it", svc.act_on_step(pr2, admin, "approve")[0])
+    ok("the parked rung is signed by the admin, not the requester",
        [s for s in steps(pr2) if s["stage"] == "warehouse"][0]["approver_user"]
-       == (signer or {}).get("username"))
-    # Purchasing prices it above the director threshold: the value rungs join,
-    # and one of them is the human who just signed the escalated demand rung.
+       == admin["username"])
+    # Pricing no longer appends rungs (every rung is on from submit), so nothing
+    # can join later onto somebody who already signed.
+    _before = [r["stage"] for r in steps(pr2)]
     item = conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (pr2,)).fetchone()["id"]
     svc.price_pr(pr2, {str(item): 150000}, {}, U["purchasing_manager"])
-    # Matched on the stage's CONFIGURED roles, not on step_roles(): a rung that
-    # was correctly re-resolved reports the superior's role, so reading the live
-    # roles would make this list empty and the assertion below vacuous.
-    trap = [s for s in steps(pr2)
-            if s["stage"] not in _C.DEMAND_STAGES
-            and (signer or {}).get("role") in _C.STAGE_ROLES.get(s["stage"], set())]
-    ok("the appended rung whose only signer already signed is NOT left silently "
-       "pending on him", trap and all(s["esc_role"] is not None for s in trap))
+    ok("pricing appended no rung", [r["stage"] for r in steps(pr2)] == _before)
     ev = [e["action"] for e in svc.get_pr(pr2)["events"]]
-    ok("the deviation is on the audit trail (%s)" % [a for a in ev if "escalat" in a],
-       any(a in ("escalated_stage", "escalation_blocked") for a in ev))
+    ok("the parking is on the audit trail (%s)" % [a for a in ev if "escalat" in a],
+       "escalation_parked" in ev)
     _want = _C.build_ladder(150000)
     _have = [r["stage"] for r in steps(pr2)]
     # A rung may be ABSENT in exactly one case, added 2026-10-13 with the
@@ -191,6 +185,9 @@ with app.app_context():
            for r in steps(pr2) if r["stage"] not in _want))
 
     print("\n--- 3. the requester never signs, at any depth -------------------")
+    # A Managing Director also signs the CEO rung, so the CEO is free to take
+    # the escalation and this section keeps testing an ESCALATED first rung.
+    mk("ab_md", "managing_director")
     pr3, _ = svc.create_pr({"title": "mine", "department": "Production"},
                            [{"item": "x", "qty": 1, "unit_price": 0}], wm, submit=False)
     svc.submit_pr(pr3, wm)

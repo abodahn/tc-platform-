@@ -84,6 +84,7 @@ def run():
         fin = mk("al_fin", "financial_director")
         cfo = mk("al_cfo", "cfo")
         ceo = mk("al_ceo", "ceo")
+        fc = mk("al_fc", "financial_controller")   # owner's Financial Control rung
 
         # ---- 0. the two DOAM tables agree with each other -----------------
         # ROLE_LEVEL is declared, not generated from STAGE_ROLES, so this is a
@@ -136,8 +137,8 @@ def run():
             and "al_cfo" in svc.eligible_approvers(conn, "cfo"),
             sorted(svc.eligible_approvers(conn, "cfo")))
 
-        # ...end to end, on the real ladder. 600,000 EGP OPEX = DOAM §4.1 tier 4:
-        # warehouse, purchasing, PD, SCD, Financial Director, CFO.
+        # ...end to end, on the real ladder. Owner's ladder (2026-11-17), every
+        # value: warehouse, wh manager, purchasing, PD, Financial Control, CFO, CEO.
         pr_id, pr_no = svc.create_pr(
             {"title": "Authority level walk", "department": "Production",
              "currency": "EGP"},
@@ -150,14 +151,15 @@ def run():
             svc.add_quote(pr_id, {"vendor": v, "amount": 600000}, buyer)
         ladder = [r["stage"] for r in conn.execute(
             "SELECT stage FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()]
-        chk("the ladder reaches the CFO rung", ladder[-1] == "cfo", ladder)
+        chk("the ladder carries the CFO rung, CEO last",
+            "cfo" in ladder and ladder[-1] == "ceo", ladder)
 
         # +Warehouse Manager (added 2026-10-13, always on); -Finance (removed from
         # authority the same day). One distinct person per rung, which is the
         # property this walk defends.
         for who, label in ((store, "warehouse"), (whm, "wh manager"),
                            (buyer, "purchasing"), (pd, "plant"),
-                           (scd, "supply chain")):
+                           (fc, "control")):
             good, msg = svc.act_on_step(pr_id, who, "approve")
             chk("%-12s signs their rung" % label, good, msg)
 
@@ -169,7 +171,9 @@ def run():
         chk("the refused rung is untouched — still pending, still unsigned",
             parked["status"] == "pending" and not parked["approver_user"], parked)
         good, msg = svc.act_on_step(pr_id, cfo, "approve")
-        chk("the CFO signs it and the request completes", good, msg)
+        chk("the CFO signs it", good, msg)
+        good, msg = svc.act_on_step(pr_id, ceo, "approve")
+        chk("the CEO signs last and the request completes", good, msg)
         row = dict(conn.execute("SELECT status FROM pr_requests WHERE id=?",
                                 (pr_id,)).fetchone())
         chk("...so the ladder is not deadlocked, only correctly gated",
@@ -189,27 +193,30 @@ def run():
             "al_junior_buyer" in set(effective_roles()))
         chk("it holds proc_approve, so the permission half alone would let it sign",
             svc.can_sign_role("al_junior_buyer"))
-        good, msg = svc.set_stage_meta("bod", roles=["al_junior_buyer"], user=admin)
-        chk("an admin can still map it onto the Board rung (nothing is blocked "
-            "at configuration time)", good, msg)
+        # The Board rung is retired (2026-11-17); Financial Control is the L1 rung
+        # an admin can still mis-map, so the fail-closed check runs on it.
+        good, msg = svc.set_stage_meta("control", roles=["al_junior_buyer"], user=admin)
+        chk("an admin can still map it onto the Financial Control rung (nothing is "
+            "blocked at configuration time)", good, msg)
         chk("but it cannot sign there: no level recorded -> fail closed",
-            not svc.can_act(jb, "bod") and not svc.can_sign_role("al_junior_buyer", "bod"))
+            not svc.can_act(jb, "control")
+            and not svc.can_sign_role("al_junior_buyer", "control"))
         health = {h["stage"]: h for h in svc.ladder_signer_health()}
-        chk("the health check names the rung's level", health["bod"]["level"] == "BOD")
+        chk("the health check names the rung's level", health["control"]["level"] == "L1")
         chk("...and names the role that cannot reach it",
-            health["bod"]["underlevel"] == ["al_junior_buyer"], health["bod"])
+            health["control"]["underlevel"] == ["al_junior_buyer"], health["control"])
         chk("...and reports the rung as unsignable rather than blocking in silence",
-            health["bod"]["ok"] is False and health["bod"]["holders"] == 0)
+            health["control"]["ok"] is False and health["control"]["holders"] == 0)
         from app.routes.governance import findings
         chk("the governance Findings page surfaces it",
-            "bod" in {x["stage"] for x in findings()["unsignable"]})
+            "control" in {x["stage"] for x in findings()["unsignable"]})
         for key in ("gov.find.level", "gov.find.underlevel"):
             tr = svc.I18N.get(key) or ()
             chk("findings wording %-22s is real EN/AR/TR" % key,
                 len(tr) == 3 and all(t.strip() for t in tr) and len(set(tr)) == 3)
         # A platform admin is still able to clear the rung — the override path.
-        chk("a platform admin can still sign the parked rung", svc.can_act(admin, "bod"))
-        svc.set_stage_meta("bod", reset_role=True, user=admin)
+        chk("a platform admin can still sign the parked rung", svc.can_act(admin, "control"))
+        svc.set_stage_meta("control", reset_role=True, user=admin)
 
         # ---- 4. the climb walks PAST an under-level superior ---------------
         print("\n--- 4. escalation is not deadlocked by the new check -----------")
@@ -251,6 +258,10 @@ def run():
         # 'forbidden', CFO 'self_approval', MD 'forbidden', status 'pending'
         # forever.
         print("\n--- 5. an under-level holder must not look like cover ----------")
+        # Owner's ladder: the CEO rung is on every request. With a sole CEO the
+        # climb could not hand him the CFO rung too (dual_role), so a Managing
+        # Director takes the CEO rung and the CEO is free for the escalation.
+        md = mk("al_md", "managing_director")
         svc.set_stage_meta("cfo", roles=["cfo", "purchasing_manager"], user=admin)
         chk("the buyer really is on the CFO rung (the admin's mistake landed)",
             "purchasing_manager" in svc.stage_roles_map().get("cfo", set()),
@@ -277,7 +288,7 @@ def run():
         # property this walk defends.
         for who, label in ((store, "warehouse"), (whm, "wh manager"),
                            (buyer, "purchasing"), (pd, "plant"),
-                           (scd, "supply chain")):
+                           (fc, "control")):
             good, msg = svc.act_on_step(d_id, who, "approve")
             chk("%-12s signs their rung" % label, good, msg)
         bad, why = svc.act_on_step(d_id, buyer, "approve")
@@ -286,7 +297,9 @@ def run():
         bad, why = svc.act_on_step(d_id, cfo, "approve")
         chk("nor the CFO, who raised it (%s)" % why, not bad, why)
         good, msg = svc.act_on_step(d_id, ceo, "approve")
-        chk("the MD the rung climbed to signs it", good, msg)
+        chk("the CEO the rung climbed to signs it", good, msg)
+        good, msg = svc.act_on_step(d_id, md, "approve")
+        chk("the Managing Director signs the CEO rung", good, msg)
         row = dict(conn.execute("SELECT status FROM pr_requests WHERE id=?",
                                 (d_id,)).fetchone())
         chk("...so the request COMPLETES — no deadlock, which is the whole point",

@@ -53,14 +53,15 @@ def run():
         a, _ = _unpriced(svc, "Belts", "Maintenance", "V-belt A42")
         price(a, 9900, tax=14)              # net 9,900 -> committed 11,286
         conn = get_db(); la = _stages(conn, a); conn.close()
-        assert "factory_manager" in la, (
-            "9,900 + 14%% VAT commits 11,286 and must clear the 10,000 tier: %s" % la)
+        # Owner's ladder (2026-11-17): no value tiers any more; every request,
+        # either side of the old 10,000 line, signs the same seven rungs.
+        assert la == list(C.DOAM_LADDER), la
 
         # a net figure that stays under the tier even with tax must NOT escalate
         b, _ = _unpriced(svc, "Filters", "Quality", "Air filter")
         price(b, 8000, tax=14)              # committed 9,120
         conn = get_db(); lb = _stages(conn, b); conn.close()
-        assert "factory_manager" not in lb, "9,120 committed is still tier 1: %s" % lb
+        assert lb == list(C.DOAM_LADDER), lb
 
         # ---- §3.4: the anti-split aggregate must fire on the REAL flow -------
         c1, _ = _unpriced(svc, "Bearings A", "Sewing", "Bearing 6204")
@@ -71,11 +72,8 @@ def run():
         l1, l2 = _stages(conn, c1), _stages(conn, c2)
         agg = conn.execute("SELECT agg_total FROM pr_requests WHERE id=?", (c2,)).fetchone()["agg_total"]
         conn.close()
-        assert "factory_manager" not in l1, "the first 9k has nothing to aggregate: %s" % l1
+        assert l1 == l2 == list(C.DOAM_LADDER), (l1, l2)
         assert agg and abs(agg - 18000) < 1, "aggregate should be 18,000, got %r" % agg
-        assert "factory_manager" in l2, (
-            "two related 9k requests priced through the UI flow must route on "
-            "18,000 — this is the case that was silently dead: %s" % l2)
 
         # ---- R3: re-pricing must NOT strip a control rung --------------------
         d, _ = _unpriced(svc, "OEM drive", "Production", "Servo drive")
@@ -113,7 +111,8 @@ def run():
             "the ceiling branch did not run — it queried a table that does not "
             "exist and the error was swallowed: %s" % dev["lines"][0])
         assert dev["lines"][0]["grade"] == "over_ceiling", dev["lines"][0]
-        assert "scd" in lf, "over-ceiling must pull in PD + SCD: %s" % lf
+        # SC-D retired from new requests; the PD signature is on the ladder.
+        assert "factory_manager" in lf and "scd" not in lf, lf
 
         # ---- R8: the guarantee threshold is an EGP figure --------------------
         conn = get_db()

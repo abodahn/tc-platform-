@@ -143,6 +143,20 @@ def run():
             finally:
                 conn.close()
 
+        def pd_escalated(pr_id):
+            """Owner's ladder (2026-11-17): the Plant Director rung is on EVERY
+            request, so §3.4 adds no duplicate rung. The escalation is proved by
+            the PD signature being there AND the deviation being recorded."""
+            conn = get_db()
+            try:
+                ev = conn.execute(
+                    "SELECT 1 FROM pr_events WHERE pr_id=? AND "
+                    "action='deviation_approval'", (pr_id,)).fetchone()
+            finally:
+                conn.close()
+            return (bool(ev) and "factory_manager" in stages(pr_id)
+                    and not deviation_rungs(pr_id))
+
         def sign_one(pr_id):
             """One rung, signed by a fresh authorised person (no self-approval,
             no dual role). Returns (ok, msg) exactly as the web POST would."""
@@ -173,11 +187,11 @@ def run():
         cov = a_dev["lines"][0]["coverage"]
         assert cov["net_need"] == 0 and cov["excess"] == 50, cov
         assert a_dev["lines"][0]["grade"] == "over_plan", a_dev["lines"][0]
-        assert deviation_rungs(a) == ["factory_manager"], (
+        assert pd_escalated(a), (
             "50 units against a net requirement of 0 must cost the higher "
             "signature §3.4 points to: %s -> %s (deviation rungs %s)"
             % (a_before, a_after, deviation_rungs(a)))
-        assert "factory_manager" not in a_before, a_before
+        assert "factory_manager" in a_before, a_before   # owner's ladder
         assert a_dev["memo"], "§3.4 demands the justification memo"
 
         # T&C-PUF-10 is retained for a year; the panel recomputes from TODAY's
@@ -253,7 +267,7 @@ def run():
         ccov = c_dev["lines"][0]["coverage"]
         assert ccov["on_order"] == 60 and ccov["net_need"] == 0, ccov
         assert c_dev["lines"][0]["grade"] == "over_plan", c_dev["lines"][0]
-        assert deviation_rungs(c) == ["factory_manager"], (
+        assert pd_escalated(c), (
             "a second order for goods already in transit must escalate: "
             "%s -> %s (deviation rungs %s)" % (c_before, c_after, deviation_rungs(c)))
 
@@ -337,7 +351,7 @@ def run():
         ok, msg = sign_one(f)
         assert not ok and msg == "deviation_memo_required", (
             "the goods arrived and the buyer still signed: %s / %s" % (ok, msg))
-        assert deviation_rungs(f) == ["factory_manager"], (
+        assert pd_escalated(f), (
             "the gate demanded the memo but never created the signature §3.4 "
             "exists to add: %s -> %s (deviation rungs %s)"
             % (f_ladder, stages(f), deviation_rungs(f)))
@@ -378,7 +392,7 @@ def run():
         assert g2cov["on_order"] == 50 and g2cov["net_need"] == 0, (
             "a second request for a part already on order must net to zero: %s"
             % g2cov)
-        assert deviation_rungs(g2) == ["factory_manager"], (
+        assert pd_escalated(g2), (
             "the commonest duplicate of all bought no extra signature: %s"
             % deviation_rungs(g2))
         sourcing(g1)
@@ -403,7 +417,7 @@ def run():
         assert hcov and hcov["net_need"] == 0 and hcov["by_name"], (
             "omitting the hidden field switched the check off: %s" % hcov)
         assert h_dev["coverage_blind"] == 0, h_dev
-        assert deviation_rungs(h) == ["factory_manager"], (
+        assert pd_escalated(h), (
             "a hand-typed line for a part with 400 on the shelf must cost the "
             "same signature as the linked one: %s -> %s" % (h_before, stages(h)))
         assert h_dev["memo"], "the memo is owed on the hand-typed line too"
@@ -478,8 +492,8 @@ def run():
         print("E at reorder point      ->", " -> ".join(e_after), "(unchanged)")
         print("F stock lands after pricing ->", " -> ".join(f_ladder), "=>",
               " -> ".join(stages(f)), "+ memo refused until written")
-        print("G duplicate PR in ladder    -> first clean, second",
-              deviation_rungs(g2))
+        print("G duplicate PR in ladder    -> first clean, second escalated",
+              pd_escalated(g2))
         print("H free text, no spare_id    ->", " -> ".join(stages(h)),
               "(matched by name); ambiguous name stays unassessed")
         print("K requester adjusted the netted master -> named on the request "
@@ -563,14 +577,21 @@ def _http(app, sid):
                     rungs = [r["stage"] for r in c.execute(
                         "SELECT stage FROM pr_steps WHERE pr_id=? AND "
                         "origin='deviation'", (pr_id,)).fetchall()]
+                    ladder = [r["stage"] for r in c.execute(
+                        "SELECT stage FROM pr_steps WHERE pr_id=?",
+                        (pr_id,)).fetchall()]
+                    ev = c.execute("SELECT 1 FROM pr_events WHERE pr_id=? AND "
+                                   "action='deviation_approval'", (pr_id,)).fetchone()
                 finally:
                     c.close()
             cov = dev["lines"][0]["coverage"]
             assert cov and cov["net_need"] == 0 and dev["memo"], (
                 "%s: 400 on the shelf and the netting missed it (%s)"
                 % (title, cov))
-            assert rungs == ["factory_manager"], (
-                "%s bought no extra signature: %s" % (title, rungs))
+            # Owner's ladder: the PD rung is always there, so none is added.
+            assert rungs == [] and "factory_manager" in ladder and ev, (
+                "%s: PD signature/deviation record missing: %s / %s"
+                % (title, rungs, ladder))
     print("HTTP  POST /procurement/new both with and without the hidden "
           "spare_id[] -> both netted, both escalated")
 

@@ -76,9 +76,11 @@ _STATUS_OPTS = [
 
 _STAGE_OPTS = [
     ("warehouse", "Warehouse", "المخازن", "Depo"),
+    ("warehouse_manager", "Warehouse Manager", "مدير المخزن", "Depo Müdürü"),
     ("factory_manager", "Factory Manager", "مدير المصنع", "Fabrika Müdürü"),
     ("purchasing", "Purchasing", "المشتريات", "Satın Alma"),
     ("finance", "Finance", "المالية", "Finans"),
+    ("control", "Financial Control", "الكنترول المالي", "Finansal Kontrol"),
     ("cfo", "CFO", "المدير المالي", "Mali İşler Direktörü"),
     ("ceo", "CEO", "الرئيس التنفيذي", "Genel Müdür"),
 ]

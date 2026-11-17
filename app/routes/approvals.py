@@ -284,16 +284,16 @@ _LANG_IDX = {"en": 0, "ar": 1, "tr": 2}
 I18N = {
     "proc.kind_unreadable": (
         "Expenditure type “{}” was not understood, so nothing was saved. "
-        "Answer Operating (OPEX) or Capital (CAPEX). Capital spend routes on "
-        "the stricter DOAM §4.2 ladder, so an answer that cannot be read is "
-        "never taken to mean OPEX.",
+        "Answer Operating (OPEX) or Capital (CAPEX). Capital spend is signed "
+        "as a joint approval under DOAM §4.2, so an answer that cannot be read "
+        "is never taken to mean OPEX.",
         "لم يُفهم نوع الإنفاق «{}»، ولم يتم حفظ أي شيء. اختر إنفاقاً تشغيلياً "
-        "(OPEX) أو إنفاقاً رأسمالياً (CAPEX). الإنفاق الرأسمالي يسير في مسار "
-        "اعتماد أكثر صرامة (DOAM §4.2)، لذلك لا تُعتبر الإجابة غير المفهومة "
+        "(OPEX) أو إنفاقاً رأسمالياً (CAPEX). الإنفاق الرأسمالي يُعتمد "
+        "اعتماداً مشتركاً وفق (DOAM §4.2)، لذلك لا تُعتبر الإجابة غير المفهومة "
         "إنفاقاً تشغيلياً أبداً.",
         "“{}” harcama türü anlaşılmadı, bu nedenle hiçbir şey kaydedilmedi. "
         "İşletme gideri (OPEX) veya Yatırım harcaması (CAPEX) seçin. Yatırım "
-        "harcaması daha katı DOAM §4.2 onay basamağını izler; bu yüzden "
+        "harcaması DOAM §4.2 uyarınca ortak onayla imzalanır; bu yüzden "
         "okunamayan bir yanıt asla OPEX sayılmaz.",
     ),
     "proc.kind_blank": (
@@ -1268,7 +1268,8 @@ def detail(pr_id):
     _on = {s["stage"] for s in bundle["steps"]}
     l2_dom = ("plant" if "factory_manager" in _on and "scd" not in _on else
               "supply_chain" if "scd" in _on and "factory_manager" not in _on else None)
-    if not bundle.get("l2_domain"):
+    # The domain note applies only to requests using the earlier director ladder.
+    if "control" in _on or not bundle.get("l2_domain"):
         l2_dom = None
     # Same wording as the proc.l2.* i18n keys, so the pre-swap render and the
     # English dictionary do not drift apart.
@@ -1342,7 +1343,12 @@ def detail(pr_id):
                                        if actionable else []),
                            act_why=act_why, act_sign=act_sign,
                            l2_domain=l2_dom, l2_note=l2_note,
-                           stage_label=C.stage_label, queued=queued,
+                           # Rung names in the reader's language; English keeps
+                           # the DOAM wording C.stage_label prints on the PDF.
+                           stage_label=(C.stage_label if _lang == "en" else
+                                        lambda s, _m=svc.labels(_lang)["stage"]:
+                                        _m.get(s) or C.stage_label(s)),
+                           queued=queued,
                            current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
                            match=svc.three_way_match(pr_id),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
@@ -1890,8 +1896,8 @@ def approve(pr_id):
                                           "is signed — record it in the Coverage check / "
                                           "Deviation from plan panel.",
                "business_case_required": "Above 10,000,000 EGP the DOAM requires a written "
-                                         "business case alongside Board approval. Record it "
-                                         "before signing.",
+                                         "business case before this request is signed. "
+                                         "Record it first.",
                "no_active_step": "No active approval step.",
                # The DOAM §6 gate answers with the maintenance module's codes.
                # Without these three they reached the buyer raw, inside an

@@ -65,22 +65,14 @@ def run():
         conn.close()
 
         assert kind == "capex", "the flag did not persist: %r" % kind
-        assert capex != opex, "CAPEX and OPEX route identically — the flag is not reaching the ladder"
-        # §4.2: capital has no Warehouse rung; it starts at Purchasing.
-        assert "warehouse" not in capex, "CAPEX must not route through Warehouse: %s" % capex
-        assert "warehouse" in opex, "OPEX at 300k must still start at Warehouse: %s" % opex
-        # §4.2: 300,000 is above the MD threshold (250,000) and below the board's.
-        assert "ceo" in capex, "Managing Director must sign 300k capital: %s" % capex
-        assert "bod" not in capex, "the Board is not required at 300k: %s" % capex
-        # Every remaining level signs capital — the Plant Director included,
-        # which the OPEX ladder only reaches at much higher values.
-        #
-        # Finance was REMOVED from authority by instruction (2026-10-13), so it
-        # no longer signs capital either. The rest of §4.2 is unchanged: capital
-        # is still a joint approval at every tier, which is the property this
-        # loop exists to defend.
-        for stage in ("purchasing", "factory_manager", "scd", "cfo"):
-            assert stage in capex, "%s must sign capital: %s" % (stage, capex)
+        # Owner's ladder (2026-11-17): OPEX and CAPEX route the SAME seven rungs
+        # at any value. The flag still persists (retention, Table 5 letters).
+        full = ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
+                "control", "cfo", "ceo"]
+        assert capex == full, "CAPEX must route the owner's ladder: %s" % capex
+        assert opex == full, "OPEX must route the owner's ladder: %s" % opex
+        assert "bod" not in capex and "scd" not in capex, \
+            "the Board and Supply Chain Director are retired: %s" % capex
         # A department responsibility matrix must not shorten a capital ladder.
         conn = get_db()
         conn.execute("INSERT INTO proc_resp_matrix (department, stage, threshold, seq, active) "

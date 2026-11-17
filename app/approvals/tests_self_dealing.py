@@ -61,7 +61,7 @@ def run():
     app = _app()
     with app.app_context():
         from app.db import get_db
-        from app.approvals import services as svc
+        from app.approvals import services as svc, constants as C
 
         def role(r):
             conn = get_db()
@@ -184,7 +184,7 @@ def run():
         before = rungs()
         svc.warehouse_revise(pr4, {line4: 150}, {line4: 0}, store)
         after = rungs()
-        chk("5,000 routed the demand rungs only", "cfo" not in before, before)
+        chk("5,000 already routes the full owner's ladder (2026-11-17)", before == list(C.DOAM_LADDER), before)
         chk("750,000 pulled in the Plant Director and the CFO",
             "factory_manager" in after and "cfo" in after, after)
         chk("and nothing already on the ladder was dropped",

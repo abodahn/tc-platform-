@@ -100,10 +100,8 @@ with app.app_context():
               for stage, roles in C.STAGE_ROLES.items()}
     buyer = signer["purchasing"]
 
-    # DOAM §4.1 tier 4 (500,001 - 2,000,000): the last signature is the CFO's, so
-    # this one request still exercises Finance AND the CFO as the final approver.
-    # Under the paper form that was 30,000; the DOAM does not involve either at
-    # that value (§4.1 tier 2 stops at the directors).
+    # Any value walks the owner's full ladder (no value tiers since 2026-11-17);
+    # 600,000 is just a realistic figure for the end-to-end walk.
     TOTAL = 600_000.0
     print("\n   end-to-end: unpriced PR -> gates -> signatures -> PO -> payment")
     pr_id, pr_no = svc.create_pr(
@@ -111,7 +109,9 @@ with app.app_context():
         [{"item": "Battery", "qty": 1, "unit_price": 0}], store, submit=True)
     steps = [r["stage"] for r in conn.execute(
         "SELECT stage FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()]
-    ok("unpriced PR routes the demand stages only %r" % (steps,), steps == C.DEMAND_STAGES)
+    # Owner's ladder (2026-11-17): every rung is on the request from submit.
+    ok("unpriced PR routes the owner's full ladder %r" % (steps,),
+       steps == C.build_ladder(0))
 
     okk, msg = svc.act_on_step(pr_id, signer["warehouse"], "approve")
     ok("warehouse signs: %s" % msg, okk)
@@ -146,12 +146,12 @@ with app.app_context():
     ok("%d DISTINCT vendor quotes satisfy the RFQ gate: %s" % (need, msg), okk)
     okk, msg = svc.act_on_step(pr_id, signer["factory_manager"], "approve")
     ok("factory manager signs: %s" % msg, okk)
-    okk, msg = svc.act_on_step(pr_id, signer["scd"], "approve")
-    ok("supply chain director signs: %s" % msg, okk)
-    # Finance was removed from authority on instruction (2026-10-13), so there is
-    # no finance rung on this ladder to sign.
-    okk, msg = svc.act_on_step(pr_id, signer["cfo"], "approve")  # -> fully approved
-    ok("cfo signs and the PR is fully approved: %s" % msg, okk and msg == "approved")
+    okk, msg = svc.act_on_step(pr_id, signer["control"], "approve")
+    ok("financial control signs: %s" % msg, okk)
+    okk, msg = svc.act_on_step(pr_id, signer["cfo"], "approve")
+    ok("cfo signs: %s" % msg, okk)
+    okk, msg = svc.act_on_step(pr_id, signer["ceo"], "approve")  # -> fully approved
+    ok("ceo signs last and the PR is fully approved: %s" % msg, okk and msg == "approved")
     ok("PR status is 'approved' with a drafted PO",
        conn.execute("SELECT status, po_no FROM pr_requests WHERE id=?",
                     (pr_id,)).fetchone()["status"] == "approved")
@@ -285,12 +285,14 @@ with app.app_context():
         # requests already circulating carry a signed finance step. That makes it
         # a good subject here: this block is about the stage-role override being
         # validated, not about which rungs are live.
-        poke_role("scd", bad)
+        # 'control' since SC-D was retired from the ladder (2026-11-17).
+        poke_role("control", bad)
         ok("stage role %r -> ignored, constant roles kept" % bad,
-           svc.stage_roles_map()["scd"] == set(C.STAGE_ROLES["scd"]))
-    poke_role("scd", "no_such_role,cfo")
+           svc.stage_roles_map()["control"] == set(C.STAGE_ROLES["control"]))
+    poke_role("control", "no_such_role,cfo")
     ok("stage role 'no_such_role,cfo' -> only the real role is used",
-       svc.stage_roles_map()["scd"] == {"cfo"})
+       svc.stage_roles_map()["control"] == {"cfo"})
+    poke_role("control", None)
     poke_role("finance", None)
     ok("a garbage role never left the stage unsignable (someone can always act)",
        all(svc.stage_roles_map()[s] for s in C.LADDER))

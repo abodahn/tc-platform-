@@ -15,7 +15,7 @@ only one where being wrong hands somebody a way around the control.
 """
 import sys
 
-sys.path.insert(0, r"D:\TC platform\tc-platform-beta")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))  # this checkout, not another worktree
 from app.approvals import constants as C   # noqa: E402
 
 ok = True
