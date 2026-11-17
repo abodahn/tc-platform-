@@ -4167,5 +4167,11 @@
   "proc.stockpost.failed": "فشل",
   "proc.stockpost.posting": "جاري الترحيل",
   "proc.stockpost.hint": "الكميات المستلمة دي لسه ما اتضافتش للمخزون. جرّب تاني، أو راجع المخزن قبل إعادة محاولة صنف عالق في حالة «جاري الترحيل».",
-  "proc.stockpost.retry": "إعادة محاولة الترحيل"
+  "proc.stockpost.retry": "إعادة محاولة الترحيل",
+  "admin.user_search": "ابحث بالاسم أو اسم المستخدم أو الإيميل…",
+  "admin.all_roles": "كل الأدوار",
+  "admin.all_status": "كل الحالات",
+  "admin.user_col": "المستخدم",
+  "admin.has_extra": "+ صلاحيات إضافية",
+  "admin.no_match": "لا يوجد مستخدمون مطابقون لهذا الفلتر."
 }

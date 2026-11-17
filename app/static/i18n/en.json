@@ -4167,5 +4167,11 @@
   "proc.stockpost.failed": "failed",
   "proc.stockpost.posting": "posting",
   "proc.stockpost.hint": "These received quantities have not reached stock yet. Retry, or check the store before retrying a line stuck in 'posting'.",
-  "proc.stockpost.retry": "Retry posting"
+  "proc.stockpost.retry": "Retry posting",
+  "admin.user_search": "Search name, username, email…",
+  "admin.all_roles": "All roles",
+  "admin.all_status": "All statuses",
+  "admin.user_col": "User",
+  "admin.has_extra": "+ extra",
+  "admin.no_match": "No users match these filters."
 }

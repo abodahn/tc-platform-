@@ -4167,5 +4167,11 @@
   "proc.stockpost.failed": "başarısız",
   "proc.stockpost.posting": "aktarılıyor",
   "proc.stockpost.hint": "Teslim alınan bu miktarlar henüz stoğa ulaşmadı. Yeniden deneyin veya 'aktarılıyor' durumunda kalan bir kalemi tekrar denemeden önce depoyu kontrol edin.",
-  "proc.stockpost.retry": "Aktarımı yeniden dene"
+  "proc.stockpost.retry": "Aktarımı yeniden dene",
+  "admin.user_search": "Ad, kullanıcı adı, e-posta ara…",
+  "admin.all_roles": "Tüm roller",
+  "admin.all_status": "Tüm durumlar",
+  "admin.user_col": "Kullanıcı",
+  "admin.has_extra": "+ ek",
+  "admin.no_match": "Bu filtrelere uyan kullanıcı yok."
 }
