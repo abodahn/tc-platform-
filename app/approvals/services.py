@@ -177,9 +177,7 @@ def bool_setting(conn, key):
 
 
 def live_matrix(conn, kind="opex"):
-    """{stage: amount} the ladder routes on NOW: the DOAM matrix with whatever
-    the admin saved on the governance screen applied, read per call like every
-    other knob so an edit takes effect on the next request without a restart."""
+    """Fixed owner-approved matrix; stored thresholds no longer affect routing."""
     return C.matrix_for(kind, lambda key: num_setting(conn, key))
 
 
@@ -1274,7 +1272,7 @@ def dept_ladder(conn, department, total, kind="opex", pr_id=None):
     # signature — which also dropped 'purchasing', the pricing-gate stage, so the
     # pricing, RFQ and engineering gates were skipped along with it. Enforcing the
     # floor HERE means an existing bad row in the database cannot do that either.
-    merged = list(floor) + [s for s in dept if s not in floor]
+    merged = list(floor) + [s for s in dept if s in C.DOAM_LADDER and s not in floor]
     order = {s: i for i, s in enumerate(C.DOAM_LADDER)}
     return sorted(merged, key=lambda s: order.get(s, len(order)))
 
@@ -2243,11 +2241,9 @@ def _withdraw_signatures_on_changed_terms(conn, pr, before, uname, ip, why):
 
 
 def _reconcile_value_ladder(conn, pr_id, department, total):
-    """After a pending PR is priced, bring its value-based rungs (Finance / CFO /
-    CEO) in line with the new total: append the ones now required that aren't in
-    the ladder yet, and drop any not-yet-reached value rungs that no longer
-    qualify. Never touches steps that are approved, rejected, or currently active,
-    so an in-flight approval is never disturbed."""
+    """Restore missing post-pricing rungs and prune future retired ladder rungs.
+    Preserve completed and currently active steps; order future sequential rungs
+    by the current ladder before re-stamping their actions."""
     row = conn.execute(
         "SELECT id, current_seq, currency, fx_rate, requester, pr_no, department, "
         "expenditure_kind, tax_rate FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
@@ -2375,6 +2371,18 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                              f"this request ({requester} raised it, or the signer already "
                              f"signed another rung) and no superior above that role has "
                              f"anyone free to sign it.", link=_pr_link(pr_id))
+    # Shared sequence numbers represent parallel rungs; preserve those groups.
+    if cur_seq and not C.PARALLEL_GROUPS:
+        future = conn.execute(
+            "SELECT id, seq, stage, COALESCE(origin,'ladder') AS origin "
+            "FROM pr_steps WHERE pr_id=? AND status='pending' AND seq>?",
+            (pr_id, cur_seq)).fetchall()
+        order = {s: i for i, s in enumerate(C.DOAM_LADDER)}
+        future = sorted(future, key=lambda r: (
+            0 if r["origin"] == "ladder" else 1,
+            order.get(r["stage"], len(order)), r["seq"], r["id"]))
+        for seq, r in enumerate(future, cur_seq + 1):
+            conn.execute("UPDATE pr_steps SET seq=? WHERE id=?", (seq, r["id"]))
     # The ladder's shape just changed, so the Table 5 letters move with it: the
     # rung that WAS the top (and so the Approve) is now a Review below the
     # director pricing pulled in.
@@ -3034,7 +3042,8 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         # RE-PRICED upward after Purchasing has already signed (price_pr stays
         # open while the request is pending) — the second check is the one that
         # catches the 5M order that became 12M on its way up the ladder.
-        if decision == "approve" and step["stage"] in (PRICING_GATE_STAGE, "bod"):
+        # CEO is the final rung; retain the historic Board document gate too.
+        if decision == "approve" and step["stage"] in (PRICING_GATE_STAGE, "bod", "ceo"):
             ok_bc, bc_msg = business_case_gate(pr)
             if not ok_bc:
                 return False, bc_msg
@@ -6514,11 +6523,14 @@ def unbudgeted_note(bud, department, kind=None):
     st = bud.get("status") or {}
     period = st.get("period") or _period()
     cur = st.get("currency") or "EGP"
-    stage = C.unbudgeted_stage(C.build_ladder(0, kind), kind) or "cfo"
+    stage = C.unbudgeted_stage(C.build_ladder(0, kind), kind)
+    # Owner's ladder (2026-11-17) already ends on the CFO and CEO, so usually
+    # nothing is added — and the note must not claim otherwise.
+    added = (f"so {stage_label(stage)} is added to the ladder" if stage else
+             "which this ladder already carries (CFO and CEO)")
     tail = (f"DOAM Table 4 puts unbudgeted spend at {C.UNBUDGETED_LEVEL} "
-            f"(up to the {C.UNBUDGETED_LEVEL} limit), so {stage_label(stage)} is "
-            f"added to the ladder. The spend is not refused — it needs higher "
-            f"authority, not refusal.")
+            f"(up to the {C.UNBUDGETED_LEVEL} limit), {added}. The spend is not "
+            f"refused — it needs higher authority, not refusal.")
     if bud.get("state") == "over_budget":
         return (f"UNBUDGETED: this request takes {department} "
                 f"{float(bud.get('over_by') or 0):,.2f} {cur} past its approved "

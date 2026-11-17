@@ -4102,6 +4102,8 @@
   "proc.wh_last_stock": "Son stok",
   "proc.wh_last_price": "Son sipariş fiyatı",
   "proc.stage.warehouse_manager": "Depo Müdürü",
+  "proc.stage.control": "Finansal Kontrol",
+  "proc.act.joint": "Bu talepte birden fazla ONAY (A) imzası var: Yetki devri kılavuzu bunu ortak onay sayar — her (A) imzası satın almayı taahhüt eder, her (R) imzası yalnızca doğrular.",
   "proc.quar.accept_tol": "Tolerans dahilinde kabul et",
   "proc.quar.allowed": "tolerans",
   "proc.quar.over_tol": "İzin verilen toleransın üzerinde — ödenebilmesi için onay gerekir.",
