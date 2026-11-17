@@ -70,9 +70,10 @@
         <select name="size" required>{% for s in sizes %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
       <div class="field"><label data-i18n="wh.field.qty">Quantity</label><input type="number" step="any" name="qty" required></div>
     </div>
+    <p class="muted" data-i18n="wh.fg.shipping_note">Orders with active shipments ship through the Shipping module. Its dispatch posts finished goods; manual ship-out is blocked to avoid a double deduction.</p>
     <div class="flex gap center mt-2">
       <button class="btn btn-primary btn-sm" name="action" value="pack" data-i18n="wh.action.pack">Pack in</button>
-      <button class="btn btn-ghost btn-sm" name="action" value="ship" data-i18n="wh.action.ship">Ship out</button>
+      <button class="btn btn-ghost btn-sm" name="action" value="ship" data-advance data-i18n="wh.action.ship">Ship out</button>
     </div>
   </div>
 </form>

@@ -1,0 +1,406 @@
+"""
+Warehouse operations self-test — reservations issue, returns, stock counts, stock card,
+daily report, internal issue, bin moves and the FG shipping guard, on a throwaway DB.
+
+Run:  python -m app.warehouse.tests_ops
+"""
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+TMP = Path(tempfile.mkdtemp(prefix="wh_ops_"))
+os.chdir(TMP)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+os.environ["TC_ENV"] = "development"
+os.environ["TC_SEED_DEMO"] = "1"
+os.environ.pop("DATABASE_URL", None)
+os.environ["TC_HEALTH_TIMEOUT"] = "1"
+os.environ["TC_AUTO_TICKET_ENABLED"] = "false"
+
+import config                                             # noqa: E402
+config.Config.DB_PATH = TMP / "platform.db"
+
+from app import create_app                                # noqa: E402
+
+FAILS = []
+
+
+def check(name, cond, extra=""):
+    print(("  ok   " if cond else "  FAIL ") + name + (f"  [{extra}]" if extra else ""))
+    if not cond:
+        FAILS.append(name)
+
+
+app = create_app()
+with app.app_context():
+    from app.db import get_db
+    from app.warehouse.schema import create_and_seed
+    from app.warehouse import services as svc
+
+    A, B = {"username": "store_a"}, {"username": "mgr_b"}
+    conn = get_db()
+    create_and_seed(conn)
+    conn.commit()
+
+    def q(sql, args=()):
+        c = get_db()
+        try:
+            r = c.execute(sql, args).fetchone()
+            return None if r is None else (r[0] if len(r.keys()) == 1 else dict(r))
+        finally:
+            c.close()
+
+    if not conn.execute("SELECT id FROM ord_orders LIMIT 1").fetchone():
+        conn.execute("INSERT INTO ord_orders (order_no, buyer, status) VALUES ('T-1','T','confirmed')")
+        conn.commit()
+    ORD = conn.execute("SELECT id FROM ord_orders ORDER BY id LIMIT 1").fetchone()["id"]
+    # a second order with no issues and no shipments (the demo seeds a shipment for ORD)
+    ORD2 = conn.execute("INSERT INTO ord_orders (order_no, buyer, status) "
+                        "VALUES ('T-OPS-2','T','confirmed')").lastrowid
+    conn.commit()
+    mats = {r["code"]: r["id"] for r in conn.execute("SELECT id, code FROM wh_materials")}
+    conn.close()
+    WHT, NVY, BTN, THR = (mats["FAB-JER-WHT"], mats["FAB-JER-NVY"], mats["TRM-BTN-18L"],
+                          mats["TRM-THR-40"])
+    stock = lambda mid: float(q("SELECT stock_qty FROM wh_materials WHERE id=?", (mid,)))
+
+    print("\n--- 1. reservations: issue one / issue all / filter ---")
+    ok, _m, p1 = svc.reserve_for_order(ORD, BTN, 100, A)
+    ok2, _m, p2 = svc.reserve_for_order(ORD, BTN, 50, A)
+    check("two reservations made", ok and ok2)
+    check("order filter + count", svc.count_open_allocations(ORD) == 2
+          and len(svc.open_allocations(ORD)) == 2 and svc.count_open_allocations(-1) == 0)
+    s0 = stock(BTN)
+    check("issue a single allocation", svc.issue_reserved(ORD, A, alloc_ids=p1["alloc_ids"])[0]
+          and abs(stock(BTN) - (s0 - 100)) < 1e-9)
+    check("forged order matches nothing",
+          svc.issue_reserved(ORD + 999, A, alloc_ids=p2["alloc_ids"]) == (False, "nothing_reserved"))
+    check("issue all for the order", svc.issue_reserved(ORD, A)[0]
+          and svc.count_open_allocations(ORD) == 0 and abs(stock(BTN) - (s0 - 150)) < 1e-9)
+
+    print("\n--- 2. returns from production ---")
+    check("order required", svc.return_to_store(BTN, 1, A, None) == (False, "order_required"))
+    check("cannot return more than issued",
+          svc.return_to_store(BTN, 151, A, ORD) == (False, "exceeds_issued"))
+    before = svc.issued_for_order(ORD)
+    check("quantity return within issued", svc.return_to_store(BTN, 40, A, ORD)[0])
+    check("cap counts earlier returns",
+          svc.return_to_store(BTN, 111, A, ORD) == (False, "exceeds_issued"))
+    after = svc.issued_for_order(ORD)
+    btn_line = lambda d: next(l for l in d["lines"] if l["material_id"] == BTN)
+    check("issued_for_order nets the return (qty)",
+          abs(btn_line(after)["qty"] - (btn_line(before)["qty"] - 40)) < 1e-9)
+    check("issued_for_order nets the return (value)",
+          abs(btn_line(after)["value"] - btn_line(before)["value"] * 110 / 150) < 1e-6)
+    check("returning the rest nets qty and value to zero",
+          svc.return_to_store(BTN, 110, A, ORD)[0]
+          and abs(btn_line(svc.issued_for_order(ORD))["qty"]) < 1e-9
+          and abs(btn_line(svc.issued_for_order(ORD))["value"]) < 1e-6)
+    check("roll-tracked material needs a roll",
+          svc.return_to_store(WHT, 1, A, ORD) == (False, "roll_required"))
+    ok, msg, plan = svc.issue_to_order(ORD, WHT, 20, A)
+    rid = plan["rolls"][0]["roll_id"]
+    check("roll return to an order that never got this roll refused",
+          svc.return_to_store(None, 1, A, ORD2, roll_id=rid) == (False, "exceeds_issued"))
+    check("roll return ok", svc.return_to_store(None, 5, A, ORD, roll_id=rid)[0])
+    hdrs, rows = svc.export_dataset("issues-by-order")
+    wht_row = [r for r in rows if r[1] == ORD and r[2] == "FAB-JER-WHT"]
+    check("issues-by-order export nets returns", wht_row and abs(wht_row[0][5] - 15) < 1e-9,
+          str(wht_row))
+
+    print("\n--- 3. stock counts ---")
+    from app.security import user_has_permission
+    c = get_db()
+    for username, role, perms, active, status in (
+            ("store_a", "normal_user", '["wh_approve"]', 1, "active"),
+            ("mgr_b", "normal_user", '["wh_approve"]', 1, "active"),
+            ("wh_mgr_c", "warehouse_manager", '[]', 1, "active"),
+            ("count_observer", "normal_user", '[]', 1, "active"),
+            ("count_inactive", "super_admin", '[]', 0, "active"),
+            ("count_locked", "super_admin", '[]', 1, "locked")):
+        c.execute("INSERT INTO users (username,password_hash,role,extra_perms,is_active,account_status) "
+                  "VALUES (?,?,?,?,?,?)", (username, "unused", role, perms, active, status))
+    c.commit(); c.close()
+    check("reason required", svc.submit_count(THR, 1, "", "", A) == (False, "reason_required"))
+    check("note required for 'other'", svc.submit_count(THR, 1, "other", "", A)
+          == (False, "note_required"))
+    s0 = stock(THR)
+    check("small positive count auto-applies",
+          svc.submit_count(THR, 1, "found", "", A) == (True, "applied") and stock(THR) == s0 + 1)
+    s0 = stock(THR)
+    check("negative count goes pending", svc.submit_count(THR, -10, "lost", "", A)
+          == (True, "pending") and stock(THR) == s0)
+    cid = q("SELECT id FROM wh_counts WHERE status='pending' ORDER BY id DESC LIMIT 1")
+    check("a bell is raised for the pending count",
+          q("SELECT COUNT(*) FROM notifications WHERE title LIKE 'Stock count awaiting%'") >= 1)
+    check("warehouse manager can approve stock counts",
+          user_has_permission({"role": "warehouse_manager"}, "wh_approve") is True)
+    check("warehouse manager receives a pending-count bell",
+          q("SELECT COUNT(*) FROM notifications WHERE title LIKE 'Stock count awaiting%' "
+            "AND target_user='wh_mgr_c'") >= 1)
+    check("warehouse manager sees the pending count",
+          any(c["id"] == cid for c in svc.pending_counts_for(
+              {"username": "wh_mgr_c", "role": "warehouse_manager"})))
+    check("pending hidden from its submitter on /my-work",
+          all(c["id"] != cid for c in svc.pending_counts_for(A))
+          and any(c["id"] == cid for c in svc.pending_counts_for(B)))
+    check("own approval refused", svc.approve_count(cid, A) == (False, "own_count")
+          and stock(THR) == s0)
+    check("other user approves -> stock moves", svc.approve_count(cid, B)[0]
+          and abs(stock(THR) - (s0 - 10)) < 1e-9)
+    check("second approval refused", svc.approve_count(cid, B) == (False, "not_pending")
+          and abs(stock(THR) - (s0 - 10)) < 1e-9)
+    svc.submit_count(THR, -5, "damaged", "", A)
+    cid2 = q("SELECT id FROM wh_counts WHERE status='pending' ORDER BY id DESC LIMIT 1")
+    s1 = stock(THR)
+    check("reject leaves stock", svc.reject_count(cid2, B)[0] and stock(THR) == s1)
+    check("bad threshold refused", not svc.set_count_threshold(150, B)[0])
+    check("threshold 0 saved", svc.set_count_threshold(0, B)[0] and svc.count_auto_pct() == 0)
+    check("with 0 % every positive count waits",
+          svc.submit_count(THR, 1, "found", "", A) == (True, "pending"))
+    svc.set_count_threshold(2, B)
+
+    c = get_db()
+    count_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty) "
+        "VALUES ('TRM-COUNT-WINDOW','Count window test','trim',0,'pcs',1000)").lastrowid
+    c.commit(); c.close()
+    start = stock(count_mid)
+    results = [svc.submit_count(count_mid, 19.9, "found", "", A) for _ in range(10)]
+    check("first split count auto-applies", results[0] == (True, "applied"), str(results))
+    check("split counts cannot exceed the cumulative auto-apply limit",
+          stock(count_mid) <= start * 1.02 + 1e-9, str(stock(count_mid)))
+    check("later split counts require approval",
+          (True, "pending") in results[1:] and results[-1] == (True, "pending"), str(results))
+    c = get_db()
+    c.execute("UPDATE wh_counts SET submitted_at='2000-01-01 00:00:00' "
+              "WHERE material_id=? AND status='applied'", (count_mid,))
+    c.commit(); c.close()
+    check("auto-applied counts older than the window do not count",
+          svc.submit_count(count_mid, stock(count_mid) * 0.0199, "found", "", A)
+          == (True, "applied"))
+
+    c = get_db()
+    roll_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty) "
+        "VALUES ('FAB-COUNT-WINDOW','Roll count window test','fabric',1,'m',100)").lastrowid
+    parent = c.execute(
+        "INSERT INTO wh_rolls (roll_no,material_id,length_m,remaining_m) "
+        "VALUES ('COUNT-PARENT',?,100,100)", (roll_mid,)).lastrowid
+    c.commit(); c.close()
+    check("small positive roll count auto-applies",
+          svc.submit_count(roll_mid, 1.5, "found", "", A, roll_id=parent) == (True, "applied"))
+    check("counted roll can split", svc.split_roll(parent, [51.5, 50], A)[0])
+    child = q("SELECT id FROM wh_rolls WHERE material_id=? AND id<>?", (roll_mid, parent))
+    check("split child count uses the material-wide auto-apply window",
+          svc.submit_count(roll_mid, 0.9, "found", "", A, roll_id=child) == (True, "pending")
+          and q("SELECT remaining_m FROM wh_rolls WHERE id=?", (child,)) == 50)
+    c = get_db()
+    notices = c.execute("SELECT n.target_user,u.role,u.extra_perms,u.is_active,u.account_status "
+                        "FROM notifications n LEFT JOIN users u ON u.username=n.target_user "
+                        "WHERE n.title LIKE 'Stock count awaiting%'").fetchall()
+    c.close()
+    check("pending-count bells target active approvers and exclude the submitter",
+          bool(notices) and any(r["target_user"] == B["username"] for r in notices)
+          and all(r["target_user"] is not None and r["target_user"] != A["username"]
+                  and r["is_active"] == 1 and r["account_status"] == "active"
+                  and user_has_permission(dict(r), "wh_approve") for r in notices))
+
+    print("\n--- 4. stock card + daily report ---")
+    card = svc.stock_card(THR, "2000-01-01", "2999-12-31")
+    check("card closes at the material's stock", abs(card["closing"] - stock(THR)) < 1e-6,
+          f"{card['closing']} vs {stock(THR)}")
+    check("opening + in - out == closing",
+          abs(card["opening"] + card["total_in"] - card["total_out"] - card["closing"]) < 1e-6)
+    from datetime import date
+    today = date.today().isoformat()
+    later = svc.stock_card(THR, today, today)
+    check("a range starting today carries the earlier balance as opening",
+          abs(later["closing"] - stock(THR)) < 1e-6)
+    rows = svc.daily_report("2000-01-01", "2999-12-31", THR)
+    check("daily rows chain opening -> closing",
+          rows and all(abs(r["opening"] + r["in"] - r["out"] - r["closing"]) < 1e-6 for r in rows)
+          and abs(rows[-1]["closing"] - stock(THR)) < 1e-6)
+    check("bad dates fall back to defaults", svc.date_range("2026-13-45", "x")[1] == today)
+
+    print("\n--- 5. internal issue + bin move ---")
+    s0, iss0 = stock(THR), svc.issued_for_order(ORD)["qty"]
+    check("internal issue requires a known destination kind",
+          svc.issue_internal(THR, 1, "party", "x", "y", A) == (False, "bad_destination"))
+    check("internal issue moves stock", svc.issue_internal(THR, 3, "maintenance", "Line 3",
+                                                           "machine oiling", A)[0]
+          and abs(stock(THR) - (s0 - 3)) < 1e-9)
+    check("...with no order and outside order consumption",
+          q("SELECT order_id FROM wh_movements WHERE material_id=? ORDER BY id DESC LIMIT 1",
+            (THR,)) is None and svc.issued_for_order(ORD)["qty"] == iss0)
+    check("roll-tracked internal issue needs a roll",
+          not svc.issue_internal(NVY, 1, "sample", "Proto", "sample", A)[0])
+    print("\n--- 5a. internal-issue value approval ---")
+    IA = dict(A, role="normal_user", extra_perms='["wh_approve"]')
+    IB = dict(B, role="normal_user", extra_perms='["wh_approve"]')
+    manager = {"username": "wh_mgr_c", "role": "warehouse_manager"}
+    c = get_db()
+    issue_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
+        "VALUES ('TRM-ISSUE-LIMIT','Issue limit test','trim',0,'pcs',100,100)").lastrowid
+    c.commit(); c.close()
+    check("below-limit department issue applies immediately",
+          svc.issue_internal(issue_mid, 10, "department", "Cutting", "supplies", IA)
+          == (True, "issued") and stock(issue_mid) == 90)
+    check("above-limit department issue waits without moving stock",
+          svc.issue_internal(issue_mid, 60, "department", "Cutting", "supplies", IA)
+          == (True, "pending") and stock(issue_mid) == 90)
+    request_row = q("SELECT * FROM wh_issue_requests WHERE material_id=? ORDER BY id DESC LIMIT 1", (issue_mid,))
+    req_id = request_row["id"]
+    check("pending issue records quantity and valuation", request_row["status"] == "pending"
+          and request_row["qty"] == 60 and request_row["unit_cost"] == 100 and request_row["value"] == 6000)
+    check("issue bell targets approvers and excludes requester",
+          q("SELECT COUNT(*) FROM notifications WHERE title LIKE 'Internal issue awaiting%' "
+            "AND target_user='wh_mgr_c'") >= 1
+          and q("SELECT COUNT(*) FROM notifications WHERE title LIKE 'Internal issue awaiting%' "
+                "AND target_user=?", (IA["username"],)) == 0)
+    check("above-limit maintenance issue waits",
+          svc.issue_internal(issue_mid, 60, "maintenance", "Line 1", "supplies", IA)
+          == (True, "pending") and stock(issue_mid) == 90)
+    check("above-limit cost-centre issue waits",
+          svc.issue_internal(issue_mid, 60, "cost_centre", "CC-10", "supplies", IA)
+          == (True, "pending") and stock(issue_mid) == 90)
+    check("above-limit sample issue waits",
+          svc.issue_internal(issue_mid, 60, "sample", "Proto", "supplies", IA)
+          == (True, "pending") and stock(issue_mid) == 90
+          and q("SELECT COUNT(*) FROM wh_issue_requests WHERE material_id=? AND status='pending' "
+                "AND dest_kind IN ('maintenance','cost_centre','sample')", (issue_mid,)) == 3)
+    c = get_db()
+    c.execute("UPDATE wh_materials SET stock_qty=90 WHERE id=?", (issue_mid,))
+    c.commit(); c.close()
+    check("self-approval of issue refused", svc.approve_issue_request(req_id, IA)
+          == (False, "own_request") and stock(issue_mid) == 90)
+    check("issue decision requires wh_approve", svc.approve_issue_request(
+          req_id, {"username": "count_observer", "role": "normal_user"})
+          == (False, "not_allowed") and stock(issue_mid) == 90)
+    check("other approver applies issue", svc.approve_issue_request(req_id, IB) == (True, "approved")
+          and stock(issue_mid) == 30
+          and q("SELECT status FROM wh_issue_requests WHERE id=?", (req_id,)) == "approved")
+    check("issue cannot be approved twice", svc.approve_issue_request(req_id, IB)
+          == (False, "not_pending") and stock(issue_mid) == 30)
+    c = get_db()
+    c.execute("UPDATE wh_materials SET stock_qty=100 WHERE id=?", (issue_mid,))
+    c.commit(); c.close()
+    svc.issue_internal(issue_mid, 60, "department", "Cutting", "supplies", IA)
+    reject_id = q("SELECT MAX(id) FROM wh_issue_requests WHERE material_id=?", (issue_mid,))
+    check("rejecting own issue leaves stock unchanged",
+          svc.reject_issue_request(reject_id, IA, "cancelled") == (True, "rejected")
+          and stock(issue_mid) == 100
+          and q("SELECT status FROM wh_issue_requests WHERE id=?", (reject_id,)) == "rejected")
+    svc.issue_internal(issue_mid, 60, "department", "Cutting", "supplies", IA)
+    short_id = q("SELECT MAX(id) FROM wh_issue_requests WHERE material_id=?", (issue_mid,))
+    c = get_db()
+    c.execute("UPDATE wh_materials SET stock_qty=20 WHERE id=?", (issue_mid,))
+    c.commit(); c.close()
+    check("issue approval rechecks availability and rolls back claim",
+          not svc.approve_issue_request(short_id, manager)[0] and stock(issue_mid) == 20
+          and q("SELECT status FROM wh_issue_requests WHERE id=?", (short_id,)) == "pending")
+    check("my-work issues exclude own and include others",
+          all(r["id"] != short_id for r in svc.pending_issue_requests_for(IA))
+          and any(r["id"] == short_id for r in svc.pending_issue_requests_for(IB))
+          and any(r["id"] == short_id for r in svc.pending_issue_requests_for(manager)))
+    c = get_db()
+    unknown_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
+        "VALUES ('TRM-ISSUE-UNKNOWN','Unknown cost test','trim',0,'pcs',2000,0)").lastrowid
+    c.commit(); c.close()
+    check("unpriced material issue is refused for every destination",
+          all(svc.issue_internal(unknown_mid, n, kind, "X", "supplies", IA) == (False, "no_unit_cost")
+              for kind in ("department", "cost_centre", "maintenance", "sample") for n in (1, 1000))
+          and stock(unknown_mid) == 2000
+          and q("SELECT COUNT(*) FROM wh_movements WHERE material_id=?", (unknown_mid,)) == 0
+          and q("SELECT COUNT(*) FROM wh_issue_requests WHERE material_id=?", (unknown_mid,)) == 0)
+    check("negative issue limit refused", svc.set_issue_limit(-1, IB) == (False, "bad_limit"))
+    check("non-finite issue limits refused", all(svc.set_issue_limit(v, IB) == (False, "bad_limit")
+                                               for v in ("nan", "inf", "-inf", "invalid")))
+    check("issue limit saved", svc.set_issue_limit(100000, IB) == (True, "saved")
+          and svc.issue_limit() == 100000)
+    svc.set_issue_limit(5000, IB)
+    c = get_db()
+    split_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
+        "VALUES ('TRM-ISSUE-SPLIT','Split issue test','trim',0,'pcs',500,100)").lastrowid
+    c.commit(); c.close()
+    check("split department issues sum within 24h",
+          svc.issue_internal(split_mid, 49, "department", "Sewing", "supplies", IA) == (True, "issued")
+          and svc.issue_internal(split_mid, 49, "department", "Sewing", "supplies", IA)
+          == (True, "pending") and stock(split_mid) == 451)
+    check("issues to another department are not summed",
+          svc.issue_internal(split_mid, 49, "department", "Finishing", "supplies", IA)
+          == (True, "issued") and stock(split_mid) == 402)
+    svc.issue_internal(split_mid, 49, "department", "Packing", "supplies", IA)
+    c = get_db()
+    c.execute("UPDATE wh_movements SET created_at='2000-01-01 00:00:00' "
+              "WHERE material_id=? AND ref='department:Packing'", (split_mid,))
+    c.commit(); c.close()
+    check("issues older than 24h are not summed",
+          svc.issue_internal(split_mid, 49, "department", "Packing", "supplies", IA)
+          == (True, "issued") and stock(split_mid) == 304)
+    check("split cost-centre issues sum within 24h",
+          svc.issue_internal(split_mid, 49, "cost_centre", "CC-20", "supplies", IA) == (True, "issued")
+          and svc.issue_internal(split_mid, 49, "cost_centre", "CC-20", "supplies", IA)
+          == (True, "pending") and stock(split_mid) == 255)
+    check("issue decision lists support multiple statuses", {r["id"] for r in
+          svc.list_issue_requests(("approved", "rejected"))} >= {req_id, reject_id})
+    c = get_db()
+    issue_roll_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty,avg_cost) "
+        "VALUES ('FAB-ISSUE-LIMIT','Issue roll test','fabric',1,'m',100,100)").lastrowid
+    issue_rid = c.execute(
+        "INSERT INTO wh_rolls (material_id,roll_no,remaining_m,unit_cost,status) "
+        "VALUES (?,'ISSUE-ROLL',100,100,'available')", (issue_roll_mid,)).lastrowid
+    c.commit(); c.close()
+    check("above-limit issue still requires a roll",
+          svc.issue_internal(issue_roll_mid, 60, "department", "Cutting", "supplies", IA)
+          == (False, "roll_required"))
+    check("roll issue uses roll valuation and waits",
+          svc.issue_internal(issue_roll_mid, 60, "department", "Cutting", "supplies", IA,
+                             roll_id=issue_rid) == (True, "pending"))
+    roll_req = q("SELECT MAX(id) FROM wh_issue_requests WHERE material_id=?", (issue_roll_mid,))
+    c = get_db()
+    c.execute("UPDATE wh_rolls SET status='quarantine' WHERE id=?", (issue_rid,))
+    c.commit(); c.close()
+    check("issue approval rechecks quarantine and rolls back claim",
+          svc.approve_issue_request(roll_req, manager) == (False, "roll_quarantined")
+          and stock(issue_roll_mid) == 100
+          and q("SELECT status FROM wh_issue_requests WHERE id=?", (roll_req,)) == "pending")
+    c = get_db()
+    c.execute("UPDATE wh_rolls SET status='available',unit_cost=125 WHERE id=?", (issue_rid,))
+    c.commit(); c.close()
+    check("approved issue uses current roll cost",
+          svc.approve_issue_request(roll_req, manager) == (True, "approved")
+          and stock(issue_roll_mid) == 40
+          and q("SELECT unit_cost FROM wh_movements WHERE roll_id=? ORDER BY id DESC LIMIT 1",
+                (issue_rid,)) == 125)
+
+    n0, s0 = q("SELECT COUNT(*) FROM wh_movements"), stock(THR)
+    check("bin move", svc.move_bin("B-07", A, material_id=THR)[0]
+          and q("SELECT bin FROM wh_materials WHERE id=?", (THR,)) == "B-07"
+          and stock(THR) == s0 and q("SELECT COUNT(*) FROM wh_movements") == n0 + 1
+          and q("SELECT type FROM wh_movements ORDER BY id DESC LIMIT 1") == "bin_move")
+    check("bin move of a roll", svc.move_bin("R-01", A, roll_id=rid)[0]
+          and q("SELECT bin FROM wh_rolls WHERE id=?", (rid,)) == "R-01")
+
+    print("\n--- 6. FG: shipping is authoritative ---")
+    svc.fg_move(ORD2, "OPS-1", "Red", "M", 100, "pack", A)
+    check("manual ship allowed without a shipment",
+          svc.fg_move(ORD2, "OPS-1", "Red", "M", 10, "ship", A, manual=True)[0])
+    c = get_db()
+    c.execute("INSERT INTO shp_shipments (shipment_no, order_id, status) VALUES ('S-T', ?, 'planned')",
+              (ORD2,))
+    c.commit(); c.close()
+    check("manual ship blocked once shipping owns the order",
+          svc.fg_move(ORD2, "OPS-1", "Red", "M", 10, "ship", A, manual=True)
+          == (False, "shipping_owns_order"))
+    check("the shipping path still posts", svc.fg_move(ORD2, "OPS-1", "Red", "M", 10, "ship", A)[0])
+    check("manual pack still allowed", svc.fg_move(ORD2, "OPS-1", "Red", "M", 5, "pack", A,
+                                                   manual=True)[0])
+
+print("\n" + ("ALL CHECKS PASSED" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}"))
+sys.exit(1 if FAILS else 0)

@@ -22,7 +22,7 @@
   {% if it.last_order_date %}
   <span><span data-i18n="proc.hist_last">Last order</span>:
     <b>{{ '%g'|format(it.last_order_qty or 0) }}</b>
-    {%- if it.last_order_price %} @ {{ '%g'|format(it.last_order_price) }}{% endif %}
+    {%- if show_commercial and it.last_order_price %} @ {{ '%g'|format(it.last_order_price) }}{% endif %}
     · {{ it.last_order_date }}</span>
   {% else %}
   <span data-i18n="proc.hist_none">first order</span>
@@ -50,7 +50,7 @@
   <div class="flex gap center wrap">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
       <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.pdf">PR PDF</span></a>
-    {% if pr.status in ('approved','po_issued','closed') %}
+    {% if money and pr.status in ('approved','po_issued','closed') %}
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
       <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
     {% endif %}
@@ -131,7 +131,7 @@
   <div class="mt-2" style="font-size:12px">
     {% if pr.budget_state == 'over_budget' %}
       <b style="color:var(--crit)"><span data-i18n="proc.unbud_over">Over the approved budget by</span>
-        {{ '{:,.0f}'.format(pr.budget_over_by or 0) }} {{ (budget and budget.currency) or 'EGP' }}</b>
+        {{ '{:,.0f}'.format(pr.budget_over_by or 0) if show_commercial else '—' }} {{ (budget and budget.currency) or 'EGP' }}</b>
     {% else %}
       <b style="color:var(--crit)" data-i18n="proc.unbud_none">No approved budget is set for this department and period.</b>
     {% endif %}
@@ -854,7 +854,7 @@
     {% if fxr != 1 %}<span class="badge b-pending">1 {{ pr.currency }} = {{ '%g'|format(fxr) }} EGP</span>{% endif %}
   </div>
   <div class="panel-pad">
-    {% if fxr != 1 %}
+    {% if show_commercial and fxr != 1 %}
     <div class="muted" style="margin-bottom:10px;font-size:13px">
       <span data-i18n="proc.fx.egp_equiv">EGP equivalent</span>:
       <b style="font-variant-numeric:tabular-nums;color:var(--ink)">{{ '{:,.2f}'.format((pr.total or 0) * fxr) }} EGP</b>
@@ -888,17 +888,18 @@
 {% endif %}
 
 {# ===== Fulfilment & payment (procure-to-pay back half) ===== #}
-{% if pr.status in ('approved','po_issued','partially_received','received','closed') %}
+{% if pr.status in ('approved','po_issued','in_transit','partially_received','received','closed') %}
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="proc.fulfilment">Fulfilment &amp; payment</h3>
     <div class="flex gap center">
-      {% if match and match.has_invoice %}
+      {% if money_full and match and match.has_invoice %}
       <span class="badge {{ 'b-approved' if match.status=='matched' else 'b-rejected' }}">
         {{ '✓ 3-way matched' if match.status=='matched' else '⚠ mismatch' }}</span>{% endif %}
-      <span class="badge b-{{ pr.payment_status or 'unpaid' }}">{{ (pr.payment_status or 'unpaid')|title }}</span>
+      {% if money_full %}<span class="badge b-{{ pr.payment_status or 'unpaid' }}">{{ (pr.payment_status or 'unpaid')|title }}</span>{% endif %}
     </div>
   </div>
   <div class="panel-pad">
+    {% if money_full %}
     {# --- 3-way match summary --- #}
     <div class="grid {{ 'cols-4' if (match.debit_open or 0) > 0 else 'cols-3' }}" style="gap:12px;margin-bottom:14px">
       <div class="mtile"><div class="mlabel" data-i18n="proc.ordered">Ordered (PO)</div>
@@ -926,6 +927,8 @@
     </div>
     {% endif %}
 
+    {% endif %}
+
     {# --- Line-level receiving --- #}
     {% if pr.status in ('received','closed') %}
     <div class="muted" style="margin-bottom:12px"><b data-i18n="proc.received_ok">Delivery confirmed.</b> {{ (pr.received_at or '')[:16] }}{% if pr.receipt_notes %} · {{ pr.receipt_notes }}{% endif %}</div>
@@ -948,7 +951,7 @@
     </form>
     {% endif %}
 
-    {% if pr.status in ('po_issued','in_transit','partially_received','received') and can_purchasing %}
+    {% if pr.status in ('po_issued','in_transit','partially_received','received') and can_receive %}
     <form method="post" action="{{ url_for('approvals.receive', pr_id=pr.id) }}" style="overflow-x:auto">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <table class="tbl" style="margin-bottom:10px">
@@ -1023,7 +1026,19 @@
           <td data-i18n="proc.stockpost.{{ issue.target }}">{{ issue.target }}</td>
           <td>{{ '%g'|format(issue.qty) }}</td>
           <td><span class="badge b-rejected" data-i18n="proc.stockpost.{{ issue.status }}">{{ issue.status }}</span></td>
-          <td>{{ issue.attempts }}</td><td>{{ issue.last_error or '' }}</td>
+          <td>{{ issue.attempts }}</td><td>{% if issue.last_error in ('no_matching_material','ambiguous_material') %}<span data-i18n="proc.stockpost.{{ issue.last_error }}">{{ 'No matching material' if issue.last_error == 'no_matching_material' else 'Ambiguous material' }}</span>{% else %}{{ issue.last_error or '' }}{% endif %}
+            {% if issue.status == 'posting' and can_purchasing %}
+            <form method="post" action="{{ url_for('approvals.resolve_stuck_posting', pr_id=pr.id, posting_id=issue.id) }}" style="display:inline-flex;gap:4px;flex-wrap:wrap">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <select name="outcome" aria-label="Resolution">
+                <option value="posted" data-i18n="proc.stockpost.mark_posted">Mark posted</option>
+                <option value="failed" data-i18n="proc.stockpost.mark_failed">Mark failed</option>
+              </select>
+              <input type="text" name="note" required placeholder="Store check note" data-i18n-ph="proc.stockpost.note_ph" aria-label="Store check note">
+              <button class="btn btn-sm" type="submit" data-i18n="proc.stockpost.resolve">Resolve</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>{% endfor %}</tbody>
       </table>
       {% if can_purchasing %}
@@ -1032,6 +1047,20 @@
         <button class="btn btn-sm" type="submit" data-i18n="proc.stockpost.retry">Retry posting</button>
       </form>
       {% endif %}
+    </div>
+    {% endif %}
+    {% if stock_skipped %}
+    <div class="mt-3">
+      <b class="badge" data-i18n="proc.stockpost.skipped_title">Not booked into stock</b>
+      <p class="muted" data-i18n="proc.stockpost.skipped_hint">These received lines matched no warehouse material, so no stock was added. If a line is a warehouse material, start the item text with its material code (CODE — Name) or add the material, then ask Purchasing to retry.</p>
+      <table class="tbl"><thead><tr><th data-i18n="proc.stockpost.item">Item</th><th data-i18n="proc.stockpost.qty">Qty</th><th data-i18n="proc.stockpost.reason">Reason</th></tr></thead>
+        <tbody>{% for issue in stock_skipped %}<tr><td>{{ issue.item or issue.item_id }}</td><td>{{ '%g'|format(issue.qty) }}</td>
+          <td>{% if issue.last_error in ('no_matching_material','ambiguous_material') %}<span data-i18n="proc.stockpost.{{ issue.last_error }}">{{ 'No matching material' if issue.last_error == 'no_matching_material' else 'Ambiguous material' }}</span>{% else %}{{ issue.last_error or '' }}{% endif %}</td></tr>{% endfor %}</tbody>
+      </table>
+      {% if can_purchasing %}<form method="post" action="{{ url_for('approvals.retry_stock_postings', pr_id=pr.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button class="btn btn-sm" type="submit" data-i18n="proc.stockpost.retry">Retry posting</button>
+      </form>{% endif %}
     </div>
     {% endif %}
     {# --- Over-delivery quarantine --- #}
@@ -1109,15 +1138,15 @@
           <td style="font-weight:600">{{ r.dn_no }}</td>
           <td class="muted">{{ (r.created_at or '')[:16] }}</td>
           <td style="color:var(--crit);font-weight:600">{{ '%g'|format(r.qty or 0) }}</td>
-          <td style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(r.total or 0) }} {{ r.currency }}</td>
+          <td style="color:var(--crit);font-weight:600">{% if money_full %}{{ '{:,.2f}'.format(r.total or 0) }} {{ r.currency }}{% else %}—{% endif %}</td>
           <td class="muted">{{ r.reason or '—' }}</td>
           <td>{% if r.status == 'open' %}<span class="badge b-rejected" data-i18n="proc.rtv.open">Open — supplier owes</span>
               {% else %}<span class="badge b-approved" data-i18n="proc.rtv.settled">Settled</span>
               <span class="muted" style="font-size:11px">{{ r.settled_by }} · {{ (r.settled_at or '')[:16] }}</span>{% endif %}</td>
           <td class="flex gap center wrap">
-            <a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+            {% if money_full %}<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                href="{{ url_for('approvals.debit_note_pdf', ret_id=r.id) }}">
-              <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rtv.pdf">Debit note PDF</span></a>
+              <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rtv.pdf">Debit note PDF</span></a>{% endif %}
             {% if r.status == 'open' and can_purchasing %}
             <form method="post" style="display:inline"
                   action="{{ url_for('approvals.settle_return', ret_id=r.id) }}">
@@ -1130,7 +1159,25 @@
       {% endfor %}
       </tbody>
     </table>
-    <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.rtv.note">Returned quantities were never received and never entered stock. An open debit note is deducted from what this order can be paid, and shows as an outstanding due against the vendor.</div>
+    <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.rtv.note">Returned quantities are excluded from received stock. An open debit note reduces the payable value and shows as an outstanding due against the vendor.</div>
+    {% endif %}
+
+    {% if can_purchasing and pr.status in ('partially_received','received') %}
+    <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.corr.receipt">Correct a receipt</summary>
+      <p class="muted" style="font-size:12.5px" data-i18n="proc.corr.stock_hint">Stock is taken back out. The correction is refused if the goods were already issued or reserved.</p>
+      <form method="post" action="{{ url_for('approvals.reverse_receipt', pr_id=pr.id) }}" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="proc.corr.line">Received line</label>
+            <select name="item_id" required>{% for it in b['items'] if (it.received_qty or 0) > 0 %}
+              <option value="{{ it.id }}">{{ it.item }} ({{ '%g'|format(it.received_qty) }})</option>{% endfor %}</select></div>
+          <div class="field"><label data-i18n="proc.corr.qty">Quantity</label><input name="qty" type="number" step="any" min="0.000001" required></div>
+          <div class="field"><label data-i18n="proc.corr.reason">Reason</label><input name="reason" required></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="submit" formaction="{{ url_for('approvals.reverse_receipt', pr_id=pr.id) }}" data-advance data-i18n="proc.corr.reverse_receipt">Reverse receipt (entered in error)</button>
+        <button class="btn btn-ghost btn-sm" type="submit" formaction="{{ url_for('approvals.return_to_supplier', pr_id=pr.id) }}" data-advance data-i18n="proc.corr.return_supplier">Return to supplier (debit note)</button>
+      </form>
+    </details>
     {% endif %}
 
     {# --- Invoices --- #}
@@ -1138,7 +1185,7 @@
       <b data-i18n="proc.invoices">Invoices</b>
       {% if pr.due_date %}<span class="tag" data-i18n-title="proc.due">Due {{ pr.due_date }}</span>{% endif %}
     </div>
-    {% if b.invoices %}
+    {% if money_full and b.invoices %}
     <table class="tbl mt-2">
       <thead><tr><th data-i18n="proc.inv_no">Invoice</th><th data-i18n="proc.date">Date</th>
         <th data-i18n="proc.amount">Amount</th><th data-i18n="proc.status">Status</th><th></th></tr></thead>
@@ -1148,14 +1195,22 @@
           <td style="font-weight:600">{{ iv.invoice_no }}</td>
           <td class="muted">{{ iv.invoice_date }}</td>
           <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format((iv.amount or 0)+(iv.tax or 0)) }} {{ iv.currency }}</td>
-          <td><span class="badge {{ 'b-approved' if iv.status=='matched' else ('b-rejected' if iv.status=='disputed' else 'b-pending') }}">{{ iv.status|title }}</span></td>
-          <td style="text-align:end">{% if iv.filename %}<a class="tag" href="{{ url_for('approvals.invoice_file', inv_id=iv.id) }}">📎</a>{% endif %}</td>
+          <td><span class="badge {{ 'b-approved' if iv.status=='matched' else ('b-rejected' if iv.status=='disputed' else 'b-pending') }}">{% if iv.status == 'void' %}<span data-i18n="proc.corr.void">Void</span>{% else %}{{ iv.status|title }}{% endif %}</span>
+            {% if iv.reversal_of %}<span class="muted" data-i18n="proc.corr.reversal">reversal</span>{% endif %}</td>
+          <td style="text-align:end">{% if iv.filename %}<a class="tag" href="{{ url_for('approvals.invoice_file', inv_id=iv.id) }}">📎</a>{% endif %}
+            {% if iv.status != 'void' and not iv.reversal_of and (can_purchasing or can_pay) %}
+            <form method="post" style="display:inline" action="{{ url_for('approvals.void_invoice', inv_id=iv.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input name="reason" required placeholder="Reason" data-i18n-ph="proc.corr.reason">
+              <button class="btn btn-ghost btn-sm" type="submit" data-advance data-i18n="proc.corr.void_invoice">Void invoice</button>
+            </form>
+            {% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
     {% endif %}
-    {% if can_purchasing and pr.status != 'draft' %}
+    {% if (can_purchasing or can_pay) and pr.status != 'draft' %}
     <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_invoice">+ Add invoice</summary>
       <form method="post" action="{{ url_for('approvals.add_invoice', pr_id=pr.id) }}" enctype="multipart/form-data" class="mt-2">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -1183,9 +1238,9 @@
     {# --- Payments --- #}
     <div class="flex between center" style="margin-top:16px">
       <b data-i18n="proc.payments">Payments</b>
-      <span class="muted" style="font-size:12.5px">{{ '{:,.2f}'.format(pr.paid_amount or 0) }} / {{ '{:,.2f}'.format(amounts.grand) }} {{ pr.currency }}</span>
+      {% if money_full %}<span class="muted" style="font-size:12.5px">{{ '{:,.2f}'.format(pr.paid_amount or 0) }} / {{ '{:,.2f}'.format(amounts.grand) }} {{ pr.currency }}</span>{% endif %}
     </div>
-    {% if b.payments %}
+    {% if money_full and b.payments %}
     <table class="tbl mt-2">
       <thead><tr><th data-i18n="proc.date">Date</th><th data-i18n="proc.amount">Amount</th>
         <th data-i18n="proc.method">Method</th><th data-i18n="proc.ref">Reference</th></tr></thead>
@@ -1193,7 +1248,15 @@
       {% for p in b.payments %}
         <tr><td class="muted">{{ p.paid_at }}</td>
           <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.amount or 0) }} {{ p.currency }}</td>
-          <td>{{ p.method or '—' }}</td><td class="muted">{{ p.reference or '—' }}</td></tr>
+          <td>{{ p.method or '—' }}{% if p.reversal_of %} <span class="muted" data-i18n="proc.corr.reversal">reversal</span>{% endif %}</td>
+          <td class="muted">{{ p.reference or '—' }}
+            {% if can_pay and not p.reversal_of and not (b.payments|selectattr('reversal_of', 'equalto', p.id)|list) %}
+            <form method="post" style="display:inline" action="{{ url_for('approvals.reverse_payment', pay_id=p.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input name="reason" required placeholder="Reason" data-i18n-ph="proc.corr.reason">
+              <button class="btn btn-ghost btn-sm" type="submit" data-advance data-i18n="proc.corr.reverse_payment">Reverse payment</button>
+            </form>
+            {% endif %}</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -1315,9 +1378,9 @@
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.grand or 0) }} {{ p.currency or pr.currency }}</td>
             {% endif %}
-            <td><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+            <td>{% if money %}<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                    href="{{ url_for('approvals.po_pdf', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_pdf', pr_id=pr.id) }}">
-              <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a></td>
+              <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>{% endif %}</td>
           </tr>
         {% endfor %}
         </tbody>
@@ -1465,7 +1528,7 @@
             A hidden one is not shown even when the request carries a value: the
             value stays on the record and reappears the moment it is unhidden. -#}
         {% if fields.show_expenditure_kind and pr.expenditure_kind == 'capex' %}<span class="tag" data-i18n="proc.kind_capex_tag">CAPEX · capital</span>{% endif %}
-        {% if pr.agg_total %}<span class="tag" title="{{ pr.agg_total }}"><span data-i18n="proc.agg_tag">Routed on 30-day aggregate</span> · {{ '{:,.0f}'.format(pr.agg_total) }}</span>{% endif %}
+        {% if show_commercial and pr.agg_total %}<span class="tag" title="{{ pr.agg_total }}"><span data-i18n="proc.agg_tag">Routed on 30-day aggregate</span> · {{ '{:,.0f}'.format(pr.agg_total) }}</span>{% endif %}
         {% if pr.single_source_reason %}<span class="tag" data-i18n="proc.ss_tag">Single source · signed one level up</span>{% endif %}
         {# DOAM §5 — the cost object this spend is costed against, on every document. #}
         {% if fields.show_sales_order and pr.so_no %}<span class="tag"><span data-i18n="proc.so_tag">SO</span> {{ pr.so_no }}</span>{% endif %}
@@ -1636,7 +1699,7 @@
     <!-- Vendor quote comparison -->
     <div class="panel mt-4">
       <div class="panel-head"><h3 data-i18n="proc.quotes">Vendor quotes</h3>
-        {% if quote_cmp and quote_cmp.saving %}
+        {% if money and quote_cmp and quote_cmp.saving %}
         <span class="badge b-approved" data-i18n-title="proc.saving">▼ {{ '{:,.0f}'.format(quote_cmp.saving) }} {{ pr.currency }}</span>
         {% endif %}
         {% if rfq_required %}
@@ -1661,12 +1724,12 @@
           {% for q in b.quotes %}
             <tr style="{{ 'background:var(--ok-bg)' if q.is_chosen else '' }}">
               <td><div style="font-weight:600">{{ q.vendor }}
-                  {% if q.amount == quote_cmp.lowest %}<span class="tag" style="color:var(--ok)">lowest</span>{% endif %}
+                  {% if money and q.amount == quote_cmp.lowest %}<span class="tag" style="color:var(--ok)">lowest</span>{% endif %}
                   {% if q.is_chosen %}<span class="badge b-approved">✓ chosen</span>{% endif %}</div>
                   {% if q.warranty %}<div class="muted" style="font-size:11.5px">{{ q.warranty }}</div>{% endif %}
                   {% if q.rfq_id %}<div class="muted" style="font-size:11.5px">↩ {{ b.rfqs|selectattr('id','equalto',q.rfq_id)|map(attribute='rfq_no')|first }}</div>{% endif %}
-                  {% if q.filename %}<a class="tag" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename }}</a>{% endif %}</td>
-              <td style="font-variant-numeric:tabular-nums;font-weight:600">{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}</td>
+                  {% if money and q.filename %}<a class="tag" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename }}</a>{% endif %}</td>
+              <td style="font-variant-numeric:tabular-nums;font-weight:600">{% if money %}{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}{% else %}—{% endif %}</td>
               <td class="muted">{{ (q.lead_time_days ~ 'd') if q.lead_time_days else '—' }}</td>
               <td style="text-align:end">
                 {% if can_purchasing and not q.is_chosen %}
@@ -1778,10 +1841,10 @@
             {% for l in deviation.off_plan %}
               <tr>
                 <td>{{ l.item }}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(l.unit_price) }}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(l.target) if l.target else '—' }}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums">{% if show_commercial %}{{ '{:,.2f}'.format(l.unit_price) }}{% else %}—{% endif %}</td>
+                <td style="text-align:end;font-variant-numeric:tabular-nums">{% if show_commercial %}{{ '{:,.2f}'.format(l.target) if l.target else '—' }}{% else %}—{% endif %}</td>
                 <td style="text-align:end;font-variant-numeric:tabular-nums;color:{{ 'var(--crit)' if (l.pct_over or 0) > 15 else 'var(--warn)' }}">
-                  {{ '+{:.1f}%'.format(l.pct_over) if l.pct_over else '—' }}</td>
+                  {% if show_commercial %}{{ '+{:.1f}%'.format(l.pct_over) if l.pct_over else '—' }}{% else %}—{% endif %}</td>
                 <td><span class="tag" data-i18n="proc.dev_{{ l.grade }}">{{ l.grade|replace('_',' ') }}</span></td>
               </tr>
             {% endfor %}
@@ -1941,7 +2004,7 @@
         {% if b.attachments %}
         <div class="flex gap wrap" style="margin-bottom:12px">
           {% for a in b.attachments %}
-          <a class="tag" href="{{ url_for('approvals.download_attachment', att_id=a.id) }}">📎 {{ a.filename }}</a>
+          {% if money %}<a class="tag" href="{{ url_for('approvals.download_attachment', att_id=a.id) }}">📎 {{ a.filename }}</a>{% else %}<span class="tag">📎 {{ a.filename }}</span>{% endif %}
           {% endfor %}
         </div>
         {% endif %}
@@ -1970,7 +2033,7 @@
     <ul class="tl">
       {% for e in b.events %}
       <li>
-        <div class="tl-act">{{ e.action|replace('_',' ')|title }}{% if e.detail %} — <span style="font-weight:400">{{ e.detail }}</span>{% endif %}</div>
+        <div class="tl-act">{{ e.action|replace('_',' ')|title }}{% if e.detail and (money_full or (money and e.action not in ('invoice_added','payment','debit_note_settled'))) %} — <span style="font-weight:400">{{ e.detail }}</span>{% endif %}</div>
         <div class="tl-meta">{{ e.actor }} · {{ (e.created_at or '')[:16] }}</div>
       </li>
       {% endfor %}

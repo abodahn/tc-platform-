@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Edit / split{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1 data-i18n="wh.action.edit_split">Edit / split</h1><div class="sub">{{ roll.roll_no }} · {{ roll.mat_code }} — {{ roll.mat_name }} ({{ roll.uom }})</div></div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.rolls') }}" data-i18n="wh.nav.rolls">Fabric rolls</a>
+</div>
+<form class="panel" method="post" action="{{ url_for('warehouse.roll_edit', roll_id=roll.id) }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="wh.action.edit">Edit</h3></div>
+  <div class="panel-pad"><div class="grid cols-2">
+    <div class="field"><label data-i18n="wh.field.shade">Shade lot</label><input name="shade_lot" maxlength="200" value="{{ roll.shade_lot or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.suplot">Supplier lot</label><input name="supplier_lot" maxlength="200" value="{{ roll.supplier_lot or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.grade">Grade</label><input name="grade" maxlength="200" value="{{ roll.grade or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.bin">Bin</label><input name="bin" maxlength="200" value="{{ roll.bin or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.width">Width (cm)</label><input type="number" min="0" step="any" name="width_cm" value="{{ roll.width_cm or 0 }}"></div>
+  </div><button class="btn btn-primary btn-sm mt-2" data-i18n="wh.action.save">Save</button></div>
+</form>
+<form class="panel mt-4" method="post" action="{{ url_for('warehouse.roll_split', roll_id=roll.id) }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="wh.action.split">Split roll</h3></div>
+  <div class="panel-pad">
+    <p class="muted"><span data-i18n="wh.split.hint">Lengths must total the remaining metres:</span> {{ roll.remaining_m }}</p>
+    <div class="grid cols-2" id="split-rows">{% for i in range(4) %}<div class="field"><label data-i18n="wh.field.length">Length (m)</label><input type="number" step="any" name="lengths"></div>{% endfor %}</div>
+    <button type="button" class="btn btn-ghost btn-sm" id="add-length" data-i18n="wh.action.add_row">Add row</button>
+    <button class="btn btn-primary btn-sm" data-advance data-i18n="wh.action.split">Split roll</button>
+  </div>
+</form>
+<script>
+document.getElementById('add-length').addEventListener('click', function () {
+  var rows = document.getElementById('split-rows');
+  var row = rows.lastElementChild.cloneNode(true);
+  row.querySelector('input').value = '';
+  rows.appendChild(row);
+});
+</script>
+{% endblock %}

@@ -38,6 +38,7 @@ ISSUER_ROLE = "storekeeper"
 
 # key -> (default, kind, min, max). Bounds reject nonsense on read AND on write.
 SETTINGS = {
+    "labour_rate_per_hour":    (0.0, "num", 0.0, 1e9),
     "response_sla_hours":      (4.0, "num", 0.01, 87600.0),
     "resolution_sla_hours":    (24.0, "num", 0.01, 87600.0),
     "sla_factor_critical":     (SLA_FACTOR["critical"], "num", 0.001, 100.0),
@@ -56,6 +57,7 @@ SETTINGS = {
 
 # Where each knob's default comes from, and who reads it (shown on the page).
 SETTING_SOURCE = {
+    "labour_rate_per_hour": ("off (0)", "services.repair_proof"),
     "response_sla_hours": ("workflow.SETTINGS (4h)", "services.create_ticket"),
     "resolution_sla_hours": ("workflow.SETTINGS (24h)", "services.create_ticket, ai.py"),
     "sla_factor_critical": ("workflow.SLA_FACTOR", "services.create_ticket"),
@@ -441,6 +443,8 @@ LABEL_I18N = {
     },
     # the configurable knobs: humanising the key gave "Response Sla Hours"
     "setting": {
+        "labour_rate_per_hour": ("Labour rate per hour", "تكلفة العمالة بالساعة",
+                                 "Saatlik işçilik ücreti"),
         "response_sla_hours": ("Response SLA hours", "ساعات SLA للاستجابة",
                                "Yanıt SLA saati"),
         "resolution_sla_hours": ("Resolution SLA hours", "ساعات SLA للإصلاح",

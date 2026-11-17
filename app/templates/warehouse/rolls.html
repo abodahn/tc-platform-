@@ -48,7 +48,7 @@
     <tbody>
     {% for r in rows %}
       <tr>
-        <td>{{ r.roll_no }}{% if r.grn_ref %}<div class="muted" style="font-size:11px">{{ r.grn_ref }}</div>{% endif %}</td>
+        <td>{{ r.roll_no }}{% if can('wh_manage') %}<div><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.roll_edit', roll_id=r.id) }}" data-i18n="wh.action.edit_split">Edit / split</a></div>{% endif %}{% if r.grn_ref %}<div class="muted" style="font-size:11px">{{ r.grn_ref }}</div>{% endif %}</td>
         <td>{{ r.mat_code }}<div class="muted" style="font-size:11px">{{ r.mat_name }}{% if r.mat_color %} · {{ r.mat_color }}{% endif %}</div></td>
         <td>{{ r.shade_lot or '—' }}{% if r.supplier_lot %}<div class="muted" style="font-size:11px">{{ r.supplier_lot }}</div>{% endif %}</td>
         <td class="muted">{{ r.grade or '—' }}</td>
@@ -57,19 +57,17 @@
         <td style="text-align:right">{{ '{:,.1f}'.format(r.remaining_m or 0) }}</td>
         <td style="text-align:right">{% if (r.reserved_m or 0) > 0 %}<span class="tag" style="background:#b4530918;color:#b45309">{{ '{:,.1f}'.format(r.free_m) }}</span>{% else %}{{ '{:,.1f}'.format(r.free_m) }}{% endif %}</td>
         <td>{{ rst(r.status) }}</td>
-        <td class="muted">{{ r.bin or '—' }}</td>
+        <td class="muted">{% if can('wh_manage') %}<form method="post" action="{{ url_for('warehouse.bin_move') }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="roll_id" value="{{ r.id }}"><input name="new_bin" maxlength="40" required data-i18n-ph="wh.field.bin" placeholder="Bin"><button class="btn btn-ghost btn-sm" data-i18n="wh.bin.move">Move bin</button></form>{% endif %}{{ r.bin or '—' }}</td>
         <td class="muted">{{ (r.received_at or '')[:10] }}</td>
         {% if can('wh_manage') %}
-        <td><form method="post" action="{{ url_for('warehouse.roll_return', roll_id=r.id) }}" style="display:flex;gap:4px">
-          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-          <input type="number" step="any" name="qty" style="width:70px" data-i18n-ph="wh.field.qty" placeholder="Qty">
-          <button class="btn btn-ghost btn-sm" data-i18n="wh.action.return">Return</button></form></td>
+        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.issue', material_id=r.material_id, return_roll=r.id) }}#return" data-i18n="wh.action.return">Return</a></td>
         {# a fabric stock take is corrected on the ROLL — the material header follows it #}
         <td><form method="post" action="{{ url_for('warehouse.adjust') }}" style="display:flex;gap:4px">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <input type="hidden" name="roll_id" value="{{ r.id }}">
           <input type="number" step="any" name="delta" style="width:70px" data-i18n-ph="wh.field.delta" placeholder="+/-">
-          <input name="reason" style="width:100px" data-i18n-ph="wh.field.reason" placeholder="Reason">
+          <select name="reason" required>{% for reason in reasons %}<option value="{{ reason }}" data-i18n="wh.reason.{{ reason }}">{{ reason|replace('_',' ')|title }}</option>{% endfor %}</select>
+          <input name="note" maxlength="200" data-i18n-ph="wh.field.notes" placeholder="Notes">
           <button class="btn btn-ghost btn-sm" data-i18n="wh.action.adjust">Adjust</button></form></td>
         <td><form method="post" action="{{ url_for('warehouse.roll_hold', roll_id=r.id) }}">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">

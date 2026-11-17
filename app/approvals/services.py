@@ -392,6 +392,8 @@ def can_act(user, stage, _deleg=None, _roles=None):
     instead of one per stage."""
     if not user:
         return False
+    if (user.get("account_status") or "active") != "active":
+        return False
     role = user.get("role")
     if role == "super_admin" or user_has_permission(user, "proc_admin"):
         return True
@@ -568,6 +570,72 @@ def can_act_step(user, step, _deleg=None, _roles=None):
     roles = dict(_roles if _roles is not None else stage_roles_map())
     roles[stage] = esc
     return can_act(user, stage, _deleg=_deleg, _roles=roles)
+
+
+def money_view(user, pr=None, steps=None, _deleg=None, _roles=None):
+    """Return "full", "own" or "" for this request's money.
+
+    Purchasing, finance and admins see all money. Approvers on this request's
+    ladder see money as personal signers or eligible current approvers. Requesters see prices,
+    quotes and their PO, but no invoices, payments, debit notes or match figures.
+    With no request, only privileged viewers qualify for cross-request money.
+    """
+    if not user or (_pr_field(user, "account_status") or "active") != "active":
+        return ""
+    user = dict(user)
+    if user.get("role") == "super_admin" or any(
+            user_has_permission(user, perm) for perm in C.MONEY_PERMS):
+        return "full"
+    if pr is None:
+        return ""
+    if steps is None:
+        conn = get_db()
+        try:
+            steps = conn.execute("SELECT * FROM pr_steps WHERE pr_id=?",
+                                 (_pr_field(pr, "id"),)).fetchall()
+        finally:
+            conn.close()
+    username = user.get("username")
+    if user_has_permission(user, "proc_approve"):
+        if _roles is None:
+            _roles = stage_roles_map()
+        if _deleg is None:
+            _deleg = active_delegator_roles(username)
+        if any(_pr_field(step, "approver_user") == username
+               or (_pr_field(step, "status") == "pending"
+                   and _pr_field(step, "seq") == _pr_field(pr, "current_seq")
+                   and _pr_field(pr, "status") == "pending"
+                   and can_act_step(user, step, _deleg=_deleg, _roles=_roles))
+               for step in steps):
+            return "full"
+    if _pr_field(pr, "requester") == username:
+        return "own"
+    return ""
+
+
+def money_views(user, prs):
+    """Request money levels, with one batched steps/roles/delegation lookup."""
+    prs = list(prs)
+    ids = list(dict.fromkeys(_pr_field(pr, "id") for pr in prs))
+    if money_view(user) == "full":
+        return {pid: "full" for pid in ids}
+    if not ids:
+        return {}
+    conn = get_db()
+    try:
+        ph = ",".join("?" for _ in ids)
+        steps = conn.execute(f"SELECT * FROM pr_steps WHERE pr_id IN ({ph})",
+                             tuple(ids)).fetchall()
+        roles = stage_roles_map(conn)
+    finally:
+        conn.close()
+    deleg = active_delegator_roles(_pr_field(user, "username"))
+    by_pr = {}
+    for step in steps:
+        by_pr.setdefault(_pr_field(step, "pr_id"), []).append(step)
+    return {_pr_field(pr, "id"): money_view(
+        user, pr, by_pr.get(_pr_field(pr, "id"), []), _deleg=deleg, _roles=roles)
+        for pr in prs}
 
 
 def _esc_columns(conn, stage, requester, _roles, _chain, _holders=None, _busy=()):
@@ -838,13 +906,18 @@ def get_pr(pr_id):
                 "SELECT " + _qcols + " FROM pr_quotes WHERE pr_id=? ORDER BY amount",
                 (pr_id,)).fetchall()
         rfqs = rfqs_for(conn, pr_id)
-        invoices = conn.execute(
-            "SELECT id, pr_id, invoice_no, invoice_date, amount, tax, currency, status, "
-            "filename, notes, created_by, created_at FROM pr_invoices WHERE pr_id=? "
-            "ORDER BY id", (pr_id,)).fetchall()
-        payments = conn.execute(
-            "SELECT id, pr_id, invoice_id, amount, currency, method, reference, paid_at, "
-            "notes, created_at FROM pr_payments WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
+        money = {}
+        for table, cols in (
+            ("pr_invoices", "id, pr_id, invoice_no, invoice_date, amount, tax, currency, status, filename, notes, created_by, created_at"),
+            ("pr_payments", "id, pr_id, invoice_id, amount, currency, method, reference, paid_at, notes, created_at")):
+            try:
+                money[table] = conn.execute("SELECT " + cols + ", reversal_of FROM " + table
+                                            + " WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
+            except Exception:
+                conn.rollback()
+                money[table] = conn.execute("SELECT " + cols + " FROM " + table
+                                            + " WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
+        invoices, payments = money["pr_invoices"], money["pr_payments"]
         try:
             sig_evs = conn.execute(
                 "SELECT seq, stage, code FROM pr_sign_events WHERE pr_id=? ORDER BY id",
@@ -2139,20 +2212,32 @@ def _withdraw_signatures_on_changed_terms(conn, pr, before, uname, ip, why):
     for step in steps:
         conn.execute(
             "UPDATE pr_steps SET status='pending', approver_user=NULL, approver_name=NULL, "
-            "approver_role=NULL, sig_png=NULL, acted_at=NULL, comment=NULL WHERE id=?",
+            "approver_role=NULL, sig_png=NULL, acted_at=NULL, comment=NULL, "
+            "escalated=0, escalated_at=NULL, escalated2_at=NULL WHERE id=?",
             (step["id"],))
+    reapproval_users = {s["approver_user"] for s in steps if s["approver_user"]} | {pr["requester"]}
     new_seq = min(step["seq"] for step in steps)
     if new_seq < (pr["current_seq"] or 0):
         conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (new_seq, pr["id"]))
         conn.execute("UPDATE pr_steps SET activated_at=? WHERE pr_id=? AND seq=?",
                      (now, pr["id"], new_seq))
+        rows = conn.execute(
+            "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr["id"], new_seq)).fetchall()
+        targets = set()
+        for r in rows:
+            targets |= set(eligible_approvers(
+                conn, r["stage"], roles=_csv_set(_pr_field(r, "esc_role")) or None))
+        notify_users(conn, targets - reapproval_users, "warning", "New request to sign",
+                     f"{pr['pr_no']} needs your "
+                     f"{' + '.join(stage_label(r['stage']) for r in rows)} approval.",
+                     link=_pr_link(pr["id"]))
     who = ", ".join("%s (%s)" % (stage_label(s["stage"]), s["approver_user"] or "")
                     for s in steps)
     audit(conn, pr["id"], uname, "signatures_recollected",
           "%s: the commercial terms changed (%s), so these signatures are withdrawn "
           "and must be given again: %s" % (why, "; ".join(changed), who), ip)
-    notify_users(conn, [s["approver_user"] for s in steps if s["approver_user"]]
-                 + [pr["requester"]], "warning",
+    notify_users(conn, reapproval_users, "warning",
                  "Re-approval needed on %s" % (pr["pr_no"] or "a request"),
                  "The commercial terms changed after you approved, so your approval "
                  "was withdrawn and is needed again.", link=_pr_link(pr["id"]))
@@ -2768,8 +2853,9 @@ def _reescalate_dual_role(conn, pr_id, pr, seq):
     steps = conn.execute("SELECT * FROM pr_steps WHERE pr_id=?", (pr_id,)).fetchall()
     busy = {s["approver_user"] for s in steps
             if s["status"] in ("approved", "rejected") and s["approver_user"]}
+    escalated = []
     if not busy:
-        return
+        return escalated
     _roles = stage_roles_map(conn)
     chain = escalation_map(conn)
     requester = pr["requester"]
@@ -2788,9 +2874,11 @@ def _reescalate_dual_role(conn, pr_id, pr, seq):
         found, why = resolve_escalation(conn, stage, requester, _roles={stage: roles},
                                         _chain=chain, _holders=holders, _busy=busy)
         if why == "escalated":
-            esc_role, esc_from = ",".join(sorted(found)), ",".join(sorted(roles))
+            esc_role = ",".join(sorted(found))
+            esc_from = _pr_field(s, "esc_from") or ",".join(sorted(roles))
             conn.execute("UPDATE pr_steps SET esc_role=?, esc_from=? WHERE id=?",
                          (esc_role, esc_from, s["id"]))
+            escalated.append({"stage": stage, "esc_role": esc_role})
             audit(conn, pr_id, "system", "escalated_stage",
                   f"{stage_label(stage)}: signing escalated from {esc_from} to {esc_role} — "
                   f"everyone who may normally sign it already signed another rung of this "
@@ -2803,6 +2891,7 @@ def _reescalate_dual_role(conn, pr_id, pr, seq):
                          f"{pr['pr_no']}: {stage_label(stage)} can only be signed by someone who "
                          f"already signed another rung of this request, and no superior above "
                          f"that role has anyone free to sign it.", link=_pr_link(pr_id))
+    return escalated
 
 
 def act_on_step(pr_id, user, decision, comment=None, ip=None):
@@ -3004,7 +3093,12 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             "SELECT COUNT(*) c FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
             (pr_id, step["seq"])).fetchone()["c"]
         if remaining > 0:
-            _reescalate_dual_role(conn, pr_id, pr, step["seq"])
+            for r in _reescalate_dual_role(conn, pr_id, pr, step["seq"]):
+                notify_users(conn, eligible_approvers(
+                    conn, r["stage"], roles=_csv_set(r["esc_role"])),
+                    "warning", "New request to sign",
+                    f"{pr['pr_no']} needs your {stage_label(r['stage'])} approval.",
+                    link=_pr_link(pr_id))
             conn.commit()
             return True, "partial"
 
@@ -3264,6 +3358,14 @@ def issue_po(pr_id, user, ip=None, force=False):
             return False, "not_found"
         if pr["status"] not in ("approved",):
             return False, "not_approved"
+        items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+        active = {C.vendor_key(r["name"]) for r in conn.execute(
+            "SELECT name FROM proc_vendors WHERE is_active=1").fetchall()}
+        for vendor in po_groups(items, pr):
+            if not C.vendor_key(vendor):
+                return False, "vendor_required"
+            if C.vendor_key(vendor) not in active:
+                return False, "vendor_not_in_master"
     finally:
         conn.close()
     if not force and not _unbudgeted_authority_given(pr_id, pr):
@@ -3927,14 +4029,18 @@ def post_stock_postings(pr_id, user=None, manual=False):
     result = {"posted": 0, "failed": 0}
     actor = user or {"username": "system"}
     cap = "" if manual else " AND COALESCE(attempts,0)<5"
+    eligible = ("(status IN ('pending','failed') OR "
+                "(status='skipped' AND COALESCE(last_error,'no_matching_material')='no_matching_material'))" if manual
+                else "status IN ('pending','failed')")
+    selected = eligible.replace("status", "p.status").replace("last_error", "p.last_error")
     try:
         conn = get_db()
         try:
             rows = [dict(r) for r in conn.execute(
-                "SELECT p.*, i.unit_price, i.item, r.pr_no, r.source_ref "
+                "SELECT p.*, i.unit_price, i.item, r.pr_no, r.source_ref, r.currency, r.fx_rate "
                 "FROM pr_stock_postings p LEFT JOIN pr_items i ON i.id=p.item_id "
                 "JOIN pr_requests r ON r.id=p.pr_id WHERE p.pr_id=? "
-                "AND p.status IN ('pending','failed')" + cap + " ORDER BY p.id",
+                "AND " + selected + cap + " ORDER BY p.id",
                 (pr_id,)).fetchall()]
         finally:
             conn.close()
@@ -3942,30 +4048,56 @@ def post_stock_postings(pr_id, user=None, manual=False):
             ok, err = False, ""
             try:
                 if row["target"] == "material" and not row["target_id"]:
-                    from app.warehouse.services import _resolve_material
+                    from app.warehouse.services import _match_material
                     conn = get_db()
                     try:
-                        mat = _resolve_material(conn, row["item"])
+                        mat, reason = _match_material(conn, row["item"])
                     finally:
                         conn.close()
                     if not mat:
-                        # not a warehouse material — nothing to post, same as before
-                        _set_posting("UPDATE pr_stock_postings SET status='skipped' "
-                                     "WHERE id=? AND status IN ('pending','failed')",
-                                     (row["id"],))
+                        changed = _set_posting(
+                            "UPDATE pr_stock_postings SET status=?, last_error=? WHERE id=? AND " + eligible,
+                            ("failed" if reason == "ambiguous_material" else "skipped", reason, row["id"]))
+                        if changed == 1 and reason == "ambiguous_material":
+                            result["failed"] += 1
+                            # Sweeps revisit failed rows; one warning per unresolved ambiguity is enough.
+                            if row["last_error"] == "ambiguous_material":
+                                continue
+                            bell = None
+                            try:
+                                bell = get_db()
+                                bell.execute(
+                                    "INSERT INTO notifications (severity,module,title,message,link,created_at) "
+                                    "VALUES (?,?,?,?,?,?)",
+                                    ("warning", "procurement", "Receipt not booked: ambiguous material",
+                                     f"{row['pr_no']}: {row['item']}", _pr_link(pr_id), _now()))
+                                bell.commit()
+                            except Exception:
+                                if bell is not None:
+                                    bell.rollback()
+                                log.warning("ambiguous material notification failed", exc_info=True)
+                            finally:
+                                if bell is not None:
+                                    bell.close()
                         continue
                     row["target_id"] = mat["id"]
                 if _set_posting(
                         "UPDATE pr_stock_postings SET status='posting', target_id=?, "
                         "attempts=COALESCE(attempts,0)+1 WHERE id=? "
-                        "AND status IN ('pending','failed')" + cap,
+                        "AND " + eligible + cap,
                         (row["target_id"], row["id"])) != 1:
                     continue      # another request claimed it
-                price = 0.0 if row["free"] else float(row["unit_price"] or 0)
+                price = 0.0 if row["free"] else float(row["unit_price"] or 0) * _pr_fx(row)
                 try:
-                    if row["target"] == "spare":
+                    if float(row["qty"]) < 0:
+                        ok, err = _unpost(row, actor)
+                    elif row["target"] == "spare":
                         from app.maintenance.services import receive_stock
-                        ok, err = receive_stock(int(row["target_id"]), row["qty"], price, actor)
+                        source_ref = str(row["source_ref"] or "")
+                        ticket_id = source_ref[7:] if source_ref.startswith("ticket:") else ""
+                        skip_ticket = int(ticket_id) if ticket_id.isdecimal() else None
+                        ok, err = receive_stock(int(row["target_id"]), row["qty"], price, actor,
+                                                skip_ticket=skip_ticket)
                     else:
                         from app.warehouse.services import post_line_to_material
                         ok, err = post_line_to_material(row["target_id"], row["qty"], price,
@@ -3994,20 +4126,52 @@ def post_stock_postings(pr_id, user=None, manual=False):
     return result
 
 
-def stock_posting_issues(pr_id):
+def stock_posting_issues(pr_id, statuses=("failed", "posting")):
     """Rows that have not reached stock and need a person: failed, or stuck mid-post."""
+    if not statuses:
+        return []
     try:
         conn = get_db()
         try:
             return [dict(r) for r in conn.execute(
                 "SELECT p.*, i.item FROM pr_stock_postings p "
                 "LEFT JOIN pr_items i ON i.id=p.item_id "
-                "WHERE p.pr_id=? AND p.status IN ('failed','posting') ORDER BY p.id",
-                (pr_id,)).fetchall()]
+                "WHERE p.pr_id=? AND p.status IN (" + ",".join("?" for _ in statuses) + ") ORDER BY p.id",
+                (pr_id, *statuses)).fetchall()]
         finally:
             conn.close()
     except Exception:
         return []
+
+
+def resolve_stuck_posting(pr_id, posting_id, outcome, note, user, ip=None):
+    """A person checked the store for a row stuck in 'posting' (outcome unknown):
+    record what they found. Never touches stock; 'failed' lets a manual retry run."""
+    if outcome not in ("posted", "failed"):
+        return False, "bad_outcome"
+    note = (note or "").strip()
+    if not note:
+        return False, "note_required"
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE pr_stock_postings SET status=?, posted_at=?, last_error=? "
+            "WHERE id=? AND pr_id=? AND status='posting'",
+            (outcome, _now() if outcome == "posted" else None,
+             None if outcome == "posted" else ("Resolved manually: " + note)[:300],
+             posting_id, pr_id))
+        if cur.rowcount == 0:
+            return False, "not_stuck"
+        row = conn.execute(
+            "SELECT p.target, p.qty, i.item FROM pr_stock_postings p "
+            "LEFT JOIN pr_items i ON i.id=p.item_id WHERE p.id=?", (posting_id,)).fetchone()
+        audit(conn, pr_id, (user or {}).get("username") or "system", "stock_posting_resolved",
+              f"{row['item'] or '-'} -> {row['target']} x{float(row['qty'] or 0):g}: "
+              f"marked {outcome} after checking the store - {note}", ip)
+        conn.commit()
+        return True, outcome
+    finally:
+        conn.close()
 
 
 def _due_date(payment_condition, base_date):
@@ -4070,7 +4234,7 @@ def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64
             norm = inv_no.lower()
             candidates = [r for r in conn.execute(
                 "SELECT pr_id, po_id, invoice_no FROM pr_invoices "
-                "WHERE invoice_no IS NOT NULL").fetchall()
+                "WHERE invoice_no IS NOT NULL AND COALESCE(status,'') != 'void'").fetchall()
                 if (r["invoice_no"] or "").strip().lower() == norm]
             mine = _invoice_supplier(conn, pr, po)
             seen = {}
@@ -4116,6 +4280,7 @@ def three_way_match(pr_id):
     bundle = get_pr(pr_id)
     if not bundle:
         return None
+    bundle["invoices"] = [iv for iv in bundle["invoices"] if iv.get("status") != "void"]
     pr, items = bundle["pr"], bundle["items"]
     amt = pr_amounts(pr)
     ordered_grand = amt["grand"]
@@ -4977,6 +5142,18 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         po, po_err = split_order(conn, pr, data.get("po_id"))
         if po_err and not force:
             return False, po_err
+        role = (user or {}).get("role")
+        exempt = (role == "super_admin" or user_has_permission(user, "proc_admin")) and bool_setting(conn, "sod_admin_exempt")
+        # Scoped by request/order, never by a posted invoice_id, which the payer controls.
+        scope, args = "pr_id=?", [pr_id]
+        if po is not None:
+            scope += " AND po_id=?"
+            args.append(po["id"])
+        if not exempt and conn.execute(
+                "SELECT id FROM pr_invoices WHERE " + scope
+                + " AND COALESCE(status,'') != 'void' AND reversal_of IS NULL AND created_by=?",
+                tuple(args + [(user or {}).get("username")])).fetchone():
+            return False, "sod_invoice_payer"
         # over-billing block (short delivery alone does not block the payment,
         # it caps it — see the received-value cap further down)
         if match and match["has_invoice"] and not force \
@@ -5059,12 +5236,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
              data.get("notes"), user.get("username") if user else "system", now))
         paid = float(pr["paid_amount"] or 0) + amount
         grand = pr_amounts(pr)["grand"]
-        # A PO with goods returned against it can never reach its own grand total,
-        # so "fully paid" is measured against the payable value once a debit note
-        # exists. Without a debit note this is bit-for-bit the old comparison.
-        target = float(match.get("payable") or 0) if (
-            match and float(match.get("debit_open") or 0) > 0) else grand
-        pstatus = "paid" if paid >= target - 0.01 else ("partial" if paid > 0 else "unpaid")
+        pstatus = _payment_status(paid, match, grand)
         conn.execute("UPDATE pr_requests SET paid_amount=?, payment_status=? WHERE id=?",
                      (round(paid, 2), pstatus, pr_id))
         audit(conn, pr_id, user.get("username") if user else "system", "payment",
@@ -5081,12 +5253,13 @@ def add_payment(pr_id, data, user, ip=None, force=False):
 def close_pr(pr_id, user, ip=None, reason=None):
     conn = get_db()
     try:
+        conn.execute("UPDATE pr_requests SET paid_amount=paid_amount WHERE id=?", (pr_id,))
         pr = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
         if pr["status"] not in ("received", "po_issued", "in_transit", "partially_received"):
             return False, "not_closable"
-        items = conn.execute("SELECT qty, received_qty FROM pr_items WHERE pr_id=?",
+        items = conn.execute("SELECT qty, received_qty, unit_price FROM pr_items WHERE pr_id=?",
                              (pr_id,)).fetchall()
         short = any(float(it["qty"] or 0) > 0 and
                     round(float(it["received_qty"] or 0), 6) < round(float(it["qty"] or 0), 6)
@@ -5094,10 +5267,13 @@ def close_pr(pr_id, user, ip=None, reason=None):
         reason = (reason or "").strip()
         if short and not reason:
             return False, "reason_required"
-        conn.execute("UPDATE pr_requests SET status='closed', closed_at=? WHERE id=?",
-                     (_now(), pr_id))
+        released = sum(max(0.0, float(it["qty"] or 0) - float(it["received_qty"] or 0))
+                       * float(it["unit_price"] or 0) for it in items)
+        conn.execute("UPDATE pr_requests SET status='closed', closed_at=?, budget_released=? WHERE id=?",
+                     (_now(), released, pr_id))
         audit(conn, pr_id, user.get("username") if user else "system", "closed",
-              "Short-closed: " + reason[:500] if short else "Closed", ip)
+              ("Short-closed: " + reason[:500] if short else "Closed")
+              + (f"; budget released {released:,.2f}" if released else ""), ip)
         conn.commit()
         return True, ""
     finally:
@@ -5178,6 +5354,11 @@ def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
     after approval — and never once goods have been received."""
     conn = get_db()
     try:
+        conn.execute("UPDATE pr_requests SET paid_amount=paid_amount WHERE id=?", (pr_id,))
+        paid = conn.execute("SELECT COALESCE(SUM(amount),0) n FROM pr_payments WHERE pr_id=?",
+                            (pr_id,)).fetchone()["n"]
+        if float(paid) > 0.005:
+            return False, "has_payments"
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
@@ -5197,7 +5378,8 @@ def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
             return False, "forbidden"
         conn.execute("UPDATE pr_requests SET status='cancelled', current_seq=0 WHERE id=?",
                      (pr_id,))
-        audit(conn, pr_id, uname, "cancelled", "Request cancelled", ip)
+        conn.execute("UPDATE pr_purchase_orders SET status='cancelled' WHERE pr_id=?", (pr_id,))
+        audit(conn, pr_id, uname, "cancelled", "Request and purchase orders cancelled", ip)
         conn.commit()
         return True, ""
     finally:
@@ -5461,17 +5643,76 @@ def list_vendors(active_only=True):
         conn.close()
 
 
-def create_vendor(data, user, ip=None):
+def _save_vendor(vendor_id, data, user, ip):
+    name = (data.get("name") or "").strip()
+    tax_id = (data.get("tax_id") or "").strip()
+    if not name:
+        return False, "name_required"
     conn = get_db()
     try:
-        conn.execute(
-            """INSERT OR IGNORE INTO proc_vendors
-               (name, contact_person, phone, email, address, payment_terms, category,
-                rating, notes, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (data.get("name"), data.get("contact_person"), data.get("phone"),
-             data.get("email"), data.get("address"), data.get("payment_terms"),
-             data.get("category"), float(data.get("rating") or 0), data.get("notes"), _now()))
+        rows = conn.execute("SELECT id, name, tax_id FROM proc_vendors").fetchall()
+        if vendor_id is not None and not any(r["id"] == vendor_id for r in rows):
+            return False, "not_found"
+        for r in rows:
+            if r["id"] != vendor_id and (C.vendor_key(r["name"]) == C.vendor_key(name)
+                    or (tax_id and tax_id.casefold() == (r["tax_id"] or "").strip().casefold())):
+                return False, "duplicate_vendor"
+        if vendor_id is not None:
+            old_name = next(r["name"] for r in rows if r["id"] == vendor_id)
+            # History is joined by the exact name string (dues, approval, scores), so any
+            # change - even case or spacing - orphans it. Compare in Python: SQLite LOWER()
+            # folds ASCII only, so Turkish/accented names would slip past an SQL match.
+            if name != (old_name or "").strip():
+                old_key = C.vendor_key(old_name)
+                for table in ("pr_requests", "pr_items", "pr_quotes", "pr_returns",
+                              "pr_purchase_orders", "pr_rfqs", "mnt_spare_parts", "mnt_machines"):
+                    try:
+                        used = conn.execute("SELECT DISTINCT vendor FROM " + table
+                                            + " WHERE vendor IS NOT NULL").fetchall()
+                    except Exception:
+                        conn.rollback()  # optional module table absent; clear PG's aborted txn
+                        continue
+                    if any(C.vendor_key(u["vendor"]) == old_key for u in used):
+                        return False, "vendor_in_use"
+        fields = ("name", "contact_person", "phone", "email", "address", "payment_terms",
+                  "category", "rating", "notes", "tax_id")
+        values = tuple(name if k == "name" else tax_id if k == "tax_id" else
+                       float(data.get(k) or 0) if k == "rating" else (data.get(k) or "").strip() or None
+                       for k in fields)
+        if vendor_id is None:
+            cur = conn.execute("INSERT INTO proc_vendors (" + ",".join(fields)
+                               + ",created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", values + (_now(),))
+            vendor_id = cur.lastrowid
+            action = "vendor_created"
+        else:
+            conn.execute("UPDATE proc_vendors SET " + ",".join(k + "=?" for k in fields)
+                         + " WHERE id=?", values + (vendor_id,))
+            action = "vendor_updated"
+        _wf_audit(conn, (user or {}).get("username"), action,
+                  f"Vendor #{vendor_id}: {name}; fields={_json_dumps(dict(zip(fields, values)))}", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def create_vendor(data, user, ip=None):
+    return _save_vendor(None, data, user, ip)
+
+
+def update_vendor(vendor_id, data, user, ip=None):
+    return _save_vendor(vendor_id, data, user, ip)
+
+
+def set_vendor_active(vendor_id, active, user, ip=None):
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT name FROM proc_vendors WHERE id=?", (vendor_id,)).fetchone()
+        if not row:
+            return False, "not_found"
+        conn.execute("UPDATE proc_vendors SET is_active=? WHERE id=?", (int(bool(active)), vendor_id))
+        _wf_audit(conn, (user or {}).get("username"), "vendor_active",
+                  f"Vendor #{vendor_id} {row['name']}: active={bool(active)}", ip)
         conn.commit()
         return True, ""
     finally:
@@ -5605,6 +5846,9 @@ def rfqs_for(conn, pr_id):
 def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=None, ip=None):
     conn = get_db()
     try:
+        if any(C.vendor_key(r["name"]) == C.vendor_key(data.get("vendor") or "")
+               for r in conn.execute("SELECT name FROM proc_vendors WHERE is_active=0").fetchall()):
+            return False, "vendor_inactive"
         # The RFQ this quotation answers, when it answers one. Validated against
         # A requester supplying the "competitive" quotes for their own request is
         # the cheapest way past DOAM §4.3 there is: the RFQ gate counts suppliers,
@@ -6058,7 +6302,7 @@ def set_budget(department, amount, period=None, currency="EGP", user=None):
 # is NOT cleared when a request is repriced back to EGP (see reports.py), so an EGP
 # row can carry a leftover 48 — and 2,000 EGP was summed into `spent` as 96,000.
 # Latent only while every rate is still 1.0.
-_EGP_GROSS_SQL = ("COALESCE(total,0) "
+_EGP_GROSS_SQL = ("(COALESCE(total,0) - COALESCE(budget_released,0)) "
                   "* (CASE WHEN UPPER(COALESCE(currency,'EGP')) = 'EGP' THEN 1 "
                   "ELSE COALESCE(NULLIF(fx_rate,0),1) END) "
                   "* (1 + COALESCE(tax_rate,0)/100.0)")
@@ -6427,20 +6671,22 @@ def analytics_summary():
             "SELECT * FROM pr_requests WHERE is_active=1").fetchall()]
         steps = [dict(r) for r in conn.execute(
             "SELECT * FROM pr_steps").fetchall()]
+        committed = _committed_rows(conn)
     finally:
         conn.close()
 
-    committed = [p for p in prs if p["status"] in ("approved", "po_issued", "in_transit", "closed")]
-    by = lambda key, rows: _group_sum(rows, key, "total")
-    spend_dept = by("department", committed)
-    spend_vendor = by("vendor", committed)
-    # monthly committed spend
-    months = {}
+    spend_dept, spend_vendor, months = {}, {}, {}
     for p in committed:
+        dept = p.get("department") or "—"
+        spend_dept[dept] = spend_dept.get(dept, 0) + p["committed_egp"]
+        for vendor, value in p["vendors"].items():
+            spend_vendor[vendor] = spend_vendor.get(vendor, 0) + value
         m = (p.get("request_date") or p.get("created_at") or "")[:7]
         if m:
-            months[m] = round(months.get(m, 0) + (p.get("total") or 0), 2)
-    monthly = sorted(months.items())
+            months[m] = months.get(m, 0) + p["committed_egp"]
+    spend_dept = {k: round(v, 2) for k, v in spend_dept.items()}
+    spend_vendor = {k: round(v, 2) for k, v in spend_vendor.items()}
+    monthly = sorted((k, round(v, 2)) for k, v in months.items())
 
     # cycle time (submitted -> approved), in days
     durs = []
@@ -6471,8 +6717,8 @@ def analytics_summary():
 
     return {
         "total_prs": len(prs),
-        "committed_spend": round(sum(p.get("total") or 0 for p in committed), 2),
-        "pending_value": round(sum(p.get("total") or 0 for p in prs if p["status"] == "pending"), 2),
+        "committed_spend": round(sum(p["committed_egp"] for p in committed), 2),
+        "pending_value": round(sum(egp_commitment(p) for p in prs if p["status"] == "pending"), 2),
         "avg_cycle_days": avg_cycle,
         "status_counts": status_counts,
         "spend_by_dept": spend_dept,
@@ -6513,24 +6759,18 @@ def export_dataset(key):
                       r["po_no"], r["payment_status"], r["paid_amount"]]
                      for r in rows])
 
-        ph = ",".join("?" * len(_SPEND_STATUSES))
-        if key == "spend_dept":
-            rows = conn.execute(
-                "SELECT COALESCE(NULLIF(department,''),'—') d, COUNT(*) n, "
-                "ROUND(SUM(COALESCE(total,0)),2) t "
-                "FROM pr_requests WHERE is_active=1 AND status IN (" + ph + ") "
-                "GROUP BY d ORDER BY t DESC", _SPEND_STATUSES).fetchall()
-            return (["Department", "PRs", "Total"],
-                    [[r["d"], r["n"], r["t"]] for r in rows])
-
-        if key == "spend_vendor":
-            rows = conn.execute(
-                "SELECT COALESCE(NULLIF(vendor,''),'(unassigned)') v, COUNT(*) n, "
-                "ROUND(SUM(COALESCE(total,0)),2) t "
-                "FROM pr_requests WHERE is_active=1 AND status IN (" + ph + ") "
-                "GROUP BY v ORDER BY t DESC", _SPEND_STATUSES).fetchall()
-            return (["Vendor", "PRs", "Total"],
-                    [[r["v"], r["n"], r["t"]] for r in rows])
+        if key in ("spend_dept", "spend_vendor"):
+            groups = {}
+            for pr in _committed_rows(conn):
+                shares = pr["vendors"] if key == "spend_vendor" else {
+                    pr.get("department") or "—": pr["committed_egp"]}
+                for label, value in shares.items():
+                    ids, total = groups.get(label, (set(), 0.0))
+                    ids.add(pr["id"])
+                    groups[label] = (ids, total + value)
+            rows = [[label, len(ids), round(total, 2)] for label, (ids, total) in groups.items()]
+            rows.sort(key=lambda r: -r[2])
+            return (["Vendor" if key == "spend_vendor" else "Department", "PRs", "Total (EGP)"], rows)
 
         if key == "open_orders":
             rows = conn.execute(
@@ -6538,7 +6778,7 @@ def export_dataset(key):
                 "p.currency, p.payment_status, "
                 "COALESCE(SUM(i.received_qty),0) rq, COALESCE(SUM(i.qty),0) oq "
                 "FROM pr_requests p LEFT JOIN pr_items i ON i.pr_id = p.id "
-                "WHERE p.is_active=1 AND p.status IN (?,?) "
+                "WHERE p.is_active=1 AND p.status IN (?,?,?) "
                 "GROUP BY p.id ORDER BY p.id",
                 ("po_issued", "in_transit", "partially_received")).fetchall()
             return (["PR No", "PO No", "Vendor", "Department", "Total",
@@ -6562,14 +6802,6 @@ def export_dataset(key):
     finally:
         conn.close()
     return (None, None)
-
-
-def _group_sum(rows, key, val):
-    out = {}
-    for r in rows:
-        k = r.get(key) or "—"
-        out[k] = round(out.get(k, 0) + (r.get(val) or 0), 2)
-    return out
 
 
 # --------------------------------------------------------------------------
@@ -7628,7 +7860,7 @@ def reverse_stock_issue(pr_id, line_id, user, ip=None):
         # people have since signed, priced or bought against.
         if (_pr_field(pr, "pricing_status") or "unpriced") == "priced":
             return False, "already_priced"
-        if (pr["status"] or "") not in ("pending", "closed"):
+        if (pr["status"] or "") not in ("pending", "closed", "rejected"):
             return False, "not_reversible"
         # The storekeeper who could have issued it, or a procurement admin — the
         # same pair who can unstick anything else in this module. An admin is
@@ -7702,3 +7934,350 @@ def reverse_stock_issue(pr_id, line_id, user, ip=None):
         return True, "reopened" if reopened else "reversed"
     finally:
         conn.close()
+
+
+def _payment_status(paid, match, grand):
+    target = float(match.get("payable") or 0) if (
+        match and float(match.get("debit_open") or 0) > 0) else grand
+    return "paid" if paid >= target - 0.01 else ("partial" if paid > 0 else "unpaid")
+
+
+def _reversal_stock(conn, target, target_id, qty, pr_no):
+    # shortcut: a roll-tracked reversal must fit in ONE roll of this PR; reverse roll by roll if not.
+    if target == "spare":
+        row = conn.execute("SELECT stock_qty, reserved_qty FROM mnt_spare_parts WHERE id=?",
+                           (target_id,)).fetchone()
+    else:
+        row = conn.execute("SELECT stock_qty, reserved_qty, roll_tracked FROM wh_materials WHERE id=?",
+                           (target_id,)).fetchone()
+        if row and row["roll_tracked"]:
+            roll = conn.execute(
+                "SELECT id FROM wh_rolls WHERE material_id=? AND grn_ref=? "
+                "AND remaining_m-COALESCE(reserved_m,0)>=? ORDER BY id DESC",
+                (target_id, pr_no, qty)).fetchone()
+            return (bool(roll), roll["id"] if roll else None)
+    return (bool(row) and float(row["stock_qty"] or 0) - float(row["reserved_qty"] or 0) >= qty, None)
+
+
+def _unreceive(conn, pr, item, qty, ref, user):
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM pr_stock_postings WHERE item_id=? AND free=0 ORDER BY id",
+        (item["id"],)).fetchall()]
+    if any(r["status"] in ("pending", "failed", "posting") for r in rows):
+        return False, "posting_unsettled"
+    net = {}
+    for r in rows:
+        if r["status"] == "posted" and not str(r["ref"] or "").startswith("door:"):
+            key = (r["target"], r["target_id"])
+            net[key] = net.get(key, 0.0) + float(r["qty"] or 0)
+    plan, left = [], qty
+    for (t, tid), n in net.items():
+        if n > 0 and left > 0:
+            plan.append((t, tid, min(left, n)))
+            left -= min(left, n)
+    door, mat = [], None
+    try:
+        for target, target_id, amount in plan:
+            if not _reversal_stock(conn, target, target_id, amount, ref)[0]:
+                return False, "stock_issued"
+        if (left > 1e-9 and not _pr_field(item, "spare_id")
+                and _pr_field(pr, "source_module") != "maintenance"):
+            from app.warehouse.services import _resolve_material, _move_stock as wh_move
+            def _mat(text):  # an inactive material still holds the stock its receipt booked
+                return _resolve_material(conn, text) or _resolve_material(conn, text, active_only=False)
+            mat = _mat(item["item"])
+            refs = [str(pr["pr_no"]).strip().upper()]
+            if _pr_field(pr, "po_no"):
+                refs.append(str(pr["po_no"]).strip().upper())
+            placeholders = ",".join("?" for _ in refs)
+            if mat:
+                received = conn.execute(
+                    "SELECT COALESCE(SUM(qty),0) AS n FROM wh_movements "
+                    "WHERE type='purchase_receiving' AND material_id=? AND UPPER(TRIM(ref)) IN ("
+                    + placeholders + ")", (mat["id"], *refs)).fetchone()["n"]
+                bridged = conn.execute(
+                    "SELECT COALESCE(SUM(qty),0) AS n FROM pr_stock_postings "
+                    "WHERE pr_id=? AND target='material' AND target_id=? AND status='posted' "
+                    "AND qty>0 AND ref NOT LIKE 'door:%'",
+                    (pr["id"], mat["id"])).fetchone()["n"]
+                door_reversed = -float(conn.execute(
+                    "SELECT COALESCE(SUM(qty),0) AS n FROM pr_stock_postings "
+                    "WHERE pr_id=? AND target='material' AND target_id=? "
+                    "AND ref LIKE 'door:%' AND status='posted'",
+                    (pr["id"], mat["id"])).fetchone()["n"])
+                door_net = round(float(received) - float(bridged) - door_reversed, 6)
+                if door_net > 1e-9:
+                    # Both receipt paths share the same free stock; reverse them separately.
+                    if plan:
+                        return False, "stock_not_posted"
+                    if door_net < left:
+                        return False, "stock_not_posted"
+                    if mat["roll_tracked"]:
+                        rolls = conn.execute(
+                            "SELECT id, remaining_m-COALESCE(reserved_m,0) AS free "
+                            "FROM wh_rolls WHERE material_id=? AND UPPER(TRIM(grn_ref)) IN ("
+                            + placeholders + ") AND remaining_m-COALESCE(reserved_m,0)>? "
+                            "ORDER BY id DESC", (mat["id"], *refs, 1e-9)).fetchall()
+                        needed = left
+                        for roll in rolls:
+                            amount = min(needed, float(roll["free"]))
+                            door.append((roll["id"], amount))
+                            needed -= amount
+                            if needed <= 1e-9:
+                                break
+                        if needed > 1e-9:
+                            return False, "stock_issued"
+                    else:
+                        available = conn.execute(
+                            "SELECT stock_qty-COALESCE(reserved_qty,0) AS free "
+                            "FROM wh_materials WHERE id=?", (mat["id"],)).fetchone()["free"]
+                        if float(available or 0) < left:
+                            return False, "stock_issued"
+                        door.append((None, left))
+            if not mat or door_net <= 1e-9:
+                # Door stock for this PR that no line (nor this line's own material) explains may be this line's: refuse, never skip it.
+                others = {m["id"] for m in (_mat(o["item"]) for o in conn.execute(
+                    "SELECT item FROM pr_items WHERE pr_id=? AND id<>?",
+                    (pr["id"], item["id"])).fetchall()) if m} | ({mat["id"]} if mat else set())
+                door_rows = conn.execute(
+                    "SELECT DISTINCT material_id FROM wh_movements WHERE type='purchase_receiving' "
+                    "AND UPPER(TRIM(ref)) IN (" + placeholders + ")", refs).fetchall()
+                if any(r["material_id"] not in others for r in door_rows):
+                    return False, "stock_not_posted"
+    except Exception:
+        conn.rollback()
+        return False, "stock_unknown"
+    # Probe other modules before the first write, then lock and revalidate.
+    conn.execute("UPDATE pr_requests SET paid_amount=paid_amount WHERE id=?", (pr["id"],))
+    current = conn.execute("SELECT status FROM pr_requests WHERE id=?", (pr["id"],)).fetchone()
+    line = conn.execute("SELECT received_qty FROM pr_items WHERE id=?", (item["id"],)).fetchone()
+    latest = [dict(r) for r in conn.execute(
+        "SELECT * FROM pr_stock_postings WHERE item_id=? AND free=0 ORDER BY id",
+        (item["id"],)).fetchall()]
+    if current["status"] not in ("partially_received", "received"):
+        return False, "not_reversible"
+    if float(line["received_qty"] or 0) != float(item["received_qty"] or 0) or rows != latest:
+        return False, "posting_unsettled"
+    if door:
+        # Lock stock counters and recheck free quantities before changing the receipt.
+        conn.execute("UPDATE wh_materials SET stock_qty=stock_qty WHERE id=?", (mat["id"],))
+        for rid, amount in door:
+            if rid:
+                conn.execute("UPDATE wh_rolls SET remaining_m=remaining_m WHERE id=?", (rid,))
+                available = conn.execute(
+                    "SELECT remaining_m-COALESCE(reserved_m,0) AS free FROM wh_rolls WHERE id=?",
+                    (rid,)).fetchone()
+            else:
+                available = conn.execute(
+                    "SELECT stock_qty-COALESCE(reserved_qty,0) AS free FROM wh_materials WHERE id=?",
+                    (mat["id"],)).fetchone()
+            if not available or float(available["free"] or 0) < amount:
+                conn.rollback()
+                return False, "stock_issued"
+    conn.execute("UPDATE pr_items SET received_qty=received_qty-? WHERE id=?", (qty, item["id"]))
+    lines = conn.execute("SELECT qty, received_qty FROM pr_items WHERE pr_id=?", (pr["id"],)).fetchall()
+    status = "received" if all(float(i["received_qty"] or 0) >= float(i["qty"] or 0) for i in lines) else (
+        "partially_received" if any(float(i["received_qty"] or 0) > 0 for i in lines) else "po_issued")
+    conn.execute("UPDATE pr_requests SET status=? WHERE id=?", (status, pr["id"]))
+    if door:
+        for rid, amount in door:
+            ok, err = wh_move(conn, "adjustment", -amount, user,
+                              material_id=None if rid else mat["id"], roll_id=rid,
+                              ref=ref, notes=f"Receipt correction door:{item['id']} ({ref})")
+            if not ok:
+                conn.rollback()
+                return False, err
+        door_n = sum(1 for r in rows if str(r["ref"] or "").startswith(f"door:{item['id']}:")) + 1
+        conn.execute("INSERT INTO pr_stock_postings "
+                     "(pr_id,grn_id,ref,item_id,target,target_id,qty,free,status,created_at,posted_at) "
+                     "VALUES (?,NULL,?,?,'material',?,?,0,'posted',?,?)",
+                     (pr["id"], f"door:{item['id']}:{door_n}", item["id"], mat["id"],
+                      -sum(amount for _, amount in door), _now(), _now()))
+    n = sum(1 for r in rows if str(r["ref"] or "").startswith("rev:")) + 1
+    for target, target_id, amount in plan:
+        conn.execute("INSERT INTO pr_stock_postings "
+                     "(pr_id,grn_id,ref,item_id,target,target_id,qty,free,status,created_at) "
+                     "VALUES (?,NULL,?,?,?,?,?,0,'pending',?)",
+                     (pr["id"], f"rev:{item['id']}:{n}", item["id"], target, target_id, -amount, _now()))
+        n += 1
+    return True, sum(amount for _, _, amount in plan) + sum(amount for _, amount in door)
+
+
+def _correct_receipt(pr_id, item_id, qty, reason, user, ip, returned):
+    reason = (reason or "").strip()
+    if not reason:
+        return False, "reason_required"
+    try:
+        qty = float(qty)
+    except (TypeError, ValueError):
+        return False, "bad_qty"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        if pr["status"] not in ("partially_received", "received"):
+            return False, "not_reversible"
+        item = conn.execute("SELECT * FROM pr_items WHERE id=? AND pr_id=?", (item_id, pr_id)).fetchone()
+        if not item or not 0 < qty <= float(item["received_qty"] or 0):
+            return False, "bad_qty"
+        ok, result = _unreceive(conn, pr, item, qty, pr["pr_no"], user)
+        if not ok:
+            return False, result
+        if returned:
+            _record_return(conn, pr_id, pr, [{"item_id": item["id"], "item": item["item"],
+                "qty": qty, "unit": item["unit"], "unit_price": item["unit_price"]}], reason, user, grn_id=None)
+        note = f"; only {result:g} had reached stock" if result < qty else ""
+        audit(conn, pr_id, (user or {}).get("username"),
+              "returned_after_receipt" if returned else "receipt_reversed",
+              f"{item['item']} (line {item['id']}): {qty:g}; {reason}{note}", ip)
+        conn.commit()
+    finally:
+        conn.close()
+    post_stock_postings(pr_id, user)
+    return True, ""
+
+
+def reverse_receipt(pr_id, item_id, qty, reason, user, ip=None):
+    return _correct_receipt(pr_id, item_id, qty, reason, user, ip, False)
+
+
+def return_to_supplier(pr_id, item_id, qty, reason, user, ip=None):
+    return _correct_receipt(pr_id, item_id, qty, reason, user, ip, True)
+
+
+def _unpost(row, actor):
+    conn = get_db()
+    try:
+        q = -float(row["qty"])
+        try:
+            # no-op write locks the stock row so two corrections cannot both pass the check
+            conn.execute("UPDATE " + ("mnt_spare_parts" if row["target"] == "spare" else "wh_materials")
+                         + " SET stock_qty=stock_qty WHERE id=?", (row["target_id"],))
+            available, roll_id = _reversal_stock(conn, row["target"], row["target_id"], q, row["pr_no"])
+        except Exception:
+            conn.rollback()
+            return False, "stock_unknown"
+        if not available:
+            conn.rollback()
+            return False, "stock_issued"
+        notes = f"Receipt correction {row['ref']} ({row['pr_no']})"
+        if row["target"] == "spare":
+            from app.maintenance.services import _move_stock
+            ok, err = _move_stock(conn, row["target_id"], "correction", -q, actor, notes=notes)
+        else:
+            from app.warehouse.services import _move_stock as wh_move
+            ok, err = wh_move(conn, "adjustment", -q, actor,
+                              material_id=None if roll_id else row["target_id"], roll_id=roll_id,
+                              ref=row["pr_no"], notes=notes)
+        if ok:
+            conn.commit()
+        else:
+            conn.rollback()
+        return ok, err
+    except Exception as exc:
+        conn.rollback()
+        return False, str(exc)
+    finally:
+        conn.close()
+
+
+def void_invoice(inv_id, reason, user, ip=None):
+    reason = (reason or "").strip()
+    if not reason:
+        return False, "reason_required"
+    conn = get_db()
+    try:
+        inv = conn.execute("SELECT * FROM pr_invoices WHERE id=?", (inv_id,)).fetchone()
+        if not inv:
+            return False, "not_found"
+        pr_id = inv["pr_id"]
+        conn.execute("UPDATE pr_requests SET paid_amount=paid_amount WHERE id=?", (pr_id,))
+        inv = conn.execute("SELECT * FROM pr_invoices WHERE id=?", (inv_id,)).fetchone()
+        if inv["reversal_of"] is not None or inv["status"] == "void" or conn.execute(
+                "SELECT id FROM pr_invoices WHERE reversal_of=?", (inv_id,)).fetchone():
+            return False, "already_void"
+        scope, args = "pr_id=?", (pr_id,)
+        if inv["po_id"] is not None:
+            scope += " AND po_id=?"
+            args += (inv["po_id"],)
+        paid = conn.execute("SELECT COALESCE(SUM(amount),0) n FROM pr_payments WHERE " + scope, args).fetchone()["n"]
+        other = conn.execute("SELECT COALESCE(SUM(amount+COALESCE(tax,0)),0) n FROM pr_invoices WHERE "
+                             + scope + " AND id!=? AND COALESCE(status,'')!='void'",
+                             args + (inv_id,)).fetchone()["n"]
+        direct = conn.execute("SELECT COALESCE(SUM(amount),0) n FROM pr_payments WHERE invoice_id=?",
+                              (inv_id,)).fetchone()["n"]
+        if float(paid) > float(other) + 0.01 or float(direct) > 0.01:
+            return False, "invoice_paid"
+        conn.execute("UPDATE pr_invoices SET status='void' WHERE id=?", (inv_id,))
+        conn.execute("INSERT INTO pr_invoices (pr_id,po_id,invoice_no,currency,amount,tax,status,"
+                     "reversal_of,notes,created_by,created_at) VALUES (?,?,?,?,?,?,'void',?,?,?,?)",
+                     (pr_id, inv["po_id"], inv["invoice_no"], inv["currency"], -float(inv["amount"] or 0),
+                      -float(inv["tax"] or 0), inv_id, reason, (user or {}).get("username"), _now()))
+        audit(conn, pr_id, (user or {}).get("username"), "invoice_voided", f"Invoice #{inv_id}: {reason}", ip)
+        conn.commit()
+    finally:
+        conn.close()
+    three_way_match(pr_id)
+    return True, ""
+
+
+def reverse_payment(pay_id, reason, user, ip=None):
+    reason = (reason or "").strip()
+    if not reason:
+        return False, "reason_required"
+    conn = get_db()
+    try:
+        pay = conn.execute("SELECT * FROM pr_payments WHERE id=?", (pay_id,)).fetchone()
+    finally:
+        conn.close()
+    if not pay:
+        return False, "not_found"
+    pr_id = pay["pr_id"]
+    match = three_way_match(pr_id)
+    conn = get_db()
+    try:
+        conn.execute("UPDATE pr_requests SET paid_amount=paid_amount WHERE id=?", (pr_id,))
+        pay = conn.execute("SELECT * FROM pr_payments WHERE id=?", (pay_id,)).fetchone()
+        if pay["reversal_of"] is not None or conn.execute(
+                "SELECT id FROM pr_payments WHERE reversal_of=?", (pay_id,)).fetchone():
+            return False, "already_reversed"
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        now = _now()
+        conn.execute("INSERT INTO pr_payments (pr_id,po_id,invoice_id,amount,currency,method,reference,"
+                     "paid_at,notes,reversal_of,created_by,created_at) VALUES (?,?,?,?,?,'reversal',?,?,?,?,?,?)",
+                     (pr_id, pay["po_id"], pay["invoice_id"], -float(pay["amount"] or 0), pay["currency"],
+                      pay["reference"], now[:10], reason, pay_id, (user or {}).get("username"), now))
+        paid = float(pr["paid_amount"] or 0) - float(pay["amount"] or 0)
+        status = _payment_status(paid, match, pr_amounts(pr)["grand"])
+        conn.execute("UPDATE pr_requests SET paid_amount=?, payment_status=? WHERE id=?", (round(paid, 2), status, pr_id))
+        audit(conn, pr_id, (user or {}).get("username"), "payment_reversed", f"Payment #{pay_id}: {reason}", ip)
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def _committed_rows(conn):
+    prs = [dict(r) for r in conn.execute(
+        "SELECT * FROM pr_requests WHERE is_active=1 AND status IN ("
+        + ",".join("?" for _ in _SPEND_STATUSES) + ")", _SPEND_STATUSES).fetchall()]
+    orders = {}
+    for row in conn.execute("SELECT pr_id, vendor, grand FROM pr_purchase_orders "
+                           "WHERE COALESCE(status,'issued')<>'cancelled'").fetchall():
+        orders.setdefault(row["pr_id"], []).append(dict(row))
+    for pr in prs:
+        reduced = dict(pr, total=float(pr.get("total") or 0) - float(pr.get("budget_released") or 0))
+        value = egp_commitment(reduced)
+        pos = orders.get(pr["id"], [])
+        grand = sum(float(po["grand"] or 0) for po in pos)
+        shares = {}
+        if pos:
+            for po in pos:
+                vendor = (po["vendor"] or "").strip() or "(unassigned)"
+                part = value * float(po["grand"] or 0) / grand if grand else value / len(pos)
+                shares[vendor] = shares.get(vendor, 0.0) + part
+        else:
+            shares[(pr.get("vendor") or "").strip() or "(unassigned)"] = value
+        pr["committed_egp"], pr["vendors"] = value, shares
+    return prs

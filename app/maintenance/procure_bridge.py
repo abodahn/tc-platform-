@@ -111,11 +111,11 @@ def auto_reorder_check(spare_ids=None, conn=None) -> list:
             conn.close()
 
 
-def _raise_pr(conn, spare) -> str:
+def _raise_pr(conn, spare, qty=None, ticket_id=None) -> str:
     """Create + submit the unpriced PR and tag it back to the spare."""
     from app.approvals import services as proc  # lazy: avoid import cycles
 
-    qty = _suggested_qty(spare)
+    qty = max(_suggested_qty(spare), qty or 0)
     available = float(spare["stock_qty"] or 0) - float(spare["reserved_qty"] or 0)
     header = {
         "title": f"Auto reorder — {spare['name'] or spare['code']}",
@@ -126,6 +126,8 @@ def _raise_pr(conn, spare) -> str:
                   f"{spare['uom'] or 'pcs'} at/below reorder level "
                   f"{float(spare['reorder_level'] or 0):g}."),
     }
+    if ticket_id is not None:
+        header["notes"] = f"Raised for ticket #{ticket_id} out-of-stock spare request: {spare['code']}."
     items = [{
         "item": f"{spare['code']} — {spare['name'] or ''}".strip(" —"),
         "description": spare["spec"] or spare["description"] or "",
@@ -147,19 +149,63 @@ def _raise_pr(conn, spare) -> str:
     # Tag the PR so the goods receipt can find its way back to this spare —
     # both at header level (dedup key) and on the line (line-level posting).
     conn.execute("UPDATE pr_requests SET source_module='maintenance', source_ref=? WHERE id=?",
-                 (f"spare:{spare['id']}", pr_id))
+                 (f"ticket:{ticket_id}" if ticket_id is not None else f"spare:{spare['id']}", pr_id))
     conn.execute("UPDATE pr_items SET spare_id=? WHERE pr_id=?", (spare["id"], pr_id))
     # Tell the maintenance side (role inbox + platform bell via notify()).
     from app.maintenance.services import audit as mnt_audit, notify as mnt_notify
+    message = (f"{spare['code']} raised for ticket #{ticket_id} out-of-stock spare request — "
+               if ticket_id is not None else f"{spare['code']} reached its reorder level — ")
     mnt_notify(conn, "storekeeper", f"Auto reorder PR raised: {spare['name']}",
-               f"{spare['code']} reached its reorder level — {pr_no} created for "
-               f"{qty:g} {spare['uom'] or 'pcs'} and sent to Purchasing for pricing.",
+               message + f"{pr_no} created for {qty:g} {spare['uom'] or 'pcs'} and sent to Purchasing for pricing.",
                "spare", spare["id"], "info", f"/procurement/pr/{pr_id}")
+    if ticket_id is not None:
+        mnt_audit(conn, {"username": "auto-reorder"}, "replenishment_pr", "ticket", ticket_id, comment=pr_no)
     mnt_audit(conn, {"username": "auto-reorder"}, "auto_reorder_pr", "spare", spare["id"],
               comment=f"{pr_no} raised for {qty:g} {spare['uom'] or 'pcs'}")
     conn.commit()
     log.info("auto-reorder: %s -> %s (qty %s)", spare["code"], pr_no, qty)
     return pr_no
+
+
+def raise_for_request(request_id):
+    """Raise or link replenishment for short request lines, outside its transaction."""
+    try:
+        conn = get_db()
+        try:
+            if not _enabled(conn):
+                return  # admin turned automatic reorder PRs off
+            req = conn.execute("SELECT ticket_id FROM mnt_requests WHERE id=?", (request_id,)).fetchone()
+            if not req:
+                return
+            from app.maintenance.services import audit
+            lines = conn.execute("SELECT spare_id,qty_requested,qty_approved FROM mnt_request_items "
+                                 "WHERE request_id=? AND spare_id IS NOT NULL", (request_id,)).fetchall()
+            for line in lines:
+                spare = conn.execute("SELECT * FROM mnt_spare_parts WHERE id=?", (line["spare_id"],)).fetchone()
+                if not spare:
+                    continue
+                available = (spare["stock_qty"] or 0) - (spare["reserved_qty"] or 0)
+                shortfall = (line["qty_approved"] or line["qty_requested"]) - available
+                if shortfall <= 0:
+                    continue
+                if f"spare:{spare['id']}" in _open_bridge_refs(conn):
+                    prs = conn.execute(
+                        "SELECT DISTINCT p.id,p.pr_no FROM pr_requests p LEFT JOIN pr_items i ON i.pr_id=p.id "
+                        "WHERE p.is_active=1 AND p.status NOT IN ('rejected','cancelled','closed','received') "
+                        "AND (p.source_ref=? OR i.spare_id=?) ORDER BY p.id DESC",
+                        (f"spare:{spare['id']}", spare["id"])).fetchall()
+                    audit(conn, {"username": "auto-reorder"}, "replenishment_linked", "ticket", req["ticket_id"],
+                          comment=", ".join(p["pr_no"] for p in prs))
+                    conn.commit()
+                else:
+                    _raise_pr(conn, spare, qty=shortfall, ticket_id=req["ticket_id"])
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    except Exception:
+        log.warning("replenishment failed for request %s", request_id, exc_info=True)
 
 
 def notify_ticket_parts_arrived(pr_id):
@@ -172,14 +218,21 @@ def notify_ticket_parts_arrived(pr_id):
             conn.close()
         if not pr or not str(pr["source_ref"] or "").startswith("ticket:"):
             return
-        from app.maintenance.services import notify as mnt_notify, add_comment
+        from app.maintenance.services import (
+            notify as mnt_notify, add_comment, _notify_people, _flush_notes, _usernames_for)
         tid = int(pr["source_ref"].split(":", 1)[1])
         conn = get_db()
         try:
             mnt_notify(conn, "maintenance_technician", f"Parts arrived: {pr['pr_no']}",
                        f"Goods received on {pr['pr_no']} for ticket #{tid} — collect from the warehouse.",
                        "ticket", tid, "info", f"/maintenance/tickets/{tid}")
+            ticket = conn.execute("SELECT assigned_to FROM mnt_tickets WHERE id=?", (tid,)).fetchone()
+            if ticket:
+                _notify_people(conn, _usernames_for(conn, [ticket["assigned_to"]]), "Parts arrived",
+                               "Goods received on %s for ticket #%s — collect from the warehouse.",
+                               f"/maintenance/tickets/{tid}", args=(pr["pr_no"], tid))
             conn.commit()
+            _flush_notes(conn)
         finally:
             conn.close()
         add_comment(tid, {"username": "procurement"},

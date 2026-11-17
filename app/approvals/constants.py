@@ -884,10 +884,16 @@ PROC_PERMISSIONS = [
     "proc_create",     # raise purchase requests
     "proc_approve",    # act on an approval stage the user is eligible for
     "proc_purchasing", # purchasing actions: issue PO, manage vendors
+    "proc_receive",    # book a goods receipt against an issued PO, nothing else
     "proc_pay",        # release payments to suppliers (DOAM 7.3.4)
     "proc_catalogue",  # maintain the item master (NOT cost price — pricing gate)
     "proc_admin",      # settings, approval matrix, act on any stage, vendors
 ]
+
+# Who may read request money (prices, totals, quotes, invoices, payments) beyond
+# their own request and the requests they sign: services.money_view and the
+# money-bearing reports gate on this one tuple.
+MONEY_PERMS = ("proc_purchasing", "proc_pay", "proc_admin")
 
 # New roles introduced by this module -> the procurement permissions they hold.
 PROC_ROLE_PERMS = {
@@ -905,7 +911,7 @@ PROC_ROLE_PERMS = {
     # unit is wrong or the name describes a part that has not been stocked for two
     # years. Purchasing keep it too — they own item and supplier data — but the
     # grant does NOT extend to cost price, which stays with the pricing gate.
-    "warehouse_manager": ["proc_view", "proc_create", "proc_approve", "proc_catalogue"],
+    "warehouse_manager": ["proc_view", "proc_create", "proc_approve", "proc_catalogue", "proc_receive"],
     # DOAM §3.2 authority roles that STAGE_ROLES routes to. Registered HERE, in
     # code, and not only seeded into custom_roles at boot: can_act() resolves a
     # role through effective_roles(), and stage_roles_map() drops any role that
@@ -923,7 +929,7 @@ PROC_ROLE_PERMS = {
     "managing_director": ["proc_view", "proc_create", "proc_approve"],
     "board": ["proc_view", "proc_create", "proc_approve"],
     # grants for roles that already exist on the platform:
-    "storekeeper": ["proc_view", "proc_create", "proc_approve", "proc_catalogue"],
+    "storekeeper": ["proc_view", "proc_create", "proc_approve", "proc_catalogue", "proc_receive"],
     "factory_manager": ["proc_view", "proc_create", "proc_approve"],
     "finance_user": ["proc_view", "proc_create", "proc_approve"],
     "production_manager": ["proc_view", "proc_create"],

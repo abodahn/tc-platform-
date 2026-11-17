@@ -667,6 +667,13 @@ _MONEY_MIGRATIONS = [
     ("po_id", "ALTER TABLE pr_payments ADD COLUMN po_id INTEGER"),
 ]
 
+_CORRECTION_MIGRATIONS = [
+    ("reversal_of", "ALTER TABLE pr_invoices ADD COLUMN reversal_of INTEGER"),
+    ("reversal_of", "ALTER TABLE pr_payments ADD COLUMN reversal_of INTEGER"),
+    ("tax_id", "ALTER TABLE proc_vendors ADD COLUMN tax_id TEXT"),
+    ("budget_released", "ALTER TABLE pr_requests ADD COLUMN budget_released REAL"),
+]
+
 # Columns added to pr_items after first release (line-level receiving).
 _ITEM_MIGRATIONS = [
     # The warehouse rung's own figures (spec §1 and §3). services.py computes
@@ -861,7 +868,8 @@ def create_and_seed(conn):
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS
-                       + _QUOTE_MIGRATIONS + _MONEY_MIGRATIONS + _PROSE_MIGRATIONS):
+                       + _QUOTE_MIGRATIONS + _MONEY_MIGRATIONS + _PROSE_MIGRATIONS
+                       + _CORRECTION_MIGRATIONS):
         try:
             conn.execute(_ddl)
             conn.commit()

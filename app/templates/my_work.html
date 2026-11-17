@@ -17,6 +17,116 @@
 </div>
 
 <div class="grid cols-2">
+  {% if wh_issues %}
+  <div class="panel"><div class="panel-head"><h3 data-i18n="wh.issues.pending">Internal issues awaiting approval</h3><span class="badge-count">{{ wh_issues|length }}</span></div>
+    <div class="panel-pad">{% for c in wh_issues %}
+      <a class="row-line" href="{{ url_for('warehouse.counts') }}" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ c.req_no }}</b> · {{ c.code }} · <span data-i18n="wh.dest.{{ c.dest_kind }}">{{ c.dest_kind|replace('_',' ')|title }}</span>: {{ c.dest_name }}</span><span class="tag">{{ c.qty }}</span>
+      </a>{% endfor %}</div>
+  </div>{% endif %}
+
+  {% if wh_counts %}
+  <div class="panel"><div class="panel-head"><h3 data-i18n="wh.counts.awaiting">Stock counts awaiting approval</h3><span class="badge-count">{{ wh_counts|length }}</span></div>
+    <div class="panel-pad">{% for c in wh_counts %}
+      <a class="row-line" href="{{ url_for('warehouse.counts') }}" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ c.count_no }}</b> · {{ c.code }}</span><span class="tag">{{ c.delta }}</span>
+      </a>{% endfor %}</div>
+  </div>{% endif %}
+
+
+  {% if recv_queue %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.recv_queue">Orders awaiting delivery</h3>
+      <span class="badge-count">{{ recv_queue|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for pr in recv_queue %}
+      <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}{% if pr.po_no %} &middot; {{ pr.po_no }}{% endif %}</span>
+        <span class="tag">{{ pr.status }}</span>
+      </a>
+      {% endfor %}
+      <a href="{{ url_for('approvals.listing') }}" data-i18n="mywork.view_all">View all</a>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if store_issue %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.store_issue">Approved spare requests to issue</h3>
+      <span class="badge-count">{{ store_issue|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for pr in store_issue %}
+      <a class="row-line" href="{{ url_for('maintenance.requests') }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ pr.request_no }}</b> &middot; {{ pr.reason or '' }}</span>
+        <span class="tag">{{ pr.status }}</span>
+      </a>
+      {% endfor %}
+      <a href="{{ url_for('maintenance.requests') }}" data-i18n="mywork.view_all">View all</a>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if po_queue %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.po_queue">Approved requests awaiting a PO</h3>
+      <span class="badge-count">{{ po_queue|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for pr in po_queue %}
+      <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}</span>
+        <span class="tag">{{ pr.status }}</span>
+      </a>
+      {% endfor %}
+      <a href="{{ url_for('approvals.listing', status='approved') }}" data-i18n="mywork.view_all">View all</a>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if stuck_postings %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.stuck_postings">Receipts that did not reach stock</h3>
+      <span class="badge-count">{{ stuck_postings|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for pr in stuck_postings %}
+      <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}</span>
+        <span class="tag">{{ pr.status }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if pay_queue %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3 data-i18n="mywork.pay_queue">Received orders with payment due</h3>
+      <span class="badge-count">{{ pay_queue|length }}</span>
+    </div>
+    <div class="panel-pad">
+      {% for pr in pay_queue %}
+      <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
+         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+        <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}</span>
+        <span class="tag">{{ pr.payment_status or 'unpaid' }}</span>
+      </a>
+      {% endfor %}
+      <a href="{{ url_for('approvals.listing') }}" data-i18n="mywork.view_all">View all</a>
+    </div>
+  </div>
+  {% endif %}
 
   {# ── Approvals waiting for my signature ── #}
   {% if sign_queue %}
@@ -201,8 +311,9 @@
 
 </div>
 
-{% if not (sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets or my_pm
-           or late_milestones or cmp_caps or cmp_expiring) %}
+{% if not (wh_issues or wh_counts or sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets or my_pm
+           or late_milestones or cmp_caps or cmp_expiring
+           or recv_queue or store_issue or po_queue or stuck_postings or pay_queue) %}
 <div class="panel"><div class="panel-pad muted" data-i18n="mywork.empty">
   Nothing to show yet — new approvals, tickets and alerts assigned to you will appear here.
 </div></div>

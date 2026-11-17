@@ -48,6 +48,10 @@ def _pdf_text(blob):
     return b"\n".join(out).decode("latin-1")
 
 
+# Segregation: whoever records an invoice may not pay it, so Finance pays.
+PAYER = {"username": "fin_payer", "role": "finance_manager"}
+
+
 def run():
     app = _app()
     with app.app_context():
@@ -97,6 +101,10 @@ def run():
                                 "id": 100 + pr_id}, "approve", "ok")
                     assert ok, "ladder stuck at %s: %s" % (s["stage"], msg)
             drafted = q("SELECT po_no FROM pr_requests WHERE id=?", pr_id)[0]["po_no"]
+            # issue_po needs every supplier on the vendor master
+            _c = get_db(); _c.execute("INSERT OR IGNORE INTO proc_vendors (name, is_active, created_at) "
+                "SELECT DISTINCT TRIM(COALESCE(i.vendor, r.vendor)), 1, '2026-01-01' FROM pr_items i "
+                "JOIN pr_requests r ON r.id=i.pr_id WHERE i.pr_id=? AND TRIM(COALESCE(i.vendor, r.vendor, ''))<>''", (pr_id,)); _c.commit(); _c.close()
             ok, res = svc.issue_po(pr_id, buyer)
             assert ok, "issue_po refused: %s" % res
             return drafted, res
@@ -198,7 +206,7 @@ def run():
         assert ok, "a legacy order must still be invoiceable: %s" % msg
         assert svc.three_way_match(legacy)["status"] == "matched", \
             svc.three_way_match(legacy)["flags"]
-        ok, msg = svc.add_payment(legacy, {"amount": 1800, "method": "transfer"}, buyer)
+        ok, msg = svc.add_payment(legacy, {"amount": 1800, "method": "transfer"}, PAYER)
         assert ok, "a legacy order must still be payable: %s" % msg      # still pays
         assert q("SELECT payment_status FROM pr_requests WHERE id=?",
                  legacy)[0]["payment_status"] == "paid", "legacy payment did not settle"

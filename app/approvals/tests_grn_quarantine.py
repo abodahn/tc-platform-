@@ -52,7 +52,8 @@ def run():
                 [{"item": item, "qty": qty, "unit_price": 0}],
                 {"username": "tech", "id": 9}, priced=False)
             li = one("SELECT id FROM pr_items WHERE pr_id=?", pr_id)["id"]
-            ok, msg = svc.price_pr(pr_id, {li: unit}, {"tax_rate": 0}, buyer)
+            # issue_po needs an active vendor-master supplier (seeded on a fresh DB)
+            ok, msg = svc.price_pr(pr_id, {li: unit}, {"tax_rate": 0, "vendor": "Delta Industrial Supplies"}, buyer)
             assert ok, "pricing failed: %s" % msg
             return pr_id, li
 
@@ -172,6 +173,14 @@ def run():
         assert wsvc.po_line_for("", trim["id"]) is None
         assert wsvc.po_line_for("NOT-A-PO-9999", trim["id"]) is None, \
             "unknown ref must not match a PO"
+
+        rejected, _ = make("Rejected reference", trim["name"], 1, 20)
+        conn = get_db()
+        conn.execute("UPDATE pr_requests SET status='rejected' WHERE id=?", (rejected,))
+        conn.commit()
+        conn.close()
+        rejected_no = one("SELECT pr_no FROM pr_requests WHERE id=?", rejected)["pr_no"]
+        assert wsvc.po_line_for(rejected_no, trim["id"])["rejected"] is True
 
         # ---- and now through the HTTP doors a real user actually clicks ------
         cl = app.test_client()
@@ -334,31 +343,48 @@ def run():
         assert status(i) == "received" and abs(recd(li) - 100) < 1e-6, (status(i), recd(li))
         assert len(grns(i)[0]) == 1
 
-        # ==== MAJOR 2: a storekeeper may not close a PO through door two =======
+        # ==== MAJOR 2: without receiving rights, no PO closes through door two ===
+        # wh_manage alone (production_manager) is not a receiving grant; the
+        # storekeeper holds proc_receive and is checked at the end.
+        conn = get_db()
+        try:
+            conn.execute("INSERT INTO users (username,password_hash,full_name,role,is_active) "
+                         "VALUES ('prodmgr','x','Production manager','production_manager',1)")
+            conn.commit()
+        finally:
+            conn.close()
         j, lj = make("Trim for the store", trim["name"], 10, 20, so_no=so)
         po_j = approve_all(j)
-        assert login("store") == "storekeeper"
+        assert login("prodmgr") == "production_manager"
         r = cl.post("/procurement/pr/%s/receive" % j,
                     data={"recv_item_id[]": str(lj), "recv_qty[]": "10", "_csrf": tok})
-        assert r.status_code == 403, "the procurement door already refuses a storekeeper"
+        assert r.status_code == 403, "the procurement door refuses a user without proc_receive"
         before = stock(trim["id"])
         r = cl.post("/warehouse/receive",
                     data={"material_id": str(trim["id"]), "qty": "10", "unit_cost": "20",
                           "grn_ref": po_j, "_csrf": tok})
         assert r.status_code == 302
         assert abs(recd(lj)) < 1e-6 and status(j) == "po_issued", (
-            "a storekeeper closed a PO for payment through /warehouse/receive: %s / %r"
+            "a user without receiving rights closed a PO through /warehouse/receive: %s / %r"
             % (status(j), recd(lj)))
-        assert grns(j) == ([], []), "a storekeeper minted a GRN: %r" % (grns(j),)
+        assert grns(j) == ([], []), "a user without receiving rights minted a GRN: %r" % (grns(j),)
         assert abs(stock(trim["id"]) - before) < 1e-6, \
             "refused on the PO, so nothing may be booked as free stock either"
-        # …but plain unreferenced stock-in is still the storekeeper's job
+        # …but plain unreferenced stock-in still works with wh_manage alone
         r = cl.post("/warehouse/receive",
                     data={"material_id": str(trim["id"]), "qty": "7", "unit_cost": "20",
                           "_csrf": tok})
         assert r.status_code == 302
         assert abs((stock(trim["id"]) - before) - 7) < 1e-6, \
-            "the storekeeper's ordinary stock-in must still work"
+            "ordinary unreferenced stock-in must still work"
+        # the storekeeper (proc_receive) books the same PO through door two
+        assert login("store") == "storekeeper"
+        r = cl.post("/warehouse/receive",
+                    data={"material_id": str(trim["id"]), "qty": "10", "unit_cost": "20",
+                          "grn_ref": po_j, "_csrf": tok})
+        assert r.status_code == 302
+        assert status(j) == "received" and abs(recd(lj) - 10) < 1e-6, (status(j), recd(lj))
+        assert len(grns(j)[0]) == 1
 
         print("GRN numbering + over-delivery quarantine: all checks passed")
         return True

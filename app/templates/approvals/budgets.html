@@ -28,12 +28,14 @@
             <td style="font-weight:600">{{ b.department }}</td>
             <td>{{ b.period }}</td>
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(b.amount or 0) }} {{ b.currency }}</td>
-            <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(b.spent or 0) }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(b.spent or 0) if money_full else '—' }}</td>
             <td style="min-width:130px">
+              {% if money_full %}
               <div style="height:7px;border-radius:5px;background:var(--line-2);overflow:hidden">
                 <div style="height:100%;width:{{ [b.pct or 0, 100]|min }}%;background:{{ 'var(--crit)' if (b.pct or 0) > 100 else ('var(--warn)' if (b.pct or 0) >= 80 else 'var(--ok)') }}"></div>
               </div>
               <div class="muted" style="font-size:11px;margin-top:3px">{{ b.pct or 0 }}%</div>
+              {% else %}—{% endif %}
             </td>
           </tr>
         {% endfor %}

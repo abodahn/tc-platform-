@@ -43,7 +43,7 @@ def checks():
             [{"item": item, "qty": qty, "unit_price": 0}],
             {"username": "test_requester", "id": 9}, priced=False)
         li = one("SELECT id FROM pr_items WHERE pr_id=?", pr_id)["id"]
-        ok, msg = svc.price_pr(pr_id, {li: unit}, {"tax_rate": 0}, buyer)
+        ok, msg = svc.price_pr(pr_id, {li: unit}, {"tax_rate": 0, "vendor": "Delta Industrial Supplies"}, buyer)
         assert ok, "pricing failed: %s" % msg
         return pr_id, li
 
@@ -103,7 +103,7 @@ def checks():
     lines = conn.execute("SELECT id FROM pr_items WHERE pr_id=? ORDER BY seq", (pr,)).fetchall()
     conn.close()
     ls, lm = [r["id"] for r in lines]
-    assert svc.price_pr(pr, {ls: 10, lm: 20}, {"tax_rate": 0}, buyer)[0]
+    assert svc.price_pr(pr, {ls: 10, lm: 20}, {"tax_rate": 0, "vendor": "Delta Industrial Supplies"}, buyer)[0]
     approve_all(pr)
     assert svc.receive_items(pr, {str(ls): 4, lm: 6}, store)[0]
     assert one("SELECT COUNT(*) c FROM pr_stock_postings WHERE pr_id=? AND status='posted'", pr)["c"] == 2
@@ -115,6 +115,24 @@ def checks():
     assert one("SELECT status FROM pr_stock_postings WHERE pr_id=?", other)["status"] == "skipped"
     assert svc.post_stock_postings(pr, manual=True) == {"posted": 0, "failed": 0}
     assert spare_stock() == 4 and material_stock() == 6
+    # a skipped line says why, is listed for the PR, and a corrected master is retried
+    assert one("SELECT last_error FROM pr_stock_postings WHERE pr_id=?", other)["last_error"] == "no_matching_material"
+    assert svc.stock_posting_issues(other, ("skipped",))
+    assert wsvc.create_material({"code": "SUNDRY-1", "name": "Unknown sundry item", "kind": "trim"}, store)[0]
+    assert svc.post_stock_postings(other) == {"posted": 0, "failed": 0}      # automatic path leaves it
+    assert svc.post_stock_postings(other, manual=True)["posted"] == 1
+    # two active materials share the line's name: never guess the colour — fail visibly, bell once
+    for code, colour in (("AMB-WHT", "White"), ("AMB-NVY", "Navy")):
+        assert wsvc.create_material({"code": code, "name": "Ambiguous jersey", "color": colour,
+                                     "kind": "trim"}, store)[0]
+    amb, la = make("Ambiguous", "Ambiguous jersey", 2, 5)
+    approve_all(amb)
+    assert svc.receive_items(amb, {la: 2}, store)[0]
+    row = one("SELECT status, last_error FROM pr_stock_postings WHERE pr_id=?", amb)
+    assert row == {"status": "failed", "last_error": "ambiguous_material"}, row
+    assert svc.post_stock_postings(amb)["failed"] == 1
+    assert one("SELECT COUNT(*) c FROM notifications WHERE title='Receipt not booked: ambiguous material'")["c"] == 1
+    assert one("SELECT COALESCE(SUM(stock_qty),0) s FROM wh_materials WHERE code LIKE 'AMB-%'")["s"] == 0
 
     bad, line = make("Failed receipt", "Outbox spare", 3, 10)
     execute("UPDATE pr_items SET spare_id=? WHERE id=?", spare, line)
@@ -150,14 +168,23 @@ def checks():
     assert svc.post_stock_postings(door, manual=True)["posted"] == 0
     assert svc.stock_posting_issues(door)[0]["status"] == "posting"
     assert material_stock() == 6
+    posting = svc.stock_posting_issues(door)[0]["id"]
+    assert svc.resolve_stuck_posting(door, posting, "failed", "  ", buyer) == (False, "note_required")
+    assert svc.resolve_stuck_posting(door, posting, "failed", "No stock movement found", buyer) == (True, "failed")
+    assert one("SELECT status FROM pr_stock_postings WHERE id=?", posting)["status"] == "failed"
+    assert one("SELECT id FROM pr_events WHERE pr_id=? AND action='stock_posting_resolved'", door)
+    assert svc.resolve_stuck_posting(door, posting, "posted", "Checked again", buyer) == (False, "not_stuck")
+    assert material_stock() == 6
 
     tid, err = msvc.create_ticket({"description": "Waiting for outbox spare"}, store)
     assert tid, err
     execute("UPDATE mnt_tickets SET status='waiting_stock', assigned_to=? WHERE id=?", "test_assignee", tid)
-    execute("INSERT INTO users (username,full_name,role,password_hash,is_active) VALUES (?,?,?,'',0)",
+    execute("INSERT INTO users (username,full_name,role,password_hash,is_active) VALUES (?,?,?,'',1)",
             "test_assignee", "Test Assignee", "maintenance_technician")
     req = execute("INSERT INTO mnt_requests (ticket_id,status) VALUES (?,'out_of_stock')", tid)
-    execute("INSERT INTO mnt_request_items (request_id,spare_id,qty_requested) VALUES (?,?,2)", req, spare)
+    # 20 > what this receipt brings: the request stays short, so arrival keeps
+    # notifying (a request the receipt fully covers is resumed instead).
+    execute("INSERT INTO mnt_request_items (request_id,spare_id,qty_requested) VALUES (?,?,20)", req, spare)
     assert msvc.receive_stock(spare, 2, 10, store)[0]
     assert one("SELECT status FROM mnt_tickets WHERE id=?", tid)["status"] == "waiting_stock"
     assert one("SELECT COUNT(*) c FROM mnt_notifications WHERE entity_type='ticket' AND entity_id=? AND title='Spare part arrived'", tid)["c"] == 2
@@ -174,6 +201,20 @@ def checks():
     assert one(arrived, tid)["c"] == 1
     svc.post_stock_postings(tpr, manual=True)          # a retry must not repeat it
     assert one(arrived, tid)["c"] == 1
+    assert one("SELECT COUNT(*) c FROM notifications WHERE target_user=? AND title='Parts arrived'",
+               "test_assignee")["c"] == 1
+
+    # a ticket PR whose line IS spare-linked: one arrival notice for that ticket, not two
+    spr, sl = make("Ticket spare", "Outbox spare", 1, 10)
+    execute("UPDATE pr_items SET spare_id=? WHERE id=?", spare, sl)
+    execute("UPDATE pr_requests SET source_module='maintenance', source_ref=? WHERE id=?",
+            "ticket:%s" % tid, spr)
+    approve_all(spr)
+    assert svc.receive_items(spr, {sl: 1}, store)[0]
+    assert one("SELECT COUNT(*) c FROM notifications WHERE target_user=? AND title='Parts arrived'",
+               "test_assignee")["c"] == 2
+    assert one("SELECT COUNT(*) c FROM notifications WHERE target_user=? AND title='Spare part arrived'",
+               "test_assignee")["c"] == 1
 
 
 if __name__ == "__main__":

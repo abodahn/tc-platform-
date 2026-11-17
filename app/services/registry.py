@@ -126,3 +126,17 @@ def search_registry(system_rows, query: str, limit: int = 200) -> dict:
         "assets": [a for a in reg["assets"] if _match(a)][:limit],
         "sources": reg["sources"],
     }
+
+
+def find_asset(system_rows, tag, timeout=1.5):
+    """The registry asset whose asset_id or serial_number equals `tag` (case-insensitive), or None. Never raises."""
+    try:
+        tag = (tag or "").strip().casefold()
+        if not tag:
+            return None
+        reg = fetch_registry(system_rows, timeout=timeout)
+        return next((a for a in reg["assets"]
+                     if any(str(a.get(k) or "").casefold() == tag
+                            for k in ("asset_id", "serial_number"))), None)
+    except Exception:
+        return None

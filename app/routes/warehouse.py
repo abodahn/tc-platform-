@@ -4,13 +4,18 @@ Raw material at roll level (FIFO + shade-lot picking), quantity-tracked trims,
 and finished goods as a style x colour x size matrix — on platform auth, RBAC,
 CSRF, i18n, base template and the notification bell.
 """
+import csv
+import io
+import json
+import re
 import time
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, Response
 
 from app.auth import login_required, permission_required, current_user, user_can
 from app.warehouse import services as svc
-from app.warehouse.constants import MATERIAL_KINDS, ROLL_STATUS, SIZES
+from app.warehouse.constants import MATERIAL_KINDS, ROLL_STATUS, SIZES, IMPORT_COLUMNS, UOMS, COUNT_REASONS, DEST_KINDS
+from app.tabular import ACCEPT, TableError, read_grid
 
 bp = Blueprint("warehouse", __name__, url_prefix="/warehouse")
 
@@ -20,6 +25,13 @@ _SWEEP_EVERY = 300  # s — no scheduler in this codebase; page loads drive the 
 
 def _u():
     return current_user()
+
+
+def _proc_flash(msg, cat):
+    """Flash a procurement-side receiving message in the reader's language."""
+    from app.approvals.messages import translate
+    lang = (current_user() or {}).get("lang_pref") or "en"
+    flash(translate(msg, lang), cat)
 
 
 def _sweep_throttled():
@@ -50,9 +62,10 @@ def index():
 def materials():
     kind = request.args.get("kind") or None
     low = request.args.get("low") == "1"
+    inactive = request.args.get("inactive") == "1"
     return render_template("warehouse/materials.html", active="wh_materials",
-                           rows=svc.list_materials(kind, low), kinds=MATERIAL_KINDS,
-                           f_kind=kind, f_low=low)
+                           rows=svc.list_materials(kind, low, inactive), kinds=MATERIAL_KINDS,
+                           f_kind=kind, f_low=low, f_inactive=inactive, reasons=COUNT_REASONS)
 
 
 @bp.route("/materials", methods=["POST"])
@@ -63,6 +76,162 @@ def material_create():
     flash("Material added." if ok else f"Could not add material ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("warehouse.materials"))
+
+
+@bp.route("/materials/<int:mid>/edit", methods=["GET", "POST"])
+@login_required
+@permission_required("wh_manage")
+def material_edit(mid):
+    material = svc.get_material(mid)
+    if not material:
+        abort(404)
+    if request.method == "POST":
+        ok, msg = svc.update_material(mid, request.form, _u())
+        flash("Material updated." if ok else f"Update rejected ({msg}).", "success" if ok else "error")
+        return redirect(url_for("warehouse.material_edit", mid=mid))
+    return render_template("warehouse/material_edit.html", active="wh_materials", material=material,
+                           kinds=MATERIAL_KINDS, uoms=UOMS, uom_locked=svc.material_uom_locked(mid))
+
+
+@bp.route("/materials/<int:mid>/active", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def material_active(mid):
+    ok, msg = svc.set_material_active(mid, request.form.get("active") == "1", _u())
+    flash("Material updated." if ok else f"Update rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.materials"))
+
+
+@bp.route("/rolls/<int:roll_id>/edit", methods=["GET", "POST"])
+@login_required
+@permission_required("wh_manage")
+def roll_edit(roll_id):
+    roll = svc.get_roll(roll_id)
+    if not roll:
+        abort(404)
+    if request.method == "POST":
+        ok, msg = svc.update_roll(roll_id, request.form, _u())
+        flash("Roll updated." if ok else f"Update rejected ({msg}).", "success" if ok else "error")
+        return redirect(url_for("warehouse.roll_edit", roll_id=roll_id))
+    return render_template("warehouse/roll_edit.html", active="wh_rolls", roll=roll)
+
+
+@bp.route("/rolls/<int:roll_id>/split", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def roll_split(roll_id):
+    lengths = [v for v in request.form.getlist("lengths") if v.strip()]
+    ok, msg = svc.split_roll(roll_id, lengths, _u())
+    flash("Roll split." if ok else f"Split rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.roll_edit", roll_id=roll_id))
+
+
+@bp.route("/materials/import")
+@login_required
+@permission_required("wh_manage")
+def material_import():
+    return render_template("warehouse/material_import.html", active="wh_materials",
+                           columns=IMPORT_COLUMNS, accept=ACCEPT)
+
+
+@bp.route("/materials/import/template.xlsx")
+@login_required
+@permission_required("wh_manage")
+def material_import_template():
+    examples = [
+        ["FAB-EXAMPLE-01", "Cotton jersey 180gsm", "fabric", "m", "White", "100% Cotton", 180, "", "yes", ""],
+        ["TRM-EXAMPLE-01", "Button 18L", "trim", "pcs", "Navy", "Polyester", "", "", "no", 500],
+    ]
+    if (request.args.get("fmt") or "").lower() == "csv":
+        buf = io.StringIO(newline="")
+        writer = csv.writer(buf)
+        writer.writerows([IMPORT_COLUMNS] + examples)
+        return Response(buf.getvalue().encode("utf-8-sig"), mimetype="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": "attachment; filename=warehouse_materials_template.csv"})
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "materials"
+    for row in [IMPORT_COLUMNS] + examples:
+        ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(buf.getvalue(),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": "attachment; filename=warehouse_materials_template.xlsx"})
+
+
+@bp.route("/materials/import", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def material_import_run():
+    target = url_for("warehouse.material_import")
+    action = request.form.get("action")
+    if action == "confirm":
+        try:
+            payload = json.loads(request.form.get("payload", ""))
+            if not isinstance(payload, dict):
+                raise ValueError()
+            rows, dec = payload.get("rows"), payload.get("decimal")
+            if (not isinstance(rows, list) or len(rows) > 5000 or dec not in (None, ",")
+                    or any(not isinstance(r, dict) or type(r.get("line")) is not int
+                           or r["line"] < 1 or any(not isinstance(r.get(k, ""), str)
+                                                    for k in IMPORT_COLUMNS) for r in rows)):
+                raise ValueError()
+        except (ValueError, TypeError):
+            flash("Invalid import payload (maximum 5000 rows).", "error")
+            return redirect(target)
+    elif action == "preview":
+        file = request.files.get("file")
+        if not file or not file.filename:
+            flash("Choose a file to import.", "error")
+            return redirect(target)
+        try:
+            grid, meta = read_grid(file)
+        except TableError as exc:
+            flash(str(exc), "error")
+            return redirect(target)
+        hdr_i = next((i for i, r in enumerate(grid) if any((c or "").strip() for c in r)), len(grid))
+        header = grid[hdr_i] if hdr_i < len(grid) else []
+
+        def _norm(s):
+            return re.sub(r"[^a-z0-9]+", "_", (s or "").strip().lower()).strip("_")
+
+        file_cols = {}
+        for idx, name in enumerate(header):
+            key = _norm(name)
+            if key and key not in file_cols:
+                file_cols[key] = idx
+        if "code" not in file_cols:
+            flash("Missing columns: code.", "error")
+            return redirect(target)
+        data = grid[hdr_i + 1:]
+        if len(data) > 5000:
+            flash("Import is limited to 5000 data rows.", "error")
+            return redirect(target)
+        rows = []
+        for line, cells in enumerate(data, hdr_i + 2):
+            row = {k: str(cells[file_cols[k]] or "") if k in file_cols and file_cols[k] < len(cells) else ""
+                   for k in IMPORT_COLUMNS}
+            row["line"] = line
+            rows.append(row)
+        dec = "," if meta.get("delimiter") == ";" else None
+    else:
+        flash("Choose preview or confirm.", "error")
+        return redirect(target)
+    try:
+        result = svc.import_materials(rows, _u(), commit=action == "confirm", decimal=dec)
+    except Exception:
+        flash("Import failed — nothing was written.", "error")
+        return redirect(target)
+    if action == "confirm":
+        flash(f"Import: {len(result['added'])} added, {len(result['updated'])} updated, "
+              f"{len(result['unchanged'])} unchanged, {len(result['rejected'])} rejected. "
+              f"Opening stock: {result['opening_total']:g}.", "success")
+        return redirect(url_for("warehouse.materials"))
+    return render_template("warehouse/material_import.html", active="wh_materials",
+                           columns=IMPORT_COLUMNS, accept=ACCEPT, result=result,
+                           payload=json.dumps({"rows": rows, "decimal": dec}))
 
 
 @bp.route("/rolls")
@@ -77,7 +246,7 @@ def rolls():
                            rows=svc.list_rolls(material_id, color, shade, status),
                            materials=svc.list_materials(), lots=svc.shade_lots(material_id),
                            statuses=ROLL_STATUS, f_material=material_id, f_shade=shade,
-                           f_status=status, f_color=color)
+                           f_status=status, f_color=color, reasons=COUNT_REASONS)
 
 
 @bp.route("/rolls/<int:roll_id>/hold", methods=["POST"])
@@ -91,16 +260,15 @@ def roll_hold(roll_id):
     return redirect(request.referrer or url_for("warehouse.rolls"))
 
 
-@bp.route("/rolls/<int:roll_id>/return", methods=["POST"])
+@bp.route("/return", methods=["POST"])
 @login_required
 @permission_required("wh_manage")
-def roll_return(roll_id):
-    """Book the end-bit back onto the roll it came off after cutting."""
-    ok, msg = svc.return_to_store(roll_id, request.form.get("qty"), _u(),
-                                 _int(request.form.get("order_id")))
-    flash("Returned to store." if ok else f"Return rejected ({msg}).",
-          "success" if ok else "error")
-    return redirect(request.referrer or url_for("warehouse.rolls"))
+def return_post():
+    ok, msg = svc.return_to_store(_int(request.form.get("material_id")), request.form.get("qty"),
+                                 _u(), _int(request.form.get("order_id")),
+                                 _int(request.form.get("roll_id")), request.form.get("notes"))
+    flash("Returned to store." if ok else f"Return rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.issue"))
 
 
 @bp.route("/receive")
@@ -120,6 +288,9 @@ def receive_post():
     if not mat:
         flash("Pick a material first.", "error")
         return redirect(url_for("warehouse.receive"))
+    if not mat["is_active"]:
+        flash("Receipt rejected (material_inactive).", "error")
+        return redirect(url_for("warehouse.receive"))
     roll = bool(mat.get("roll_tracked"))
     form = request.form
     # Same rule as the procurement receiving tab: a stock-in that names a PO is
@@ -127,22 +298,33 @@ def receive_post():
     # its own GRN number allocated. post_stock=False because we book the stock
     # ourselves right after, keeping the roll/lot detail the bridge cannot carry.
     line = svc.po_line_for(form.get("grn_ref"), mid)
-    if line and line.get("no_po"):
-        flash("That reference belongs to a purchase request that has no purchase order yet. "
-              "Issue the PO first, or receive here without the reference.", "error")
+    if line and line.get("rejected"):
+        _proc_flash("That reference belongs to a purchase request that was rejected. Nothing "
+                    "can be received against it - receive here without the reference.", "error")
         return redirect(url_for("warehouse.receive"))
-    delivered = svc.qty_of(form.get("length_m") if roll else form.get("qty"))
+    if line and line.get("no_po"):
+        _proc_flash("That reference belongs to a purchase request that has no purchase order yet. "
+                    "Issue the PO first, or receive here without the reference.", "error")
+        return redirect(url_for("warehouse.receive"))
+    roll_rows = []
+    if roll:
+        columns = {k: form.getlist(k) for k in
+                   ("roll_no", "length_m", "shade_lot", "supplier_lot", "width_cm", "bin")}
+        for i, length in enumerate(columns["length_m"]):
+            if length.strip():
+                roll_rows.append({k: values[i] if i < len(values) else "" for k, values in columns.items()})
+        if not roll_rows or any(svc.qty_of(r["length_m"], -1) <= 0 for r in roll_rows):
+            flash("Receipt rejected (bad_qty).", "error")
+            return redirect(url_for("warehouse.receive"))
+    delivered = sum(svc.qty_of(r["length_m"]) for r in roll_rows) if roll else svc.qty_of(form.get("qty"))
     asked, quarantined = delivered, 0.0
     if line and delivered > 0:
-        # Booking a receipt onto a PO writes pr_requests.status and received_qty,
-        # mints a GRN and opens the payment path — a proc_purchasing action. This
-        # route is only wh_manage, so a storekeeper could close a PO for payment
-        # here after being refused on the procurement door. Refuse instead of
-        # quietly booking free stock the order never hears about.
-        if not user_can("proc_purchasing"):
-            flash("That reference belongs to a purchase order. Receiving against a "
-                  "PO needs purchasing rights — use the Receiving tab on the "
-                  "request, or receive here without the PO reference.", "error")
+        # Booking a PO receipt requires receiving rights as well as wh_manage.
+        # Refuse instead of quietly booking unreferenced free stock.
+        if not (user_can("proc_purchasing") or user_can("proc_receive")):
+            _proc_flash("That reference belongs to a purchase order. Receiving against a "
+                        "PO needs receiving rights — use the Receiving tab on the "
+                        "request, or receive here without the PO reference.", "error")
             return redirect(url_for("warehouse.receive"))
         quarantined = max(0.0, delivered - line["outstanding"])
         asked = min(delivered, line["outstanding"])
@@ -157,8 +339,17 @@ def receive_post():
     if line and asked <= 0:
         pass                       # the whole delivery is over the order: quarantine only
     elif roll:
-        ok, msg = svc.receive_roll(mid, form, _u())
-        flash(f"Roll {msg} received." if ok else f"Receipt rejected ({msg}).",
+        allowance = asked
+        capped = []
+        for row in roll_rows:
+            if allowance <= 1e-6:     # float residue must not mint a micro-roll
+                break
+            length = min(svc.qty_of(row["length_m"]), allowance)
+            capped.append(dict(row, length_m=length))
+            allowance = round(allowance - length, 6)
+        common = {k: form.get(k) for k in ("grn_ref", "unit_cost", "grade", "received_at", "warehouse", "notes")}
+        ok, msg = svc.receive_rolls(mid, common, capped, _u())
+        flash(f"{len(msg)} rolls received." if ok else f"Receipt rejected ({msg}).",
               "success" if ok else "error")
     else:
         ok, msg = svc.receive_qty(mid, form.get("qty"), form.get("unit_cost"), _u(),
@@ -172,11 +363,11 @@ def receive_post():
         pok, pmsg = psvc.receive_items(line["pr_id"], {line["item_id"]: delivered}, _u(),
                                        notes=form.get("notes") or None, post_stock=False)
         if not pok:
-            flash(f"Stock booked, but the purchase order refused the receipt ({pmsg}).",
-                  "error")
+            _proc_flash(f"Stock booked, but the purchase order refused the receipt ({pmsg}).",
+                        "error")
         elif quarantined > 0:
-            flash(f"{quarantined:g} over the ordered quantity was quarantined, not "
-                  f"added to stock.", "warning")
+            _proc_flash(f"Quarantined, not added to stock - over the ordered quantity: "
+                        f"{quarantined:g}", "warning")
     return redirect(url_for("warehouse.rolls" if roll else "warehouse.materials"))
 
 
@@ -185,9 +376,10 @@ def receive_post():
 @permission_required("wh_manage")
 def adjust():
     mid = _int(request.form.get("material_id"))
-    ok, msg = svc.adjust_stock(mid, request.form.get("delta"), request.form.get("reason"),
-                               _u(), _int(request.form.get("roll_id")))
-    flash("Stock adjusted." if ok else f"Adjustment rejected ({msg}).",
+    ok, msg = svc.submit_count(mid, request.form.get("delta"), request.form.get("reason"),
+                               request.form.get("note"), _u(), _int(request.form.get("roll_id")))
+    flash(("Adjustment applied." if msg == "applied" else "Count submitted for approval.")
+          if ok else f"Adjustment rejected ({msg}).",
           "success" if ok else "error")
     return redirect(request.referrer or url_for("warehouse.materials"))
 
@@ -201,9 +393,14 @@ def issue():
     shade = request.args.get("shade_lot") or None
     plan = svc.plan_pick(mid, required, shade, request.args.get("min_width_cm")) \
         if (mid and required) else None
+    res_order = _int(request.args.get("res_order"))
     return render_template("warehouse/issue.html", active="wh_issue",
                            materials=svc.list_materials(), orders=svc.list_orders_lite(),
-                           lots=svc.shade_lots(mid), plan=plan, allocs=svc.open_allocations(),
+                           lots=svc.shade_lots(mid), plan=plan, allocs=svc.open_allocations(res_order),
+                           alloc_total=svc.count_open_allocations(res_order), res_order=res_order,
+                           selected_material=svc.get_material(mid),
+                           rolls=svc.list_rolls(mid) if mid else [], dest_kinds=DEST_KINDS,
+                           return_roll=_int(request.args.get("return_roll")),
                            f_material=mid, f_required=required, f_shade=shade,
                            f_width=request.args.get("min_width_cm"),
                            f_order=_int(request.args.get("order_id")))
@@ -264,8 +461,11 @@ def fg_post():
     oid = _int(request.form.get("order_id"))
     ok, msg = svc.fg_move(oid, request.form.get("style_code"), request.form.get("color"),
                           request.form.get("size"), request.form.get("qty"),
-                          request.form.get("action") or "pack", _u())
-    flash("Finished goods updated." if ok else f"Rejected ({msg}).",
+                          request.form.get("action") or "pack", _u(), manual=True)
+    flash("Finished goods updated." if ok else
+          "This order ships through the Shipping module - its dispatch posts the finished goods. "
+          "Manual ship-out is blocked to avoid a double deduction."
+          if msg == "shipping_owns_order" else f"Rejected ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("warehouse.fg", order_id=oid))
 
@@ -291,6 +491,145 @@ def api_json(key):
     if resp is None:
         abort(404)
     return resp
+
+
+
+@bp.route("/allocations/<int:alloc_id>/issue", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def allocation_issue(alloc_id):
+    ok, msg = svc.issue_reserved(_int(request.form.get("order_id")), _u(), alloc_ids=[alloc_id])
+    flash(f"Material issued ({msg})." if ok else f"Issue rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.issue"))
+
+
+@bp.route("/orders/<int:order_id>/issue-reserved", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def issue_all_reserved(order_id):
+    ok, msg = svc.issue_reserved(order_id, _u())
+    flash(f"Material issued ({msg})." if ok else f"Issue rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.issue"))
+
+
+@bp.route("/counts")
+@login_required
+@permission_required("wh_view")
+def counts():
+    recent = svc.list_counts(("applied", "approved", "rejected"), limit=50)
+    return render_template("warehouse/counts.html", active="wh_materials",
+                           pending=svc.list_counts("pending"), recent=recent, pct=svc.count_auto_pct(),
+                           issue_pending=svc.list_issue_requests("pending"),
+                           issue_recent=svc.list_issue_requests(("approved", "rejected"), limit=50),
+                           issue_limit=svc.issue_limit())
+
+
+@bp.route("/counts/settings", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def count_settings():
+    ok, msg = svc.set_count_threshold(request.form.get("pct"), _u())
+    flash("Threshold saved." if ok else f"Threshold rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/counts/<int:count_id>/approve", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def count_approve(count_id):
+    ok, msg = svc.approve_count(count_id, _u(), request.form.get("note"))
+    flash("Count approved." if ok else f"Approval rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/counts/<int:count_id>/reject", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def count_reject(count_id):
+    ok, msg = svc.reject_count(count_id, _u(), request.form.get("note"))
+    flash("Count rejected." if ok else f"Rejection failed ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/issue-requests/<int:req_id>/approve", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def issue_request_approve(req_id):
+    ok, msg = svc.approve_issue_request(req_id, _u(), request.form.get("note"))
+    flash("Issue approved." if ok else f"Approval rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/issue-requests/<int:req_id>/reject", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def issue_request_reject(req_id):
+    ok, msg = svc.reject_issue_request(req_id, _u(), request.form.get("note"))
+    flash("Issue rejected." if ok else f"Rejection failed ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/issue-limit", methods=["POST"])
+@login_required
+@permission_required("wh_approve")
+def issue_limit():
+    ok, msg = svc.set_issue_limit(request.form.get("limit"), _u())
+    flash("Limit saved." if ok else f"Limit rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.counts"))
+
+
+@bp.route("/materials/<int:mid>/card")
+@login_required
+@permission_required("wh_view")
+def material_card(mid):
+    start, end = svc.date_range(request.args.get("from"), request.args.get("to"))
+    card = svc.stock_card(mid, start, end)
+    if not card["material"]:
+        abort(404)
+    return render_template("warehouse/stock_card.html", active="wh_materials", card=card,
+                           date_from=start, date_to=end)
+
+
+@bp.route("/daily")
+@login_required
+@permission_required("wh_view")
+def daily():
+    start, end = svc.date_range(request.args.get("from"), request.args.get("to"))
+    mid = _int(request.args.get("material_id"))
+    rows = svc.daily_report(start, end, mid)
+    if request.args.get("format") == "csv":
+        from app.services.export import csv_file
+        keys = ["date", "code", "name", "uom", "opening", "in", "out", "closing"]
+        return csv_file(["Date", "Code", "Material", "Unit", "Opening", "In", "Out", "Closing"],
+                        [[r[k] for k in keys] for r in rows], "warehouse_daily.csv")
+    return render_template("warehouse/daily.html", active="wh_materials", rows=rows,
+                           materials=svc.list_materials(), f_material=mid, date_from=start, date_to=end)
+
+
+@bp.route("/issue-internal", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def issue_internal():
+    ok, msg = svc.issue_internal(_int(request.form.get("material_id")), request.form.get("qty"),
+                                 request.form.get("dest_kind"), request.form.get("dest_name"),
+                                 request.form.get("reason"), _u(), _int(request.form.get("roll_id")))
+    if ok and msg == "pending":
+        flash("Issue sent for approval: value is above the approval limit.", "success")
+    elif msg == "no_unit_cost":
+        flash("wh.issues.no_unit_cost", "error")
+    else:
+        flash("Material issued." if ok else f"Issue rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.issue"))
+
+
+@bp.route("/bin", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def bin_move():
+    ok, msg = svc.move_bin(request.form.get("new_bin"), _u(),
+                           _int(request.form.get("material_id")), _int(request.form.get("roll_id")))
+    flash("Bin updated." if ok else f"Bin move rejected ({msg}).", "success" if ok else "error")
+    return redirect(request.referrer or url_for("warehouse.materials"))
 
 
 # Report declarations for the shared engine (app/services/reporting.py). Imported

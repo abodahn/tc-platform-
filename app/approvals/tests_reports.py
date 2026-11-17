@@ -34,6 +34,7 @@ config.Config.DB_PATH = TMP / "platform.db"
 
 from app import create_app                          # noqa: E402
 from app.services import reporting as R             # noqa: E402
+from app.approvals import constants as C            # noqa: E402
 
 app = create_app()
 # The generic /reporting hub is owned by another lane and may not be registered
@@ -145,8 +146,9 @@ with app.app_context():
     print("\n-- registration --")
     for k in KEYS:
         spec = R.get(k)
-        ok(f"{k} is registered with perm proc_view",
-           spec is not None and spec["perm"] == "proc_view")
+        # every one of these carries request money: purchasing / finance / admin only
+        ok(f"{k} is registered with the money permissions",
+           spec is not None and spec["perm"] == C.MONEY_PERMS)
         ok(f"{k} declares AR + TR for every column/kpi/filter",
            spec is not None and all(x["ar"] and x["tr"] for x in spec["columns"])
            and all(x["ar"] and x["tr"] for x in spec["kpis"])

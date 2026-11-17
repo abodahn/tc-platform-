@@ -57,13 +57,13 @@
           <th data-i18n="proc.terms">Terms</th>
           <th data-i18n="vsc.manual">Manual rating</th>
           <th data-i18n="vsc.title">Measured performance</th>
-          <th data-i18n="proc.rtv.dues">Outstanding dues</th>
+          {% if money_full %}<th data-i18n="proc.rtv.dues">Outstanding dues</th>{% endif %}{% if can_manage %}<th></th>{% endif %}
         </tr></thead>
         <tbody>
         {% for v in vendors %}
           {% set s = scores.get(v.name|trim|lower) %}
           <tr>
-            <td><div style="font-weight:600">{{ v.name }}</div>
+            <td><div style="font-weight:600">{{ v.name }}{% if not v.is_active %} <span class="badge b-pending" data-i18n="proc.vendor.inactive">Inactive</span>{% endif %}</div>
                 <div class="muted" style="font-size:12px">{{ v.category or '' }}{% if v.email %} · {{ v.email }}{% endif %}</div></td>
             <td>{{ v.contact_person or '—' }}<div class="muted" style="font-size:12px">{{ v.phone or '' }}</div></td>
             <td>{{ v.payment_terms or '—' }}</td>
@@ -80,9 +80,33 @@
               {% endif %}
               {{ scorecard(s) }}
             </td>
-            <td>{% if v.dues %}<span style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(v.dues) }}</span>
+            {% if money_full %}<td>{% if v.dues %}<span style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(v.dues) }}</span>
                 <div class="muted" style="font-size:12px">{{ v.dues_count }} <span data-i18n="proc.rtv.open_dn">open debit note(s)</span></div>
-                {% else %}—{% endif %}</td>
+                {% else %}—{% endif %}</td>{% endif %}
+            {% if can_manage %}<td>
+              <details><summary style="cursor:pointer;font-weight:600" data-i18n="proc.vendor.edit">Edit vendor</summary>
+                <form method="post" action="{{ url_for('approvals.update_vendor', vendor_id=v.id) }}">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <div class="field"><label data-i18n="proc.vendor.name">Name</label><input name="name" value="{{ v.name or '' }}" required></div>
+                  <div class="field"><label data-i18n="proc.vendor.contact_person">Contact person</label><input name="contact_person" value="{{ v.contact_person or '' }}"></div>
+                  <div class="field"><label data-i18n="proc.vendor.phone">Phone</label><input name="phone" value="{{ v.phone or '' }}"></div>
+                  <div class="field"><label data-i18n="proc.vendor.email">Email</label><input name="email" value="{{ v.email or '' }}"></div>
+                  <div class="field"><label data-i18n="proc.vendor.address">Address</label><input name="address" value="{{ v.address or '' }}"></div>
+                  <div class="field"><label data-i18n="proc.vendor.payment_terms">Payment terms</label><input name="payment_terms" value="{{ v.payment_terms or '' }}"></div>
+                  <div class="field"><label data-i18n="proc.vendor.category">Category</label><input name="category" value="{{ v.category or '' }}"></div>
+                  <div class="field"><label data-i18n="proc.vendor.rating">Rating (0–5)</label><input name="rating" value="{{ v.rating or '' }}" type="number" min="0" max="5" step="0.1"></div>
+                  <div class="field"><label data-i18n="proc.vendor.notes">Notes</label><input name="notes" value="{{ v.notes or '' }}"></div>
+                  <div class="field"><label data-i18n="proc.vendor.tax_id">Tax ID</label><input name="tax_id" value="{{ v.tax_id or '' }}"></div>
+                  <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.vendor.save">Save vendor</button>
+                </form>
+              </details>
+              <form method="post" action="{{ url_for('approvals.set_vendor_active', vendor_id=v.id) }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="active" value="{{ 0 if v.is_active else 1 }}">
+                {% if v.is_active %}<button class="btn btn-ghost btn-sm" type="submit" data-advance data-i18n="proc.vendor.deactivate">Deactivate</button>
+                {% else %}<button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.vendor.activate">Activate</button>{% endif %}
+              </form>
+            </td>{% endif %}
           </tr>
         {% endfor %}
         </tbody>
@@ -112,6 +136,8 @@
           <div class="field"><label data-i18n="proc.email">Email</label><input name="email" autocomplete="off"></div>
           <div class="field"><label data-i18n="proc.category">Category</label><input name="category" autocomplete="off"></div>
         </div>
+        <div class="field"><label data-i18n="proc.vendor.tax_id">Tax ID</label><input name="tax_id" autocomplete="off"></div>
+        <div class="field"><label data-i18n="proc.vendor.notes">Notes</label><input name="notes" autocomplete="off"></div>
         <div class="field"><label data-i18n="proc.address">Address</label><input name="address" autocomplete="off"></div>
         <div class="grid cols-2">
           <div class="field"><label data-i18n="proc.terms">Payment terms</label><input name="payment_terms" autocomplete="off"></div>

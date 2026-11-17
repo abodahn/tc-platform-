@@ -106,7 +106,8 @@ def _pg_candidates():
 
 
 # Tables whose primary key is NOT `id` (so we never append RETURNING id).
-_NO_ID_TABLES = {"mnt_settings", "ai_system_settings", "prob_settings", "auth_settings"}
+_NO_ID_TABLES = {"mnt_settings", "ai_system_settings", "prob_settings", "auth_settings",
+                  "wh_settings"}
 
 
 def translate_ddl(sql, dialect):
@@ -1144,6 +1145,30 @@ def apply_integration_overrides(conn):
                      (base, health, key))
 
 
+def widen_real_columns(conn):
+    """PostgreSQL only: widen float4 (REAL) columns to DOUBLE PRECISION using a text
+    cast to keep the value the user saw (shortest float4 text). Rewrite each table
+    once in its own transaction; return the number of columns successfully widened."""
+    cols = [(r["table_name"], r["column_name"]) for r in conn.execute(
+        "SELECT table_name, column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND data_type = 'real'").fetchall()]
+    tables = {}
+    for table, column in cols:
+        tables.setdefault(table, []).append(column.replace('"', ''))
+    done = 0
+    for table, columns in tables.items():
+        try:
+            changes = ', '.join(
+                'ALTER COLUMN "%s" TYPE DOUBLE PRECISION USING "%s"::text::double precision'
+                % (column, column) for column in columns)
+            conn.execute('ALTER TABLE "%s" %s' % (table.replace('"', ''), changes))
+            conn.commit()
+            done += len(columns)
+        except Exception:
+            conn.rollback()
+    return done
+
+
 def init_db():
     """Create tables and seed first-run data. Idempotent and non-destructive."""
     conn = get_db()
@@ -1350,6 +1375,13 @@ def init_db():
                 _m.create_and_seed(conn)
             except Exception:
                 conn.rollback()
+        # PostgreSQL REAL is float4 (~7 significant digits): 500000.01 was stored as
+        # 500000.0, enough to slip a value threshold. Widen every REAL column to
+        # DOUBLE PRECISION using a text cast to keep the value the user saw (shortest
+        # float4 text), rewriting each table once. SQLite REAL is already 8-byte. Runs last so
+        # columns added above are covered; finds nothing on later boots.
+        if _is_pg():
+            widen_real_columns(conn)
         # Auto-provision a signature for every user who doesn't have one yet, so it
         # can be stamped on any paper without each person drawing one manually.
         try:

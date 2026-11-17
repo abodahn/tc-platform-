@@ -28,6 +28,31 @@ wrong, which is the worst moment to make somebody parse a formal sentence.
 
 # English source (a TEMPLATE where the message carries data) -> {"ar", "tr"}
 MESSAGES = {
+    "Repair test failed": {"ar": "فشل اختبار الإصلاح", "tr": "Onarım testi başarısız"},
+    "%s failed its test: %s": {"ar": "فشل اختبار %s: %s", "tr": "%s testte başarısız oldu: %s"},
+    "Spare request resumed": {"ar": "تم استئناف طلب قطع الغيار", "tr": "Yedek parça talebi devam ediyor"},
+    "%s: stock arrived, the request is back in the flow": {"ar": "%s: وصل المخزون وتم استئناف إجراءات الطلب", "tr": "%s: stok geldi, talep sürece geri döndü"},
+    "Work order assigned": {"ar": "تم إسناد أمر العمل", "tr": "İş emri atandı"},
+    "Spare request awaiting approval": {"ar": "طلب قطع غيار بانتظار الموافقة", "tr": "Yedek parça talebi onay bekliyor"},
+    "Spare request rejected": {"ar": "تم رفض طلب قطع الغيار", "tr": "Yedek parça talebi reddedildi"},
+    "Spare request returned": {"ar": "تمت إعادة طلب قطع الغيار للتوضيح", "tr": "Yedek parça talebi açıklama için iade edildi"},
+    "Spare request approved": {"ar": "تمت الموافقة على طلب قطع الغيار", "tr": "Yedek parça talebi onaylandı"},
+    "Ticket closed": {"ar": "تم إغلاق التذكرة", "tr": "Talep kapatıldı"},
+    "Spare part arrived": {"ar": "وصلت قطعة الغيار", "tr": "Yedek parça geldi"},
+    "Parts arrived": {"ar": "وصلت قطع الغيار", "tr": "Parçalar geldi"},
+    "%s assigned to you": {"ar": "تم إسناد %s إليك", "tr": "%s size atandı"},
+    "%s needs your approval": {"ar": "%s يحتاج إلى موافقتك", "tr": "%s onayınızı bekliyor"},
+    "%s returned for clarification": {"ar": "تمت إعادة %s للتوضيح", "tr": "%s açıklama için iade edildi"},
+    "%s approved": {"ar": "تمت الموافقة على %s", "tr": "%s onaylandı"},
+    "%s has been closed": {"ar": "تم إغلاق %s", "tr": "%s kapatıldı"},
+    "%s received (%s) — ticket #%s is waiting on it; raise or re-approve the spare request.": {
+        "ar": "تم استلام %s (%s) — التذكرة رقم %s تنتظر هذه القطعة؛ أنشئ طلب قطع الغيار أو أعد الموافقة عليه.",
+        "tr": "%s teslim alındı (%s) — #%s numaralı talep bu parçayı bekliyor; yedek parça talebi oluşturun veya yeniden onaylayın.",
+    },
+    "Goods received on %s for ticket #%s — collect from the warehouse.": {
+        "ar": "تم استلام البضائع بموجب %s للتذكرة رقم %s — يرجى استلامها من المخزن.",
+        "tr": "%s kapsamında #%s numaralı talep için mallar teslim alındı — depodan teslim alın.",
+    },
     "%s added, %s updated, %s unchanged, %s rejected.": {
         "ar": "%s مضافة، %s محدَّثة، %s دون تغيير، %s مرفوضة.",
         "tr": "%s eklendi, %s güncellendi, %s değişmedi, %s reddedildi.",

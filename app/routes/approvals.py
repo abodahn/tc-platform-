@@ -8,6 +8,7 @@ approval actions are additionally gated by the per-stage authority check.
 """
 import base64
 import io
+import math
 import time
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
@@ -106,10 +107,13 @@ def index():
             svc.run_escalations()
     except Exception:
         pass
+    queue = svc.my_queue(user)
+    recent = svc.list_prs(limit=12)
     return render_template(
         "approvals/index.html", active="procurement",
-        kpi=svc.counts(user), queue=svc.my_queue(user),
-        recent=svc.list_prs(limit=12),
+        kpi=svc.counts(user), queue=queue, recent=recent,
+        money=svc.money_views(user, queue + recent),
+        show_value=(svc.money_view(user) == "full"),
         can_create=user_can("proc_create"))
 
 
@@ -118,7 +122,8 @@ def index():
 @permission_required("proc_view")
 def analytics():
     return render_template("approvals/analytics.html", active="proc_analytics",
-                           a=svc.analytics_summary())
+                           a=svc.analytics_summary(),
+                           show_money=(svc.money_view(_u()) == "full"))
 
 
 @bp.route("/export/<key>.csv")
@@ -126,6 +131,8 @@ def analytics():
 @permission_required("proc_view")
 def export_csv(key):
     """Download a procurement report as CSV (register / spend / orders / payments)."""
+    if svc.money_view(_u()) != "full":
+        abort(403)
     import csv  # local import keeps this addition self-contained
     headers, rows = svc.export_dataset(key)
     if headers is None:
@@ -180,6 +187,7 @@ def listing_xlsx():
     prs = svc.list_prs(status=status,
                        requester=(user["username"] if mine else None))
 
+    levels = svc.money_views(user, prs)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Purchase requests"
@@ -200,6 +208,10 @@ def listing_xlsx():
                     v = 0.0
             elif key in ("request_date", "approved_at"):
                 v = (str(v)[:10] or None) if v else None
+            if key == "total" and not levels.get(pr["id"]):
+                v = None
+            elif key == "payment_status" and levels.get(pr["id"]) != "full":
+                v = None
             row.append(v)
         ws.append(row)
 
@@ -234,7 +246,8 @@ def listing():
     user = _u()
     prs = svc.list_prs(status=status, requester=(user["username"] if mine else None))
     return render_template("approvals/list.html", active="proc_list",
-                           prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES)
+                           prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES,
+                           money=svc.money_views(user, prs))
 
 
 # --------------------------------------------------------------------------
@@ -1267,6 +1280,7 @@ def detail(pr_id):
                "request. The Plant Director does not sign it." if l2_dom else "")
     cur_label = " + ".join(C.stage_label(s) for s in current_stages) if current_stages else None
     can_purchasing = user_can("proc_purchasing")
+    can_receive = can_purchasing or user_can("proc_receive")
     is_priced = (pr.get("pricing_status") or "priced") == "priced"
     # Cross-module mesh: live warehouse availability for spare-linked lines and
     # a clickable origin (the maintenance ticket / spare this PR came from).
@@ -1307,9 +1321,11 @@ def detail(pr_id):
     needs_pricing = (can_purchasing and not is_priced
                      and pr["status"] in ("draft", "rejected", "pending"))
     # Requesters don't see commercial figures until Purchasing has priced the PR.
-    show_commercial = is_priced or can_purchasing
+    money = svc.money_view(user, pr, bundle["steps"])
+    show_commercial = (is_priced or can_purchasing) and bool(money)
     return render_template("approvals/detail.html", active="proc_list",
                            stock_issues=svc.stock_posting_issues(pr_id),
+                           stock_skipped=svc.stock_posting_issues(pr_id, ("skipped",)),
                            fields=svc.visible_fields(),
                            # Approved suppliers, for the per-line supplier boxes
                            # at the pricing gate. Free text is still allowed —
@@ -1330,8 +1346,8 @@ def detail(pr_id):
                            current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
                            match=svc.three_way_match(pr_id),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
-                           budget=svc.budget_status(pr.get("department")),
-                           can_purchasing=can_purchasing, is_priced=is_priced,
+                           budget=svc.budget_status(pr.get("department")) if money == "full" else None,
+                           can_purchasing=can_purchasing, can_receive=can_receive, is_priced=is_priced,
                            # Offering a form the viewer cannot submit is worse
                            # than hiding it: Purchasing no longer releases payment.
                            can_pay=user_can("proc_pay"),
@@ -1340,6 +1356,7 @@ def detail(pr_id):
                            can_advance=any(svc.can_act(user, s)
                                            for s in ("finance", "cfo", "ceo")),
                            needs_pricing=needs_pricing, show_commercial=show_commercial,
+                           money=money, money_full=(money == "full"),
                            # The warehouse rung may correct quantities, but only
                            # while the request is still worth nothing — after
                            # pricing a quantity moves a signed total.
@@ -1349,7 +1366,7 @@ def detail(pr_id):
                            # exactly the case that needs unwinding.
                            can_reverse_issue=bool(
                                (not is_priced)
-                               and pr["status"] in ("pending", "closed")
+                               and pr["status"] in ("pending", "closed", "rejected")
                                and ((actionable
                                      and actionable["stage"] == "warehouse")
                                     or user_can("proc_admin")
@@ -1414,6 +1431,23 @@ def retry_stock_postings(pr_id):
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
+@bp.route("/pr/<int:pr_id>/stock-postings/<int:posting_id>/resolve", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing", "proc_admin")
+def resolve_stuck_posting(pr_id, posting_id):
+    ok, code = svc.resolve_stuck_posting(
+        pr_id, posting_id, request.form.get("outcome"), request.form.get("note"), _u(), ip=_ip())
+    messages = {
+        "posted": "Stock posting marked as posted after checking the store.",
+        "failed": "Stock posting marked as failed. You can retry it now.",
+        "bad_outcome": "Choose posted or failed to resolve the stock posting.",
+        "note_required": "Enter a note about checking the store.",
+        "not_stuck": "This stock posting is no longer stuck in posting.",
+    }
+    flash(messages[code], "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
 # --------------------------------------------------------------------------
 # Multi-quote comparison
 # --------------------------------------------------------------------------
@@ -1439,14 +1473,16 @@ def add_quote(pr_id):
     if not f.get("vendor") or not f.get("amount"):
         flash("Vendor and amount are required for a quote.", "error")
         return redirect(url_for("approvals.detail", pr_id=pr_id))
-    svc.add_quote(pr_id, {
+    ok, code = svc.add_quote(pr_id, {
         "vendor": f.get("vendor", "").strip(), "amount": f.get("amount"),
         "currency": f.get("currency", "EGP"), "lead_time_days": f.get("lead_time_days"),
         "warranty": f.get("warranty", "").strip(), "notes": f.get("notes", "").strip(),
         # The RFQ this quotation came back against, when it answers one.
         "rfq_id": f.get("rfq_id", "").strip(),
     }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
-    flash("Quote added.", "success")
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash("Quote added." if ok else ui.get(str(code) + "_flash") or
+          f"Could not add quote ({code}).", "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -1679,6 +1715,11 @@ def quote_file(quote_id):
     q = svc.get_quote(quote_id)
     if not q or not q["content_b64"]:
         abort(404)
+    bundle = svc.get_pr(q["pr_id"])
+    if not bundle:
+        abort(404)
+    if not svc.money_view(_u(), bundle["pr"], bundle["steps"]):
+        abort(403)
     try:
         raw = base64.b64decode(q["content_b64"])
     except Exception:
@@ -1694,14 +1735,16 @@ def quote_file(quote_id):
 @login_required
 @permission_required("proc_view")
 def budgets():
+    money_full = svc.money_view(_u()) == "full"
     rows = svc.list_budgets()
-    for b in rows:
-        st = svc.budget_status(b["department"], b["period"])
-        b["spent"] = st["spent"] if st else 0
-        b["remaining"] = st["remaining"] if st else None
-        b["pct"] = st["pct"] if st else 0
+    if money_full:
+        for b in rows:
+            st = svc.budget_status(b["department"], b["period"])
+            b["spent"] = st["spent"] if st else 0
+            b["remaining"] = st["remaining"] if st else None
+            b["pct"] = st["pct"] if st else 0
     return render_template("approvals/budgets.html", active="proc_budgets",
-                           budgets=rows, can_manage=user_can("proc_admin"))
+                           budgets=rows, money_full=money_full, can_manage=user_can("proc_admin"))
 
 
 @bp.route("/budgets", methods=["POST"])
@@ -1983,7 +2026,12 @@ def issue_po(pr_id):
     # could see. Now the caller has to tick "override" and the reason is audited.
     _override = user_can("proc_admin") and request.form.get("override") == "1"
     ok, res = svc.issue_po(pr_id, _u(), ip=_ip(), force=_override)
-    flash(f"Purchase Order {res} issued." if ok else
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    if not ok and res in ("vendor_required", "vendor_not_in_master"):
+        flash((ui.get(str(res) + "_flash") or f"Could not issue PO ({res}).")
+              + " " + url_for("approvals.vendors"), "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    flash(f"Purchase Order {res} issued." if ok else ui.get(str(res) + "_flash") or
           {"over_budget": "The department budget for this period is exceeded — "
                           "an administrator must issue this PO (or raise the budget).",
            }.get(res, f"Could not issue PO ({res})."),
@@ -2048,7 +2096,7 @@ _RECEIVE_ERR = {
 
 @bp.route("/pr/<int:pr_id>/receive", methods=["POST"])
 @login_required
-@permission_required("proc_purchasing")
+@permission_required("proc_purchasing", "proc_receive")
 def receive(pr_id):
     f = request.form
     ids = f.getlist("recv_item_id[]")
@@ -2060,6 +2108,8 @@ def receive(pr_id):
         for i, iid in enumerate(ids):
             try:
                 q = float(vals[i]) if i < len(vals) and vals[i] else 0
+                if not math.isfinite(q):
+                    q = 0
             except ValueError:
                 q = 0
             if q > 0:
@@ -2086,7 +2136,7 @@ def receive(pr_id):
 
 @bp.route("/pr/<int:pr_id>/invoice", methods=["POST"])
 @login_required
-@permission_required("proc_purchasing")
+@permission_required("proc_purchasing", "proc_pay")
 def add_invoice(pr_id):
     if not svc.get_pr(pr_id):
         abort(404)
@@ -2130,6 +2180,11 @@ def invoice_file(inv_id):
     iv = svc.get_invoice(inv_id)
     if not iv or not iv["content_b64"]:
         abort(404)
+    bundle = svc.get_pr(iv["pr_id"])
+    if not bundle:
+        abort(404)
+    if svc.money_view(_u(), bundle["pr"], bundle["steps"]) != "full":
+        abort(403)
     try:
         raw = base64.b64decode(iv["content_b64"])
     except Exception:
@@ -2212,7 +2267,8 @@ def cancel(pr_id):
     ok, msg = svc.cancel_pr(pr_id, _u(), ip=_ip(),
                             is_purchasing=user_can("proc_purchasing"),
                             is_admin=user_can("proc_admin"))
-    flash("Request cancelled." if ok else
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash("Request cancelled." if ok else ui.get(str(msg) + "_flash") or
           {"forbidden": "Only the requester (or Purchasing/an admin) can cancel this request.",
            "needs_admin": "This request is already approved — only an administrator can cancel it.",
            "already_received": "Goods were already received against this order — close it instead of cancelling.",
@@ -2273,7 +2329,8 @@ def pr_pdf(pr_id):
     if not bundle:
         abort(404)
     try:
-        data = pdfgen.pr_pdf(bundle)
+        data = pdfgen.pr_pdf(bundle, money=bool(
+            svc.money_view(_u(), bundle["pr"], bundle["steps"])))
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
     return send_file(io.BytesIO(data), mimetype="application/pdf",
@@ -2297,6 +2354,8 @@ def po_pdf(pr_id):
     bundle = svc.get_pr(pr_id)
     if not bundle:
         abort(404)
+    if not svc.money_view(_u(), bundle["pr"], bundle["steps"]):
+        abort(403)
     if bundle["pr"]["status"] not in ("approved", "po_issued", "partially_received",
                                       "received", "closed"):
         abort(400, "The Purchase Order is available only after full approval.")
@@ -2351,6 +2410,8 @@ def debit_note_pdf(ret_id):
     bundle = svc.get_pr(ret["pr_id"])
     if not bundle:
         abort(404)
+    if svc.money_view(_u(), bundle["pr"], bundle["steps"]) != "full":
+        abort(403)
     try:
         data = pdfgen.debit_note_pdf(bundle, ret)
     except Exception:
@@ -2503,6 +2564,10 @@ def download_attachment(att_id):
     row = svc.get_attachment(att_id)
     if not row:
         abort(404)
+    # PR documents are mostly supplier quotations: same gate as quote_file.
+    bundle = svc.get_pr(row["pr_id"])
+    if not bundle or not svc.money_view(_u(), bundle["pr"], bundle["steps"]):
+        abort(403)
     try:
         raw = base64.b64decode(row["content_b64"])
     except Exception:
@@ -2520,6 +2585,7 @@ def download_attachment(att_id):
 def vendors():
     return render_template("approvals/vendors.html", active="proc_vendors",
                            vendors=svc.list_vendors(active_only=False),
+                           money_full=(svc.money_view(_u()) == "full"),
                            can_manage=user_can("proc_purchasing"))
 
 
@@ -2527,14 +2593,10 @@ def vendors():
 @login_required
 @permission_required("proc_purchasing")
 def create_vendor():
-    data = {k: request.form.get(k, "").strip() for k in
-            ("name", "contact_person", "phone", "email", "address",
-             "payment_terms", "category", "rating", "notes")}
-    if not data["name"]:
-        flash("Vendor name is required.", "error")
-    else:
-        svc.create_vendor(data, _u(), ip=_ip())
-        flash("Vendor saved.", "success")
+    ok, code = svc.create_vendor(request.form, _u(), ip=_ip())
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash(ui["vendor_saved_flash"] if ok else ui.get(str(code) + "_flash") or
+          f"Could not save vendor ({code}).", "success" if ok else "error")
     return redirect(url_for("approvals.vendors"))
 
 
@@ -2779,3 +2841,83 @@ def verify_signature(code):
 # Report declarations for the shared reporting engine (/reporting). Imported for
 # its import-time side effect: it registers the specs and touches no database.
 from app.approvals import reports as _reports  # noqa: E402,F401
+
+
+@bp.route("/vendors/<int:vendor_id>", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def update_vendor(vendor_id):
+    ok, code = svc.update_vendor(vendor_id, request.form, _u(), ip=_ip())
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash(ui["vendor_saved_flash"] if ok else ui.get(str(code) + "_flash") or
+          f"Could not save vendor ({code}).", "success" if ok else "error")
+    return redirect(url_for("approvals.vendors"))
+
+
+@bp.route("/vendors/<int:vendor_id>/active", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def set_vendor_active(vendor_id):
+    ok, code = svc.set_vendor_active(vendor_id, request.form.get("active") == "1", _u(), ip=_ip())
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash(ui["vendor_saved_flash"] if ok else ui.get(str(code) + "_flash") or
+          f"Could not update vendor ({code}).", "success" if ok else "error")
+    return redirect(url_for("approvals.vendors"))
+
+
+def _correction_flash(ok, code):
+    ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
+    flash(ui["correction_saved_flash"] if ok else ui.get(str(code) + "_flash") or
+          f"Could not correct record ({code}).", "success" if ok else "error")
+
+
+@bp.route("/pr/<int:pr_id>/reverse-receipt", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing", "proc_admin")
+def reverse_receipt(pr_id):
+    ok, code = svc.reverse_receipt(pr_id, request.form.get("item_id"), request.form.get("qty"),
+                                   request.form.get("reason"), _u(), ip=_ip())
+    _correction_flash(ok, code)
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/pr/<int:pr_id>/return-to-supplier", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def return_to_supplier(pr_id):
+    ok, code = svc.return_to_supplier(pr_id, request.form.get("item_id"), request.form.get("qty"),
+                                      request.form.get("reason"), _u(), ip=_ip())
+    _correction_flash(ok, code)
+    return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+@bp.route("/invoice/<int:inv_id>/void", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing", "proc_pay", "proc_admin")
+def void_invoice(inv_id):
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT pr_id FROM pr_invoices WHERE id=?", (inv_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    ok, code = svc.void_invoice(inv_id, request.form.get("reason"), _u(), ip=_ip())
+    _correction_flash(ok, code)
+    return redirect(url_for("approvals.detail", pr_id=row["pr_id"]))
+
+
+@bp.route("/payment/<int:pay_id>/reverse", methods=["POST"])
+@login_required
+@permission_required("proc_pay", "proc_admin")
+def reverse_payment(pay_id):
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT pr_id FROM pr_payments WHERE id=?", (pay_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    ok, code = svc.reverse_payment(pay_id, request.form.get("reason"), _u(), ip=_ip())
+    _correction_flash(ok, code)
+    return redirect(url_for("approvals.detail", pr_id=row["pr_id"]))

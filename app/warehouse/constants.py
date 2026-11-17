@@ -5,6 +5,9 @@
 # fabric and trims into two tables would duplicate every list query, the reorder sweep,
 # the receipt path and the ledger for zero gain — the columns are identical.
 MATERIAL_KINDS = ["fabric", "trim", "accessory"]
+IMPORT_COLUMNS = ["code", "name", "kind", "uom", "color", "composition", "width_cm",
+                  "supplier", "roll_tracked", "opening_qty"]
+UOMS = ["m", "yd", "kg", "g", "pcs", "cone", "roll", "set", "pair", "box", "dz", "l"]
 
 # Stored on wh_rolls. There is deliberately NO 'reserved' status: a roll is routinely
 # PART reserved (30m committed out of 60m), so a reservation is a quantity (reserved_m),
@@ -20,7 +23,12 @@ SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL"]
 # preference; this is the tolerance allowed on the requested minimum width (cm).
 WIDTH_TOLERANCE_CM = 0.5
 
+COUNT_REASONS = ["stock_take", "damaged", "lost", "found", "entry_error", "other"]
+WH_SETTING_DEFAULTS = {"count_auto_approve_pct": "2", "issue_approval_limit": "5000"}
+DEST_KINDS = ["department", "cost_centre", "maintenance", "sample"]
+
 WH_PERMISSIONS = [
+    "wh_approve",  # approve stock-count adjustments; held by super_admin and warehouse_manager, grantable in Admin > Roles
     "wh_view",     # dashboard, materials, rolls, FG matrix
     "wh_manage",   # receive, issue, reserve, adjust, pack/ship
 ]
@@ -28,7 +36,7 @@ WH_PERMISSIONS = [
 WH_ROLE_PERMS = {
     # existing platform / module roles that need the material store
     "storekeeper": ["wh_view", "wh_manage"],
-    "warehouse_manager": ["wh_view", "wh_manage"],
+    "warehouse_manager": ["wh_view", "wh_manage", "wh_approve"],
     "production_manager": ["wh_view", "wh_manage"],
     "production_supervisor": ["wh_view"],
     "factory_manager": ["wh_view", "wh_manage"],

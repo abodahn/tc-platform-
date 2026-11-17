@@ -311,8 +311,8 @@ with app.app_context():
         c.close()
 
 from app.maintenance import schema as _schema                        # noqa: E402
-ck("exactly 5 migration statements added for this feature",
-   len([m for m in _schema._MIGRATIONS if m[0] == "mnt_machines"]) == 5,
+ck("exactly 6 mnt_machines migrations (5 for this feature + asset_tag)",
+   len([m for m in _schema._MIGRATIONS if m[0] == "mnt_machines"]) == 6,
    [m[1] for m in _schema._MIGRATIONS if m[0] == "mnt_machines"])
 
 print("\n=====================================================================")

@@ -24,12 +24,12 @@
   <a class="kpi kpi-link {{ cls }}" href="{{ href }}">
     <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-{{ icon }}"></use></svg></div>
       <svg class="ico kpi-go" aria-hidden="true"><use href="#i-external"></use></svg></div>
-    <div class="kval" data-count="{{ val }}" data-suffix="{{ suf }}">0</div>
+    <div class="kval"{% if val is not none %} data-count="{{ val }}" data-suffix="{{ suf }}"{% endif %}>{{ '—' if val is none else '0' }}</div>
     <div class="klabel" data-i18n="{{ label }}">{{ label }}</div></a>
   {% else %}
   <div class="kpi {{ cls }}">
     <div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-{{ icon }}"></use></svg></div></div>
-    <div class="kval" data-count="{{ val }}" data-suffix="{{ suf }}">0</div>
+    <div class="kval"{% if val is not none %} data-count="{{ val }}" data-suffix="{{ suf }}"{% endif %}>{{ '—' if val is none else '0' }}</div>
     <div class="klabel" data-i18n="{{ label }}">{{ label }}</div></div>
   {% endif %}
 {% endmacro %}

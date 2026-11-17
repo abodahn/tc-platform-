@@ -15,6 +15,7 @@ from pathlib import Path
 TMP = Path(tempfile.mkdtemp(prefix="wf_"))
 os.chdir(TMP)
 sys.path.insert(0, r"D:\TC platform\tc-platform-render")
+os.environ["TC_SEED_DEMO"] = "1"   # the lay-to-roll checks book against the warehouse demo rolls
 os.environ["TC_ENV"] = "development"
 os.environ.pop("DATABASE_URL", None)
 os.environ["TC_HEALTH_TIMEOUT"] = "1"

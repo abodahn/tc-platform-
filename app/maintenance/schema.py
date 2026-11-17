@@ -335,12 +335,16 @@ CREATE TABLE IF NOT EXISTS mnt_ext_map (
 # Columns added after first release — applied as idempotent ALTERs on every boot
 # so already-deployed databases pick them up (safe: each wrapped in try/except).
 _MIGRATIONS = [
+    ("mnt_stock_movements", "unit_cost", "ALTER TABLE mnt_stock_movements ADD COLUMN unit_cost REAL"),
     ("mnt_spare_parts", "reserved_qty",
      "ALTER TABLE mnt_spare_parts ADD COLUMN reserved_qty REAL DEFAULT 0"),
     # Guards the reopen->close-again path: the machine's cost/downtime/breakdown
     # counters are rolled up from a ticket exactly once.
     ("mnt_tickets", "machine_rolled",
      "ALTER TABLE mnt_tickets ADD COLUMN machine_rolled INTEGER DEFAULT 0"),
+    ("mnt_tickets", "cost_rolled", (
+        "ALTER TABLE mnt_tickets ADD COLUMN cost_rolled REAL",
+        "UPDATE mnt_tickets SET cost_rolled=COALESCE(cost,0) WHERE machine_rolled=1")),
     # --- Machine register import (app/maintenance/machine_import.py). Five ALTERs,
     # no index, no other boot work: gunicorn runs --preload, so everything here
     # happens BEFORE the port binds over a slow external PostgreSQL link.
@@ -357,6 +361,10 @@ _MIGRATIONS = [
     # Keeps the owner's "load everything" decision reversible: filter, don't drop.
     ("mnt_machines", "in_register_2023",
      "ALTER TABLE mnt_machines ADD COLUMN in_register_2023 INTEGER DEFAULT 0"),
+    # Links a CMMS machine to the platform asset registry.
+    ("mnt_machines", "asset_tag", "ALTER TABLE mnt_machines ADD COLUMN asset_tag TEXT"),
+    # Records the MES downtime row exported once for a closed ticket.
+    ("mnt_tickets", "mes_downtime_id", "ALTER TABLE mnt_tickets ADD COLUMN mes_downtime_id INTEGER"),
 ]
 
 
@@ -385,7 +393,8 @@ def create_and_seed(conn):
         except Exception:
             conn.rollback()   # PostgreSQL aborts the transaction on a failed query
         try:
-            conn.execute(_ddl)
+            for statement in (_ddl if isinstance(_ddl, tuple) else (_ddl,)):
+                conn.execute(statement)
             conn.commit()
         except Exception:
             conn.rollback()

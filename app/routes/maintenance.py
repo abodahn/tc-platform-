@@ -6,6 +6,7 @@ the right maintenance permission; mutating actions enforce finer-grained perms.
 """
 import csv
 import io
+import math
 import re
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
@@ -15,7 +16,7 @@ from config import Config
 from app.db import get_db
 from app.tabular import read_grid, TableError, ACCEPT, to_number
 from app.auth import login_required, current_user
-from app.security import user_has_permission
+from app.security import user_has_permission, system_scope
 from app.maintenance import services as svc
 from app.maintenance import constants as C
 from app.maintenance import ai as ai_engine
@@ -90,6 +91,11 @@ def _u():
 
 def _require(perm):
     if not _can(perm):
+        abort(403)
+
+
+def _require_any(*perms):
+    if not any(_can(perm) for perm in perms):
         abort(403)
 
 
@@ -227,10 +233,17 @@ def dashboard():
             "cost_month": c("SELECT COALESCE(SUM(cost),0) c FROM mnt_tickets "
                             "WHERE COALESCE(closed_at, created_at) >= ?", (month_start,)),
         }
-        # MTTR (avg downtime of closed) & breakdown count
-        mttr = conn.execute("SELECT AVG(total_downtime_min) a FROM mnt_tickets WHERE status='closed' AND total_downtime_min>0").fetchone()["a"]
-        kpis["mttr"] = round(mttr) if mttr else 0
-        kpis["sla"] = 92  # computed placeholder until enough history
+        repair_times = [svc.repair_minutes(row) for row in conn.execute(
+            "SELECT repair_started_at,repair_done_at,total_downtime_min "
+            "FROM mnt_tickets WHERE status='closed'").fetchall()]
+        repair_times = [minutes for minutes in repair_times if minutes and minutes > 0]
+        kpis["mttr"] = round(sum(repair_times) / len(repair_times)) if repair_times else 0
+        sla = conn.execute(
+            "SELECT COUNT(*) total, SUM(CASE WHEN COALESCE(testing_done_at,closed_at) "
+            "<= resolution_due THEN 1 ELSE 0 END) met FROM mnt_tickets "
+            "WHERE status='closed' AND closed_at >= ? AND resolution_due IS NOT NULL",
+            (month_start,)).fetchone()
+        kpis["sla"] = round(100 * sla["met"] / sla["total"]) if sla["total"] else None
 
         by_status = conn.execute("SELECT status, COUNT(*) c FROM mnt_tickets GROUP BY status ORDER BY c DESC").fetchall()
         by_priority = conn.execute("SELECT priority, COUNT(*) c FROM mnt_tickets GROUP BY priority").fetchall()
@@ -471,6 +484,10 @@ def ticket_detail(tid):
         comments = conn.execute("SELECT * FROM mnt_comments WHERE ticket_id=? ORDER BY id", (tid,)).fetchall()
         audit = conn.execute("SELECT * FROM mnt_audit WHERE entity_type='ticket' AND entity_id=? ORDER BY id", (tid,)).fetchall()
         reqs = conn.execute("SELECT * FROM mnt_requests WHERE ticket_id=? ORDER BY id DESC", (tid,)).fetchall()
+        issued_parts = conn.execute(
+            "SELECT s.id spare_id,s.code,s.name,-SUM(m.qty) qty FROM mnt_stock_movements m "
+            "JOIN mnt_spare_parts s ON s.id=m.spare_id WHERE m.ticket_id=? AND m.type IN ('issue','return') "
+            "GROUP BY s.id,s.code,s.name HAVING -SUM(m.qty)>0 ORDER BY s.code", (tid,)).fetchall()
         req_items, approvals = {}, {}
         for r in reqs:
             req_items[r["id"]] = conn.execute("SELECT * FROM mnt_request_items WHERE request_id=?", (r["id"],)).fetchall()
@@ -497,7 +514,7 @@ def ticket_detail(tid):
                            audit=audit, reqs=reqs, req_items=req_items, approvals=approvals,
                            machine=machine, spares=spares, attachments=attachments,
                            rc_suggest=rc_suggest, tech_rec=tech_rec, mttr=mttr, sla_risk=sla_risk,
-                           proc_prs=proc_prs, active="maint_tickets")
+                           proc_prs=proc_prs, issued_parts=issued_parts, can_test=_can_test(), active="maint_tickets")
 
 
 @bp.route("/tickets/<int:tid>/assign", methods=["POST"])
@@ -536,6 +553,53 @@ def ticket_diagnosis(tid):
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
 
 
+def _can_test():
+    return _can("maint_technician") or _can("maint_manage") or _u().get("role") == "production_supervisor"
+
+
+def _parse_part_lines(form):
+    merged = {}
+    spares, quantities = form.getlist("spare_id"), form.getlist("qty")
+    for index, sid in enumerate(spares):
+        if not sid:
+            continue
+        try:
+            sid = int(sid)
+            qty = float(quantities[index])
+            if qty <= 0 or not math.isfinite(qty):
+                raise ValueError
+        except (ValueError, TypeError, IndexError):
+            return [], "m_invalid_qty"
+        merged[sid] = merged.get(sid, 0) + qty
+        if not math.isfinite(merged[sid]):
+            return [], "m_invalid_qty"
+    return [{"spare_id": sid, "qty": qty} for sid, qty in merged.items()], "" if merged else "no_items"
+
+
+@bp.route("/requests/<int:rid>/resubmit", methods=["POST"])
+@login_required
+def request_resubmit(rid):
+    _require("maint_technician")
+    req = _one("SELECT ticket_id FROM mnt_requests WHERE id=?", (rid,))
+    if not req:
+        abort(404)
+    items, err = _parse_part_lines(request.form)
+    ok, msg = (False, err) if err else svc.resubmit_request(
+        rid, items, request.form.get("reason"), _u(), request.remote_addr)
+    flash("m_request_resubmitted" if ok else msg, "success" if ok else "error")
+    return redirect(url_for("maintenance.ticket_detail", tid=req["ticket_id"]))
+
+
+@bp.route("/tickets/<int:tid>/return-parts", methods=["POST"])
+@login_required
+def ticket_return_parts(tid):
+    _require("maint_store")
+    ok, msg = svc.return_parts(tid, request.form.get("spare_id"), request.form.get("qty"),
+                               request.form.get("reason"), _u(), request.remote_addr)
+    flash("m_parts_returned" if ok else msg, "success" if ok else "error")
+    return redirect(url_for("maintenance.ticket_detail", tid=tid))
+
+
 @bp.route("/tickets/<int:tid>/request-parts", methods=["POST"])
 @login_required
 def ticket_request_parts(tid):
@@ -545,18 +609,12 @@ def ticket_request_parts(tid):
         flash("m_need_diagnosis", "error")
         return redirect(url_for("maintenance.ticket_detail", tid=tid))
     f = request.form
-    try:
-        spare_id = int(f.get("spare_id"))
-        qty = float(f.get("qty") or 0)
-    except (TypeError, ValueError):
-        flash("m_invalid_qty", "error")
-        return redirect(url_for("maintenance.ticket_detail", tid=tid))
-    if qty <= 0:
-        flash("m_invalid_qty", "error")
-        return redirect(url_for("maintenance.ticket_detail", tid=tid))
-    svc.create_request(tid, [{"spare_id": spare_id, "qty": qty, "notes": f.get("notes")}],
-                       f.get("reason"), f.get("urgency"), _u(), request.remote_addr)
-    flash("m_request_created", "success")
+    items, err = _parse_part_lines(f)
+    if err:
+        flash(err, "error")
+    else:
+        rid, err = svc.create_request(tid, items, f.get("reason"), f.get("urgency"), _u(), request.remote_addr)
+        flash(err or "m_request_created", "error" if err else "success")
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
 
 
@@ -569,6 +627,7 @@ def ticket_repair(tid):
         "action_performed": f.get("action_performed"),
         "old_part_returned": f.get("old_part_returned") == "on",
         "machine_running": f.get("machine_running"), "final_notes": f.get("final_notes"),
+        "labour_hours": f.get("labour_hours"),
     }, _u(), request.remote_addr)
     svc.save_attachments(request.files.getlist("photos"), "ticket", tid, "repair", _u())
     flash("m_saved", "success")
@@ -578,11 +637,12 @@ def ticket_repair(tid):
 @bp.route("/tickets/<int:tid>/test", methods=["POST"])
 @login_required
 def ticket_test(tid):
-    _require("maint_view")  # supervisor/manager confirm
+    if not _can_test():
+        abort(403)
     f = request.form
-    svc.record_test(tid, {"test_result": f.get("test_result"), "safety_check": f.get("safety_check"),
-                          "machine_running": f.get("machine_running")}, _u(), request.remote_addr)
-    flash("m_saved", "success")
+    ok, msg = svc.record_test(tid, {"test_result": f.get("test_result"), "safety_check": f.get("safety_check"),
+                          "machine_running": f.get("machine_running"), "reason": f.get("test_reason")}, _u(), request.remote_addr)
+    flash("m_saved" if ok else msg, "success" if ok else "error")
     return redirect(url_for("maintenance.ticket_detail", tid=tid))
 
 
@@ -724,7 +784,7 @@ MACHINE_LIST_CAP = 500
 def machines():
     _require("maint_view")
     if request.method == "POST":
-        _require("maint_admin")
+        _require_any("maint_manage", "maint_admin")
         f = request.form
         code = (f.get("code") or "").strip()
         if not code:
@@ -736,12 +796,13 @@ def machines():
             try:
                 conn.execute(
                     """INSERT INTO mnt_machines (code,name,type,brand,model,serial,department,
-                       area,line_no,location,criticality,status,qr_token,created_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))""",
+                       area,line_no,location,criticality,status,qr_token,created_at,asset_tag)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (code, f.get("name"), f.get("type"), f.get("brand"), f.get("model"),
                      f.get("serial"), f.get("department"), f.get("area"), f.get("line_no"),
                      f.get("location"), f.get("criticality", "medium"), f.get("status", "running"),
-                     "MQR" + code.replace("-", "")))
+                     "MQR" + code.replace("-", ""), svc._now(),
+                     (f.get("asset_tag") or "").strip()[:60] or None))
                 conn.commit()
                 flash("m_saved", "success")
             finally:
@@ -769,8 +830,8 @@ def machines():
     if q:
         where.append("(LOWER(code) LIKE ? OR LOWER(name) LIKE ? OR LOWER(serial) LIKE ? "
                      "OR LOWER(legacy_card_no) LIKE ? OR LOWER(brand) LIKE ? "
-                     "OR LOWER(model) LIKE ?)")
-        args += ["%" + q.lower() + "%"] * 6
+                     "OR LOWER(model) LIKE ? OR LOWER(asset_tag) LIKE ?)")
+        args += ["%" + q.lower() + "%"] * 7
     w = " AND ".join(where)
     total = _one("SELECT COUNT(*) n FROM mnt_machines WHERE " + w, tuple(args))["n"]
     # ponytail: hard cap, no paging. Narrow with the search box; add pages the day
@@ -802,9 +863,34 @@ def machine_profile(mid):
             "SELECT * FROM mnt_attachments WHERE entity_type='machine' AND entity_id=? ORDER BY id", (mid,)).fetchall()
     finally:
         conn.close()
+    reg_asset = None
+    if m["asset_tag"] and system_scope(current_user()) is None:
+        try:
+            from app.services.registry import find_asset
+            reg_asset = find_asset(_all("SELECT * FROM systems WHERE enabled = 1 ORDER BY sort_order"),
+                                   m["asset_tag"])
+        except Exception:
+            pass
     return render_template("maintenance/machine_profile.html", m=m, tickets=tickets_, pm=pm,
                            spares=spares, moves=moves, health=health, health_band=health_band,
-                           attachments=attachments, active="maint_machines")
+                           attachments=attachments, reg_asset=reg_asset, active="maint_machines")
+
+
+@bp.route("/machines/<int:mid>/asset-tag", methods=["POST"])
+@login_required
+def machine_asset_tag(mid):
+    _require_any("maint_manage", "maint_admin")
+    if not _one("SELECT id FROM mnt_machines WHERE id=?", (mid,)):
+        abort(404)
+    conn = _db()
+    try:
+        conn.execute("UPDATE mnt_machines SET asset_tag=? WHERE id=?",
+                     ((request.form.get("asset_tag") or "").strip()[:60] or None, mid))
+        conn.commit()
+    finally:
+        conn.close()
+    flash("m_saved", "success")
+    return redirect(url_for("maintenance.machine_profile", mid=mid))
 
 
 @bp.route("/machines/<int:mid>/attach", methods=["POST"])
@@ -1046,7 +1132,7 @@ def needle_costs():
 def spares():
     _require("maint_view")
     if request.method == "POST":
-        _require("maint_store")
+        _require_any("maint_store", "maint_manage")
         f = request.form
         code = (f.get("code") or "").strip()
         if not code:
@@ -1056,15 +1142,23 @@ def spares():
         else:
             conn = _db()
             try:
-                conn.execute(
+                cur = conn.execute(
                     """INSERT INTO mnt_spare_parts (code,name,category,uom,stock_qty,min_level,
                        reorder_level,max_level,avg_cost,criticality,warehouse,bin,qr_token,created_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))""",
                     (code, f.get("name"), f.get("category", "other"), f.get("uom", "pcs"),
-                     float(f.get("stock_qty") or 0), float(f.get("min_level") or 0),
+                     0, float(f.get("min_level") or 0),
                      float(f.get("reorder_level") or 0), float(f.get("max_level") or 0),
                      float(f.get("avg_cost") or 0), f.get("criticality", "medium"),
                      f.get("warehouse"), f.get("bin"), "PQR" + code.replace("-", "")))
+                qty = float(f.get("stock_qty") or 0)
+                if qty > 0:
+                    ok, msg = svc._move_stock(conn, cur.lastrowid, 'opening', qty, _u(), notes='Opening balance')
+                    if not ok:
+                        conn.rollback()
+                        flash(msg, "error")
+                        return redirect(url_for("maintenance.spares"))
+                svc.audit(conn, _u(), 'spare_create', 'spare', cur.lastrowid, None, code)
                 conn.commit()
                 flash("m_saved", "success")
             finally:
@@ -1207,7 +1301,7 @@ def approvals():
             """SELECT a.*, r.request_no, r.ticket_id, t.machine_code
                FROM mnt_approvals a JOIN mnt_requests r ON r.id=a.request_id
                LEFT JOIN mnt_tickets t ON t.id=r.ticket_id
-               WHERE a.status='pending' ORDER BY a.id""").fetchall()
+               WHERE a.status='pending' AND r.status NOT IN ('rejected','returned','cancelled') ORDER BY a.id""").fetchall()
         items = {}
         for a in rows:
             items[a["request_id"]] = conn.execute(
@@ -1274,6 +1368,9 @@ def pm():
             "SELECT w.*, m.code mcode FROM mnt_pm_work_orders w JOIN mnt_machines m ON m.id=w.machine_id "
             # open orders first so an old overdue one linked from /my-work is still listed
             "ORDER BY CASE WHEN w.status='completed' THEN 1 ELSE 0 END, w.id DESC LIMIT 30").fetchall()
+        total_wos = conn.execute(
+            "SELECT COUNT(*) c FROM mnt_pm_work_orders w "
+            "JOIN mnt_machines m ON m.id=w.machine_id").fetchone()["c"]
     finally:
         conn.close()
     # Overdue and due-soon first, then the rest — and cap what is rendered. All
@@ -1287,7 +1384,84 @@ def pm():
     checklists = {k: v for k, v in checklists.items() if k in keep}
     return render_template("maintenance/pm.html", plans=plans, checklists=checklists,
                            total_plans=total_plans, shown_plans=len(plans),
-                           wos=wos, active="maint_pm")
+                           wos=wos, total_wos=total_wos, active="maint_pm")
+
+
+@bp.route("/pm/new", methods=["POST"])
+@login_required
+def pm_plan_new():
+    _require_any("maint_manage", "maint_admin")
+    from datetime import datetime, timedelta
+    f = request.form
+    conn = _db()
+    try:
+        machine = conn.execute("SELECT id FROM mnt_machines WHERE code=?",
+                               ((f.get("machine_code") or "").strip(),)).fetchone()
+        title = (f.get("title") or "").strip()
+        frequency = f.get("frequency")
+        if frequency not in C.PM_FREQUENCIES:
+            frequency = "monthly"
+        if not machine:
+            flash("m_pm_machine_unknown", "error")
+        elif not title:
+            flash("m_pm_title_required", "error")
+        elif conn.execute("SELECT id FROM mnt_pm_plans WHERE machine_id=? AND title=?",
+                          (machine["id"], title)).fetchone():
+            flash("m_pm_plan_exists", "error")
+        else:
+            try:
+                raw_interval = (f.get("interval_days") or "").strip()
+                interval = int(raw_interval) if raw_interval else C.PM_FREQUENCY_DAYS[frequency]
+                if interval <= 0:
+                    raise ValueError
+                raw_due = (f.get("next_due") or "").strip()
+                if raw_due:
+                    due = datetime.strptime(raw_due, "%Y-%m-%d").date()
+                    if due.isoformat() != raw_due:
+                        raise ValueError
+                else:
+                    due = svc._parse_dt(svc._now()).date() + timedelta(days=interval)
+            except (ValueError, OverflowError):
+                flash("m_pm_schedule_invalid", "error")
+            else:
+                cur = conn.execute(
+                    "INSERT INTO mnt_pm_plans (machine_id,title,frequency,interval_days,"
+                    "assigned_to,next_due,active,created_at) VALUES (?,?,?,?,?,?,1,datetime('now'))",
+                    (machine["id"], title, frequency, interval,
+                     (f.get("assigned_to") or "").strip() or None, due.isoformat()))
+                svc.audit(conn, _u(), "pm_plan_add", "pm_plan", cur.lastrowid,
+                          None, title, ip=request.remote_addr)
+                conn.commit()
+                flash("m_saved", "success")
+    finally:
+        conn.close()
+    return redirect(url_for("maintenance.pm"))
+
+
+@bp.route("/pm/<int:pid>/checklist", methods=["POST"])
+@login_required
+def pm_checklist_add(pid):
+    _require_any("maint_manage", "maint_admin")
+    conn = _db()
+    try:
+        if not conn.execute("SELECT id FROM mnt_pm_plans WHERE id=?", (pid,)).fetchone():
+            abort(404)
+        item = (request.form.get("item") or "").strip()
+        if not item:
+            flash("m_pm_item_required", "error")
+        else:
+            sort = conn.execute(
+                "SELECT COALESCE(MAX(sort),-1)+1 n FROM mnt_pm_checklist WHERE plan_id=?",
+                (pid,)).fetchone()["n"]
+            conn.execute(
+                "INSERT INTO mnt_pm_checklist (plan_id,item,required,photo_required,sort) "
+                "VALUES (?,?,1,?,?)",
+                (pid, item, 1 if request.form.get("photo_required") == "on" else 0, sort))
+            conn.commit()
+            flash("m_saved", "success")
+    finally:
+        conn.close()
+    return redirect(url_for("maintenance.pm"))
 
 
 @bp.route("/pm/<int:pid>/generate", methods=["POST"])
@@ -1315,14 +1489,8 @@ def pm_generate(pid):
 @login_required
 def pm_complete(wid):
     _require("maint_technician")
-    conn = _db()
-    try:
-        conn.execute("UPDATE mnt_pm_work_orders SET status='completed', completed_at=datetime('now'), "
-                     "notes=? WHERE id=?", (request.form.get("notes"), wid))
-        conn.commit()
-        flash("m_saved", "success")
-    finally:
-        conn.close()
+    ok, msg = svc.complete_pm_wo(wid, request.form.get("notes"), _u(), request.remote_addr)
+    flash("m_saved" if ok else "m_pm_already_completed", "success" if ok else "error")
     return redirect(url_for("maintenance.pm"))
 
 
@@ -1588,9 +1756,9 @@ def report_pdf(key):
 IMPORT_SPECS = {
     "machines": {
         "headers": ["code", "name", "type", "brand", "department", "area", "line_no",
-                    "criticality", "status"],
+                    "criticality", "status", "asset_tag"],
         "example": ["M-100", "Sample Sewing Machine", "Sewing", "Juki", "Production",
-                    "Hall A", "L9", "high", "running"],
+                    "Hall A", "L9", "high", "running", "AST-0100"],
     },
     "spares": {
         "headers": ["code", "name", "category", "uom", "stock_qty", "min_level",
@@ -2089,11 +2257,12 @@ def import_run(kind):
                 if kind == "machines":
                     conn.execute(
                         "INSERT INTO mnt_machines (code,name,type,brand,department,area,line_no,"
-                        "criticality,status,qr_token,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+                        "criticality,status,qr_token,created_at,asset_tag) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                         (code, d.get("name"), d.get("type"), d.get("brand"), d.get("department"),
                          d.get("area"), str(d.get("line_no") or ""),
                          (d.get("criticality") or "medium"), (d.get("status") or "running"),
-                         "MQR" + code.replace("-", "")))
+                         "MQR" + code.replace("-", ""), svc._now(),
+                         str(d.get("asset_tag") or "").strip() or None))
                 else:
                     qty = nums["stock_qty"]
                     cur = conn.execute(
