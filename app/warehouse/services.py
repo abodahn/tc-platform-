@@ -1614,6 +1614,9 @@ def export_dataset(key):
 
 
 # --- stock counts and operational ledger views -----------------------------
+COUNT_AUTO_WINDOW_HOURS = 24
+
+
 def get_setting(key):
     conn = get_db()
     try:
@@ -1703,6 +1706,22 @@ def submit_count(material_id, delta, reason, note, user, roll_id=None):
         if roll_id:
             book = _f(conn.execute("SELECT remaining_m FROM wh_rolls WHERE id=?",
                                    (roll_id,)).fetchone()["remaining_m"])
+        # A rolling window closes the split-submission bypass of the auto-apply limit.
+        window_start = (datetime.utcnow() - timedelta(hours=COUNT_AUTO_WINDOW_HOURS)).strftime(
+            "%Y-%m-%d %H:%M:%S")
+        if roll_id:
+            recent_auto = conn.execute(
+                "SELECT COALESCE(SUM(delta),0) AS recent_auto FROM wh_counts "
+                "WHERE material_id=? AND status='applied' AND decided_by='auto' "
+                "AND submitted_at >= ? AND roll_id=?",
+                (material_id, window_start, roll_id)).fetchone()["recent_auto"]
+        else:
+            recent_auto = conn.execute(
+                "SELECT COALESCE(SUM(delta),0) AS recent_auto FROM wh_counts "
+                "WHERE material_id=? AND status='applied' AND decided_by='auto' "
+                "AND submitted_at >= ? AND roll_id IS NULL",
+                (material_id, window_start)).fetchone()["recent_auto"]
+        base = book - recent_auto
         cur = conn.execute(
             "INSERT INTO wh_counts (material_id,roll_id,book_qty,delta,reason,note,submitted_by,"
             "submitted_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -1710,7 +1729,7 @@ def submit_count(material_id, delta, reason, note, user, roll_id=None):
         count_id = cur.lastrowid
         count_no = doc_no("CNT", count_id)
         conn.execute("UPDATE wh_counts SET count_no=? WHERE id=?", (count_no, count_id))
-        pending = delta < 0 or book <= 0 or delta > book * pct / 100
+        pending = delta < 0 or base <= 0 or (recent_auto + delta) > base * pct / 100
         if not pending:
             row = conn.execute("SELECT * FROM wh_counts WHERE id=?", (count_id,)).fetchone()
             ok, msg = _count_movement(conn, row, user)

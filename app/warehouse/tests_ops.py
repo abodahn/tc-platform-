@@ -140,6 +140,26 @@ with app.app_context():
           svc.submit_count(THR, 1, "found", "", A) == (True, "pending"))
     svc.set_count_threshold(2, B)
 
+    c = get_db()
+    count_mid = c.execute(
+        "INSERT INTO wh_materials (code,name,kind,roll_tracked,uom,stock_qty) "
+        "VALUES ('TRM-COUNT-WINDOW','Count window test','trim',0,'pcs',1000)").lastrowid
+    c.commit(); c.close()
+    start = stock(count_mid)
+    results = [svc.submit_count(count_mid, 19.9, "found", "", A) for _ in range(10)]
+    check("first split count auto-applies", results[0] == (True, "applied"), str(results))
+    check("split counts cannot exceed the cumulative auto-apply limit",
+          stock(count_mid) <= start * 1.02 + 1e-9, str(stock(count_mid)))
+    check("later split counts require approval",
+          (True, "pending") in results[1:] and results[-1] == (True, "pending"), str(results))
+    c = get_db()
+    c.execute("UPDATE wh_counts SET submitted_at='2000-01-01 00:00:00' "
+              "WHERE material_id=? AND status='applied'", (count_mid,))
+    c.commit(); c.close()
+    check("auto-applied counts older than the window do not count",
+          svc.submit_count(count_mid, stock(count_mid) * 0.0199, "found", "", A)
+          == (True, "applied"))
+
     print("\n--- 4. stock card + daily report ---")
     card = svc.stock_card(THR, "2000-01-01", "2999-12-31")
     check("card closes at the material's stock", abs(card["closing"] - stock(THR)) < 1e-6,
