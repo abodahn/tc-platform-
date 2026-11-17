@@ -7953,7 +7953,7 @@ def _reversal_stock(conn, target, target_id, qty, pr_no):
     return (bool(row) and float(row["stock_qty"] or 0) - float(row["reserved_qty"] or 0) >= qty, None)
 
 
-def _unreceive(conn, pr, item, qty, ref):
+def _unreceive(conn, pr, item, qty, ref, user):
     rows = [dict(r) for r in conn.execute(
         "SELECT * FROM pr_stock_postings WHERE item_id=? AND free=0 ORDER BY id",
         (item["id"],)).fetchall()]
@@ -7961,7 +7961,7 @@ def _unreceive(conn, pr, item, qty, ref):
         return False, "posting_unsettled"
     net = {}
     for r in rows:
-        if r["status"] == "posted":
+        if r["status"] == "posted" and not str(r["ref"] or "").startswith("door:"):
             key = (r["target"], r["target_id"])
             net[key] = net.get(key, 0.0) + float(r["qty"] or 0)
     plan, left = [], qty
@@ -7969,10 +7969,60 @@ def _unreceive(conn, pr, item, qty, ref):
         if n > 0 and left > 0:
             plan.append((t, tid, min(left, n)))
             left -= min(left, n)
+    door, mat = [], None
     try:
         for target, target_id, amount in plan:
             if not _reversal_stock(conn, target, target_id, amount, ref)[0]:
                 return False, "stock_issued"
+        if (left > 1e-9 and not _pr_field(item, "spare_id")
+                and _pr_field(pr, "source_module") != "maintenance"):
+            from app.warehouse.services import _resolve_material, _move_stock as wh_move
+            mat = _resolve_material(conn, item["item"])
+            if mat:
+                refs = [str(pr["pr_no"]).strip().upper()]
+                if _pr_field(pr, "po_no"):
+                    refs.append(str(pr["po_no"]).strip().upper())
+                placeholders = ",".join("?" for _ in refs)
+                received = conn.execute(
+                    "SELECT COALESCE(SUM(qty),0) AS n FROM wh_movements "
+                    "WHERE type='purchase_receiving' AND material_id=? AND UPPER(TRIM(ref)) IN ("
+                    + placeholders + ")", (mat["id"], *refs)).fetchone()["n"]
+                bridged = conn.execute(
+                    "SELECT COALESCE(SUM(qty),0) AS n FROM pr_stock_postings "
+                    "WHERE pr_id=? AND target='material' AND target_id=? AND status='posted' "
+                    "AND qty>0 AND ref NOT LIKE 'door:%'",
+                    (pr["id"], mat["id"])).fetchone()["n"]
+                door_reversed = -float(conn.execute(
+                    "SELECT COALESCE(SUM(qty),0) AS n FROM pr_stock_postings "
+                    "WHERE pr_id=? AND target='material' AND target_id=? "
+                    "AND ref LIKE 'door:%' AND status='posted'",
+                    (pr["id"], mat["id"])).fetchone()["n"])
+                door_net = round(float(received) - float(bridged) - door_reversed, 6)
+                if door_net > 1e-9:
+                    if door_net < left:
+                        return False, "stock_not_posted"
+                    if mat["roll_tracked"]:
+                        rolls = conn.execute(
+                            "SELECT id, remaining_m-COALESCE(reserved_m,0) AS free "
+                            "FROM wh_rolls WHERE material_id=? AND UPPER(TRIM(grn_ref)) IN ("
+                            + placeholders + ") AND remaining_m-COALESCE(reserved_m,0)>? "
+                            "ORDER BY id DESC", (mat["id"], *refs, 1e-9)).fetchall()
+                        needed = left
+                        for roll in rolls:
+                            amount = min(needed, float(roll["free"]))
+                            door.append((roll["id"], amount))
+                            needed -= amount
+                            if needed <= 1e-9:
+                                break
+                        if needed > 1e-9:
+                            return False, "stock_issued"
+                    else:
+                        available = conn.execute(
+                            "SELECT stock_qty-COALESCE(reserved_qty,0) AS free "
+                            "FROM wh_materials WHERE id=?", (mat["id"],)).fetchone()["free"]
+                        if float(available or 0) < left:
+                            return False, "stock_issued"
+                        door.append((None, left))
     except Exception:
         conn.rollback()
         return False, "stock_unknown"
@@ -7987,11 +8037,41 @@ def _unreceive(conn, pr, item, qty, ref):
         return False, "not_reversible"
     if float(line["received_qty"] or 0) != float(item["received_qty"] or 0) or rows != latest:
         return False, "posting_unsettled"
+    if door:
+        # Lock stock counters and recheck free quantities before changing the receipt.
+        conn.execute("UPDATE wh_materials SET stock_qty=stock_qty WHERE id=?", (mat["id"],))
+        for rid, amount in door:
+            if rid:
+                conn.execute("UPDATE wh_rolls SET remaining_m=remaining_m WHERE id=?", (rid,))
+                available = conn.execute(
+                    "SELECT remaining_m-COALESCE(reserved_m,0) AS free FROM wh_rolls WHERE id=?",
+                    (rid,)).fetchone()
+            else:
+                available = conn.execute(
+                    "SELECT stock_qty-COALESCE(reserved_qty,0) AS free FROM wh_materials WHERE id=?",
+                    (mat["id"],)).fetchone()
+            if not available or float(available["free"] or 0) < amount:
+                conn.rollback()
+                return False, "stock_issued"
     conn.execute("UPDATE pr_items SET received_qty=received_qty-? WHERE id=?", (qty, item["id"]))
     lines = conn.execute("SELECT qty, received_qty FROM pr_items WHERE pr_id=?", (pr["id"],)).fetchall()
     status = "received" if all(float(i["received_qty"] or 0) >= float(i["qty"] or 0) for i in lines) else (
         "partially_received" if any(float(i["received_qty"] or 0) > 0 for i in lines) else "po_issued")
     conn.execute("UPDATE pr_requests SET status=? WHERE id=?", (status, pr["id"]))
+    if door:
+        for rid, amount in door:
+            ok, err = wh_move(conn, "adjustment", -amount, user,
+                              material_id=None if rid else mat["id"], roll_id=rid,
+                              ref=ref, notes=f"Receipt correction door:{item['id']} ({ref})")
+            if not ok:
+                conn.rollback()
+                return False, err
+        door_n = sum(1 for r in rows if str(r["ref"] or "").startswith(f"door:{item['id']}:")) + 1
+        conn.execute("INSERT INTO pr_stock_postings "
+                     "(pr_id,grn_id,ref,item_id,target,target_id,qty,free,status,created_at,posted_at) "
+                     "VALUES (?,NULL,?,?,'material',?,?,0,'posted',?,?)",
+                     (pr["id"], f"door:{item['id']}:{door_n}", item["id"], mat["id"],
+                      -sum(amount for _, amount in door), _now(), _now()))
     n = sum(1 for r in rows if str(r["ref"] or "").startswith("rev:")) + 1
     for target, target_id, amount in plan:
         conn.execute("INSERT INTO pr_stock_postings "
@@ -7999,7 +8079,7 @@ def _unreceive(conn, pr, item, qty, ref):
                      "VALUES (?,NULL,?,?,?,?,?,0,'pending',?)",
                      (pr["id"], f"rev:{item['id']}:{n}", item["id"], target, target_id, -amount, _now()))
         n += 1
-    return True, sum(amount for _, _, amount in plan)
+    return True, sum(amount for _, _, amount in plan) + sum(amount for _, amount in door)
 
 
 def _correct_receipt(pr_id, item_id, qty, reason, user, ip, returned):
@@ -8020,7 +8100,7 @@ def _correct_receipt(pr_id, item_id, qty, reason, user, ip, returned):
         item = conn.execute("SELECT * FROM pr_items WHERE id=? AND pr_id=?", (item_id, pr_id)).fetchone()
         if not item or not 0 < qty <= float(item["received_qty"] or 0):
             return False, "bad_qty"
-        ok, result = _unreceive(conn, pr, item, qty, pr["pr_no"])
+        ok, result = _unreceive(conn, pr, item, qty, pr["pr_no"], user)
         if not ok:
             return False, result
         if returned:

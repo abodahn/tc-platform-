@@ -77,11 +77,11 @@ def run():
             r = q("SELECT stage FROM pr_steps WHERE pr_id=? AND status='pending' ORDER BY seq LIMIT 1", pr_id)
             return r["stage"] if r else None
 
-        def approve(title, vendor=VENDOR, qty=10.0):
-            pr_id, _ = svc.create_pr({"title": title, "department": "General Maintenance",
+        def approve(title, vendor=VENDOR, qty=10.0, item=None, department="General Maintenance"):
+            pr_id, _ = svc.create_pr({"title": title, "department": department,
                                       "currency": "EGP", "vendor": vendor},
-                                     [{"item": "Corr part", "qty": qty, "unit_price": 0,
-                                       "spare_id": sid}], reqr, priced=False)
+                                     [{"item": item or "Corr part", "qty": qty, "unit_price": 0,
+                                       "spare_id": None if item else sid}], reqr, priced=False)
             li = q("SELECT id FROM pr_items WHERE pr_id=?", pr_id)["id"]
             ok, msg = svc.price_pr(pr_id, {li: UNIT}, {"tax_rate": 0}, buyer)
             assert ok, msg
@@ -202,8 +202,66 @@ def run():
         heads, rows = svc.export_dataset("spend_vendor")
         assert heads[-1] == "Total (EGP)" and any(r[0] == VENDOR and r[2] >= 5000 for r in rows)
         assert svc.export_dataset("open_orders")[0], "open_orders export binds 3 statuses"
+        # ---- 10. warehouse door receipts reverse physical stock atomically ----
+        from app.warehouse import services as wh
+        c = get_db()
+        for code, tracked in (("CORR-QTY", 0), ("CORR-ROLL", 1)):
+            c.execute("INSERT INTO wh_materials (code,name,roll_tracked) VALUES (?,?,?)",
+                      (code, code + " material", tracked))
+        c.commit(); c.close()
+        mid = q("SELECT id FROM wh_materials WHERE code='CORR-QTY'")["id"]
+        p_door, li_door = approve("Door quantity", qty=100, item="CORR-QTY material",
+                                  department="Production")
+        ok, po_no = svc.issue_po(p_door, buyer)
+        assert ok, po_no
+        assert wh.receive_qty(mid, 100, UNIT, store, grn_ref=" " + po_no.lower())[0]  # door stores the typed ref raw
+        assert svc.receive_items(p_door, {li_door: 100}, store, post_stock=False)[0]
+        assert not q("SELECT 1 FROM pr_stock_postings WHERE pr_id=?", p_door)
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 100
+        assert svc.return_to_supplier(p_door, li_door, 40, "defective delivery", buyer) == (True, "")
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 60
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li_door)["received_qty"]) == 60
+        ret = q("SELECT qty, dn_no FROM pr_returns WHERE pr_id=?", p_door)
+        assert ret and float(ret["qty"]) == 40 and ret["dn_no"]
+        c = get_db(); c.execute("UPDATE wh_materials SET reserved_qty=50 WHERE id=?", (mid,)); c.commit(); c.close()
+        assert svc.reverse_receipt(p_door, li_door, 60, "wrong receipt", buyer) == (False, "stock_issued")
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 60
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li_door)["received_qty"]) == 60
+        c = get_db(); c.execute("UPDATE wh_materials SET reserved_qty=0 WHERE id=?", (mid,)); c.commit(); c.close()
+        assert svc.reverse_receipt(p_door, li_door, 60, "wrong receipt", buyer) == (True, "")
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 0
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li_door)["received_qty"]) == 0
+        assert float(q("SELECT SUM(qty) AS n FROM pr_stock_postings WHERE pr_id=? AND ref LIKE 'door:%'",
+                       p_door)["n"]) == -100
+
+        rid_mat = q("SELECT id FROM wh_materials WHERE code='CORR-ROLL'")["id"]
+        p_roll, li_roll = approve("Door rolls", qty=100, item="CORR-ROLL material",
+                                  department="Production")
+        assert svc.issue_po(p_roll, buyer)[0]
+        pr_no = q("SELECT pr_no FROM pr_requests WHERE id=?", p_roll)["pr_no"]
+        assert wh.receive_rolls(rid_mat, {"grn_ref": pr_no, "unit_cost": UNIT},
+                                [{"length_m": 40}, {"length_m": 60}], store)[0]
+        assert svc.receive_items(p_roll, {li_roll: 100}, store, post_stock=False)[0]
+        assert svc.reverse_receipt(p_roll, li_roll, 80, "incorrect roll lengths", buyer) == (True, "")
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", rid_mat)["stock_qty"]) == 20
+        c = get_db()
+        rolls = c.execute("SELECT remaining_m FROM wh_rolls WHERE material_id=? ORDER BY id",
+                          (rid_mat,)).fetchall()
+        c.close()
+        assert [float(r["remaining_m"]) for r in rolls] == [20, 0]
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li_roll)["received_qty"]) == 20
+
+        p_short, li_short = approve("Door mismatch", qty=10, item="CORR-QTY material",
+                                    department="Production")
+        assert svc.issue_po(p_short, buyer)[0]
+        pr_no = q("SELECT pr_no FROM pr_requests WHERE id=?", p_short)["pr_no"]
+        assert wh.receive_qty(mid, 5, UNIT, store, grn_ref=pr_no)[0]
+        assert svc.receive_items(p_short, {li_short: 10}, store, post_stock=False)[0]
+        assert svc.reverse_receipt(p_short, li_short, 10, "mismatched receipt", buyer) == (False, "stock_not_posted")
+        assert float(q("SELECT stock_qty FROM wh_materials WHERE id=?", mid)["stock_qty"]) == 5
+        assert float(q("SELECT received_qty FROM pr_items WHERE id=?", li_short)["received_qty"]) == 10
         print("PASS: corrections — reversals, vendor master, PO gate, returns, SoD, "
-              "cancel, short-close budget, EGP spend and stock cost")
+              "cancel, short-close budget, EGP spend and stock cost, warehouse door corrections")
         return True
 
 
