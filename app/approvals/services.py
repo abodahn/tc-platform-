@@ -5589,6 +5589,23 @@ def _save_vendor(vendor_id, data, user, ip):
             if r["id"] != vendor_id and (C.vendor_key(r["name"]) == C.vendor_key(name)
                     or (tax_id and tax_id.casefold() == (r["tax_id"] or "").strip().casefold())):
                 return False, "duplicate_vendor"
+        if vendor_id is not None:
+            old_name = next(r["name"] for r in rows if r["id"] == vendor_id)
+            # History is joined by the exact name string (dues, approval, scores), so any
+            # change - even case or spacing - orphans it. Compare in Python: SQLite LOWER()
+            # folds ASCII only, so Turkish/accented names would slip past an SQL match.
+            if name != (old_name or "").strip():
+                old_key = C.vendor_key(old_name)
+                for table in ("pr_requests", "pr_items", "pr_quotes", "pr_returns",
+                              "pr_purchase_orders", "pr_rfqs", "mnt_spare_parts", "mnt_machines"):
+                    try:
+                        used = conn.execute("SELECT DISTINCT vendor FROM " + table
+                                            + " WHERE vendor IS NOT NULL").fetchall()
+                    except Exception:
+                        conn.rollback()  # optional module table absent; clear PG's aborted txn
+                        continue
+                    if any(C.vendor_key(u["vendor"]) == old_key for u in used):
+                        return False, "vendor_in_use"
         fields = ("name", "contact_person", "phone", "email", "address", "payment_terms",
                   "category", "rating", "notes", "tax_id")
         values = tuple(name if k == "name" else tax_id if k == "tax_id" else

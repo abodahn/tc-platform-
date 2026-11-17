@@ -67,6 +67,9 @@ def run():
         v2 = q("SELECT id FROM proc_vendors WHERE name='Second Vendor'")["id"]
         assert svc.update_vendor(v2, {"name": "corr vendor"}, buyer) == (False, "duplicate_vendor")
         assert svc.update_vendor(v2, {"name": "Second Vendor", "phone": "1"}, buyer)[0]
+        assert svc.update_vendor(v2, {"name": "Renamed Vendor"}, buyer)[0]
+        assert q("SELECT name FROM proc_vendors WHERE id=?", v2)["name"] == "Renamed Vendor"
+        assert svc.update_vendor(v2, {"name": "Second Vendor"}, buyer)[0]
         assert svc.set_vendor_active(v2, False, buyer)[0]
         assert "Second Vendor" not in [v["name"] for v in svc.list_vendors()]
 
@@ -111,6 +114,19 @@ def run():
             == (False, "vendor_inactive")
 
         pr_id, li = approve("Corrections")
+        vid = q("SELECT id FROM proc_vendors WHERE name=?", VENDOR)["id"]
+        assert svc.update_vendor(vid, {"name": "Renamed Corr Vendor"}, buyer) == (False, "vendor_in_use")
+        assert q("SELECT name FROM proc_vendors WHERE id=?", vid)["name"] == VENDOR
+        assert svc.update_vendor(vid, {"name": VENDOR, "phone": "2"}, buyer)[0]
+        assert q("SELECT phone FROM proc_vendors WHERE id=?", vid)["phone"] == "2"
+        # case/spacing-only rename also orphans name-keyed history -> refused
+        assert svc.update_vendor(vid, {"name": "  corr VENDOR  "}, buyer) == (False, "vendor_in_use")
+        assert svc.update_vendor(vid, {"name": "  " + VENDOR + "  "}, buyer)[0]  # same name, trimmed
+        # non-ASCII capitals: SQLite LOWER() would miss these; the guard must not
+        assert svc.create_vendor({"name": "ÖZTÜRK Tekstil"}, buyer)[0]
+        tvid = q("SELECT id FROM proc_vendors WHERE name=?", "ÖZTÜRK Tekstil")["id"]
+        approve("Turkish supplier", vendor="öztürk tekstil")
+        assert svc.update_vendor(tvid, {"name": "Ozturk Textiles"}, buyer) == (False, "vendor_in_use")
         assert svc.issue_po(pr_id, buyer)[0]
         assert svc.receive_items(pr_id, {li: 10}, store)[0]
         assert stock() == 10
