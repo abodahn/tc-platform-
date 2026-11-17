@@ -1135,6 +1135,24 @@ def apply_integration_overrides(conn):
                      (base, health, key))
 
 
+def widen_real_columns(conn):
+    """PostgreSQL only: ALTER every float4 (REAL) column to DOUBLE PRECISION. Returns the
+    number widened. Each column is its own transaction, so one failure skips only it."""
+    cols = [(r["table_name"], r["column_name"]) for r in conn.execute(
+        "SELECT table_name, column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND data_type = 'real'").fetchall()]
+    done = 0
+    for table, column in cols:
+        try:
+            conn.execute('ALTER TABLE "%s" ALTER COLUMN "%s" TYPE DOUBLE PRECISION'
+                         % (table.replace('"', ''), column.replace('"', '')))
+            conn.commit()
+            done += 1
+        except Exception:
+            conn.rollback()
+    return done
+
+
 def init_db():
     """Create tables and seed first-run data. Idempotent and non-destructive."""
     conn = get_db()
@@ -1331,6 +1349,12 @@ def init_db():
                 _m.create_and_seed(conn)
             except Exception:
                 conn.rollback()
+        # PostgreSQL REAL is float4 (~7 significant digits): 500000.01 was stored as
+        # 500000.0, enough to slip a value threshold. Widen every REAL column to
+        # DOUBLE PRECISION (lossless; SQLite REAL is already 8-byte). Runs last so
+        # columns added above are covered; finds nothing on later boots.
+        if _is_pg():
+            widen_real_columns(conn)
         # Auto-provision a signature for every user who doesn't have one yet, so it
         # can be stamped on any paper without each person drawing one manually.
         try:
