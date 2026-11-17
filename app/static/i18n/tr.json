@@ -2934,7 +2934,7 @@
   "pwf.department": "Departman",
   "pwf.edit": "Düzenle",
   "pwf.effective": "Şu anda yürürlükte",
-  "pwf.egp_note": "Talep eden, gönderdiğinde imzalamış olur. Eşikler EGP karşılığı toplam üzerinden karşılaştırılır; yabancı para birimli talep önce çevrilir.",
+  "pwf.egp_note": "Talep eden, gönderdiğinde imzalamış olur. Her talep, tutarı veya para birimi ne olursa olsun sabit 7 basamaklı zinciri izler; yeniden fiyatlandırma yalnızca mevcut basamağın ilerisindeki eksik basamakları ekler.",
   "pwf.explanation": "Burada ne olur",
   "pwf.eyebrow": "Satın alma",
   "pwf.fixed": "sabit",

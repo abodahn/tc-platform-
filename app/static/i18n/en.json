@@ -2934,7 +2934,7 @@
   "pwf.department": "Department",
   "pwf.edit": "Edit",
   "pwf.effective": "In force now",
-  "pwf.egp_note": "The requester signs by submitting. Thresholds are compared on the EGP-equivalent total, so a foreign-currency request is converted first.",
+  "pwf.egp_note": "The requester signs by submitting. Every request follows the fixed 7-rung ladder, whatever its value or currency; re-pricing only adds missing rungs still ahead of the current one.",
   "pwf.explanation": "What happens here",
   "pwf.eyebrow": "Procurement",
   "pwf.fixed": "fixed",

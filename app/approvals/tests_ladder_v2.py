@@ -289,6 +289,11 @@ def run():
         conn.execute("UPDATE proc_stage_meta SET explanation=? WHERE stage='ceo'",
                      ("Admin wording for the CEO",))
         conn.execute("UPDATE proc_doc SET body=? WHERE section='overview'", (old_doc,))
+        old_sod = {c: SUPERSEDED["proc_doc"][c]["sod_escalation"]
+                   for c in ("body", "body_ar", "body_tr")}
+        conn.execute("UPDATE proc_doc SET body=?, body_ar=?, body_tr=? "
+                     "WHERE section='sod_escalation'",
+                     (old_sod["body"], old_sod["body_ar"], old_sod["body_tr"]))
         conn.commit()
         SC.seed_governance(conn)
         row = conn.execute("SELECT explanation, explanation_ar FROM proc_stage_meta "
@@ -299,6 +304,16 @@ def run():
         chk("old default doc text replaced",
             conn.execute("SELECT body FROM proc_doc WHERE section='overview'")
             .fetchone()["body"] == dict(C.DOC_SECTIONS)["overview"])
+        sod_row = conn.execute("SELECT body, body_ar, body_tr FROM proc_doc "
+                               "WHERE section='sod_escalation'").fetchone()
+        chk("shipped sod_escalation text (en/ar/tr) refreshed; no amount thresholds left",
+            sod_row["body"] == dict(C.DOC_SECTIONS)["sod_escalation"]
+            and sod_row["body_ar"] == T.DOC["ar"]["sod_escalation"]
+            and sod_row["body_tr"] == T.DOC["tr"]["sod_escalation"]
+            and "threshold" not in sod_row["body"].lower())
+        chk("workflow docs state the fixed 7-rung ladder, not 'brings any missing rung'",
+            all("7-rung" in C.DOC_SECTIONS[k] and "brings any missing rung" not in
+                C.DOC_SECTIONS[k] for k in ("overview", "pricing_gate")))
         chk("admin-edited text left alone",
             conn.execute("SELECT explanation FROM proc_stage_meta WHERE stage='ceo'")
             .fetchone()["explanation"] == "Admin wording for the CEO")
@@ -321,6 +336,10 @@ def run():
                                           encoding="utf-8"))
         chk("i18n JSON key sets identical",
             set(dicts["en"]) == set(dicts["ar"]) == set(dicts["tr"]))
+        chk("workflow page note no longer talks about thresholds",
+            "7-rung" in dicts["en"]["pwf.egp_note"] and "7" in dicts["tr"]["pwf.egp_note"]
+            and "السبع" in dicts["ar"]["pwf.egp_note"]
+            and "Threshold" not in dicts["en"]["pwf.egp_note"])
         chk("proc.stage.control in every dictionary",
             dicts["ar"].get("proc.stage.control") == "الكنترول المالي")
 
