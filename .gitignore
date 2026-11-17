@@ -44,3 +44,5 @@ beta-server*.log
 
 # Rendered page snapshots used to show a screen in chat. Never committed.
 _preview/
+
+.impeccable/
