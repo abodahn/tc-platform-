@@ -1303,6 +1303,7 @@ def detail(pr_id):
     show_commercial = is_priced or can_purchasing
     return render_template("approvals/detail.html", active="proc_list",
                            stock_issues=svc.stock_posting_issues(pr_id),
+                           stock_skipped=svc.stock_posting_issues(pr_id, ("skipped",)),
                            fields=svc.visible_fields(),
                            # Approved suppliers, for the per-line supplier boxes
                            # at the pricing gate. Free text is still allowed —

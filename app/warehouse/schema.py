@@ -3,9 +3,10 @@ Warehouse — schema + seed, merged into the TC Platform DB.
 
 Native `wh_*` tables. DDL is SQLite-authored and translated for PostgreSQL by
 app.db. create_and_seed(conn) runs on every boot: it creates whatever is missing
-and seeds a small, clearly-marked DEMO dataset ONLY when the module is empty.
+and seeds DEMO data only when TC_SEED_DEMO is enabled and the module is empty.
 It never deletes or overwrites anything.
 """
+import os
 from datetime import date, datetime, timedelta
 
 SCHEMA = """
@@ -182,6 +183,8 @@ def create_and_seed(conn):
     # try/except+rollback, and on PostgreSQL a failing seed would roll the CREATE
     # TABLEs back with it — the tables would silently never appear on Render.
     conn.commit()
+    if os.environ.get("TC_SEED_DEMO", "").strip().lower() not in ("1", "true", "yes"):
+        return
     if not _empty(conn, "wh_materials"):
         return  # already seeded / in use — never overwrite
 

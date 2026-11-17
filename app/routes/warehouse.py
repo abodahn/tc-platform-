@@ -14,7 +14,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 
 from app.auth import login_required, permission_required, current_user, user_can
 from app.warehouse import services as svc
-from app.warehouse.constants import MATERIAL_KINDS, ROLL_STATUS, SIZES, IMPORT_COLUMNS
+from app.warehouse.constants import MATERIAL_KINDS, ROLL_STATUS, SIZES, IMPORT_COLUMNS, UOMS
 from app.tabular import ACCEPT, TableError, read_grid
 
 bp = Blueprint("warehouse", __name__, url_prefix="/warehouse")
@@ -62,9 +62,10 @@ def index():
 def materials():
     kind = request.args.get("kind") or None
     low = request.args.get("low") == "1"
+    inactive = request.args.get("inactive") == "1"
     return render_template("warehouse/materials.html", active="wh_materials",
-                           rows=svc.list_materials(kind, low), kinds=MATERIAL_KINDS,
-                           f_kind=kind, f_low=low)
+                           rows=svc.list_materials(kind, low, inactive), kinds=MATERIAL_KINDS,
+                           f_kind=kind, f_low=low, f_inactive=inactive)
 
 
 @bp.route("/materials", methods=["POST"])
@@ -75,6 +76,54 @@ def material_create():
     flash("Material added." if ok else f"Could not add material ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("warehouse.materials"))
+
+
+@bp.route("/materials/<int:mid>/edit", methods=["GET", "POST"])
+@login_required
+@permission_required("wh_manage")
+def material_edit(mid):
+    material = svc.get_material(mid)
+    if not material:
+        abort(404)
+    if request.method == "POST":
+        ok, msg = svc.update_material(mid, request.form, _u())
+        flash("Material updated." if ok else f"Update rejected ({msg}).", "success" if ok else "error")
+        return redirect(url_for("warehouse.material_edit", mid=mid))
+    return render_template("warehouse/material_edit.html", active="wh_materials", material=material,
+                           kinds=MATERIAL_KINDS, uoms=UOMS, uom_locked=svc.material_uom_locked(mid))
+
+
+@bp.route("/materials/<int:mid>/active", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def material_active(mid):
+    ok, msg = svc.set_material_active(mid, request.form.get("active") == "1", _u())
+    flash("Material updated." if ok else f"Update rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.materials"))
+
+
+@bp.route("/rolls/<int:roll_id>/edit", methods=["GET", "POST"])
+@login_required
+@permission_required("wh_manage")
+def roll_edit(roll_id):
+    roll = svc.get_roll(roll_id)
+    if not roll:
+        abort(404)
+    if request.method == "POST":
+        ok, msg = svc.update_roll(roll_id, request.form, _u())
+        flash("Roll updated." if ok else f"Update rejected ({msg}).", "success" if ok else "error")
+        return redirect(url_for("warehouse.roll_edit", roll_id=roll_id))
+    return render_template("warehouse/roll_edit.html", active="wh_rolls", roll=roll)
+
+
+@bp.route("/rolls/<int:roll_id>/split", methods=["POST"])
+@login_required
+@permission_required("wh_manage")
+def roll_split(roll_id):
+    lengths = [v for v in request.form.getlist("lengths") if v.strip()]
+    ok, msg = svc.split_roll(roll_id, lengths, _u())
+    flash("Roll split." if ok else f"Split rejected ({msg}).", "success" if ok else "error")
+    return redirect(url_for("warehouse.roll_edit", roll_id=roll_id))
 
 
 @bp.route("/materials/import")
@@ -240,6 +289,9 @@ def receive_post():
     if not mat:
         flash("Pick a material first.", "error")
         return redirect(url_for("warehouse.receive"))
+    if not mat["is_active"]:
+        flash("Receipt rejected (material_inactive).", "error")
+        return redirect(url_for("warehouse.receive"))
     roll = bool(mat.get("roll_tracked"))
     form = request.form
     # Same rule as the procurement receiving tab: a stock-in that names a PO is
@@ -255,7 +307,17 @@ def receive_post():
         _proc_flash("That reference belongs to a purchase request that has no purchase order yet. "
                     "Issue the PO first, or receive here without the reference.", "error")
         return redirect(url_for("warehouse.receive"))
-    delivered = svc.qty_of(form.get("length_m") if roll else form.get("qty"))
+    roll_rows = []
+    if roll:
+        columns = {k: form.getlist(k) for k in
+                   ("roll_no", "length_m", "shade_lot", "supplier_lot", "width_cm", "bin")}
+        for i, length in enumerate(columns["length_m"]):
+            if length.strip():
+                roll_rows.append({k: values[i] if i < len(values) else "" for k, values in columns.items()})
+        if not roll_rows or any(svc.qty_of(r["length_m"], -1) <= 0 for r in roll_rows):
+            flash("Receipt rejected (bad_qty).", "error")
+            return redirect(url_for("warehouse.receive"))
+    delivered = sum(svc.qty_of(r["length_m"]) for r in roll_rows) if roll else svc.qty_of(form.get("qty"))
     asked, quarantined = delivered, 0.0
     if line and delivered > 0:
         # Booking a PO receipt requires receiving rights as well as wh_manage.
@@ -278,8 +340,17 @@ def receive_post():
     if line and asked <= 0:
         pass                       # the whole delivery is over the order: quarantine only
     elif roll:
-        ok, msg = svc.receive_roll(mid, form, _u())
-        flash(f"Roll {msg} received." if ok else f"Receipt rejected ({msg}).",
+        allowance = asked
+        capped = []
+        for row in roll_rows:
+            if allowance <= 1e-6:     # float residue must not mint a micro-roll
+                break
+            length = min(svc.qty_of(row["length_m"]), allowance)
+            capped.append(dict(row, length_m=length))
+            allowance = round(allowance - length, 6)
+        common = {k: form.get(k) for k in ("grn_ref", "unit_cost", "grade", "received_at", "warehouse", "notes")}
+        ok, msg = svc.receive_rolls(mid, common, capped, _u())
+        flash(f"{len(msg)} rolls received." if ok else f"Receipt rejected ({msg}).",
               "success" if ok else "error")
     else:
         ok, msg = svc.receive_qty(mid, form.get("qty"), form.get("unit_cost"), _u(),

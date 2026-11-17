@@ -115,6 +115,24 @@ def checks():
     assert one("SELECT status FROM pr_stock_postings WHERE pr_id=?", other)["status"] == "skipped"
     assert svc.post_stock_postings(pr, manual=True) == {"posted": 0, "failed": 0}
     assert spare_stock() == 4 and material_stock() == 6
+    # a skipped line says why, is listed for the PR, and a corrected master is retried
+    assert one("SELECT last_error FROM pr_stock_postings WHERE pr_id=?", other)["last_error"] == "no_matching_material"
+    assert svc.stock_posting_issues(other, ("skipped",))
+    assert wsvc.create_material({"code": "SUNDRY-1", "name": "Unknown sundry item", "kind": "trim"}, store)[0]
+    assert svc.post_stock_postings(other) == {"posted": 0, "failed": 0}      # automatic path leaves it
+    assert svc.post_stock_postings(other, manual=True)["posted"] == 1
+    # two active materials share the line's name: never guess the colour — fail visibly, bell once
+    for code, colour in (("AMB-WHT", "White"), ("AMB-NVY", "Navy")):
+        assert wsvc.create_material({"code": code, "name": "Ambiguous jersey", "color": colour,
+                                     "kind": "trim"}, store)[0]
+    amb, la = make("Ambiguous", "Ambiguous jersey", 2, 5)
+    approve_all(amb)
+    assert svc.receive_items(amb, {la: 2}, store)[0]
+    row = one("SELECT status, last_error FROM pr_stock_postings WHERE pr_id=?", amb)
+    assert row == {"status": "failed", "last_error": "ambiguous_material"}, row
+    assert svc.post_stock_postings(amb)["failed"] == 1
+    assert one("SELECT COUNT(*) c FROM notifications WHERE title='Receipt not booked: ambiguous material'")["c"] == 1
+    assert one("SELECT COALESCE(SUM(stock_qty),0) s FROM wh_materials WHERE code LIKE 'AMB-%'")["s"] == 0
 
     bad, line = make("Failed receipt", "Outbox spare", 3, 10)
     execute("UPDATE pr_items SET spare_id=? WHERE id=?", spare, line)

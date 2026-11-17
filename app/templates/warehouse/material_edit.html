@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Edit material{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1 data-i18n="wh.action.edit_material">Edit material</h1><div class="sub">{{ material.code }}</div></div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.materials') }}" data-i18n="wh.nav.materials">Material master</a>
+</div>
+<form class="panel" method="post" action="{{ url_for('warehouse.material_edit', mid=material.id) }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="panel-head"><h3 data-i18n="wh.action.edit_material">Edit material</h3></div>
+  <div class="panel-pad"><div class="grid cols-2">
+    <div class="field"><label data-i18n="wh.field.name">Name</label><input name="name" maxlength="200" value="{{ material.name or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.color">Colour</label><input name="color" maxlength="200" value="{{ material.color or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.composition">Composition</label><input name="composition" maxlength="200" value="{{ material.composition or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.supplier">Supplier</label><input name="supplier" maxlength="200" value="{{ material.supplier or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.warehouse">Warehouse</label><input name="warehouse" maxlength="200" value="{{ material.warehouse or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.bin">Bin</label><input name="bin" maxlength="200" value="{{ material.bin or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.notes">Notes</label><input name="notes" maxlength="200" value="{{ material.notes or '' }}"></div>
+    <div class="field"><label data-i18n="wh.field.kind">Kind</label><select name="kind">{% for k in kinds %}<option value="{{ k }}" {{ 'selected' if material.kind==k }}>{{ k }}</option>{% endfor %}</select></div>
+    <div class="field"><label data-i18n="wh.field.uom">Unit</label><select name="uom" {{ 'disabled' if uom_locked }}>
+      {% for u in uoms %}<option value="{{ u }}" {{ 'selected' if material.uom==u }}>{{ u }}</option>{% endfor %}
+      {% if material.uom not in uoms %}<option selected value="{{ material.uom }}">{{ material.uom }}</option>{% endif %}
+    </select>{% if uom_locked %}<input type="hidden" name="uom" value="{{ material.uom }}"><span class="muted" data-i18n="wh.edit.uom_locked">Unit is locked by stock history.</span>{% endif %}</div>
+    <div class="field"><label data-i18n="wh.field.width">Width (cm)</label><input type="number" min="0" step="any" name="width_cm" value="{{ material.width_cm or 0 }}"></div>
+    <div class="field"><label data-i18n="wh.field.minlevel">Minimum level</label><input type="number" min="0" step="any" name="min_level" value="{{ material.min_level or 0 }}"></div>
+    <div class="field"><label data-i18n="wh.field.reorder">Reorder level</label><input type="number" min="0" step="any" name="reorder_level" value="{{ material.reorder_level or 0 }}"></div>
+  </div><button class="btn btn-primary btn-sm mt-2" data-i18n="wh.action.save">Save</button></div>
+</form>
+<form class="panel mt-4" method="post" action="{{ url_for('warehouse.material_active', mid=material.id) }}"><div class="panel-pad">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="active" value="{{ '0' if material.is_active else '1' }}">
+  <button class="btn btn-ghost btn-sm" {% if material.is_active %}data-advance{% endif %} data-i18n="{{ 'wh.action.deactivate' if material.is_active else 'wh.action.reactivate' }}">{{ 'Deactivate' if material.is_active else 'Reactivate' }}</button>
+</div></form>
+{% endblock %}

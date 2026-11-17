@@ -22,7 +22,9 @@
   </select>
   <label class="flex gap center"><input type="checkbox" name="low" value="1" {{ 'checked' if f_low }} onchange="this.form.submit()">
     <span data-i18n="wh.filter.low">Short only</span></label>
-  {% if f_kind or f_low %}<a class="tag" href="{{ url_for('warehouse.materials') }}" data-i18n="wh.filter.clear">Clear</a>{% endif %}
+  <label class="flex gap center"><input type="checkbox" name="inactive" value="1" {{ 'checked' if f_inactive }} onchange="this.form.submit()">
+    <span data-i18n="wh.filter.inactive">Show inactive</span></label>
+  {% if f_kind or f_low or f_inactive %}<a class="tag" href="{{ url_for('warehouse.materials') }}" data-i18n="wh.filter.clear">Clear</a>{% endif %}
 </div></form>
 
 <div class="panel"><div class="panel-pad">
@@ -47,12 +49,17 @@
         <td style="text-align:right">{{ '{:,.1f}'.format(r.reserved_qty or 0) }}</td>
         <td style="text-align:right">
           {% if r.short %}<span class="tag" style="background:#be123c18;color:#be123c">{{ '{:,.1f}'.format(r.available) }}</span>
-          {% else %}{{ '{:,.1f}'.format(r.available) }}{% endif %}</td>
+          {% else %}{{ '{:,.1f}'.format(r.available) }}{% endif %}
+          {% if r.quarantined > 0 %}<div class="muted" style="font-size:11px"><span data-i18n="wh.field.quarantined">quarantined:</span> {{ '{:,.1f}'.format(r.quarantined) }}</div>{% endif %}</td>
         <td style="text-align:right">{{ '{:,.0f}'.format(r.reorder_level or 0) }}</td>
         <td style="text-align:right">{{ '{:,.3f}'.format(r.avg_cost or 0) }}</td>
         {% if can('wh_manage') %}
         {# a roll-tracked header is DERIVED from its rolls: correct it on the roll #}
-        <td>{% if r.roll_tracked %}
+        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.material_edit', mid=r.id) }}" data-i18n="wh.action.edit">Edit</a>
+        {% if not r.is_active %}<form method="post" action="{{ url_for('warehouse.material_active', mid=r.id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="active" value="1">
+          <button class="btn btn-ghost btn-sm" data-i18n="wh.action.reactivate">Reactivate</button></form>{% endif %}
+        {% if r.roll_tracked %}
           <a class="tag" href="{{ url_for('warehouse.rolls', material_id=r.id) }}" data-i18n="wh.nav.rolls">Fabric rolls</a>
         {% else %}
           <form method="post" action="{{ url_for('warehouse.adjust') }}" style="display:flex;gap:4px">

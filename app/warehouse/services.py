@@ -27,6 +27,10 @@ _RES = {"roll": ("wh_rolls", "reserved_m", "remaining_m"),
         "material": ("wh_materials", "reserved_qty", "stock_qty")}
 
 _EPS = 1e-9
+_QUAR_SQL = ("COALESCE((SELECT SUM(q.remaining_m - COALESCE(q.reserved_m,0)) "
+             "FROM wh_rolls q WHERE q.material_id=wh_materials.id "
+             "AND q.status='quarantine'),0)")
+_AVAIL_SQL = "(COALESCE(stock_qty,0)-COALESCE(reserved_qty,0)-" + _QUAR_SQL + ")"
 
 
 def _now():
@@ -264,18 +268,18 @@ def _release(conn, target, row_id, qty):
 
 
 # --- reads -----------------------------------------------------------------
-def list_materials(kind=None, low_only=False):
+def list_materials(kind=None, low_only=False, inactive=False):
     conn = get_db()
     try:
-        sql = "SELECT * FROM wh_materials WHERE is_active=1"
-        args = []
+        sql = "SELECT *, " + _QUAR_SQL + " AS quarantined FROM wh_materials WHERE is_active=?"
+        args = [0 if inactive else 1]
         if kind:
             sql += " AND kind=?"; args.append(kind)
         if low_only:
-            sql += " AND reorder_level>0 AND (COALESCE(stock_qty,0)-COALESCE(reserved_qty,0))<=reorder_level"
+            sql += " AND reorder_level>0 AND " + _AVAIL_SQL + "<=reorder_level"
         rows = [dict(r) for r in conn.execute(sql + " ORDER BY kind, code", args).fetchall()]
         for r in rows:
-            r["available"] = round(_f(r["stock_qty"]) - _f(r["reserved_qty"]), 3)
+            r["available"] = round(_f(r["stock_qty"]) - _f(r["reserved_qty"]) - _f(r["quarantined"]), 3)
             r["short"] = bool(_f(r["reorder_level"]) > 0 and r["available"] <= _f(r["reorder_level"]))
         return rows
     finally:
@@ -287,6 +291,163 @@ def get_material(material_id):
     try:
         r = conn.execute("SELECT * FROM wh_materials WHERE id=?", (material_id,)).fetchone()
         return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def material_uom_locked(material_id):
+    conn = get_db()
+    try:
+        m = conn.execute("SELECT stock_qty FROM wh_materials WHERE id=?", (material_id,)).fetchone()
+        return bool(m and (_f(m["stock_qty"]) != 0 or conn.execute(
+            "SELECT id FROM wh_movements WHERE material_id=? LIMIT 1", (material_id,)).fetchone()))
+    finally:
+        conn.close()
+
+
+def update_material(material_id, data, user):
+    conn = get_db()
+    try:
+        conn.execute("UPDATE wh_materials SET code=code WHERE id=?", (material_id,))
+        m = conn.execute("SELECT * FROM wh_materials WHERE id=?", (material_id,)).fetchone()
+        reason = ""
+        if not m:
+            conn.rollback()
+            return False, "material_not_found"
+        values = {k: str(data.get(k, m[k]) or "").strip() for k in
+                  ("name", "kind", "color", "composition", "supplier", "warehouse", "bin", "notes", "uom")}
+        if any(len(v) > 200 for v in values.values()):
+            reason = "too_long"
+        elif values["kind"] not in MATERIAL_KINDS:
+            reason = "bad_kind"
+        elif values["uom"] not in UOMS and values["uom"] != m["uom"]:
+            reason = "bad_uom"
+        elif values["uom"] != m["uom"] and (_f(m["stock_qty"]) != 0 or conn.execute(
+                "SELECT id FROM wh_movements WHERE material_id=? LIMIT 1", (material_id,)).fetchone()):
+            reason = "uom_locked"
+        for k in ("width_cm", "min_level", "reorder_level"):
+            raw = data.get(k, m[k])
+            values[k] = 0.0 if str(raw if raw is not None else "").strip() == "" else _f(raw, -1)
+            if values[k] < 0:
+                reason = "bad_number"
+        if reason:
+            conn.rollback()
+            return False, reason
+        values["name"] = values["name"] or m["code"]
+        conn.execute("UPDATE wh_materials SET " + ", ".join(k + "=?" for k in values)
+                     + " WHERE id=?", (*values.values(), material_id))
+        conn.commit()
+        return True, "updated"
+    except Exception:
+        conn.rollback()
+        return False, "update_failed"
+    finally:
+        conn.close()
+
+
+def set_material_active(material_id, active, user):
+    conn = get_db()
+    try:
+        conn.execute("UPDATE wh_materials SET code=code WHERE id=?", (material_id,))
+        m = conn.execute("SELECT reserved_qty FROM wh_materials WHERE id=?", (material_id,)).fetchone()
+        reason = "material_not_found" if not m else "reserved_blocks" if not active and _f(m["reserved_qty"]) > 0 else ""
+        if reason:
+            conn.rollback()
+            return False, reason
+        conn.execute("UPDATE wh_materials SET is_active=?, low_alerted=CASE WHEN ?=0 "
+                     "THEN 0 ELSE low_alerted END WHERE id=?", (1 if active else 0, 1 if active else 0, material_id))
+        conn.commit()
+        return True, "updated"
+    except Exception:
+        conn.rollback()
+        return False, "update_failed"
+    finally:
+        conn.close()
+
+
+def get_roll(roll_id):
+    conn = get_db()
+    try:
+        r = conn.execute("SELECT r.*, m.code AS mat_code, m.name AS mat_name, m.uom "
+                         "FROM wh_rolls r JOIN wh_materials m ON m.id=r.material_id WHERE r.id=?",
+                         (roll_id,)).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def update_roll(roll_id, data, user):
+    conn = get_db()
+    try:
+        conn.execute("UPDATE wh_rolls SET roll_no=roll_no WHERE id=?", (roll_id,))
+        r = conn.execute("SELECT * FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
+        if not r:
+            conn.rollback()
+            return False, "roll_not_found"
+        values = {k: str(data.get(k, r[k]) or "").strip() for k in
+                  ("shade_lot", "supplier_lot", "grade", "bin")}
+        width = _f(data.get("width_cm", r["width_cm"]), -1)
+        reason = "too_long" if any(len(v) > 200 for v in values.values()) else "bad_number" if width < 0 else ""
+        if reason:
+            conn.rollback()
+            return False, reason
+        values["width_cm"] = width
+        conn.execute("UPDATE wh_rolls SET " + ", ".join(k + "=?" for k in values)
+                     + " WHERE id=?", (*values.values(), roll_id))
+        conn.commit()
+        return True, "updated"
+    except Exception:
+        conn.rollback()
+        return False, "update_failed"
+    finally:
+        conn.close()
+
+
+def split_roll(roll_id, lengths, user):
+    lengths = [_f(v, -1) for v in lengths]
+    if len(lengths) < 2 or any(v <= 0 for v in lengths):
+        return False, "bad_split"
+    conn = get_db()
+    try:
+        conn.execute("UPDATE wh_rolls SET roll_no=roll_no WHERE id=?", (roll_id,))
+        r = conn.execute("SELECT * FROM wh_rolls WHERE id=?", (roll_id,)).fetchone()
+        # 1 mm tolerance: PostgreSQL REAL stores 100.1 as 100.0999984..., so an exact
+        # sum would refuse a correct split typed off the label.
+        reason = ("roll_not_found" if not r else "reserved_blocks" if _f(r["reserved_m"]) > 0
+                  else "split_sum_mismatch" if abs(sum(lengths) - _f(r["remaining_m"])) > 1e-3 else "")
+        if reason:
+            conn.rollback()
+            return False, reason
+        moved = sum(lengths[1:])       # the parent keeps the exact rest, so the ledger reconciles
+        ok, msg = _move_stock(conn, "transfer", -moved,
+                              user, roll_id=roll_id, unit_cost=r["unit_cost"], ref=r["roll_no"])
+        if not ok:
+            conn.rollback()
+            return False, msg
+        # The metres that left are no longer this roll's to take back: without shrinking
+        # length_m, return_to_store() would accept them as an end-bit and invent stock.
+        new_len = round(_f(r["length_m"]) - moved, 6)
+        conn.execute("UPDATE wh_rolls SET length_m=?, status=? WHERE id=?",
+                     (new_len, _roll_status(r["status"], round(_f(r["remaining_m"]) - moved, 6),
+                                           new_len), roll_id))
+        numbers = []
+        data = dict(r)
+        data.pop("roll_no")
+        data["notes"] = f"Split from {r['roll_no']}"
+        for length in lengths[1:]:
+            rid, number = _insert_roll(conn, r["material_id"], data, length, r["unit_cost"],
+                                       "quarantine" if r["status"] == "quarantine" else "available")
+            ok, msg = _move_stock(conn, "transfer", length, user, roll_id=rid,
+                                  unit_cost=r["unit_cost"], ref=r["roll_no"])
+            if not ok:
+                conn.rollback()
+                return False, msg
+            numbers.append(number)
+        conn.commit()
+        return True, numbers
+    except Exception:
+        conn.rollback()
+        return False, "split_failed"
     finally:
         conn.close()
 
@@ -708,10 +869,15 @@ def receive_qty(material_id, qty, price, user, grn_ref=None, notes=None):
     price = _price(price)
     conn = get_db()
     try:
-        m = conn.execute("SELECT stock_qty, roll_tracked FROM wh_materials WHERE id=?",
+        conn.execute("UPDATE wh_materials SET code=code WHERE id=?", (material_id,))
+        m = conn.execute("SELECT stock_qty, roll_tracked, is_active FROM wh_materials WHERE id=?",
                          (material_id,)).fetchone()
         if not m:
+            conn.rollback()
             return False, "material_not_found"
+        if not m["is_active"]:
+            conn.rollback()
+            return False, "material_inactive"
         before = _f(m["stock_qty"])
         ok, msg = _move_stock(conn, "purchase_receiving", qty, user, material_id=material_id,
                               unit_cost=price or _avg(conn, material_id),
@@ -723,66 +889,85 @@ def receive_qty(material_id, qty, price, user, grn_ref=None, notes=None):
         conn.execute("UPDATE wh_materials SET low_alerted=0 WHERE id=?", (material_id,))
         conn.commit()
         return True, "received"
+    except Exception:
+        conn.rollback()
+        return False, "receipt_failed"
+    finally:
+        conn.close()
+
+
+def _insert_roll(conn, material_id, data, length, price, status="available"):
+    cur = conn.execute(
+        "INSERT INTO wh_rolls (material_id,supplier_lot,shade_lot,grade,width_cm,length_m,"
+        "remaining_m,reserved_m,unit_cost,status,grn_ref,warehouse,bin,received_at,notes) "
+        "VALUES (?,?,?,?,?,?,0,0,?,?,?,?,?,?,?)",
+        (material_id, data.get("supplier_lot") or None, data.get("shade_lot") or None,
+         data.get("grade") or "A", data.get("width_cm"), length, price, status,
+         data.get("grn_ref") or None, data.get("warehouse") or None, data.get("bin") or None,
+         data.get("received_at"), data.get("notes") or None))
+    rid = cur.lastrowid
+    want_no = (data.get("roll_no") or "").strip()
+    roll_no, bump = want_no or doc_no("ROLL", rid), 0
+    while not want_no and conn.execute("SELECT id FROM wh_rolls WHERE roll_no=?",
+                                       (roll_no,)).fetchone():
+        bump += 1
+        roll_no = f"{doc_no('ROLL', rid)}-{bump}"
+    conn.execute("UPDATE wh_rolls SET roll_no=? WHERE id=?", (roll_no, rid))
+    return rid, roll_no
+
+
+def receive_rolls(material_id, common, rolls, user):
+    conn = get_db()
+    row_no = 1
+    try:
+        conn.execute("UPDATE wh_materials SET code=code WHERE id=?", (material_id,))
+        m = conn.execute("SELECT * FROM wh_materials WHERE id=?", (material_id,)).fetchone()
+        reason = ("material_not_found" if not m else "material_inactive" if not m["is_active"]
+                  else "not_roll_tracked" if not m["roll_tracked"] else "")
+        if reason or not rolls:
+            conn.rollback()
+            return False, reason or "bad_qty"
+        price = _price(common.get("unit_cost"))
+        before = _f(m["stock_qty"])
+        numbers = []
+        for row_no, row in enumerate(rolls, 1):
+            length = _f(row.get("length_m"), -1)
+            want_no = (row.get("roll_no") or "").strip()
+            reason = "bad_qty" if length <= 0 else ""
+            if want_no and conn.execute("SELECT id FROM wh_rolls WHERE roll_no=?",
+                                        (want_no,)).fetchone():
+                reason = "duplicate_roll_no"
+            if reason:
+                conn.rollback()
+                return False, f"{reason} (row {row_no})"
+            data = dict(common, **row)
+            data["grade"] = common.get("grade") or "A"
+            data["received_at"] = common.get("received_at") or _now()[:10]
+            data["width_cm"] = _f(row.get("width_cm")) or _f(m["width_cm"])
+            rid, roll_no = _insert_roll(conn, material_id, data, length, price)
+            ok, msg = _move_stock(conn, "purchase_receiving", length, user, roll_id=rid,
+                                  unit_cost=price, ref=common.get("grn_ref"),
+                                  notes=common.get("notes") or "Roll received")
+            if not ok:
+                conn.rollback()
+                return False, f"{msg} (row {row_no})"
+            _apply_avg_cost(conn, material_id, before, length, price)
+            before += length
+            numbers.append(roll_no)
+        conn.execute("UPDATE wh_materials SET low_alerted=0 WHERE id=?", (material_id,))
+        conn.commit()
+        return True, numbers
+    except Exception:
+        conn.rollback()
+        log.warning("roll receipt failed", exc_info=True)
+        return False, f"receipt_failed (row {row_no})"
     finally:
         conn.close()
 
 
 def receive_roll(material_id, data, user):
-    """Receive one physical roll. Returns (ok, roll_no) or (False, msg).
-
-    The roll is created empty and its length booked through _move_stock, so the very
-    first metre on the shelf already has a ledger row behind it."""
-    length = _f(data.get("length_m"), -1)
-    if length <= 0:
-        return False, "bad_qty"
-    price = _price(data.get("unit_cost"))
-    conn = get_db()
-    try:
-        m = conn.execute("SELECT stock_qty, width_cm, roll_tracked FROM wh_materials "
-                         "WHERE id=?", (material_id,)).fetchone()
-        if not m:
-            return False, "material_not_found"
-        if not m["roll_tracked"]:
-            return False, "not_roll_tracked"
-        # roll_no is UNIQUE and operator-typed: check it here or the INSERT raises
-        # an IntegrityError straight out of the service and 500s the receipt page.
-        want_no = (data.get("roll_no") or "").strip()
-        if want_no and conn.execute("SELECT id FROM wh_rolls WHERE roll_no=?",
-                                    (want_no,)).fetchone():
-            return False, "duplicate_roll_no"
-        before = _f(m["stock_qty"])
-        cur = conn.execute(
-            "INSERT INTO wh_rolls (material_id,supplier_lot,shade_lot,grade,width_cm,length_m,"
-            "remaining_m,reserved_m,unit_cost,status,grn_ref,warehouse,bin,received_at,notes) "
-            "VALUES (?,?,?,?,?,?,0,0,?,'available',?,?,?,?,?)",
-            (material_id, data.get("supplier_lot") or None, data.get("shade_lot") or None,
-             data.get("grade") or "A", _f(data.get("width_cm")) or _f(m["width_cm"]), length,
-             price, data.get("grn_ref") or None, data.get("warehouse") or None,
-             data.get("bin") or None, data.get("received_at") or _now()[:10],
-             data.get("notes") or None))
-        rid = cur.lastrowid
-        # The auto number is built from the row id, but an operator may already have
-        # TYPED that exact number on an earlier roll — then this UPDATE raises an
-        # IntegrityError straight out of the service and 500s the receipt page (the
-        # delivery is on the floor and the system refuses to book it). Step past it.
-        roll_no, bump = want_no or doc_no("ROLL", rid), 0
-        while not want_no and conn.execute("SELECT id FROM wh_rolls WHERE roll_no=?",
-                                           (roll_no,)).fetchone():
-            bump += 1
-            roll_no = f"{doc_no('ROLL', rid)}-{bump}"
-        conn.execute("UPDATE wh_rolls SET roll_no=? WHERE id=?", (roll_no, rid))
-        ok, msg = _move_stock(conn, "purchase_receiving", length, user, material_id=material_id,
-                              roll_id=rid, unit_cost=price, ref=data.get("grn_ref"),
-                              notes=data.get("notes") or "Roll received")
-        if not ok:
-            conn.rollback()
-            return False, msg
-        _apply_avg_cost(conn, material_id, before, length, price)
-        conn.execute("UPDATE wh_materials SET low_alerted=0 WHERE id=?", (material_id,))
-        conn.commit()
-        return True, roll_no
-    finally:
-        conn.close()
+    ok, msg = receive_rolls(material_id, data, [dict(data)], user)
+    return ok, msg[0] if ok else msg.removesuffix(" (row 1)")
 
 
 def return_to_store(roll_id, qty, user, order_id=None, notes=None):
@@ -1081,12 +1266,12 @@ def stock_sweep():
         # NEVER alerted again, and the next real shortage passed in silence.
         conn.execute(
             "UPDATE wh_materials SET low_alerted=0 WHERE low_alerted=1 AND "
-            "(reorder_level<=0 OR (COALESCE(stock_qty,0)-COALESCE(reserved_qty,0))>reorder_level)")
+            "(reorder_level<=0 OR " + _AVAIL_SQL + ">reorder_level)")
         for m in conn.execute(
-                "SELECT id,code,name,uom,stock_qty,reserved_qty,reorder_level FROM wh_materials "
+                "SELECT id,code,name,uom, " + _AVAIL_SQL + " AS available,reorder_level FROM wh_materials "
                 "WHERE is_active=1 AND low_alerted=0 AND reorder_level>0 AND "
-                "(COALESCE(stock_qty,0)-COALESCE(reserved_qty,0))<=reorder_level").fetchall():
-            avail = _f(m["stock_qty"]) - _f(m["reserved_qty"])
+                + _AVAIL_SQL + "<=reorder_level").fetchall():
+            avail = _f(m["available"])
             sev = "critical" if avail <= 0 else "warning"
             head = "Out of stock" if avail <= 0 else "Low stock"
             _bell(conn, sev, f"{head}: {m['code']}",
@@ -1119,8 +1304,7 @@ def dashboard():
             "shade_lots": int(one("SELECT COUNT(DISTINCT shade_lot) c FROM wh_rolls "
                                   "WHERE shade_lot IS NOT NULL AND remaining_m>0")),
             "low_count": int(one("SELECT COUNT(*) c FROM wh_materials WHERE is_active=1 AND "
-                                 "reorder_level>0 AND (COALESCE(stock_qty,0)-"
-                                 "COALESCE(reserved_qty,0))<=reorder_level")),
+                                 "reorder_level>0 AND " + _AVAIL_SQL + "<=reorder_level")),
             "quarantine": int(one("SELECT COUNT(*) c FROM wh_rolls WHERE status='quarantine'")),
             "fg_onhand": round(one("SELECT COALESCE(SUM(packed_qty)-SUM(shipped_qty),0) c "
                                    "FROM wh_fg"), 0),
@@ -1136,7 +1320,7 @@ def dashboard():
 
 
 # --- procurement bridge (reverse leg) --------------------------------------
-def _resolve_material(conn, text):
+def _match_material(conn, text):
     """Map a PR line's item text back to a material. Procurement's pr_items has no
     warehouse link column (spare_id is hard-typed to maintenance), and that file is not
     ours to change — so the material CODE at the head of the line is the join key, the
@@ -1149,7 +1333,7 @@ def _resolve_material(conn, text):
     equality is tried after every code candidate has failed."""
     s = str(text or "").strip()
     if not s:
-        return None
+        return None, "no_matching_material"
     heads, seen = [], set()
     for c in (s, s.split("—")[0].strip(), s.split(" - ")[0].strip()):
         if c and c not in seen:
@@ -1160,13 +1344,19 @@ def _resolve_material(conn, text):
         r = conn.execute("SELECT id, roll_tracked, code FROM wh_materials "
                          "WHERE UPPER(code)=UPPER(?) AND is_active=1", (c,)).fetchone()
         if r:
-            return dict(r)
+            return dict(r), ""
     for c in heads:            # name match: whole head only, never the first word
-        r = conn.execute("SELECT id, roll_tracked, code FROM wh_materials "
-                         "WHERE UPPER(name)=UPPER(?) AND is_active=1", (c,)).fetchone()
-        if r:
-            return dict(r)
-    return None
+        rows = conn.execute("SELECT id, roll_tracked, code FROM wh_materials "
+                            "WHERE UPPER(name)=UPPER(?) AND is_active=1", (c,)).fetchall()
+        if len(rows) > 1:
+            return None, "ambiguous_material"
+        if rows:
+            return dict(rows[0]), ""
+    return None, "no_matching_material"
+
+
+def _resolve_material(conn, text):
+    return _match_material(conn, text)[0]
 
 
 def post_line_to_material(material_id, qty, price, pr_no, user):

@@ -17,6 +17,7 @@ TMP = Path(tempfile.mkdtemp(prefix="wh_adv_"))
 REPO = Path(__file__).resolve().parents[2]
 os.chdir(TMP)
 sys.path.insert(0, str(REPO))
+os.environ["TC_SEED_DEMO"] = "1"
 os.environ["TC_ENV"] = "development"
 os.environ.pop("DATABASE_URL", None)
 os.environ["TC_HEALTH_TIMEOUT"] = "1"
@@ -493,7 +494,7 @@ with app.app_context():
                                        r"def (\w+)", src):
         ck("@login_required" in decs, f"{name}: login_required")
         ck("permission_required" in decs, f"{name}: permission_required")
-    ck(src.count("methods=[\"POST\"]") == 9, "9 state-changing routes, all POST-only",
+    ck(src.count("methods=[\"POST\"]") == 11, "11 state-changing routes, all POST-only",
        str(src.count("methods=[\"POST\"]")))
     ck("execute(" not in src, "routes contain no SQL at all")
 

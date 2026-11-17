@@ -5,7 +5,7 @@
   <div>
     <div class="eyebrow" data-i18n="wh.eyebrow">Operations · Raw Material &amp; Finished Goods</div>
     <h1 data-i18n="wh.nav.receive">Receive material</h1>
-    <div class="sub" data-i18n="wh.recv.sub">Book a delivery in. Roll-tracked materials create one roll per receipt; trims are added to the quantity on hand.</div>
+    <div class="sub" data-i18n="wh.recv.packing_hint">Book a delivery in. Enter each roll on its own packing-list row; trims are added to the quantity on hand.</div>
   </div>
   <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
 </div>
@@ -24,16 +24,22 @@
     </div>
 
     <div class="panel mt-4"><div class="panel-head"><h3 data-i18n="wh.recv.roll_hint">Roll-tracked materials (fabric, tape)</h3></div>
-      <div class="panel-pad"><div class="grid cols-2">
-        <div class="field"><label data-i18n="wh.field.length">Length (m)</label><input type="number" step="any" name="length_m"></div>
-        <div class="field"><label data-i18n="wh.field.rollno_in">Roll number (blank = auto)</label><input name="roll_no"></div>
-        <div class="field"><label data-i18n="wh.field.shade">Shade lot</label><input name="shade_lot"></div>
-        <div class="field"><label data-i18n="wh.field.suplot">Supplier lot</label><input name="supplier_lot"></div>
-        <div class="field"><label data-i18n="wh.field.width">Width (cm)</label><input type="number" step="any" name="width_cm"></div>
-        <div class="field"><label data-i18n="wh.field.grade">Grade</label><input name="grade" value="A"></div>
-        <div class="field"><label data-i18n="wh.field.bin">Bin</label><input name="bin"></div>
-        <div class="field"><label data-i18n="wh.field.received">Received on</label><input type="date" name="received_at"></div>
-      </div></div>
+      <div class="panel-pad">
+        <table class="tbl"><thead><tr>
+          <th data-i18n="wh.field.rollno_in">Roll number (blank = auto)</th><th data-i18n="wh.field.length">Length (m)</th>
+          <th data-i18n="wh.field.shade">Shade lot</th><th data-i18n="wh.field.suplot">Supplier lot</th>
+          <th data-i18n="wh.field.width">Width (cm)</th><th data-i18n="wh.field.bin">Bin</th>
+        </tr></thead><tbody id="packing-rows">
+          {% for i in range(5) %}<tr><td><input name="roll_no"></td><td><input type="number" step="any" name="length_m"></td>
+            <td><input name="shade_lot"></td><td><input name="supplier_lot"></td>
+            <td><input type="number" step="any" name="width_cm"></td><td><input name="bin"></td></tr>{% endfor %}
+        </tbody></table>
+        <button type="button" class="btn btn-ghost btn-sm" id="add-roll" data-i18n="wh.action.add_roll">Add roll</button>
+        <div class="grid cols-2">
+          <div class="field"><label data-i18n="wh.field.grade">Grade</label><input name="grade" value="A"></div>
+          <div class="field"><label data-i18n="wh.field.received">Received on</label><input type="date" name="received_at"></div>
+        </div>
+      </div>
     </div>
 
     <div class="panel mt-4"><div class="panel-head"><h3 data-i18n="wh.recv.qty_hint">Quantity-tracked materials (buttons, thread, labels)</h3></div>
@@ -46,4 +52,12 @@
     <button class="btn btn-primary btn-sm mt-4" data-i18n="wh.action.receive">Receive material</button>
   </div>
 </form>
+<script>
+document.getElementById('add-roll').addEventListener('click', function () {
+  var body = document.getElementById('packing-rows');
+  var row = body.lastElementChild.cloneNode(true);
+  row.querySelectorAll('input').forEach(function (input) { input.value = ''; });
+  body.appendChild(row);
+});
+</script>
 {% endblock %}

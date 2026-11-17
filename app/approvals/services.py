@@ -3948,6 +3948,10 @@ def post_stock_postings(pr_id, user=None, manual=False):
     result = {"posted": 0, "failed": 0}
     actor = user or {"username": "system"}
     cap = "" if manual else " AND COALESCE(attempts,0)<5"
+    eligible = ("(status IN ('pending','failed') OR "
+                "(status='skipped' AND COALESCE(last_error,'no_matching_material')='no_matching_material'))" if manual
+                else "status IN ('pending','failed')")
+    selected = eligible.replace("status", "p.status").replace("last_error", "p.last_error")
     try:
         conn = get_db()
         try:
@@ -3955,7 +3959,7 @@ def post_stock_postings(pr_id, user=None, manual=False):
                 "SELECT p.*, i.unit_price, i.item, r.pr_no, r.source_ref "
                 "FROM pr_stock_postings p LEFT JOIN pr_items i ON i.id=p.item_id "
                 "JOIN pr_requests r ON r.id=p.pr_id WHERE p.pr_id=? "
-                "AND p.status IN ('pending','failed')" + cap + " ORDER BY p.id",
+                "AND " + selected + cap + " ORDER BY p.id",
                 (pr_id,)).fetchall()]
         finally:
             conn.close()
@@ -3963,23 +3967,43 @@ def post_stock_postings(pr_id, user=None, manual=False):
             ok, err = False, ""
             try:
                 if row["target"] == "material" and not row["target_id"]:
-                    from app.warehouse.services import _resolve_material
+                    from app.warehouse.services import _match_material
                     conn = get_db()
                     try:
-                        mat = _resolve_material(conn, row["item"])
+                        mat, reason = _match_material(conn, row["item"])
                     finally:
                         conn.close()
                     if not mat:
-                        # not a warehouse material — nothing to post, same as before
-                        _set_posting("UPDATE pr_stock_postings SET status='skipped' "
-                                     "WHERE id=? AND status IN ('pending','failed')",
-                                     (row["id"],))
+                        changed = _set_posting(
+                            "UPDATE pr_stock_postings SET status=?, last_error=? WHERE id=? AND " + eligible,
+                            ("failed" if reason == "ambiguous_material" else "skipped", reason, row["id"]))
+                        if changed == 1 and reason == "ambiguous_material":
+                            result["failed"] += 1
+                            # Sweeps revisit failed rows; one warning per unresolved ambiguity is enough.
+                            if row["last_error"] == "ambiguous_material":
+                                continue
+                            bell = None
+                            try:
+                                bell = get_db()
+                                bell.execute(
+                                    "INSERT INTO notifications (severity,module,title,message,link,created_at) "
+                                    "VALUES (?,?,?,?,?,?)",
+                                    ("warning", "procurement", "Receipt not booked: ambiguous material",
+                                     f"{row['pr_no']}: {row['item']}", _pr_link(pr_id), _now()))
+                                bell.commit()
+                            except Exception:
+                                if bell is not None:
+                                    bell.rollback()
+                                log.warning("ambiguous material notification failed", exc_info=True)
+                            finally:
+                                if bell is not None:
+                                    bell.close()
                         continue
                     row["target_id"] = mat["id"]
                 if _set_posting(
                         "UPDATE pr_stock_postings SET status='posting', target_id=?, "
                         "attempts=COALESCE(attempts,0)+1 WHERE id=? "
-                        "AND status IN ('pending','failed')" + cap,
+                        "AND " + eligible + cap,
                         (row["target_id"], row["id"])) != 1:
                     continue      # another request claimed it
                 price = 0.0 if row["free"] else float(row["unit_price"] or 0)
@@ -4019,16 +4043,18 @@ def post_stock_postings(pr_id, user=None, manual=False):
     return result
 
 
-def stock_posting_issues(pr_id):
+def stock_posting_issues(pr_id, statuses=("failed", "posting")):
     """Rows that have not reached stock and need a person: failed, or stuck mid-post."""
+    if not statuses:
+        return []
     try:
         conn = get_db()
         try:
             return [dict(r) for r in conn.execute(
                 "SELECT p.*, i.item FROM pr_stock_postings p "
                 "LEFT JOIN pr_items i ON i.id=p.item_id "
-                "WHERE p.pr_id=? AND p.status IN ('failed','posting') ORDER BY p.id",
-                (pr_id,)).fetchall()]
+                "WHERE p.pr_id=? AND p.status IN (" + ",".join("?" for _ in statuses) + ") ORDER BY p.id",
+                (pr_id, *statuses)).fetchall()]
         finally:
             conn.close()
     except Exception:
