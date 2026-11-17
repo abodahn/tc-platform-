@@ -84,14 +84,18 @@ def notify(conn, target_role, title, message, entity_type, entity_id,
 
 
 def _usernames_for(conn, names):
-    names = list({name.strip() for name in (names or []) if name and name.strip()})
-    if not names:
-        return []
-    placeholders = ",".join("?" for _ in names)
-    return [row["username"] for row in conn.execute(
-        f"SELECT username FROM users WHERE is_active=1 AND "
-        f"(username IN ({placeholders}) OR full_name IN ({placeholders}))",
-        tuple(names + names)).fetchall()]
+    usernames = []
+    for name in dict.fromkeys(name.strip() for name in (names or []) if name and name.strip()):
+        exact = conn.execute(
+            "SELECT username FROM users WHERE is_active=1 AND username=?", (name,)).fetchone()
+        if exact:
+            usernames.append(exact["username"])
+            continue
+        matches = conn.execute(
+            "SELECT username FROM users WHERE is_active=1 AND full_name=?", (name,)).fetchall()
+        if len(matches) == 1:
+            usernames.append(matches[0]["username"])
+    return list(dict.fromkeys(usernames))
 
 
 def _role_usernames(conn, role):
@@ -117,12 +121,14 @@ def _requester_usernames(conn, ticket_id):
 _PENDING_NOTES = {}
 
 
-def _notify_people(conn, usernames, title, message, link):
+def _notify_people(conn, usernames, title, message, link, args=(), actor=None):
     """Queue a personal bell notice; _flush_notes sends it AFTER the workflow commits.
     Writing it mid-transaction risked a failed INSERT rolling back the workflow on
     PostgreSQL (the shared connection rolls back the whole transaction on error)."""
+    usernames = list(dict.fromkeys(name for name in usernames
+                                   if name != (actor or {}).get("username")))
     if usernames:
-        _PENDING_NOTES.setdefault(conn, []).append((list(usernames), title, message, link))
+        _PENDING_NOTES.setdefault(conn, []).append((usernames, title, message, args, link))
 
 
 def _flush_notes(conn):
@@ -131,8 +137,20 @@ def _flush_notes(conn):
         return
     try:
         from app.approvals.services import notify_users
-        for usernames, title, message, link in notes:
-            notify_users(conn, usernames, "info", title, message, link=link, module="maintenance")
+        from app.maintenance.messages import translate
+        for usernames, title, message, args, link in notes:
+            placeholders = ",".join("?" for _ in usernames)
+            groups = {}
+            for row in conn.execute(
+                    f"SELECT username, lang_pref FROM users WHERE username IN ({placeholders})",
+                    tuple(usernames)).fetchall():
+                groups.setdefault(row["lang_pref"] or "en", []).append(row["username"])
+            for lang, group in groups.items():
+                text = translate(message, lang)
+                if args:
+                    text = text % tuple(args)
+                notify_users(conn, group, "info", translate(title, lang), text,
+                             link=link, module="maintenance")
         conn.commit()
     except Exception:
         try:
@@ -343,8 +361,9 @@ def review_assign(ticket_id, technician, priority, response_due, resolution_due,
                f"{doc_no('MNT', ticket_id)} assigned to you", "ticket", ticket_id,
                "info", f"/maintenance/tickets/{ticket_id}")
         _notify_people(conn, _usernames_for(conn, [technician]), "Work order assigned",
-                       f"{doc_no('MNT', ticket_id)} assigned to you",
-                       f"/maintenance/tickets/{ticket_id}")
+                       "%s assigned to you",
+                       f"/maintenance/tickets/{ticket_id}",
+                       args=(doc_no('MNT', ticket_id),), actor=user)
         conn.commit()
         _flush_notes(conn)
         return True, ""
@@ -490,13 +509,14 @@ def create_request(ticket_id, items, reason, urgency, user, ip=None):
             conn.execute("UPDATE mnt_requests SET status='waiting_approval' WHERE id=?", (rid,))
             set_ticket_status(conn, ticket_id, "waiting_approval", user, ip, force=True)
             first_role = roles[0] if roles else "maintenance_manager"
+            people = [name for name in _role_usernames(conn, first_role)
+                      if name != user.get("username")]
             notify(conn, first_role, "Spare request awaiting approval",
                    f"{doc_no('SPR', rid)} needs your approval", "request", rid,
-                   "warning", f"/maintenance/approvals")
-            if roles:
-                _notify_people(conn, _role_usernames(conn, roles[0]),
-                               "Spare request awaiting approval",
-                               f"{doc_no('SPR', rid)} needs your approval", "/maintenance/approvals")
+                   "info" if people else "warning", "/maintenance/approvals")
+            _notify_people(conn, people, "Spare request awaiting approval",
+                           "%s needs your approval", "/maintenance/approvals",
+                           args=(doc_no('SPR', rid),), actor=user)
         audit(conn, user, "request_create", "request", rid, None, doc_no("SPR", rid), ip=ip)
         conn.commit()
         _flush_notes(conn)
@@ -542,7 +562,8 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
                                   comment=comment)
                 ticket_id = req["ticket_id"]
                 _notify_people(conn, _requester_usernames(conn, ticket_id), "Spare request rejected",
-                               f"{doc_no('SPR', rid)}: {comment}", f"/maintenance/tickets/{ticket_id}")
+                               "%s: %s", f"/maintenance/tickets/{ticket_id}",
+                               args=(doc_no('SPR', rid), comment), actor=user)
             notify(conn, "maintenance_technician", "Spare request rejected",
                    f"Request {rid}: {comment}", "request", rid, "warning")
             audit(conn, user, "approval_reject", "request", rid, None, "rejected",
@@ -562,8 +583,9 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             if req:
                 ticket_id = req["ticket_id"]
                 _notify_people(conn, _requester_usernames(conn, ticket_id), "Spare request returned",
-                               f"{doc_no('SPR', rid)} returned for clarification",
-                               f"/maintenance/tickets/{ticket_id}")
+                               "%s returned for clarification",
+                               f"/maintenance/tickets/{ticket_id}",
+                               args=(doc_no('SPR', rid),), actor=user)
             audit(conn, user, "approval_return", "request", rid, None, "returned",
                   comment=comment, ip=ip)
             conn.commit()
@@ -629,7 +651,8 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
                     set_ticket_status(conn, req["ticket_id"], "approved_issue", user, ip, force=True)
                     ticket_id = req["ticket_id"]
                     _notify_people(conn, _requester_usernames(conn, ticket_id), "Spare request approved",
-                                   f"{doc_no('SPR', rid)} approved", f"/maintenance/tickets/{ticket_id}")
+                                   "%s approved", f"/maintenance/tickets/{ticket_id}",
+                                   args=(doc_no('SPR', rid),), actor=user)
                 notify(conn, "storekeeper", "Spare request approved - ready to issue",
                        f"Request {rid} approved", "request", rid, "warning",
                        "/maintenance/requests")
@@ -640,7 +663,8 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             if next_rung:
                 _notify_people(conn, _role_usernames(conn, next_rung["approver_role"]),
                                "Spare request awaiting approval",
-                               f"{doc_no('SPR', rid)} needs your approval", "/maintenance/approvals")
+                               "%s needs your approval", "/maintenance/approvals",
+                               args=(doc_no('SPR', rid),), actor=user)
         audit(conn, user, "approval_approve", "request", rid, None, "approved", comment=comment, ip=ip)
         conn.commit()
         _flush_notes(conn)
@@ -811,7 +835,8 @@ def close_ticket(ticket_id, user, ip=None):
         conn.execute("UPDATE mnt_tickets SET status='closed', closed_at=?, total_downtime_min=? WHERE id=?",
                      (_now(), downtime, ticket_id))
         _notify_people(conn, _requester_usernames(conn, ticket_id), "Ticket closed",
-                       f"{doc_no('MNT', ticket_id)} has been closed", f"/maintenance/tickets/{ticket_id}")
+                       "%s has been closed", f"/maintenance/tickets/{ticket_id}",
+                       args=(doc_no('MNT', ticket_id),), actor=user)
         if t["machine_id"] and not (t["machine_rolled"] or 0):
             # Only charge the machine's downtime meter when production was actually
             # stopped -- otherwise administrative waiting time (approvals, parts)
@@ -1098,7 +1123,7 @@ def save_attachments(files, entity_type, entity_id, kind, user, limit=5):
     return saved
 
 
-def _notify_spare_arrived(spare_id, qty):
+def _notify_spare_arrived(spare_id, qty, skip_ticket=None):
     """Stock arrived for a spare: tell whoever is waiting on it. Never raises.
 
     Notify only: waiting_stock->waiting_approval needs the approval rows that only
@@ -1115,25 +1140,21 @@ def _notify_spare_arrived(spare_id, qty):
                 "WHERE ri.spare_id=? AND r.status='out_of_stock' "
                 "AND t.status IN ('waiting_stock','spare_required')", (spare_id,)).fetchall()
             for t in tickets:
+                if t["id"] == skip_ticket:
+                    continue
                 tid, title = t["id"], "Spare part arrived"
                 message = (f"{spare['code']} received ({float(qty):g}) — ticket #{tid} is "
                            "waiting on it; raise or re-approve the spare request.")
                 link = f"/maintenance/tickets/{tid}"
                 for role in ("maintenance_technician", "maintenance_manager"):
                     notify(conn, role, title, message, "ticket", tid, "info", link)
-                # assigned_to is free text (a name or a username); bell it if it is a user
-                acct = None
-                if t["assigned_to"]:
-                    acct = conn.execute(
-                        "SELECT username FROM users WHERE username=? OR full_name=?",
-                        (t["assigned_to"], t["assigned_to"])).fetchone()
-                if acct:
-                    conn.execute(
-                        "INSERT INTO notifications (severity,module,title,message,target_user,"
-                        "link,created_at) VALUES ('info','maintenance',?,?,?,?,?)",
-                        (title, message, acct["username"], link, _now()))
+                _notify_people(conn, _usernames_for(conn, [t["assigned_to"]]), title,
+                               "%s received (%s) — ticket #%s is waiting on it; raise or re-approve the spare request.",
+                               link, args=(spare["code"], f"{float(qty):g}", tid))
             conn.commit()
+            _flush_notes(conn)
         except Exception:
+            _PENDING_NOTES.pop(conn, None)   # rolled back: drop the queued notices too
             conn.rollback()     # never leave a shared PG connection aborted
             raise
         finally:
@@ -1142,7 +1163,7 @@ def _notify_spare_arrived(spare_id, qty):
         log.warning("spare-arrived notification failed for spare %s", spare_id, exc_info=True)
 
 
-def receive_stock(spare_id, qty, price, user, ip=None):
+def receive_stock(spare_id, qty, price, user, ip=None, skip_ticket=None):
     conn = get_db()
     try:
         try:
@@ -1183,7 +1204,7 @@ def receive_stock(spare_id, qty, price, user, ip=None):
                          (price, round(new_avg, 4), spare_id))
         audit(conn, user, "stock_receive", "spare", spare_id, None, qty, ip=ip)
         conn.commit()
-        _notify_spare_arrived(spare_id, qty)
+        _notify_spare_arrived(spare_id, qty, skip_ticket=skip_ticket)
         return True, ""
     finally:
         conn.close()

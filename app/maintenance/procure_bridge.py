@@ -172,14 +172,21 @@ def notify_ticket_parts_arrived(pr_id):
             conn.close()
         if not pr or not str(pr["source_ref"] or "").startswith("ticket:"):
             return
-        from app.maintenance.services import notify as mnt_notify, add_comment
+        from app.maintenance.services import (
+            notify as mnt_notify, add_comment, _notify_people, _flush_notes, _usernames_for)
         tid = int(pr["source_ref"].split(":", 1)[1])
         conn = get_db()
         try:
             mnt_notify(conn, "maintenance_technician", f"Parts arrived: {pr['pr_no']}",
                        f"Goods received on {pr['pr_no']} for ticket #{tid} — collect from the warehouse.",
                        "ticket", tid, "info", f"/maintenance/tickets/{tid}")
+            ticket = conn.execute("SELECT assigned_to FROM mnt_tickets WHERE id=?", (tid,)).fetchone()
+            if ticket:
+                _notify_people(conn, _usernames_for(conn, [ticket["assigned_to"]]), "Parts arrived",
+                               "Goods received on %s for ticket #%s — collect from the warehouse.",
+                               f"/maintenance/tickets/{tid}", args=(pr["pr_no"], tid))
             conn.commit()
+            _flush_notes(conn)
         finally:
             conn.close()
         add_comment(tid, {"username": "procurement"},

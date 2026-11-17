@@ -23,6 +23,8 @@
   {% else %}<div class="panel"><div class="empty" data-i18n="m.no_records">No PM plans</div></div>{% endfor %}
 </div>
 
+{% if total_plans > shown_plans %}<div class="muted"><span data-i18n="sf.showing">Showing</span> {{ shown_plans }} / {{ total_plans }}</div>{% endif %}
+
 <div class="panel mt-6"><div class="panel-head"><h3>PM work orders</h3></div>
   <div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th data-i18n="m.machine">Machine</th>
     <th data-i18n="m.next_due">Scheduled</th><th data-i18n="m.status">Status</th><th data-i18n="m.assigned_to">Assigned</th><th data-i18n="m.actions">Actions</th></tr></thead>
@@ -31,4 +33,5 @@
       <td>{% if w.status!='completed' and mcan('maint_technician') %}<form method="post" action="{{ url_for('maintenance.pm_complete', wid=w.id) }}" style="display:inline">
         <button class="btn btn-ghost btn-sm">Complete</button></form>{% else %}—{% endif %}</td></tr>
     {% else %}<tr><td colspan="6"><div class="empty muted" data-i18n="m.no_records">No work orders</div></td></tr>{% endfor %}</tbody></table></div></div>
+{% if total_wos > wos|length %}<div class="muted"><span data-i18n="sf.showing">Showing</span> {{ wos|length }} / {{ total_wos }}</div>{% endif %}
 {% endblock %}

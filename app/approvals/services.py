@@ -3986,7 +3986,11 @@ def post_stock_postings(pr_id, user=None, manual=False):
                 try:
                     if row["target"] == "spare":
                         from app.maintenance.services import receive_stock
-                        ok, err = receive_stock(int(row["target_id"]), row["qty"], price, actor)
+                        source_ref = str(row["source_ref"] or "")
+                        ticket_id = source_ref[7:] if source_ref.startswith("ticket:") else ""
+                        skip_ticket = int(ticket_id) if ticket_id.isdecimal() else None
+                        ok, err = receive_stock(int(row["target_id"]), row["qty"], price, actor,
+                                                skip_ticket=skip_ticket)
                     else:
                         from app.warehouse.services import post_line_to_material
                         ok, err = post_line_to_material(row["target_id"], row["qty"], price,

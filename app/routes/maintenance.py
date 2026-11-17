@@ -1298,6 +1298,9 @@ def pm():
             "SELECT w.*, m.code mcode FROM mnt_pm_work_orders w JOIN mnt_machines m ON m.id=w.machine_id "
             # open orders first so an old overdue one linked from /my-work is still listed
             "ORDER BY CASE WHEN w.status='completed' THEN 1 ELSE 0 END, w.id DESC LIMIT 30").fetchall()
+        total_wos = conn.execute(
+            "SELECT COUNT(*) c FROM mnt_pm_work_orders w "
+            "JOIN mnt_machines m ON m.id=w.machine_id").fetchone()["c"]
     finally:
         conn.close()
     # Overdue and due-soon first, then the rest — and cap what is rendered. All
@@ -1311,7 +1314,7 @@ def pm():
     checklists = {k: v for k, v in checklists.items() if k in keep}
     return render_template("maintenance/pm.html", plans=plans, checklists=checklists,
                            total_plans=total_plans, shown_plans=len(plans),
-                           wos=wos, active="maint_pm")
+                           wos=wos, total_wos=total_wos, active="maint_pm")
 
 
 @bp.route("/pm/<int:pid>/generate", methods=["POST"])

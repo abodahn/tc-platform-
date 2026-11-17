@@ -161,7 +161,7 @@ def checks():
     tid, err = msvc.create_ticket({"description": "Waiting for outbox spare"}, store)
     assert tid, err
     execute("UPDATE mnt_tickets SET status='waiting_stock', assigned_to=? WHERE id=?", "test_assignee", tid)
-    execute("INSERT INTO users (username,full_name,role,password_hash,is_active) VALUES (?,?,?,'',0)",
+    execute("INSERT INTO users (username,full_name,role,password_hash,is_active) VALUES (?,?,?,'',1)",
             "test_assignee", "Test Assignee", "maintenance_technician")
     req = execute("INSERT INTO mnt_requests (ticket_id,status) VALUES (?,'out_of_stock')", tid)
     execute("INSERT INTO mnt_request_items (request_id,spare_id,qty_requested) VALUES (?,?,2)", req, spare)
@@ -181,6 +181,20 @@ def checks():
     assert one(arrived, tid)["c"] == 1
     svc.post_stock_postings(tpr, manual=True)          # a retry must not repeat it
     assert one(arrived, tid)["c"] == 1
+    assert one("SELECT COUNT(*) c FROM notifications WHERE target_user=? AND title='Parts arrived'",
+               "test_assignee")["c"] == 1
+
+    # a ticket PR whose line IS spare-linked: one arrival notice for that ticket, not two
+    spr, sl = make("Ticket spare", "Outbox spare", 1, 10)
+    execute("UPDATE pr_items SET spare_id=? WHERE id=?", spare, sl)
+    execute("UPDATE pr_requests SET source_module='maintenance', source_ref=? WHERE id=?",
+            "ticket:%s" % tid, spr)
+    approve_all(spr)
+    assert svc.receive_items(spr, {sl: 1}, store)[0]
+    assert one("SELECT COUNT(*) c FROM notifications WHERE target_user=? AND title='Parts arrived'",
+               "test_assignee")["c"] == 2
+    assert one("SELECT COUNT(*) c FROM notifications WHERE target_user=? AND title='Spare part arrived'",
+               "test_assignee")["c"] == 1
 
 
 if __name__ == "__main__":
