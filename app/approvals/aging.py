@@ -258,9 +258,13 @@ def run_aging_alerts():
         sent = {r["detail"] for r in conn.execute(
             "SELECT detail FROM pr_events WHERE pr_id IN (%s) AND action='aging_alert'"
             % ph, tuple(pr_ids)).fetchall()}
+        approvers = {}
         for r in rows:
             esc = svc._csv_set(r.get("esc_role"))
-            targets = svc.eligible_approvers(conn, r["stage"], roles=esc or None)
+            key = (r["stage"], frozenset(esc))
+            if key not in approvers:
+                approvers[key] = svc.eligible_approvers(conn, r["stage"], roles=esc or None)
+            targets = approvers[key]
             fresh = sorted(u for u in targets
                            if u and _alert_stamp(r["step_id"], u) not in sent)
             if not fresh:

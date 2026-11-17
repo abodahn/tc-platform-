@@ -840,14 +840,16 @@ def locations():
                     "lower(label_tr) LIKE ? OR lower(department) LIKE ?)")
             args = [like, like, like, like]
         rows = [dict(r) for r in conn.execute(sql + " ORDER BY level, code", args)]
-        # One query for every location's live machine count, matched on the free
-        # text the register actually holds.
+        groups = conn.execute(
+            "SELECT COALESCE(area,'') a, COALESCE(line_no,'') l, COUNT(*) c "
+            "FROM mnt_machines WHERE is_active=1 GROUP BY COALESCE(area,''), COALESCE(line_no,'')"
+        ).fetchall()
+        # Match each location against the machine groups loaded in one query.
         for r in rows:
             needle = (r.get("line_no") or r.get("department") or r.get("building") or "").strip()
-            r["live_machines"] = conn.execute(
-                "SELECT COUNT(*) c FROM mnt_machines WHERE is_active=1 AND ("
-                "lower(COALESCE(area,''))=lower(?) OR lower(COALESCE(line_no,''))=lower(?))",
-                (needle, needle)).fetchone()["c"] if needle else 0
+            r["live_machines"] = sum(g["c"] for g in groups
+                                     if g["a"].lower() == needle.lower()
+                                     or g["l"].lower() == needle.lower()) if needle else 0
         levels = conn.execute(
             "SELECT level, COUNT(*) c FROM mnt_locations WHERE is_active=1 "
             "GROUP BY level ORDER BY c DESC").fetchall()

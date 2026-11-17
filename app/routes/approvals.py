@@ -8,6 +8,7 @@ approval actions are additionally gated by the per-stage authority check.
 """
 import base64
 import io
+import time
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
                    abort, jsonify, send_file, current_app)
@@ -54,6 +55,10 @@ from app.approvals import constants as C
 
 bp = Blueprint("approvals", __name__, url_prefix="/procurement")
 
+# run_escalations() from the landing page: at most once per process per 5 min
+_SWEEP_INTERVAL = 300  # seconds
+_LAST_SWEEP = [float("-inf")]  # monotonic() can be < 300 right after boot
+
 _MAX_ATTACH = 3 * 1024 * 1024  # 3 MB per quotation file
 _ATTACH_EXT = (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".xlsx", ".csv")
 
@@ -95,7 +100,10 @@ def _save_attachments(pr_id, user):
 def index():
     user = _u()
     try:  # opportunistically flag overdue approvals (no cron needed)
-        svc.run_escalations()
+        now = time.monotonic()
+        if now - _LAST_SWEEP[0] >= _SWEEP_INTERVAL:
+            _LAST_SWEEP[0] = now
+            svc.run_escalations()
     except Exception:
         pass
     return render_template(

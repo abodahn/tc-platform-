@@ -899,14 +899,17 @@ def sync_stock_alerts(conn=None):
         spares = conn.execute(
             "SELECT id,code,name,stock_qty,reorder_level,uom FROM mnt_spare_parts WHERE is_active=1"
         ).fetchall()
+        alerts = {}
+        for r in conn.execute(
+                "SELECT id, title, entity_id FROM mnt_notifications WHERE entity_type='spare' "
+                "AND is_read=0 AND (title LIKE 'Out of stock:%' OR title LIKE 'Low stock:%') "
+                "ORDER BY id"):
+            alerts.setdefault(r["entity_id"], r)
         for s in spares:
             sid = s["id"]
             stock = s["stock_qty"] or 0
             reorder = s["reorder_level"] or 0
-            existing = conn.execute(
-                "SELECT id, title FROM mnt_notifications WHERE entity_type='spare' AND entity_id=? "
-                "AND is_read=0 AND (title LIKE 'Out of stock:%' OR title LIKE 'Low stock:%')",
-                (sid,)).fetchone()
+            existing = alerts.get(sid)
             url = f"/maintenance/spares/{sid}"
             if stock <= 0:
                 if not (existing and existing["title"].startswith("Out of stock:")):

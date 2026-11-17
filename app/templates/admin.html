@@ -145,7 +145,7 @@
             </td>
             <td><span class="tag">{{ u.role }}</span>{% if has_extra %} <span class="tag ok" data-i18n="admin.has_extra">+ extra</span>{% endif %}</td>
             <td>{% if u.is_active %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.active">Active</span></span>{% else %}<span class="badge b-offline"><span class="dot"></span><span data-i18n="admin.disabled">Disabled</span></span>{% endif %}</td>
-            <td>{% if u.sig_png %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.signed">Signed</span></span>{% else %}<span class="tag" data-i18n="admin.no_sig">Not set</span>{% endif %}</td>
+            <td>{% if u.has_sig %}<span class="badge b-online"><span class="dot"></span><span data-i18n="admin.signed">Signed</span></span>{% else %}<span class="tag" data-i18n="admin.no_sig">Not set</span>{% endif %}</td>
             <td class="u-act">
               {% if can('manage_users') %}
               <div class="flex" style="gap:6px">

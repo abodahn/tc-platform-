@@ -27,7 +27,9 @@ bp = Blueprint("admin", __name__, url_prefix="/admin")
 def index():
     conn = get_db()
     try:
-        users = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+        users = conn.execute(
+            "SELECT id, username, full_name, email, role, is_active, extra_perms, "
+            "(sig_png IS NOT NULL AND sig_png<>'') AS has_sig FROM users ORDER BY id").fetchall()
         systems = conn.execute("SELECT * FROM systems ORDER BY sort_order").fetchall()
         audit = conn.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 300").fetchall()
         audit_actions = [r["action"] for r in conn.execute(

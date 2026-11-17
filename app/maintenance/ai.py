@@ -226,9 +226,13 @@ def downtime_anomalies(conn):
 
 
 def _mtbf_days(conn, machine_id):
-    dates = [d for d in (_parse(r["created_at"]) for r in conn.execute(
+    return _mtbf_from_dates(r["created_at"] for r in conn.execute(
         "SELECT created_at FROM mnt_tickets WHERE machine_id=? ORDER BY created_at",
-        (machine_id,))) if d]
+        (machine_id,)))
+
+
+def _mtbf_from_dates(values):
+    dates = [d for d in (_parse(value) for value in values) if d]
     if len(dates) >= 2:
         span = (dates[-1] - dates[0]).days
         if span > 0:
@@ -242,8 +246,14 @@ def pm_optimizer(conn):
     plans = conn.execute(
         "SELECT p.*, m.code mcode, m.id mid FROM mnt_pm_plans p JOIN mnt_machines m ON m.id=p.machine_id "
         "WHERE p.active=1").fetchall()
+    ticket_dates = {}
+    for r in conn.execute(
+            "SELECT machine_id, created_at FROM mnt_tickets WHERE machine_id IN "
+            "(SELECT machine_id FROM mnt_pm_plans WHERE active=1) ORDER BY machine_id, created_at"):
+        ticket_dates.setdefault(r["machine_id"], []).append(r["created_at"])
+    mtbf_by_machine = {mid: _mtbf_from_dates(values) for mid, values in ticket_dates.items()}
     for p in plans:
-        mtbf = _mtbf_days(conn, p["mid"])
+        mtbf = mtbf_by_machine.get(p["mid"])
         interval = p["interval_days"] or 30
         if mtbf and mtbf < interval * 0.8:
             out.append({"mcode": p["mcode"], "title": p["title"], "current": interval,
@@ -255,11 +265,12 @@ def pm_optimizer(conn):
 # --------------------------------------------------------------------------
 # Spare consumption forecast + reorder recommendation
 # --------------------------------------------------------------------------
-def consumption_forecast(conn, spare):
+def consumption_forecast(conn, spare, *, issues=None):
     sid = spare["id"]
-    issues = conn.execute(
-        "SELECT qty, created_at FROM mnt_stock_movements WHERE spare_id=? AND type='issue'",
-        (sid,)).fetchall()
+    if issues is None:
+        issues = conn.execute(
+            "SELECT qty, created_at FROM mnt_stock_movements WHERE spare_id=? AND type='issue'",
+            (sid,)).fetchall()
     dates = [d for d in (_parse(i["created_at"]) for i in issues) if d]
     total = sum(abs(i["qty"] or 0) for i in issues)
     now = _now()
@@ -294,7 +305,12 @@ def consumption_forecast(conn, spare):
 
 def reorder_recommendations(conn):
     rows = conn.execute("SELECT * FROM mnt_spare_parts WHERE is_active=1").fetchall()
-    recs = [consumption_forecast(conn, s) for s in rows]
+    issues = {}
+    for r in conn.execute(
+            "SELECT spare_id, qty, created_at FROM mnt_stock_movements WHERE type='issue' "
+            "AND spare_id IN (SELECT id FROM mnt_spare_parts WHERE is_active=1)"):
+        issues.setdefault(r["spare_id"], []).append(r)
+    recs = [consumption_forecast(conn, s, issues=issues.get(s["id"], [])) for s in rows]
     recs = [r for r in recs if r["need_reorder"]]
     crit_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     recs.sort(key=lambda r: (crit_order.get(r["criticality"], 9), r["stock"]))

@@ -138,13 +138,13 @@ def _raw_setting(conn, key):
     return r["value"] if r else None
 
 
-def num_setting(conn, key):
+def num_setting(conn, key, *, rows=None):
     """Numeric knob: the override coerced against its spec, else the constant.
     Blank, non-numeric, NaN, infinity and out-of-bounds all fall back, so a bad
     entry can never disable a gate or widen a payment cap."""
     spec = C.WORKFLOW_SETTINGS.get(key) or {}
     default = spec.get("default")
-    raw = _raw_setting(conn, key)
+    raw = _raw_setting(conn, key) if rows is None else rows.get(key)
     if raw is None or str(raw).strip() == "":
         return default
     try:
@@ -163,11 +163,11 @@ _TRUE_WORDS = {"1", "true", "yes", "on"}
 _FALSE_WORDS = {"0", "false", "no", "off"}
 
 
-def bool_setting(conn, key):
+def bool_setting(conn, key, *, rows=None):
     """Boolean knob. Only an unambiguous word counts; anything else (blank,
     "maybe", a number) falls back to the constant rather than silently turning a
     control off."""
-    raw = _raw_setting(conn, key)
+    raw = _raw_setting(conn, key) if rows is None else rows.get(key)
     s = str(raw).strip().lower() if raw is not None else ""
     if s in _TRUE_WORDS:
         return True
@@ -176,19 +176,21 @@ def bool_setting(conn, key):
     return bool((C.WORKFLOW_SETTINGS.get(key) or {}).get("default"))
 
 
-def live_matrix(conn, kind="opex"):
+def live_matrix(conn, kind="opex", *, rows=None):
     """{stage: amount} the ladder routes on NOW: the DOAM matrix with whatever
     the admin saved on the governance screen applied, read per call like every
     other knob so an edit takes effect on the next request without a restart."""
-    return C.matrix_for(kind, lambda key: num_setting(conn, key))
+    return C.matrix_for(kind, lambda key: num_setting(conn, key, rows=rows))
 
 
-def effective_thresholds(kind="opex"):
+def effective_thresholds(kind="opex", *, rows=None):
     """The amounts in force, for a caller with no connection (the settings and
     governance screens). Pre-DOAM the paper form's matrix is still the policy,
     so the flag is honoured here rather than at each of the three call sites."""
     if not C.DOAM_IN_FORCE and (kind or "opex").strip().lower() != "capex":
         return {k: float(v) for k, v in C.ACTIVE_MATRIX.items()}
+    if rows is not None:                 # settings already in hand: no connection needed
+        return live_matrix(None, kind, rows=rows)
     conn = get_db()
     try:
         return live_matrix(conn, kind)
@@ -6346,15 +6348,20 @@ def run_escalations():
     n = 0
     try:
         prs = conn.execute("SELECT * FROM pr_requests WHERE status='pending'").fetchall()
+        reminders = {r["pr_id"] for r in conn.execute(
+            "SELECT DISTINCT pr_id FROM pr_events WHERE action='pricing_reminder' "
+            "AND pr_id IN (SELECT id FROM pr_requests WHERE status='pending')")}
+        pending_steps = {}
+        for r in conn.execute(
+                "SELECT * FROM pr_steps WHERE status='pending' AND pr_id IN "
+                "(SELECT id FROM pr_requests WHERE status='pending') ORDER BY id"):
+            pending_steps.setdefault((r["pr_id"], r["seq"]), r)
         for pr in prs:
             # ---- pricing-stall reminder (independent of the ladder position) ----
             if (pr["pricing_status"] or "priced") == "unpriced":
                 sub_hrs = _age_hours(pr["submitted_at"])
                 if sub_hrs is not None and sub_hrs > C.SLA_HOURS_PER_STAGE:
-                    prior = conn.execute(
-                        "SELECT 1 FROM pr_events WHERE pr_id=? AND action='pricing_reminder' "
-                        "LIMIT 1", (pr["id"],)).fetchone()
-                    if not prior:
+                    if pr["id"] not in reminders:
                         audit(conn, pr["id"], "system", "pricing_reminder",
                               f"Unpriced for {round(sub_hrs)}h — Purchasing reminded")
                         notify_users(conn, eligible_approvers(conn, "purchasing"),
@@ -6364,9 +6371,7 @@ def run_escalations():
                                      link=_pr_link(pr["id"]))
                         n += 1
 
-            step = conn.execute(
-                "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
-                (pr["id"], pr["current_seq"])).fetchone()
+            step = pending_steps.get((pr["id"], pr["current_seq"]))
             if not step:
                 continue
             hrs = _age_hours(step["activated_at"] or pr["submitted_at"])
@@ -7036,7 +7041,7 @@ def set_doc(section, body=None, user=None, ip=None, reset=False,
 
 
 # --- the page model -------------------------------------------------------
-def _effective_matrix(department):
+def _effective_matrix(department, *, settings=None):
     """(ordered [(stage, threshold)], source) actually applied to `department`.
     A department with its own responsibility matrix uses it; everyone else uses
     the global default from constants.APPROVAL_MATRIX."""
@@ -7047,7 +7052,7 @@ def _effective_matrix(department):
         return [(s, v["threshold"]) for s, v in rows], "department"
     # The LIVE thresholds, not the constant: the numbers shown to an admin must
     # be the ones the request will actually route on, including their own edits.
-    live = effective_thresholds("opex")
+    live = effective_thresholds("opex", rows=settings)
     return [(s, float(live.get(s, 0))) for s in LADDER], "default"
 
 
@@ -7071,7 +7076,6 @@ def workflow_view(department=None, lang="en"):
     lang = lang if lang in _LANGS else "en"
     depts = list_departments()
     department = department or (depts[0] if depts else "")
-    matrix, thr_source = _effective_matrix(department)
     conn = get_db()
     try:
         # SELECT * so a database whose _ar/_tr ALTER has not run yet still reads.
@@ -7083,12 +7087,13 @@ def workflow_view(department=None, lang="en"):
             "SELECT * FROM proc_doc").fetchall()}
         knob_rows = {r["key"]: dict(r) for r in conn.execute(
             "SELECT key, value, updated_by, updated_at FROM proc_settings").fetchall()}
+        settings = {key: row["value"] for key, row in knob_rows.items()}
         roles_map = stage_roles_map(conn)
         knobs = []
         for key, spec in C.WORKFLOW_SETTINGS.items():
             row = knob_rows.get(key) or {}
-            eff = (bool_setting(conn, key) if spec["kind"] == "bool"
-                   else num_setting(conn, key))
+            eff = (bool_setting(conn, key, rows=settings) if spec["kind"] == "bool"
+                   else num_setting(conn, key, rows=settings))
             stored = row.get("value")
             knobs.append({
                 "key": key, "kind": spec["kind"], "default": spec["default"],
@@ -7103,6 +7108,7 @@ def workflow_view(department=None, lang="en"):
     finally:
         conn.close()
 
+    matrix, thr_source = _effective_matrix(department, settings=settings)
     all_roles = effective_roles()
 
     from app.approvals import i18n_text as T
