@@ -40,6 +40,8 @@ def run():
                 users = {}
                 for name, role in (("A", "normal_user"), ("B", "normal_user"),
                                    ("store", "storekeeper"),
+                                   ("store2", "storekeeper"),
+                                   ("whm", "warehouse_manager"),
                                    ("buyer", "purchasing_manager"),
                                    ("finance", "finance_manager")):
                     username = "money_" + name
@@ -90,11 +92,70 @@ def run():
             chk("B batch hides money", not svc.money_views(users["B"], [bundle["pr"]])[pr_id])
             chk("Storekeeper batch shows money", bool(svc.money_views(
                 users["store"], [bundle["pr"]])[pr_id]))
+            bundle = svc.get_pr(pr_id)
+            current_seq = bundle["pr"]["current_seq"]
+            warehouse = [s for s in bundle["steps"] if s["stage"] == "warehouse"]
+            if warehouse:
+                step = warehouse[0]
+                if (step["status"] == "pending" and step["seq"] == current_seq
+                        and bundle["pr"]["status"] == "pending"):
+                    conn = get_db()
+                    try:
+                        conn.execute(
+                            "UPDATE pr_steps SET status='approved', approver_user=? WHERE id=?",
+                            (users["store"]["username"], step["id"]))
+                        conn.execute(
+                            "UPDATE pr_requests SET current_seq=current_seq+1 WHERE id=?", (pr_id,))
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    bundle = svc.get_pr(pr_id)
+            chk("Warehouse rung is signed by a colleague, no longer current", any(
+                s["stage"] == "warehouse" and s["status"] == "approved"
+                and s["approver_user"] == users["store"]["username"]
+                and s["seq"] != bundle["pr"]["current_seq"] for s in bundle["steps"]))
+            chk("store2 (storekeeper, rung signed by a colleague) sees no money",
+                svc.money_view(users["store2"], bundle["pr"], bundle["steps"]) == "")
+            # whm sees money only while the current rung is theirs to sign
+            cur = [s for s in bundle["steps"] if s["seq"] == bundle["pr"]["current_seq"]]
+            chk("warehouse_manager money follows the current rung",
+                svc.money_view(users["whm"], bundle["pr"], bundle["steps"])
+                == ("full" if cur and svc.can_act_step(users["whm"], cur[0]) else ""))
+            if cur and cur[0]["stage"] in ("warehouse", "warehouse_manager"):
+                conn = get_db()
+                try:
+                    conn.execute("UPDATE pr_steps SET status='approved', approver_user=? "
+                                 "WHERE id=?", ("money_other_whm", cur[0]["id"]))
+                    conn.execute("UPDATE pr_requests SET current_seq=current_seq+1 WHERE id=?",
+                                 (pr_id,))
+                    conn.commit()
+                finally:
+                    conn.close()
+                bundle = svc.get_pr(pr_id)
+            chk("warehouse_manager not signer sees no money once rung is past",
+                svc.money_view(users["whm"], bundle["pr"], bundle["steps"]) == "")
+            chk("store2 batch hides money", not svc.money_views(users["store2"], [bundle["pr"]])[pr_id])
+            chk("store (personally signed) still sees full",
+                svc.money_view(users["store"], bundle["pr"], bundle["steps"]) == "full")
             chk("Inactive admin cannot see money", svc.money_view(
                 dict(users["admin"], account_status="suspended"), bundle["pr"], bundle["steps"]) == "")
             chk("No user cannot see money", svc.money_view(None, bundle["pr"], []) == "")
             chk("PR PDFs render with and without money",
                 bool(pdf.pr_pdf(bundle, money=False)) and bool(pdf.pr_pdf(bundle, money=True)))
+
+        cl = app.test_client()
+        with cl.session_transaction() as session:
+            session["uid"] = users["store2"]["id"]
+            session["ep"] = 0
+        r = cl.get("/procurement/pr/%d" % pr_id)
+        html = r.get_data(as_text=True)
+        chk("store2 request opens", r.status_code == 200, r.status_code)
+        chk("store2 request stays visible", pr_no in html)
+        chk("store2 request hides money", "4,321" not in html)
+        r = cl.get("/procurement/pr/%d/po.pdf" % pr_id)
+        chk("store2 PO PDF gate", r.status_code == 403, r.status_code)
+        r = cl.get("/procurement/attachment/%d" % att_id)
+        chk("store2 PR document gate", r.status_code == 403, r.status_code)
 
         # Requests outside app_context avoid leaking current_user's g cache.
         for name, level in expected.items():

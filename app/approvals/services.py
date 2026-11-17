@@ -574,7 +574,7 @@ def money_view(user, pr=None, steps=None, _deleg=None, _roles=None):
     """Return "full", "own" or "" for this request's money.
 
     Purchasing, finance and admins see all money. Approvers on this request's
-    ladder (including past signers) see what they sign. Requesters see prices,
+    ladder see money as personal signers or eligible current approvers. Requesters see prices,
     quotes and their PO, but no invoices, payments, debit notes or match figures.
     With no request, only privileged viewers qualify for cross-request money.
     """
@@ -600,7 +600,10 @@ def money_view(user, pr=None, steps=None, _deleg=None, _roles=None):
         if _deleg is None:
             _deleg = active_delegator_roles(username)
         if any(_pr_field(step, "approver_user") == username
-               or can_act_step(user, step, _deleg=_deleg, _roles=_roles)
+               or (_pr_field(step, "status") == "pending"
+                   and _pr_field(step, "seq") == _pr_field(pr, "current_seq")
+                   and _pr_field(pr, "status") == "pending"
+                   and can_act_step(user, step, _deleg=_deleg, _roles=_roles))
                for step in steps):
             return "full"
     if _pr_field(pr, "requester") == username:
