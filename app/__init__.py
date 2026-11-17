@@ -26,10 +26,15 @@ def create_app():
     _redirect_to = (os.getenv("TC_REDIRECT_TO", "") or "").strip().rstrip("/")
     if _redirect_to:
         from flask import request as _rq, redirect as _redir
+        from urllib.parse import urlsplit as _urlsplit
+        _redirect_host = (_urlsplit(_redirect_to).netloc or "").lower()
 
         @app.before_request
         def _redirect_to_new_host():
             if _rq.path == "/api/health":
+                return None
+            # Never point at ourselves (the variable copied onto the new host = redirect loop).
+            if _rq.host.lower() == _redirect_host:
                 return None
             qs = _rq.query_string.decode("latin-1")
             # 302 not 301: browsers must not cache it, so removing the variable reverts cleanly.
