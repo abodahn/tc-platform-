@@ -68,7 +68,7 @@
           <td>{{ pr.requester_name or pr.requester }}</td>
           <td>{{ pr.department or '—' }}</td>
           <td><span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span></td>
-          <td style="font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}</td>
+          <td style="font-variant-numeric:tabular-nums">{% if money.get(pr.id) %}{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}{% else %}—{% endif %}</td>
           <td class="muted" style="font-size:12px">{{ pr.request_date or (pr.created_at or '')[:10] }}</td>
         </tr>
       {% endfor %}

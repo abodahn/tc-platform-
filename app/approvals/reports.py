@@ -103,7 +103,7 @@ def _common(**kw):
 # 1. Purchase requests & spend — the register, and spend by supplier
 # ---------------------------------------------------------------------------
 R.register(**_common(
-    key="proc_requests",
+    key="proc_requests", perm=C.MONEY_PERMS,   # carries request money
     title="Purchase requests & spend",
     title_ar="طلبات الشراء والإنفاق",
     title_tr="Satın alma talepleri ve harcama",
@@ -198,7 +198,7 @@ _BUDGETS = ("(SELECT COALESCE(department,'') AS department, "
             "COALESCE(period,'')) b")
 
 R.register(**_common(
-    key="proc_budget",
+    key="proc_budget", perm=C.MONEY_PERMS,   # carries request money
     title="Budget vs committed vs spent",
     title_ar="الموازنة مقابل المرتبط والمنصرف",
     title_tr="Bütçe / taahhüt / harcama",
@@ -271,7 +271,7 @@ R.register(**_common(
 # 3. Where requests are waiting — the live approval queue, oldest first
 # ---------------------------------------------------------------------------
 R.register(**_common(
-    key="proc_waiting",
+    key="proc_waiting", perm=C.MONEY_PERMS,   # carries request money
     title="Approvals waiting",
     title_ar="الاعتمادات المعلقة",
     title_tr="Bekleyen onaylar",
@@ -373,7 +373,7 @@ _EXPOSURE = f"(CASE WHEN {_OUTSTANDING} > 0 THEN {_OUTSTANDING} ELSE 0 END)"
 _HAS_INVOICE = "i.pr_id IS NOT NULL"
 
 R.register(**_common(
-    key="proc_payables",
+    key="proc_payables", perm=C.MONEY_PERMS,   # carries request money
     title="Receipts, invoices & payment exposure",
     title_ar="الاستلام والفواتير والمكشوف من السداد",
     title_tr="Mal kabul, fatura ve ödeme riski",
@@ -569,7 +569,7 @@ _RET_DUE = ("(CASE WHEN COALESCE(NULLIF(TRIM(p.retention_until),''),'9999-12-31'
             "<= date('now') THEN '1' ELSE '0' END)")
 
 R.register(**_common(
-    key="proc_retention",
+    key="proc_retention", perm=C.MONEY_PERMS,   # carries request money
     title="Records retention & disposal",
     title_ar="حفظ السجلات والتخلص منها",
     title_tr="Kayıt saklama ve imha",

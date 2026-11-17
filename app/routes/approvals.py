@@ -98,10 +98,13 @@ def index():
         svc.run_escalations()
     except Exception:
         pass
+    queue = svc.my_queue(user)
+    recent = svc.list_prs(limit=12)
     return render_template(
         "approvals/index.html", active="procurement",
-        kpi=svc.counts(user), queue=svc.my_queue(user),
-        recent=svc.list_prs(limit=12),
+        kpi=svc.counts(user), queue=queue, recent=recent,
+        money=svc.money_views(user, queue + recent),
+        show_value=(svc.money_view(user) == "full"),
         can_create=user_can("proc_create"))
 
 
@@ -110,7 +113,8 @@ def index():
 @permission_required("proc_view")
 def analytics():
     return render_template("approvals/analytics.html", active="proc_analytics",
-                           a=svc.analytics_summary())
+                           a=svc.analytics_summary(),
+                           show_money=(svc.money_view(_u()) == "full"))
 
 
 @bp.route("/export/<key>.csv")
@@ -118,6 +122,8 @@ def analytics():
 @permission_required("proc_view")
 def export_csv(key):
     """Download a procurement report as CSV (register / spend / orders / payments)."""
+    if svc.money_view(_u()) != "full":
+        abort(403)
     import csv  # local import keeps this addition self-contained
     headers, rows = svc.export_dataset(key)
     if headers is None:
@@ -172,6 +178,7 @@ def listing_xlsx():
     prs = svc.list_prs(status=status,
                        requester=(user["username"] if mine else None))
 
+    levels = svc.money_views(user, prs)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Purchase requests"
@@ -192,6 +199,10 @@ def listing_xlsx():
                     v = 0.0
             elif key in ("request_date", "approved_at"):
                 v = (str(v)[:10] or None) if v else None
+            if key == "total" and not levels.get(pr["id"]):
+                v = None
+            elif key == "payment_status" and levels.get(pr["id"]) != "full":
+                v = None
             row.append(v)
         ws.append(row)
 
@@ -226,7 +237,8 @@ def listing():
     user = _u()
     prs = svc.list_prs(status=status, requester=(user["username"] if mine else None))
     return render_template("approvals/list.html", active="proc_list",
-                           prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES)
+                           prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES,
+                           money=svc.money_views(user, prs))
 
 
 # --------------------------------------------------------------------------
@@ -1300,7 +1312,8 @@ def detail(pr_id):
     needs_pricing = (can_purchasing and not is_priced
                      and pr["status"] in ("draft", "rejected", "pending"))
     # Requesters don't see commercial figures until Purchasing has priced the PR.
-    show_commercial = is_priced or can_purchasing
+    money = svc.money_view(user, pr, bundle["steps"])
+    show_commercial = (is_priced or can_purchasing) and bool(money)
     return render_template("approvals/detail.html", active="proc_list",
                            stock_issues=svc.stock_posting_issues(pr_id),
                            stock_skipped=svc.stock_posting_issues(pr_id, ("skipped",)),
@@ -1334,6 +1347,7 @@ def detail(pr_id):
                            can_advance=any(svc.can_act(user, s)
                                            for s in ("finance", "cfo", "ceo")),
                            needs_pricing=needs_pricing, show_commercial=show_commercial,
+                           money=money, money_full=(money == "full"),
                            # The warehouse rung may correct quantities, but only
                            # while the request is still worth nothing — after
                            # pricing a quantity moves a signed total.
@@ -1692,6 +1706,11 @@ def quote_file(quote_id):
     q = svc.get_quote(quote_id)
     if not q or not q["content_b64"]:
         abort(404)
+    bundle = svc.get_pr(q["pr_id"])
+    if not bundle:
+        abort(404)
+    if not svc.money_view(_u(), bundle["pr"], bundle["steps"]):
+        abort(403)
     try:
         raw = base64.b64decode(q["content_b64"])
     except Exception:
@@ -2148,6 +2167,11 @@ def invoice_file(inv_id):
     iv = svc.get_invoice(inv_id)
     if not iv or not iv["content_b64"]:
         abort(404)
+    bundle = svc.get_pr(iv["pr_id"])
+    if not bundle:
+        abort(404)
+    if svc.money_view(_u(), bundle["pr"], bundle["steps"]) != "full":
+        abort(403)
     try:
         raw = base64.b64decode(iv["content_b64"])
     except Exception:
@@ -2292,7 +2316,8 @@ def pr_pdf(pr_id):
     if not bundle:
         abort(404)
     try:
-        data = pdfgen.pr_pdf(bundle)
+        data = pdfgen.pr_pdf(bundle, money=bool(
+            svc.money_view(_u(), bundle["pr"], bundle["steps"])))
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
     return send_file(io.BytesIO(data), mimetype="application/pdf",
@@ -2316,6 +2341,8 @@ def po_pdf(pr_id):
     bundle = svc.get_pr(pr_id)
     if not bundle:
         abort(404)
+    if not svc.money_view(_u(), bundle["pr"], bundle["steps"]):
+        abort(403)
     if bundle["pr"]["status"] not in ("approved", "po_issued", "partially_received",
                                       "received", "closed"):
         abort(400, "The Purchase Order is available only after full approval.")
@@ -2370,6 +2397,8 @@ def debit_note_pdf(ret_id):
     bundle = svc.get_pr(ret["pr_id"])
     if not bundle:
         abort(404)
+    if svc.money_view(_u(), bundle["pr"], bundle["steps"]) != "full":
+        abort(403)
     try:
         data = pdfgen.debit_note_pdf(bundle, ret)
     except Exception:
@@ -2522,6 +2551,10 @@ def download_attachment(att_id):
     row = svc.get_attachment(att_id)
     if not row:
         abort(404)
+    # PR documents are mostly supplier quotations: same gate as quote_file.
+    bundle = svc.get_pr(row["pr_id"])
+    if not bundle or not svc.money_view(_u(), bundle["pr"], bundle["steps"]):
+        abort(403)
     try:
         raw = base64.b64decode(row["content_b64"])
     except Exception:

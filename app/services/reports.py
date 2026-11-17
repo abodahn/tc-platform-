@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 
 from app.db import get_db
+from app.approvals.constants import MONEY_PERMS
 
 _PR_STATUS = ["draft", "pending", "approved", "rejected", "po_issued",
               "partially_received", "received", "closed"]
@@ -32,7 +33,7 @@ REPORTS = [
     # ---------------- Procurement ----------------
     dict(key="proc_prs", group="Procurement", label="Purchase Requests",
          desc="Every purchase request with status, vendor, value and payment.",
-         perm="proc_view", icon="i-cart",
+         perm=MONEY_PERMS, icon="i-cart",
          sql="SELECT pr_no,title,department,requester_name AS requester,vendor,total,"
              "currency,status,payment_status,created_at FROM pr_requests {where} ORDER BY id DESC",
          columns=[("pr_no", "PR No"), ("title", "Title"), ("department", "Department"),
@@ -44,14 +45,14 @@ REPORTS = [
                   _f("vendor", "Vendor", "vendor")] + _date_range()),
     dict(key="proc_spend_dept", group="Procurement", label="Spend by Department",
          desc="Total committed spend and request count per department.",
-         perm="proc_view", icon="i-chart",
+         perm=MONEY_PERMS, icon="i-chart",
          sql="SELECT department,COUNT(*) AS requests,SUM(total) AS total FROM pr_requests "
              "{where} GROUP BY department ORDER BY total DESC",
          columns=[("department", "Department"), ("requests", "Requests"), ("total", "Total spend")],
          filters=[_f("status", "Status", "status", "select", "=", _PR_STATUS)] + _date_range()),
     dict(key="proc_invoices", group="Procurement", label="Vendor Invoices",
          desc="Invoices recorded against purchase orders (for 3-way match).",
-         perm="proc_view", icon="i-report",
+         perm=MONEY_PERMS, icon="i-report",
          sql="SELECT i.invoice_no,p.pr_no,i.invoice_date,i.amount,i.tax,i.currency,i.status "
              "FROM pr_invoices i LEFT JOIN pr_requests p ON p.id=i.pr_id {where} ORDER BY i.id DESC",
          columns=[("invoice_no", "Invoice"), ("pr_no", "PR No"), ("invoice_date", "Date"),
@@ -60,7 +61,7 @@ REPORTS = [
                      ["received", "matched", "disputed", "paid"])]),
     dict(key="proc_payments", group="Procurement", label="Payments",
          desc="Payments made against purchase requests and invoices.",
-         perm="proc_view", icon="i-wallet",
+         perm=MONEY_PERMS, icon="i-wallet",
          sql="SELECT y.paid_at,p.pr_no,y.amount,y.currency,y.method,y.reference "
              "FROM pr_payments y LEFT JOIN pr_requests p ON p.id=y.pr_id {where} ORDER BY y.id DESC",
          columns=[("paid_at", "Paid on"), ("pr_no", "PR No"), ("amount", "Amount"),

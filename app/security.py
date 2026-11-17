@@ -241,6 +241,9 @@ def user_permissions(user):
 
 
 def user_has_permission(user, permission):
+    """`permission` may be a tuple: holding ANY of them is enough."""
+    if isinstance(permission, tuple):
+        return any(user_has_permission(user, p) for p in permission)
     perms = user_permissions(user)
     return "*" in perms or permission in perms
 

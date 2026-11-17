@@ -594,7 +594,7 @@ def _chosen_lead_time(bundle):
     return ""
 
 
-def pr_pdf(bundle):
+def pr_pdf(bundle, money=True):
     """The customer's paper PURCHASE REQUEST form: 21 columns, landscape, ONE page.
 
     One page is a requirement, not a preference: the paper form is a single
@@ -614,7 +614,7 @@ def pr_pdf(bundle):
 
     tall = 600 * cm
     probe = _ar.wrap(canvas.Canvas(io.BytesIO(), pagesize=(w, tall)))
-    need = tall - _pr_body(probe, w, tall, cm, bundle)
+    need = tall - _pr_body(probe, w, tall, cm, bundle, money=money)
     scale = min(1.0, (h - foot) / need) if need > 0 else 1.0
 
     buf = io.BytesIO()
@@ -625,7 +625,7 @@ def pr_pdf(bundle):
         # out on a virtual page h/scale tall so its top lands on the real top
         c.translate(w * (1 - scale) / 2, 0)
         c.scale(scale, scale)
-    _pr_body(c, w, h / scale, cm, bundle)
+    _pr_body(c, w, h / scale, cm, bundle, money=money)
     c.restoreState()
     _footer(c, w, cm, 1, _PR_NOTES)
     c.showPage()
@@ -634,7 +634,7 @@ def pr_pdf(bundle):
     return buf.read()
 
 
-def _pr_body(c, w, h, cm, bundle):
+def _pr_body(c, w, h, cm, bundle, money=True):
     """Everything on the PR except the footer. Returns the lowest y drawn."""
     pr, items, steps = bundle["pr"], bundle["items"], bundle["steps"]
     pn = {"page": 1, "notes": _PR_NOTES}
@@ -673,8 +673,8 @@ def _pr_body(c, w, h, cm, bundle):
              "" if it.get("stock_days") is None else str(it["stock_days"]),
              _fmt(it.get("pending_qty"), 0) if it.get("pending_qty") else "",
              _fmt(it.get("last_order_qty"), 0), it.get("last_order_date") or "",
-             it.get("vendor") or pr.get("vendor") or "", _fmt(it.get("unit_price")),
-             _fmt(it.get("est_cost")), cur, _fmt(it.get("last_order_price")),
+             it.get("vendor") or pr.get("vendor") or "", (_fmt(it.get("unit_price")) if money else ""),
+             (_fmt(it.get("est_cost")) if money else ""), cur, (_fmt(it.get("last_order_price")) if money else ""),
              pr.get("po_no") or "",
              "" if it.get("last_stock") is None else _fmt(it.get("last_stock"), 0),
              pr.get("payment_condition") or "",
@@ -698,7 +698,8 @@ def _pr_body(c, w, h, cm, bundle):
                # item names and vendors ARE the request: ink, not caption grey
                wrap_ink=(0.13, 0.13, 0.16))
 
-    y = _totals_block(c, w, cm, y, pr, cur, words_beside=True)
+    if money:
+        y = _totals_block(c, w, cm, y, pr, cur, words_beside=True)
 
     # signatures (the paper form's A20:U25 notes/signature block)
     return _signature_grid(c, w, h, cm, y, pr, steps, pn)

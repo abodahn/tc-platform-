@@ -570,6 +570,69 @@ def can_act_step(user, step, _deleg=None, _roles=None):
     return can_act(user, stage, _deleg=_deleg, _roles=roles)
 
 
+def money_view(user, pr=None, steps=None, _deleg=None, _roles=None):
+    """Return "full", "own" or "" for this request's money.
+
+    Purchasing, finance and admins see all money. Approvers on this request's
+    ladder (including past signers) see what they sign. Requesters see prices,
+    quotes and their PO, but no invoices, payments, debit notes or match figures.
+    With no request, only privileged viewers qualify for cross-request money.
+    """
+    if not user or (_pr_field(user, "account_status") or "active") != "active":
+        return ""
+    user = dict(user)
+    if user.get("role") == "super_admin" or any(
+            user_has_permission(user, perm) for perm in C.MONEY_PERMS):
+        return "full"
+    if pr is None:
+        return ""
+    if steps is None:
+        conn = get_db()
+        try:
+            steps = conn.execute("SELECT * FROM pr_steps WHERE pr_id=?",
+                                 (_pr_field(pr, "id"),)).fetchall()
+        finally:
+            conn.close()
+    username = user.get("username")
+    if user_has_permission(user, "proc_approve"):
+        if _roles is None:
+            _roles = stage_roles_map()
+        if _deleg is None:
+            _deleg = active_delegator_roles(username)
+        if any(_pr_field(step, "approver_user") == username
+               or can_act_step(user, step, _deleg=_deleg, _roles=_roles)
+               for step in steps):
+            return "full"
+    if _pr_field(pr, "requester") == username:
+        return "own"
+    return ""
+
+
+def money_views(user, prs):
+    """Request money levels, with one batched steps/roles/delegation lookup."""
+    prs = list(prs)
+    ids = list(dict.fromkeys(_pr_field(pr, "id") for pr in prs))
+    if money_view(user) == "full":
+        return {pid: "full" for pid in ids}
+    if not ids:
+        return {}
+    conn = get_db()
+    try:
+        ph = ",".join("?" for _ in ids)
+        steps = conn.execute(f"SELECT * FROM pr_steps WHERE pr_id IN ({ph})",
+                             tuple(ids)).fetchall()
+        roles = stage_roles_map(conn)
+    finally:
+        conn.close()
+    deleg = active_delegator_roles(_pr_field(user, "username"))
+    by_pr = {}
+    for step in steps:
+        by_pr.setdefault(_pr_field(step, "pr_id"), []).append(step)
+    return {_pr_field(pr, "id"): money_view(
+        user, pr, by_pr.get(_pr_field(pr, "id"), []), _deleg=deleg, _roles=roles)
+        for pr in prs}
+
+
 def _esc_columns(conn, stage, requester, _roles, _chain, _holders=None, _busy=()):
     """(esc_role, esc_from, reason) to store on a new pr_steps row for `stage`."""
     found, why = resolve_escalation(conn, stage, requester, _roles=_roles, _chain=_chain,

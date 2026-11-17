@@ -11,12 +11,14 @@
 </div>
 
 <div class="grid cols-4">
+  {% if show_money %}
   <div class="kpi good"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-wallet"></use></svg></div></div>
     <div class="kval">{{ '{:,.0f}'.format(a.committed_spend or 0) }}</div>
     <div class="klabel" data-i18n="proc.committed">Committed spend (EGP)</div></div>
   <div class="kpi"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-kanban"></use></svg></div></div>
     <div class="kval">{{ '{:,.0f}'.format(a.pending_value or 0) }}</div>
     <div class="klabel" data-i18n="proc.k_value">Pending value (EGP)</div></div>
+  {% endif %}
   <div class="kpi info"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-clock"></use></svg></div></div>
     <div class="kval">{{ a.avg_cycle_days }}</div>
     <div class="klabel" data-i18n="proc.avg_cycle">Avg approval time (days)</div></div>
@@ -26,12 +28,14 @@
 </div>
 
 <div class="grid cols-2 mt-4" style="align-items:start">
+  {% if show_money %}
   <div class="panel"><div class="panel-head"><h3 data-i18n="proc.by_dept">Spend by department</h3></div>
     <div class="panel-pad"><canvas id="chDept" height="200"></canvas></div></div>
   <div class="panel"><div class="panel-head"><h3 data-i18n="proc.by_vendor">Spend by vendor</h3></div>
     <div class="panel-pad"><canvas id="chVendor" height="200"></canvas></div></div>
   <div class="panel"><div class="panel-head"><h3 data-i18n="proc.monthly">Monthly committed spend</h3></div>
     <div class="panel-pad"><canvas id="chMonth" height="200"></canvas></div></div>
+  {% endif %}
   <div class="panel"><div class="panel-head"><h3 data-i18n="proc.by_status">Requests by status</h3></div>
     <div class="panel-pad"><canvas id="chStatus" height="200"></canvas></div></div>
 </div>
@@ -47,6 +51,7 @@
   </div>
 </div>
 
+{% if show_money %}
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="proc.export.title">Exports</h3></div>
   <div class="panel-pad">
@@ -61,10 +66,12 @@
   </div>
 </div>
 
+{% endif %}
+
 <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
 <script>
 (function () {
-  var A = {{ a|tojson }};
+  var A = {% if show_money %}{{ a|tojson }}{% else %}{{ dict(avg_cycle_days=a.avg_cycle_days, bottleneck=a.bottleneck, status_counts=a.status_counts, stage_avg_hours=a.stage_avg_hours, stage_rejections=a.stage_rejections)|tojson }}{% endif %};
   var RED = '#ED1C24', MUT = '#94a3b8';
   var css = getComputedStyle(document.body);
   var ink = css.getPropertyValue('--ink') || '#101114';

@@ -890,6 +890,11 @@ PROC_PERMISSIONS = [
     "proc_admin",      # settings, approval matrix, act on any stage, vendors
 ]
 
+# Who may read request money (prices, totals, quotes, invoices, payments) beyond
+# their own request and the requests they sign: services.money_view and the
+# money-bearing reports gate on this one tuple.
+MONEY_PERMS = ("proc_purchasing", "proc_pay", "proc_admin")
+
 # New roles introduced by this module -> the procurement permissions they hold.
 PROC_ROLE_PERMS = {
     "purchasing_manager": ["proc_view", "proc_create", "proc_approve", "proc_purchasing",
