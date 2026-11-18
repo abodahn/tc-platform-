@@ -140,26 +140,45 @@
     // Restore rail (collapsed) state
     if (localStorage.getItem(LS.collapsed) === "1") app.classList.add("collapsed");
 
+    // Off-canvas drawer below 1024px (must match the drawer media query in app.css).
+    const drawerMQ = window.matchMedia("(max-width: 1023.98px)");
+    const sidebar = document.querySelector(".sidebar");
+    const topToggle = document.getElementById("sidebarToggle");
+    function setDrawer(open, focusBack) {
+      app.classList.toggle("mobile-open", open);
+      document.documentElement.classList.toggle("drawer-open", open);
+      if (topToggle) topToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      // A closed off-canvas drawer must not take Tab focus or be read out.
+      if (sidebar) sidebar.inert = drawerMQ.matches && !open;
+      if (open && sidebar) {
+        const first = sidebar.querySelector(".nav-item.active") || sidebar.querySelector(".brand");
+        if (first) first.focus({ preventScroll: true });
+      } else if (focusBack && topToggle) topToggle.focus();
+    }
+    if (topToggle) topToggle.setAttribute("aria-expanded", "false");
+    setDrawer(false);
+    drawerMQ.addEventListener("change", () => setDrawer(false));
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && app.classList.contains("mobile-open")) setDrawer(false, true);
+    });
+
     function toggleRail() {
-      if (window.innerWidth <= 900) {
-        app.classList.toggle("mobile-open");
+      if (drawerMQ.matches) {
+        setDrawer(!app.classList.contains("mobile-open"), true);
       } else {
         app.classList.toggle("collapsed");
         localStorage.setItem(LS.collapsed, app.classList.contains("collapsed") ? "1" : "0");
       }
     }
-    const topToggle = document.getElementById("sidebarToggle");
     const railToggle = document.getElementById("railToggle");
     if (topToggle) topToggle.addEventListener("click", toggleRail);
     if (railToggle) railToggle.addEventListener("click", toggleRail);
 
     // On mobile, close the drawer when tapping the backdrop or a nav link
     document.addEventListener("click", function (e) {
-      if (window.innerWidth > 900 || !app.classList.contains("mobile-open")) return;
+      if (!drawerMQ.matches || !app.classList.contains("mobile-open")) return;
       if (e.target.closest("#sidebarToggle, #railToggle")) return;
-      if (!e.target.closest(".sidebar") || e.target.closest(".nav-item")) {
-        app.classList.remove("mobile-open");
-      }
+      if (!e.target.closest(".sidebar") || e.target.closest(".nav-item")) setDrawer(false);
     });
 
     // Sections render collapsed by default (server-side) except the one holding the
@@ -219,11 +238,7 @@
       navEl.scrollTop = Math.max(0, target);
     }
 
-    // Close mobile drawer when a link is tapped
-    document.querySelectorAll(".nav-item").forEach(a =>
-      a.addEventListener("click", () => {
-        if (window.innerWidth <= 900) app.classList.remove("mobile-open");
-      }));
+    // (tapping a nav link closes the drawer: handled by the document click above)
   }
 
   /* ---------------- Popovers (menu / notifications) ---------------- */
@@ -318,6 +333,66 @@
       }, 200);
     });
     input.addEventListener("blur", () => setTimeout(() => box.style.display = "none", 180));
+
+    // Phones: the search field folds behind an icon; the icon opens it as a row.
+    const bar = input.closest(".topbar");
+    const opener = document.getElementById("searchToggle");
+    if (bar && opener) {
+      const setOpen = (open) => {
+        bar.classList.toggle("search-open", open);
+        opener.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) input.focus();
+      };
+      opener.addEventListener("click", () => setOpen(!bar.classList.contains("search-open")));
+      input.addEventListener("keydown", e => { if (e.key === "Escape") { setOpen(false); opener.focus(); } });
+      input.addEventListener("blur", () => setTimeout(() => {
+        if (!input.value.trim() && document.activeElement !== input) setOpen(false);
+      }, 200));
+    }
+  }
+
+  /* ---------------- Wide tables ----------------
+     Every table scrolls inside its own box instead of pushing the page sideways.
+     A table without a scrolling parent gets a .tbl-scroll wrapper; the box fades
+     the edge that has more columns behind it, so the scroll is discoverable.
+     Overflow is only switched on while the table is actually wider than its box,
+     so narrow tables keep their sticky header. */
+  function initTables() {
+    const boxes = [];
+    document.querySelectorAll(".content table").forEach(tbl => {
+      if (tbl.closest(".tbl-scroll")) return;
+      const parent = tbl.parentElement;
+      const ox = getComputedStyle(parent).overflowX;
+      let box = parent;
+      if (ox !== "auto" && ox !== "scroll") {
+        box = document.createElement("div");
+        box.className = "tbl-scroll";
+        parent.insertBefore(box, tbl);
+        box.appendChild(tbl);
+      }
+      box.classList.add("tbl-hint");
+      boxes.push([box, tbl]);
+      box.addEventListener("scroll", () => hint(box), { passive: true });
+    });
+    function hint(box) {
+      // scrollLeft is 0..-max in RTL (Chromium, Firefox, Safari all agree now).
+      const max = box.scrollWidth - box.clientWidth;
+      const pos = Math.abs(box.scrollLeft);
+      box.classList.toggle("more-end", max > 1 && pos < max - 1);
+      box.classList.toggle("more-start", max > 1 && pos > 1);
+    }
+    function measure() {
+      boxes.forEach(([box, tbl]) => {
+        if (box.classList.contains("tbl-scroll"))
+          box.classList.toggle("is-wide", tbl.offsetWidth > box.clientWidth + 1);
+        hint(box);
+      });
+    }
+    measure();
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => requestAnimationFrame(measure));
+      boxes.forEach(([box, tbl]) => { ro.observe(box); ro.observe(tbl); });
+    } else window.addEventListener("resize", measure);
   }
 
   /* ---------------- Animated counters ---------------- */
@@ -618,6 +693,7 @@
       if ((localStorage.getItem(LS.theme) || "light") === "auto") setTheme("auto", false);
     });
 
+    initTables();   // before the i18n fetch, so wide tables never push the first paint sideways
     const initLang = cfg.lang || localStorage.getItem(LS.lang) || "en";
     await setLanguage(initLang, false);
 
@@ -657,6 +733,7 @@
     inp.style.paddingInlineEnd = "42px";
     var btn = document.createElement("button");
     btn.type = "button";
+    btn.className = "pw-eye";
     btn.tabIndex = -1;
     btn.setAttribute("aria-label", "Show or hide password");
     btn.title = "Show / hide password";
@@ -814,7 +891,7 @@
   // "/" focuses the menu filter (desktop only; ignored while typing in a field).
   document.addEventListener("keydown", function (e) {
     if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (window.innerWidth <= 900) return;
+    if (window.innerWidth < 1024) return;
     var t = e.target, tag = t && t.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
     if (filter) { e.preventDefault(); filter.focus(); }

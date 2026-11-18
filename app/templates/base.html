@@ -46,7 +46,7 @@
     'nav.factory_floor': 'target', 'nav.supply_chain': 'boxes',
     'nav.sec_materials': 'boxes', 'nav.sec_shipping': 'cart', 'nav.sec_system': 'pulse'
   } %}
-  <aside class="sidebar">
+  <aside class="sidebar" id="appSidebar">
     <a class="brand" href="{{ url_for('main.dashboard') }}">
       <div class="brand-logo"><img src="{{ url_for('static', filename=brand_logo) }}" alt="T&amp;C Garments"><span class="brand-dot" aria-hidden="true"></span></div>
       <div class="brand-text">
@@ -131,7 +131,7 @@
   {# ---------------- Main ---------------- #}
   <div class="main">
     <header class="topbar">
-      <button class="icon-btn" id="sidebarToggle" data-i18n-title="top.menu" title="Menu">
+      <button class="icon-btn" id="sidebarToggle" type="button" aria-controls="appSidebar" data-i18n-title="top.menu" title="Menu">
         <svg class="ico"><use href="#i-menu"></use></svg>
       </button>
 
@@ -142,6 +142,11 @@
       </div>
 
       <div class="spacer"></div>
+
+      {# phones only: the search field folds behind this icon #}
+      <button class="icon-btn search-toggle" id="searchToggle" type="button" aria-controls="globalSearch" aria-expanded="false" data-i18n-title="top.search" title="Search">
+        <svg class="ico"><use href="#i-search"></use></svg>
+      </button>
 
       {# language switcher #}
       <div class="seg" title="Language">

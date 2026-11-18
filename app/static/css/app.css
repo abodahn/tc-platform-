@@ -1025,54 +1025,213 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .qr-card img { width: 150px; height: 150px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: #fff; }
 @media print { .sidebar, .topbar, .page-head .btn { display: none !important; } }
 
-/* responsive sidebar (mobile = overlay) + mobile layout */
-@media (max-width: 900px) {
+/* ============================================================
+   Responsive shell: one layer for every page.
+   Phones 360-767, tablets 768-1023 (drawer nav), desktop 1024+.
+   Logical properties throughout so Arabic mirrors without overrides.
+   ============================================================ */
+
+/* Grid and flex children may shrink below their content. Without this one wide
+   table inside a .cols-2 panel stretched the whole column, and the page with it. */
+.grid > *, .flex > *, .page-head > *, .panel-head > *, .modal-body > * { min-width: 0; }
+.content input, .content select, .content textarea { max-width: 100%; }
+.content img, .content video, .content canvas { max-width: 100%; }
+
+/* Wide tables scroll inside their own box (wrapper added by app.js). The box only
+   becomes a scroller while the table is wider than it, so narrow tables keep the
+   sticky header. The edge with more columns behind it fades out: that is the hint. */
+.tbl-scroll { max-width: 100%; }
+.tbl-scroll.is-wide { overflow-x: auto; overscroll-behavior-x: contain; }
+.tbl-hint.more-end   { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), rgba(0,0,0,.15));
+                               mask-image: linear-gradient(to right, #000 calc(100% - 36px), rgba(0,0,0,.15)); }
+.tbl-hint.more-start { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 36px), rgba(0,0,0,.15));
+                               mask-image: linear-gradient(to left, #000 calc(100% - 36px), rgba(0,0,0,.15)); }
+.tbl-hint.more-end.more-start {
+  -webkit-mask-image: linear-gradient(to right, rgba(0,0,0,.15), #000 36px, #000 calc(100% - 36px), rgba(0,0,0,.15));
+          mask-image: linear-gradient(to right, rgba(0,0,0,.15), #000 36px, #000 calc(100% - 36px), rgba(0,0,0,.15)); }
+/* RTL: the "end" is on the left. */
+[dir="rtl"] .tbl-hint.more-end:not(.more-start) {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 36px), rgba(0,0,0,.15));
+          mask-image: linear-gradient(to left, #000 calc(100% - 36px), rgba(0,0,0,.15)); }
+[dir="rtl"] .tbl-hint.more-start:not(.more-end) {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), rgba(0,0,0,.15));
+          mask-image: linear-gradient(to right, #000 calc(100% - 36px), rgba(0,0,0,.15)); }
+
+/* Page header: the title and the action buttons wrap instead of overflowing. */
+.page-head > div:not(:first-child), .page-head > .flex { flex-wrap: wrap; }
+.page-head h1, .page-head .h1-like { font-size: clamp(1.3rem, 1.05rem + 1vw, var(--fs-2xl)); text-wrap: balance; }
+
+/* Dialogs always fit the screen and scroll inside. */
+.tc-dialog { max-width: min(600px, 94vw); max-height: 92vh; max-height: 92dvh; overflow: auto; }
+.modal { max-width: min(580px, 94vw); max-height: 92dvh; }
+
+.search-toggle { display: none; }
+
+/* Narrow desktops: the user name yields its room to the search field. */
+@media (max-width: 1279.98px) {
+  .topbar .user .meta { display: none; }
+  .topbar .search { min-width: 180px; }
+}
+
+/* ---- Drawer navigation: tablets and phones ---- */
+@media (max-width: 1023.98px) {
   .sidebar {
-    position: fixed; inset-inline-start: 0; top: 0; height: 100vh; z-index: 300;
-    width: min(84vw, 290px); flex-basis: min(84vw, 290px);
-    transform: translateX(-105%); transition: transform .25s ease;
+    position: fixed; inset-inline-start: 0; top: 0; height: 100vh; height: 100dvh; z-index: 300;
+    width: min(86vw, 300px); flex-basis: min(86vw, 300px);
+    transform: translateX(-105%); transition: transform .25s cubic-bezier(.22,1,.36,1);
     box-shadow: var(--shadow-strong);
   }
   [dir="rtl"] .sidebar { transform: translateX(105%); }
   .app.mobile-open .sidebar { transform: translateX(0); }
-  /* keep the full sidebar on mobile even if the desktop "rail" flag is set */
-  .app.collapsed .sidebar { width: min(84vw, 290px); flex-basis: min(84vw, 290px); }
+  /* keep the full sidebar in the drawer even if the desktop "rail" flag is set */
+  .app.collapsed .sidebar { width: min(86vw, 300px); flex-basis: min(86vw, 300px); }
+  .app.collapsed .brand { padding: 15px 16px; justify-content: flex-start; }
   .app.collapsed .brand-text { display: flex; }
-  .app.collapsed .nav-label { justify-content: flex-start; gap: 10px; padding: 9px 10px 7px; }
+  .app.collapsed .nav { padding: 12px 12px 14px; }
+  .app.collapsed .nav-filter { display: block; }
+  .app.collapsed .nav-label { pointer-events: auto; justify-content: flex-start; gap: 10px; padding: 9px 10px 7px; }
   .app.collapsed .nav-label .nl-text { display: block; }
   .app.collapsed .nav-label .nl-meta { display: flex; }
   .app.collapsed .nav-label .nl-ico { opacity: .55; }
-  .app.collapsed .nav-item { width: auto; justify-content: flex-start; padding: 8px 11px; padding-inline-end: 30px; margin: 2px 0; border-radius: 10px; }
+  .app.collapsed .nav-band { display: flex; }
+  .app.collapsed .nav-item { width: auto; justify-content: flex-start; padding: 8px 11px; padding-inline-end: 44px; margin: 2px 0; border-radius: 10px; }
   .app.collapsed .nav-item .lbl { display: block; }
   .app.collapsed .nav-item::before { display: block; }
   .app.collapsed .nav-star { display: grid; }
+  .app.collapsed .sidebar-foot { flex-direction: row; padding: 10px 12px; }
+  .app.collapsed .sf-user { justify-content: flex-start; flex: 1; }
+  .app.collapsed .sf-user .sf-meta { display: block; }
+  /* Touch: every row in the drawer is a comfortable target, the pin star is
+     reachable without hover. */
+  .nav-item { min-height: 44px; }
+  .nav-label { min-height: 40px; }
+  .nav-star { opacity: .7; width: 40px; height: 40px; inset-inline-end: 2px; }
+  .nav-item { padding-inline-end: 44px; }
+  .sf-collapse { width: 40px; height: 40px; flex-basis: 40px; }
+  .nav-filter input { font-size: 16px; }
+  .nav-kbd { display: none; }
   /* dim backdrop behind the open drawer (tap to close, handled in app.js) */
   .app.mobile-open::before {
-    content: ""; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 250;
+    content: ""; position: fixed; inset: 0; background: rgba(2,6,23,.5); z-index: 250;
   }
+  html.drawer-open, html.drawer-open body { overflow: hidden; }
+  html.drawer-open .gm-launch { visibility: hidden; }
   .main { width: 100%; min-width: 0; }
-  .content { padding: 16px; }
-  #sidebarToggle { display: inline-flex !important; }
-  /* stack multi-column grids on small screens */
-  .content [class*="grid"], .kpi-grid, .cards, .tiles, .stat-grid { grid-template-columns: 1fr !important; }
-  /* wide tables scroll instead of breaking the page */
-  .content table { display: block; width: 100%; overflow-x: auto; white-space: nowrap; }
-  /* .main stacks as blocks so the taller mobile topbar can't overlap content */
-  .main { display: block !important; }
-  /* topbar: auto height + clean 2-row wrap (controls row + full-width search).
-     static + flex:none so it can't keep a locked flow height and overlap content. */
-  .topbar { position: sticky !important; top: 0 !important; flex: none !important; height: auto !important; min-height: 54px; flex-wrap: wrap; gap: 8px 10px; padding: 8px 12px; }
-  .topbar .spacer { display: none; }
-  .topbar .seg[title="Theme"] { display: none; }    /* declutter: theme stays auto on mobile */
-  .topbar .search { order: 9; flex: 1 1 100%; max-width: none; }
-  .topbar .user .meta { display: none; }            /* avatar only on mobile */
-  .page-head { flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 16px; }
-  .page-head h1 { font-size: 1.4rem; line-height: 1.2; }
+  #sidebarToggle { display: grid !important; }
+  .topbar { padding: 0 16px; gap: 10px; }
+  .topbar .user .meta { display: none; }            /* avatar only */
+  .content { padding: 20px; }
 }
-@media (max-width: 560px) {
-  .content { padding: 11px; }
-  .topbar { padding: 7px 10px; }
-  .topbar .seg button { padding: 5px 8px; }
+@media (max-width: 1023.98px) and (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+}
+
+@media (max-width: 900px) {
+  .topbar .seg[title="Theme"] { display: none; }    /* declutter: theme stays as chosen */
+  .page-head { gap: 10px; margin-bottom: 18px; }
+  .content { padding: 16px; }
+}
+
+/* ---- Phones ---- */
+@media (max-width: 767.98px) {
+  :root { --topbar-h: 58px; }
+  /* every multi-column layout becomes one column (inline-style grids included) */
+  .content [class*="grid"], .kpi-grid, .cards, .tiles, .stat-grid { grid-template-columns: 1fr !important; }
+  .content [class*="grid"] > * { grid-column: auto !important; }
+  /* KPI rows stay two-up: one KPI per row wastes the screen */
+  .content .grid:has(> .kpi) { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .kpi { padding: 14px; }
+  .kpi .kval { font-size: 24px; margin-top: 10px; }
+  .kpi .kicon { width: 36px; height: 36px; border-radius: 10px; }
+
+  /* Compact top bar: menu, search icon, language, bell, avatar. */
+  .topbar { height: var(--topbar-h); padding: 0 10px; gap: 6px; }
+  .topbar .search { display: none; }
+  .topbar .search-toggle { display: grid; }
+  .topbar.search-open { flex-wrap: wrap; height: auto; padding-block: 9px; row-gap: 8px; }
+  .topbar.search-open .search { display: block; order: 9; flex: 1 1 100%; max-width: none; }
+  .topbar .seg { padding: 0; }
+  .topbar .seg button { min-width: 40px; min-height: 40px; padding: 0 8px; }
+  .topbar .user { padding: 0; }
+  .user .avatar { width: 40px; height: 40px; flex-basis: 40px; }
+
+  /* Popovers become full-width sheets under the bar. */
+  .panel-pop, .menu {
+    position: absolute; top: calc(100% + 6px); inset-inline: 8px; width: auto; max-width: none; min-width: 0;
+  }
+  .panel-pop { max-height: calc(100vh - var(--topbar-h) - 20px); max-height: calc(100dvh - var(--topbar-h) - 20px); flex-direction: column; }
+  .panel-pop.open { display: flex; }
+  .panel-pop > div { max-height: none !important; flex: 1 1 auto; min-height: 0; }
+  .panel-pop header { flex-wrap: wrap; gap: 8px; }
+  .notif-actions .tag { display: inline-flex; align-items: center; min-height: 40px; padding: 6px 12px; font-size: 13px; }
+  .notif { padding: 14px 16px; }
+  .notif .ntitle { font-size: 14px; }
+  .notif .nmsg { font-size: 13px; }
+  .menu a { min-height: 44px; font-size: 14px; }
+
+  /* Page frame */
+  .content .flex { flex-wrap: wrap; }
+  .content { padding: 12px 12px 96px; }               /* room above the assistant button */
+  .page-head { flex-direction: column; align-items: stretch; margin-bottom: 14px; }
+  .page-head .sub { font-size: 14px; }
+  .panel-pad { padding: 16px; }
+  .panel-head { padding: 14px 16px; flex-wrap: wrap; gap: 8px; }
+  .modal-overlay { padding: 10px; }
+  .modal-body { padding: 16px; }
+  .modal-head, .modal-foot { padding: 14px 16px; }
+  .modal-foot { flex-wrap: wrap; }
+  .tc-dialog { padding: 16px; }
+
+  /* Readable body text, inputs that do not trigger iOS zoom, 40px+ targets. */
+  table.tbl { font-size: 14px; }
+  table.tbl th { font-size: 12px; padding: 10px 12px; }
+  table.tbl td { padding: 11px 12px; }
+  .tbl-hint > table, .tbl-wrap > table { white-space: nowrap; }
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]),
+  select, textarea { font-size: 16px !important; }
+  .field input, .field select, .li-row input, .li-row select { min-height: 44px; }
+  .btn, .icon-btn { min-height: 42px; }
+  .btn-sm { min-height: 40px; padding-block: 8px; }
+  .page-head .btn { justify-content: center; }
+  .modal .x, .chip-x { min-width: 40px; min-height: 40px; }
+  table.tbl td > a:only-child { display: inline-block; padding-block: 11px; }
+  a.tag { display: inline-flex; align-items: center; min-height: 40px; padding: 6px 12px; }
+  .seg button { min-width: 40px; min-height: 40px; }
+  .pw-eye, .acc-pw-toggle { min-width: 40px; min-height: 40px; display: grid; place-items: center; }
+  span.tc-polish-wrap .tc-polish-btn { width: 40px; height: 40px; inset-inline-end: 2px; top: 2px; }
+  span.tc-polish-wrap > input, span.tc-polish-wrap > textarea { padding-inline-end: 46px !important; }
+  .acc-links a { display: inline-block; padding-block: 11px; }
+  .li-row .li-del { min-width: 44px; height: 44px; }
+
+  /* Feedback and floating bits */
+  .toasts { inset-inline: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .toast { min-width: 0; }
+  .npops { top: calc(var(--topbar-h) + 8px); inset-inline-end: 8px; width: calc(100vw - 16px); }
+
+  /* A page's main action stays in reach: put .sticky-actions on the button row
+     and it docks to the bottom of the screen while the form scrolls. */
+  .sticky-actions {
+    position: sticky; bottom: 0; z-index: 20;
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-inline: -16px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    padding-inline-end: 84px;                       /* clear of the assistant button */
+    background: var(--panel); border-top: 1px solid var(--line);
+    box-shadow: 0 -6px 18px rgba(2,6,23,.08);
+  }
+  .sticky-actions > .btn { flex: 1 1 auto; justify-content: center; }
+}
+
+/* Login / auth screens on a phone: the dark art panel shrinks to a slim brand bar
+   that keeps the language switch; the form comes straight after. */
+.login-wrap > * { min-width: 0; }
+@media (max-width: 920px) {
+  .login-wrap .login-art { padding: 12px 16px; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+  .login-art .la-mid { display: none; }
+  .login-art .brand-logo { width: 36px !important; height: 36px !important; flex-basis: 36px; }
+  .login-art .brand-text b { font-size: 15px !important; }
+  .login-art .seg button { min-width: 40px; min-height: 40px; }
+  .login-card .lc-brand { display: none; }
+  .login-form-side { padding: 28px 16px 40px; place-items: start center; }
 }
 
 /* Top loading progress bar (page loads, navigation, slow requests).
