@@ -1,5 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Registry{% endblock %}
+{% block head %}
+<style>
+  #regSearch { height: 44px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); color: var(--ink); padding-inline-end: 14px; font: inherit; font-size: 14px; }
+  #regSearch:focus { outline: none; border-color: var(--tc-red); box-shadow: 0 0 0 4px rgba(237,28,36,.1); }
+  /* Phones: the source chips swipe in one row instead of pushing results a screen down. */
+  @media (max-width: 767.98px) {
+    #regSources { font-size: 13px !important; flex-wrap: nowrap !important; overflow-x: auto; scrollbar-width: none; flex: 1 1 100%; padding-bottom: 2px; }
+    #regSources .badge { flex: none; }
+  }
+  /* Phones and tablets: each person / asset is a stacked card row — name, detail, system — with Open beside it. */
+  @media (max-width: 1023.98px) {
+    .reg-tbl thead { display: none; }
+    .reg-tbl, .reg-tbl tbody { display: block; width: 100%; white-space: normal !important; }
+    .reg-tbl tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line-2); }
+    .reg-tbl tr:last-child { border-bottom: 0; }
+    .reg-tbl td { display: block; padding: 0 !important; border: 0 !important; background: none !important; overflow-wrap: anywhere; }
+    .reg-tbl td:nth-child(-n+3) { grid-column: 1; }
+    .reg-tbl td:nth-child(2) { color: var(--muted); font-size: 14px; }
+    .reg-tbl td:nth-child(4) { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+    .reg-tbl td .muted { font-size: 13px !important; }
+  }
+</style>
+{% endblock %}
 {% block content %}
 
 <div class="page-head">
@@ -31,7 +54,7 @@
       <span class="badge b-info"><span id="regPeopleCount">{{ registry.people|length }}</span></span>
     </div>
     <div class="panel-pad" style="overflow-x:auto">
-      <table class="tbl" style="width:100%">
+      <table class="tbl reg-tbl" style="width:100%">
         <thead><tr>
           <th data-i18n="registry.name">Name</th>
           <th data-i18n="registry.dept">Dept / Title</th>
@@ -51,7 +74,7 @@
       <span class="badge b-info"><span id="regAssetsCount">{{ registry.assets|length }}</span></span>
     </div>
     <div class="panel-pad" style="overflow-x:auto">
-      <table class="tbl" style="width:100%">
+      <table class="tbl reg-tbl" style="width:100%">
         <thead><tr>
           <th data-i18n="registry.asset">Asset</th>
           <th data-i18n="registry.status">Status / Holder</th>
