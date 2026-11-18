@@ -2748,6 +2748,19 @@ def workflow():
                            can_edit=user_can("proc_admin"))
 
 
+@bp.route("/guide", methods=["GET"])
+@login_required
+@permission_required("proc_view", "proc_create")
+def guide():
+    # Rendered in the reader's language server-side, like the workflow page:
+    # the language switch saves the preference and reloads.
+    from app.approvals import guide as G
+    user = _u()
+    return render_template("approvals/guide.html", active="proc_guide",
+                           g=G.view(user, (user or {}).get("lang_pref") or "en"),
+                           T=G.t, R=G.rich)
+
+
 def _back(dept=None):
     return redirect(url_for("approvals.workflow", department=dept or None))
 

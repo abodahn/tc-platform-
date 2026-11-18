@@ -76,6 +76,7 @@ NAV = [
         ("proc_delegations", "nav.proc_delegations", "users", "approvals.delegations", "proc_view", "nav.b_suppliers"),
         ("proc_analytics", "nav.proc_analytics", "chart", "approvals.analytics", "proc_view", "nav.b_insight"),
         ("proc_workflow", "nav.proc_workflow", "map", "approvals.workflow", "proc_view", "nav.b_setup"),
+        ("proc_guide", "nav.proc_guide", "book", "approvals.guide", "proc_view", "nav.b_setup"),
         ("proc_settings", "nav.proc_settings", "settings", "approvals.settings", "proc_admin", "nav.b_setup"),
     ]},
 

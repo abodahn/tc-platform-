@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+{% block title %}{{ T(g.lang, 'nav.proc_guide') }}{% endblock %}
+{#- Every string is resolved SERVER-side for the reader (T / R from
+    app/approvals/guide.py) from the same proc.guide.* / proc.* keys app.js uses;
+    the language switch saves the preference and reloads, so the page is never
+    half-translated. Button names inside a sentence are rendered by R() from the
+    key the real button uses, so they always match the screen. -#}
+{% block head %}
+<style>
+  .g-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .g-mine { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 14px 22px; }
+  .g-mine b { font-size: 13px; }
+  .g-mine a { font-size: 12.5px; font-weight: 600; padding: 4px 11px; border-radius: var(--r-pill);
+    background: var(--crit-bg); color: var(--tc-red); transition: background .15s ease; }
+  .g-mine a:hover { background: var(--panel-2); }
+  .g-mine .muted { font-size: 13px; }
+
+  /* the cycle map: two bands, each an ordered flow of links */
+  .g-travel p { margin: 0; max-width: 78ch; line-height: 1.7; color: var(--ink-2); }
+  .g-band { margin-top: 18px; }
+  .g-band h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
+  .g-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 4px; }
+  .g-flow li { display: flex; align-items: center; gap: 4px; }
+  .g-flow li:not(:last-child)::after { content: "\203A"; color: var(--soft-ink); font-size: 18px; line-height: 1; padding-inline: 2px; }
+  [dir="rtl"] .g-flow li:not(:last-child)::after { content: "\2039"; }
+  .g-node { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px;
+    border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--panel-2);
+    font-size: 12.5px; font-weight: 600; color: var(--ink-2);
+    transition: border-color .15s ease, background .15s ease; }
+  [dir="rtl"] .g-node { padding: 6px 6px 6px 12px; }
+  .g-node:hover { border-color: var(--ink-2); background: var(--panel); }
+  .g-node:focus-visible, .g-toc a:focus-visible, .g-mine a:focus-visible { outline: 2px solid var(--tc-red); outline-offset: 2px; }
+  .g-dot { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: var(--r-pill);
+    background: var(--panel); border: 1px solid var(--line); font-size: 11px; font-weight: 700;
+    color: var(--muted); font-variant-numeric: tabular-nums; }
+  .g-node.is-mine { border-color: var(--tc-red); background: var(--crit-bg); color: var(--ink); }
+  .g-node.is-mine .g-dot { background: var(--tc-red); border-color: var(--tc-red); color: var(--on-red); }
+  .g-you { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: var(--r-pill);
+    background: var(--tc-red); color: var(--on-red); white-space: nowrap; }
+
+  .g-rules { margin: 18px 0 0; padding: 14px 18px; border-radius: var(--r-md); background: var(--panel-2); border: 1px solid var(--line-2); }
+  .g-rules h3 { margin: 0 0 8px; font-size: 13px; }
+  .g-rules ul { margin: 0; padding-inline-start: 18px; display: grid; gap: 6px; }
+  .g-rules li { line-height: 1.6; font-size: 13px; color: var(--ink-2); max-width: 90ch; }
+
+  /* layout: sections + sticky table of contents */
+  .g-layout { display: grid; grid-template-columns: minmax(0, 1fr) 232px; gap: 22px; align-items: start; margin-top: 18px; }
+  .g-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .g-toc { position: sticky; top: calc(var(--topbar-h) + 18px); max-height: calc(100vh - var(--topbar-h) - 36px);
+    overflow-y: auto; padding: 14px 10px; }
+  .g-toc h2 { margin: 0 8px 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
+  .g-toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+  .g-toc a { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px;
+    border-radius: var(--r-sm); font-size: 12.5px; color: var(--ink-2); transition: background .15s ease, color .15s ease; }
+  .g-toc a:hover { background: var(--panel-2); }
+  .g-toc a[aria-current="true"] { background: var(--panel-2); color: var(--ink); font-weight: 600; }
+  .g-toc .g-you { font-size: 9.5px; padding: 1px 6px; }
+
+  .g-sec { scroll-margin-top: calc(var(--topbar-h) + 14px); }
+  .g-sec:target { animation: g-flash 1.4s cubic-bezier(.22,1,.36,1); }
+  @keyframes g-flash { from { box-shadow: 0 0 0 3px var(--tc-red), var(--shadow-card); } to { box-shadow: var(--shadow-card); } }
+  .g-head { gap: 12px; flex-wrap: wrap; }
+  .g-head-l { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .g-head h2 { margin: 0; font-size: 17px; letter-spacing: -.1px; text-wrap: balance; }
+  .g-head .g-dot { min-width: 26px; height: 26px; font-size: 12px; }
+  .g-sec.is-mine .g-head .g-dot { background: var(--tc-red); border-color: var(--tc-red); color: var(--on-red); }
+  .g-who { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .g-who .tag { color: var(--ink-2); }
+  .g-body { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 26px; }
+  .g-body h3 { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
+  .g-body h3 + * { margin-top: 0; }
+  .g-block + .g-block { margin-top: 20px; }
+  .g-text { line-height: 1.65; font-size: 13.5px; color: var(--ink-2); margin: 0; max-width: 75ch; }
+  .g-list { margin: 0; padding-inline-start: 18px; display: grid; gap: 6px; }
+  .g-list li { line-height: 1.6; font-size: 13.5px; color: var(--ink-2); }
+  .g-steps { list-style: none; margin: 0; padding: 0; counter-reset: g-step; display: grid; gap: 12px; }
+  .g-steps li { counter-increment: g-step; position: relative; padding-inline-start: 36px; line-height: 1.65;
+    font-size: 13.5px; color: var(--ink); min-height: 24px; }
+  .g-steps li::before { content: counter(g-step); position: absolute; inset-inline-start: 0; top: 0;
+    width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--ink); color: var(--panel); font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .g-next { padding: 12px 14px; border-radius: var(--r-md); background: var(--ok-bg); }
+  .g-next h3 { color: var(--ok); }
+  .g-next .g-text { color: var(--ink); }
+  .g-side { border-inline-start: 1px solid var(--line-2); padding-inline-start: 24px; }
+  .g-probs { margin: 0; display: grid; }
+  .g-prob { padding: 10px 0; border-top: 1px solid var(--line-2); }
+  .g-prob:first-child { border-top: 0; padding-top: 0; }
+  .g-prob dt { display: flex; gap: 8px; font-weight: 600; font-size: 13px; line-height: 1.5; color: var(--ink); }
+  .g-prob dt::before { content: "!"; flex: 0 0 18px; height: 18px; margin-top: 1px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 11px; font-weight: 800; background: var(--warn-bg); color: var(--warn); }
+  .g-prob dd { margin: 4px 0 0; padding-inline-start: 26px; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+  .g-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
+  .g-foot a { font-size: 12px; color: var(--muted); }
+  .g-foot a:hover { color: var(--ink); }
+
+  /* the real screen's words: a button looks like a key, other screen text like a label */
+  .g-btn { display: inline; padding: 1px 7px; margin-inline: 1px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); box-shadow: 0 1px 0 var(--line); font-weight: 600; font-size: .93em; color: var(--ink);
+    -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .g-ui { padding: 0 4px; border-radius: 4px; background: var(--panel-2); font-weight: 600; color: var(--ink);
+    -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+
+  .g-faq { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 28px; margin: 0; }
+  .g-faq .g-prob:nth-child(2) { border-top: 0; padding-top: 0; }
+  .g-contact { margin-top: 18px; padding: 14px 16px; border-radius: var(--r-md); background: var(--info-bg); }
+  .g-contact h3 { margin: 0 0 4px; font-size: 13.5px; color: var(--info); }
+  .g-contact p { margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--ink); max-width: 85ch; }
+
+  @media (max-width: 1180px) {
+    .g-layout { grid-template-columns: minmax(0, 1fr); }
+    .g-toc { display: none; }
+  }
+  @media (max-width: 900px) {
+    .g-body { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+    .g-side { border-inline-start: 0; padding-inline-start: 0; border-top: 1px solid var(--line-2); padding-top: 18px; }
+    .g-faq { grid-template-columns: minmax(0, 1fr); }
+    .g-faq .g-prob:nth-child(2) { border-top: 1px solid var(--line-2); padding-top: 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .g-sec:target { animation: none; }
+    .g-node, .g-toc a, .g-mine a { transition: none; }
+  }
+
+  @page { size: A4; margin: 14mm 12mm; }
+  @media print {
+    body { background: #fff !important; }
+    .content { padding: 0 !important; max-width: none !important; }
+    .g-actions, .g-toc, .g-foot, .g-mine, .gm-launch, .gm-panel, .cmdk { display: none !important; }
+    .g-layout { display: block; margin-top: 0; }
+    .g-main { display: block; }
+    .panel { box-shadow: none !important; border-color: #cfd4dc !important; break-inside: auto; }
+    .g-sec, .g-faq-sec { break-before: page; margin-top: 0; }
+    .g-body { grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) !important; }
+    .g-side { border-inline-start: 1px solid #e3e6eb !important; padding-inline-start: 18px !important; border-top: 0 !important; padding-top: 0 !important; }
+    .g-steps li, .g-prob, .g-list li, .g-next { break-inside: avoid; }
+    .g-head { break-after: avoid; }
+    .g-sec:target { animation: none; }
+    .g-node, .g-dot, .g-you, .g-steps li::before, .g-next, .g-ui, .g-btn, .g-prob dt::before, .g-contact {
+      -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+{% set L = g.lang %}
+
+<div class="page-head" id="g-top">
+  <div>
+    <div class="eyebrow" data-i18n="pwf.eyebrow">{{ T(L, 'pwf.eyebrow') }}</div>
+    <h1 data-i18n="proc.guide.title">{{ T(L, 'proc.guide.title') }}</h1>
+    <div class="sub" data-i18n="proc.guide.sub">{{ T(L, 'proc.guide.sub') }}</div>
+  </div>
+  <div class="g-actions">
+    <a class="btn btn-ghost" href="{{ url_for('approvals.workflow') }}" data-i18n="nav.proc_workflow">{{ T(L, 'nav.proc_workflow') }}</a>
+    <button class="btn btn-primary" type="button" onclick="window.print()" data-i18n="proc.guide.print">{{ T(L, 'proc.guide.print') }}</button>
+  </div>
+</div>
+
+<div class="panel g-mine-panel">
+  <div class="g-mine">
+    {% if g.mine %}
+      <b data-i18n="proc.guide.yours">{{ T(L, 'proc.guide.yours') }}</b>
+      {% for s in g.sections if s.mine %}<a href="#g-{{ s.id }}">{{ s.title }}</a>{% endfor %}
+    {% else %}
+      <span class="muted" data-i18n="proc.guide.yours_none">{{ T(L, 'proc.guide.yours_none') }}</span>
+    {% endif %}
+  </div>
+</div>
+
+<section class="panel mt-3 g-travel" aria-labelledby="g-travel-h">
+  <div class="panel-head"><h3 id="g-travel-h" data-i18n="proc.guide.travel_h">{{ T(L, 'proc.guide.travel_h') }}</h3></div>
+  <div class="panel-pad">
+    <p data-i18n="proc.guide.travel_p">{{ T(L, 'proc.guide.travel_p') }}</p>
+
+    <div class="g-band">
+      <h3 data-i18n="proc.guide.band_sign">{{ T(L, 'proc.guide.band_sign') }}</h3>
+      <ol class="g-flow">
+        {% for s in g.sections if s.id == 'req' or s.stage %}
+        <li><a class="g-node{{ ' is-mine' if s.mine }}" href="#g-{{ s.id }}">
+          <span class="g-dot">{{ s.seq if s.stage else '·' }}</span><span>{{ s.title }}</span>
+          {% if s.mine %}<span class="g-you" data-i18n="proc.guide.you">{{ T(L, 'proc.guide.you') }}</span>{% endif %}
+        </a></li>
+        {% endfor %}
+      </ol>
+    </div>
+    <div class="g-band">
+      <h3 data-i18n="proc.guide.band_after">{{ T(L, 'proc.guide.band_after') }}</h3>
+      <ol class="g-flow">
+        {% for n in g.after %}
+        <li><a class="g-node{{ ' is-mine' if n.mine }}" href="#g-{{ n.target }}">
+          <span class="g-dot">{{ loop.index }}</span><span data-i18n="proc.guide.node.{{ n.key }}">{{ T(L, 'proc.guide.node.' ~ n.key) }}</span>
+          {% if n.mine %}<span class="g-you" data-i18n="proc.guide.you">{{ T(L, 'proc.guide.you') }}</span>{% endif %}
+        </a></li>
+        {% endfor %}
+      </ol>
+    </div>
+
+    <div class="g-rules">
+      <h3 data-i18n="proc.guide.rules_h">{{ T(L, 'proc.guide.rules_h') }}</h3>
+      <ul>{% for k in g.rules %}<li>{{ R(L, k) }}</li>{% endfor %}</ul>
+    </div>
+  </div>
+</section>
+
+<div class="g-layout">
+  <div class="g-main">
+    {% for s in g.sections %}
+    <section class="panel g-sec{{ ' is-mine' if s.mine }}" id="g-{{ s.id }}" aria-labelledby="g-{{ s.id }}-h">
+      <div class="panel-head g-head">
+        <div class="g-head-l">
+          {% if s.stage %}<span class="g-dot">{{ s.seq }}</span>{% endif %}
+          <h2 id="g-{{ s.id }}-h">{{ s.title }}</h2>
+          {% if s.mine %}<span class="g-you" data-i18n="proc.guide.you">{{ T(L, 'proc.guide.you') }}</span>{% endif %}
+        </div>
+        <div class="g-who">
+          <span data-i18n="proc.guide.who">{{ T(L, 'proc.guide.who') }}</span>
+          {% for r in s.who %}<span class="tag">{{ r }}</span>{% endfor %}
+          {% if s.who_text %}<span>{{ R(L, s.who_text) }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="panel-pad g-body">
+        <div>
+          {% if s.parts.reach %}
+          <div class="g-block">
+            <h3 data-i18n="proc.guide.h.reach">{{ T(L, 'proc.guide.h.reach') }}</h3>
+            <ul class="g-list">{% for k in s.parts.reach %}<li>{{ R(L, k) }}</li>{% endfor %}</ul>
+          </div>
+          {% endif %}
+          <div class="g-block">
+            <h3 data-i18n="proc.guide.h.steps">{{ T(L, 'proc.guide.h.steps') }}</h3>
+            <ol class="g-steps">{% for k in s.parts.step %}<li>{{ R(L, k) }}</li>{% endfor %}</ol>
+          </div>
+          {% if s.next %}
+          <div class="g-block g-next">
+            <h3 data-i18n="proc.guide.h.next">{{ T(L, 'proc.guide.h.next') }}</h3>
+            <p class="g-text">{{ R(L, s.next) }}</p>
+          </div>
+          {% endif %}
+        </div>
+        <div class="g-side">
+          {% if s.parts.cant %}
+          <div class="g-block">
+            <h3 data-i18n="proc.guide.h.cant">{{ T(L, 'proc.guide.h.cant') }}</h3>
+            <ul class="g-list">{% for k in s.parts.cant %}<li>{{ R(L, k) }}</li>{% endfor %}</ul>
+          </div>
+          {% endif %}
+          {% if s.probs %}
+          <div class="g-block">
+            <h3 data-i18n="proc.guide.h.probs">{{ T(L, 'proc.guide.h.probs') }}</h3>
+            <dl class="g-probs">
+              {% for k in s.probs %}<div class="g-prob"><dt>{{ R(L, k ~ '.q') }}</dt><dd>{{ R(L, k ~ '.a') }}</dd></div>{% endfor %}
+            </dl>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      <div class="g-foot panel-pad" style="padding-top:0"><a href="#g-top" data-i18n="proc.guide.top">{{ T(L, 'proc.guide.top') }}</a></div>
+    </section>
+    {% endfor %}
+
+    <section class="panel g-sec g-faq-sec" id="g-faq" aria-labelledby="g-faq-h">
+      <div class="panel-head g-head">
+        <div class="g-head-l"><h2 id="g-faq-h" data-i18n="proc.guide.faq_h">{{ T(L, 'proc.guide.faq_h') }}</h2></div>
+        <span class="muted" data-i18n="proc.guide.faq_sub">{{ T(L, 'proc.guide.faq_sub') }}</span>
+      </div>
+      <div class="panel-pad">
+        <dl class="g-faq">
+          {% for k in g.faq %}<div class="g-prob"><dt>{{ R(L, k ~ '.q') }}</dt><dd>{{ R(L, k ~ '.a') }}</dd></div>{% endfor %}
+        </dl>
+        <div class="g-contact">
+          <h3 data-i18n="proc.guide.contact_h">{{ T(L, 'proc.guide.contact_h') }}</h3>
+          <p data-i18n="proc.guide.contact_p">{{ T(L, 'proc.guide.contact_p') }}</p>
+        </div>
+      </div>
+      <div class="g-foot panel-pad" style="padding-top:0"><a href="#g-top" data-i18n="proc.guide.top">{{ T(L, 'proc.guide.top') }}</a></div>
+    </section>
+  </div>
+
+  <nav class="panel g-toc" aria-labelledby="g-toc-h">
+    <h2 id="g-toc-h" data-i18n="proc.guide.toc">{{ T(L, 'proc.guide.toc') }}</h2>
+    <ol>
+      {% for s in g.sections %}
+      <li><a href="#g-{{ s.id }}"><span>{{ s.title }}</span>{% if s.mine %}<span class="g-you" data-i18n="proc.guide.you">{{ T(L, 'proc.guide.you') }}</span>{% endif %}</a></li>
+      {% endfor %}
+      <li><a href="#g-faq"><span data-i18n="proc.guide.faq_h">{{ T(L, 'proc.guide.faq_h') }}</span></a></li>
+    </ol>
+  </nav>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  // Table of contents: mark the section being read. Progressive: without
+  // IntersectionObserver the links simply stay unmarked.
+  (function () {
+    var links = document.querySelectorAll(".g-toc a[href^='#g-']");
+    if (!links.length || !("IntersectionObserver" in window)) return;
+    var byId = {};
+    links.forEach(function (a) { byId[a.getAttribute("href").slice(1)] = a; });
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting || !byId[e.target.id]) return;
+        links.forEach(function (a) { a.removeAttribute("aria-current"); });
+        byId[e.target.id].setAttribute("aria-current", "true");
+      });
+    }, { rootMargin: "-20% 0px -70% 0px" });
+    document.querySelectorAll(".g-sec").forEach(function (s) { io.observe(s); });
+  })();
+</script>
+{% endblock %}

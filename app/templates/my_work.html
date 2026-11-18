@@ -14,6 +14,9 @@
       {% endif %}
     </div>
   </div>
+  {% if can('proc_view') or can('proc_create') %}
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.guide') }}" data-i18n="proc.guide.mywork_link">How the procurement cycle works</a>
+  {% endif %}
 </div>
 
 <div class="grid cols-2">
