@@ -1178,7 +1178,7 @@ def search():
                 if fuzzy(f"{t['ticket_no']} {t['machine_code']} {t['description']}"):
                     results.append({"type": "ticket", "name": f"{t['ticket_no']} · {t['machine_code']}",
                                     "sub": "Ticket", "url": url_for("maintenance.ticket_detail", tid=t["id"])})
-        if user_has_permission(user, "proc_view") or user_has_permission(user, "proc_create"):
+        if user_has_permission(user, "proc_view"):
             from app.approvals.guide import t as _gt
             lg = user.get("lang_pref") or "en"
             if fuzzy(" ".join(_gt(x, k) for x in ("en", "ar", "tr")

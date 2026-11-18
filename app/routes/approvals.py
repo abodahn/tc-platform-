@@ -2750,7 +2750,7 @@ def workflow():
 
 @bp.route("/guide", methods=["GET"])
 @login_required
-@permission_required("proc_view", "proc_create")
+@permission_required("proc_view")
 def guide():
     # Rendered in the reader's language server-side, like the workflow page:
     # the language switch saves the preference and reloads.

@@ -18,6 +18,7 @@
   /* the cycle map: two bands, each an ordered flow of links */
   .g-travel p { margin: 0; max-width: 78ch; line-height: 1.7; color: var(--ink-2); }
   .g-band { margin-top: 18px; }
+  .g-travel .panel-head h2 { margin: 0; font-size: 15px; }
   .g-band h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
   .g-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 4px; }
   .g-flow li { display: flex; align-items: center; gap: 4px; }
@@ -101,7 +102,7 @@
   .g-ui { padding: 0 4px; border-radius: 4px; background: var(--panel-2); font-weight: 600; color: var(--ink);
     -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 
-  .g-faq { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 28px; margin: 0; }
+  .g-faq { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px; margin: 0; }
   .g-faq .g-prob:nth-child(2) { border-top: 0; padding-top: 0; }
   .g-contact { margin-top: 18px; padding: 14px 16px; border-radius: var(--r-md); background: var(--info-bg); }
   .g-contact h3 { margin: 0 0 4px; font-size: 13.5px; color: var(--info); }
@@ -126,14 +127,17 @@
   @media print {
     body { background: #fff !important; }
     .content { padding: 0 !important; max-width: none !important; }
-    .g-actions, .g-toc, .g-foot, .g-mine, .gm-launch, .gm-panel, .cmdk { display: none !important; }
+    .g-actions, .g-toc, .g-foot, .g-mine, .g-mine-panel, .gm-launch, .gm-panel, .cmdk { display: none !important; }
     .g-layout { display: block; margin-top: 0; }
     .g-main { display: block; }
     .panel { box-shadow: none !important; border-color: #cfd4dc !important; break-inside: auto; }
     .g-sec, .g-faq-sec { break-before: page; margin-top: 0; }
     .g-body { grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) !important; }
     .g-side { border-inline-start: 1px solid #e3e6eb !important; padding-inline-start: 18px !important; border-top: 0 !important; padding-top: 0 !important; }
-    .g-steps li, .g-prob, .g-list li, .g-next { break-inside: avoid; }
+    .g-steps li, .g-prob, .g-list li, .g-next, .g-contact { break-inside: avoid; }
+    /* A4 is narrower than the 900px breakpoint: keep the FAQ in two columns on paper */
+    .g-faq { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    .g-faq .g-prob:nth-child(2) { border-top: 0 !important; padding-top: 0 !important; }
     .g-head { break-after: avoid; }
     .g-sec:target { animation: none; }
     .g-node, .g-dot, .g-you, .g-steps li::before, .g-next, .g-ui, .g-btn, .g-prob dt::before, .g-contact {
@@ -168,7 +172,7 @@
 </div>
 
 <section class="panel mt-3 g-travel" aria-labelledby="g-travel-h">
-  <div class="panel-head"><h3 id="g-travel-h" data-i18n="proc.guide.travel_h">{{ T(L, 'proc.guide.travel_h') }}</h3></div>
+  <div class="panel-head"><h2 id="g-travel-h" data-i18n="proc.guide.travel_h">{{ T(L, 'proc.guide.travel_h') }}</h2></div>
   <div class="panel-pad">
     <p data-i18n="proc.guide.travel_p">{{ T(L, 'proc.guide.travel_p') }}</p>
 
