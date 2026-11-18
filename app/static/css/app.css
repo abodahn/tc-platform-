@@ -1202,6 +1202,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   span.tc-polish-wrap > input, span.tc-polish-wrap > textarea { padding-inline-end: 46px !important; }
   .acc-links a { display: inline-block; padding-block: 11px; }
   .li-row .li-del { min-width: 44px; height: 44px; }
+  .field label { font-size: 14px; }
 
   /* Feedback and floating bits */
   .toasts { inset-inline: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
