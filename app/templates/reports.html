@@ -1,5 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Reports{% endblock %}
+{% block head %}
+<style>
+  /* Phones: each report is a compact row (icon beside title) — the whole card is the link. */
+  @media (max-width: 767.98px) {
+    .rpt-list .grid { gap: 10px; }
+    .rpt-list .app-card { display: grid; grid-template-columns: 40px minmax(0, 1fr); column-gap: 12px; row-gap: 2px; padding: 14px; }
+    .rpt-list .app-card .ac-top { grid-row: span 2; }
+    .rpt-list .app-card .ac-icon { width: 40px; height: 40px; border-radius: 11px; }
+    .rpt-list .app-card .ac-icon .ico { width: 20px !important; height: 20px !important; }
+    .rpt-list .app-card h3 { font-size: 15px; align-self: center; }
+    .rpt-list .app-card .ac-desc { font-size: 14px; min-height: 0; }
+    .rpt-list .app-card .ac-actions { display: none; }
+  }
+</style>
+{% endblock %}
 {% block content %}
 
 <div class="page-head">
@@ -20,7 +35,7 @@
     <h3>{{ grp.group }}</h3>
     <span class="muted">{{ grp.reports|length }}</span>
   </div>
-  <div class="panel-pad">
+  <div class="panel-pad rpt-list">
     <div class="grid cols-3">
       {% for r in grp.reports %}
       <a class="app-card" href="{{ url_for('main.report_view', key=r.key) }}" style="text-decoration:none;color:inherit">

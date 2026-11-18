@@ -19,6 +19,23 @@
 .sig-label{font-size:12px;color:var(--muted,#777);margin-top:9px}
 .sig-current{text-align:center;padding:16px;border:1px dashed var(--line-2,#dcdce3);border-radius:12px;background:var(--surface-1,#fafafd)}
 .sig-img{max-width:100%;max-height:110px;background:#fff;border-radius:8px;padding:6px}
+#sigName{height:44px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);padding:0 14px;font:inherit;font-size:14px}
+#sigName:focus{outline:none;border-color:var(--tc-red);box-shadow:0 0 0 4px rgba(237,28,36,.1)}
+.pf-kv td{overflow-wrap:anywhere}
+.pf-check{flex-wrap:nowrap !important;align-items:flex-start !important}
+.pf-check input{width:20px !important;height:20px !important;flex:none;margin-top:2px}
+@media (max-width:767.98px){
+  .pf-kv{white-space:normal !important}            /* a long email wraps instead of scrolling the card */
+  .pf-kv td:first-child{width:38%}
+  #sigName{flex:1 1 100% !important;min-width:0 !important}
+  #sigQuick,#sigGen{flex:1 1 auto;justify-content:center}
+  .content p.muted,.pf-check .muted,.sig-current .muted{font-size:14px !important}
+  .sig-label{font-size:13px}
+  .pf-kv .tag{font-size:12px}
+  .sig-preview{font-size:30px}
+  #sigActions{position:sticky;bottom:0;z-index:5;margin-inline:-16px;padding:10px 16px calc(10px + env(safe-area-inset-bottom));
+    padding-inline-end:84px;background:var(--panel);border-top:1px solid var(--line)}
+}
 </style>
 
 <div class="page-head">
@@ -55,7 +72,7 @@
   <div class="panel">
     <div class="panel-head"><h3 data-i18n="top.profile">Account</h3></div>
     <div class="panel-pad">
-      <table class="tbl">
+      <table class="tbl pf-kv">
         <tr><td class="muted" data-i18n="admin.username">Username</td><td><b>{{ cu.username }}</b></td></tr>
         <tr><td class="muted" data-i18n="admin.name">Name</td><td>{{ cu.full_name or '—' }}</td></tr>
         <tr><td class="muted" data-i18n="admin.email">Email</td><td>{{ cu.email or '—' }}</td></tr>
@@ -129,7 +146,7 @@
       <span data-i18n="notif.title">Notifications</span></h3>
   </div>
   <div class="panel-pad">
-    <label class="flex gap center" style="cursor:pointer">
+    <label class="flex gap center pf-check" style="cursor:pointer">
       <input type="checkbox" id="emailPref" style="width:auto;height:auto"
              {{ 'checked' if ('"email": false' not in _nprefs and "'email': false" not in _nprefs) else '' }}>
       <span><b data-i18n="notif.email">Email me my notifications</b>

@@ -15,6 +15,13 @@
     window.TC_FLASH = [{% for cat, m in msgs %}{cat:"{{ cat }}", msg:"{{ m }}"}{{ "," if not loop.last }}{% endfor %}];
     {% endwith %}
   </script>
+  <style>
+    /* Phones: intro line and the brand bar's subtitle at a readable size. */
+    @media (max-width: 767.98px) {
+      .login-card .muted { font-size: 14px; }
+      .login-art .brand-text span { font-size: 12px; }
+    }
+  </style>
 </head>
 <body>
 <div id="tcbar" aria-hidden="true"></div>

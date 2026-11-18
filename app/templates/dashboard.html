@@ -1,5 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Command Center{% endblock %}
+{% block head %}
+<style>
+  /* Phones: the pulse tiles' labels and the one-line notes read at body size. */
+  @media (max-width: 767.98px) {
+    #factoryPulse .klabel { font-size: 14px; line-height: 1.35; }
+    #factoryPulse .kpi .muted { font-size: 12.5px !important; }
+    .dash-note { font-size: 14px !important; }
+  }
+</style>
+{% endblock %}
 {% block content %}
 
 {# Everything computed server-side (greetings, verdicts, dates, per-order status)
@@ -60,7 +70,7 @@
 
 {# ---------------- 3. Freshness — the date behind the output numbers. 0 queries. #}
 {% if freshness %}
-<div class="muted mt-3" style="font-size:12.5px" {{ loc(freshness) }}>{{ freshness.en }}</div>
+<div class="muted mt-3 dash-note" style="font-size:12.5px" {{ loc(freshness) }}>{{ freshness.en }}</div>
 {% endif %}
 
 {# ---------------- 4. Order commitments — the only list on this page ------------
@@ -121,7 +131,7 @@
      lives on /maintenance/ai, which is where you act on it. #}
 {% if briefing %}
 <div class="panel mt-6">
-  <div class="panel-pad flex gap center wrap" style="font-size:13.5px">
+  <div class="panel-pad flex gap center wrap dash-note" style="font-size:13.5px">
     <svg class="ico" aria-hidden="true"
          style="width:18px;height:18px;flex:none;color:var({{ '--crit' if briefing.tone == 'crit' else ('--warn' if briefing.tone == 'warn' else '--ok') }})">
       <use href="#i-{{ 'alert' if briefing.tone != 'good' else 'check' }}"></use></svg>

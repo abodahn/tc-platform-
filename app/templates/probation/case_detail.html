@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% from "probation/_macros.html" import sbadge, obadge, daysleft %}
 {% block title %}{{ case.case_no }} · {{ case.employee.employee_name }}{% endblock %}
+{% block head %}
+<style>
+  /* free-standing inputs (criterion notes, comment, reason, dates) get the form-field look */
+  .content .panel input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not(.field input) { height: 44px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); color: var(--ink); padding: 0 14px; font: inherit; font-size: 14px; }
+  .content .panel input:not(.field input):focus { outline: none; border-color: var(--tc-red); box-shadow: 0 0 0 4px rgba(237,28,36,.1); }
+  @media (max-width: 767.98px) {
+    .pb-actions.sticky-actions { margin-inline: -12px; padding-inline: 12px 84px; }
+    .pb-scale .chip { width: 44px; height: 44px; }
+    .pb-crit-row .muted, .panel-pad.grid .muted { font-size: 13px !important; }
+  }
+</style>
+{% endblock %}
 {% block content %}
 {% set ev = case.evaluation %}
 {% set editable = ev and ev.status in Status.EDITABLE_BY_EVALUATOR and can_evaluate %}
@@ -103,14 +115,15 @@
       <label class="flex gap center" style="grid-column:span 2"><input type="checkbox" name="employee_acknowledged" {{ 'checked' if ev.employee_acknowledged }} {{ 'disabled' if not editable }}>
         <span data-i18n="prob.form.acknowledged">Employee acknowledged the evaluation</span></label>
     </div>
-    {% if editable %}
-    <div class="panel-pad flex gap center wrap" style="padding-top:0">
-      <button class="btn btn-ghost" type="submit" data-i18n="prob.action.save_draft">Save draft</button>
-      <button class="btn btn-primary" type="submit" formaction="{{ url_for('probation.case_submit', case_id=case.id) }}"
-        onclick="return confirm('Submit this evaluation for review?')" data-i18n="prob.action.submit">Submit for review</button>
-    </div>
-    {% endif %}
   </div>
+  {% if editable %}
+  {# Outside the last panel so it can stay docked (phones) for the whole form. #}
+  <div class="flex gap center wrap mt-4 sticky-actions pb-actions">
+    <button class="btn btn-ghost" type="submit" data-i18n="prob.action.save_draft">Save draft</button>
+    <button class="btn btn-primary" type="submit" formaction="{{ url_for('probation.case_submit', case_id=case.id) }}"
+      onclick="return confirm('Submit this evaluation for review?')" data-i18n="prob.action.submit">Submit for review</button>
+  </div>
+  {% endif %}
 </form>
 {% endif %}
 

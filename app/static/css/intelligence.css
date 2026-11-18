@@ -57,7 +57,8 @@
 .ai-glass .k-val.crit { color: #ff5a6a; } .ai-glass .k-val.warn { color: #fbbf24; } .ai-glass .k-val.ok { color: #4ade80; }
 
 /* ---------- Section cards ---------- */
-.ai-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; align-items: start; }
+.ai-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 18px; align-items: start; }
+.ai-grid > *, .ai-heat > *, .ai-hero > *, .ai-hero-kpis > * { min-width: 0; }  /* a wide table scrolls in its card instead of widening the page */
 .ai-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-card); }
 .ai-card h3 { margin: 0; font-size: 14px; }
 .ai-card .hd { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--line-2); }
@@ -71,7 +72,10 @@
 }
 .ai-tile .t-lbl { font-size: 12px; opacity: .92; font-weight: 600; }
 .ai-tile .t-val { font-size: 30px; font-weight: 800; margin-top: 8px; font-variant-numeric: tabular-nums; }
-.ai-tile .t-lvl { position: absolute; top: 12px; inset-inline-end: 12px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; opacity: .9; }
+.ai-tile .t-lvl { float: right; margin: 1px 0 4px 8px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; opacity: .9; }
+/* level floats at the end of the label line, so a long label wraps under it instead of running into it */
+[dir="rtl"] .ai-tile .t-lvl { float: left; margin: 1px 8px 4px 0; }
+.ai-tile .t-val { clear: both; }
 .ai-tile.ok   { background: linear-gradient(135deg, #059669, #047857); }
 .ai-tile.info { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
 .ai-tile.warn { background: linear-gradient(135deg, #d97706, #b45309); }
@@ -139,5 +143,33 @@
 @media (max-width: 720px) {
   .ai-hero { grid-template-columns: 1fr; text-align: center; }
   .ai-gauge { margin: 0 auto; }
+}
+/* Phones: one swipeable tab strip, readable secondary text, a hero that fits. */
+@media (max-width: 767.98px) {
+  .ai-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: -12px; padding-inline: 12px; }
+  .ai-tabs::-webkit-scrollbar { display: none; }
+  .ai-tabs a { flex: none; display: inline-flex; align-items: center; min-height: 40px; font-size: 14px; }
+  .ai-hero { padding: 20px 16px; gap: 18px; }
+  .ai-hero h1 { font-size: 22px; }
+  .ai-hero .sub { font-size: 14px; }
+  .ai-gauge { width: 132px; height: 132px; }
+  .ai-gauge .g-lbl { display: none; }               /* same words sit right under the ring */
+  .ai-eyebrow { font-size: 12px; }
+  .ai-glass { padding: 12px; }
+  .ai-glass .k-lbl { font-size: 13px; }
+  .ai-glass .k-val.k-text { font-size: 16px; line-height: 1.3; }
+  .ai-tile .t-lbl { font-size: 14px; }
+  .ai-tile .t-lvl { font-size: 12px; }
+  .ai-tile .t-val { font-size: 26px; }
+  .ai-chip { font-size: 12px; }
+  .ai-row .r-title, .ai-rec .r-act { font-size: 14px; }
+  .ai-row .r-sub { font-size: 13px; }
+  .ai-rec .r-ctx, .ai-impact .imp .l { font-size: 14px; }
+  .ai-alert .a-actions .btn { min-width: 44px; justify-content: center; }
+  .ai-card .hd { padding: 14px 16px; flex-wrap: wrap; gap: 8px; }
+  .ai-card .bd { padding: 12px 16px; }
+  .ai-ask { flex-wrap: wrap; }
+  .ai-ask input { flex: 1 1 100%; min-height: 44px; }
+  .ai-suggest-chips button { min-height: 40px; font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
