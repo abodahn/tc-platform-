@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Tickets & Work Orders{% endblock %}
+{% block head %}{% include "maintenance/_mobile.html" %}{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -12,8 +13,8 @@
 </div>
 
 {# Filters #}
-<form class="panel" style="margin-bottom:16px" method="get">
-  <div class="panel-pad flex gap wrap center">
+<form class="panel m-filters-form" style="margin-bottom:16px" method="get">
+  <div class="panel-pad flex gap wrap center m-filters">
     <select name="status" onchange="this.form.submit()" style="height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px">
       <option value="" data-i18n="m.all_statuses">All statuses</option>
       {% for s in C.TICKET_STATUSES %}<option value="{{ s }}" data-i18n="mx.{{ s }}" {{ 'selected' if status==s }}>{{ s|mtext }}</option>{% endfor %}
@@ -51,14 +52,14 @@
           <span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span>
         </div>
         <div class="mk-meta">{{ t.machine_code }} · {{ t.department or '—' }}</div>
-        <div style="font-size:12.5px;margin-top:6px">{{ (t.description or '')[:64] }}</div>
+        <div class="mk-desc">{{ (t.description or '')[:64] }}</div>
         <div class="flex between center" style="margin-top:8px">
           <span class="badge {{ mbadge(t.status) }}" data-mk-status>{{ t.status|mhuman }}</span>
-          <span class="muted" style="font-size:11px">{{ t.assigned_to or '—' }}</span>
+          <span class="muted mk-who">{{ t.assigned_to or '—' }}</span>
         </div>
       </a>
       {% endfor %}
-      <div class="empty muted" style="padding:18px;font-size:12px" data-i18n="m.no_records" {{ 'hidden' if col }}>No records</div>
+      <div class="empty muted mk-empty" style="padding:18px" data-i18n="m.no_records" {{ 'hidden' if col }}>No records</div>
     </div>
   </div>
   {% endfor %}

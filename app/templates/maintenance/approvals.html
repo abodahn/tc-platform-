@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Approvals Center{% endblock %}
+{% block head %}{% include "maintenance/_mobile.html" %}{% endblock %}
 {% block content %}
 <div class="page-head"><div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
   <h1 data-i18n="nav.maint_approvals">Approvals Center</h1></div>
@@ -15,7 +16,7 @@
         <td>{{ it.qty_requested }} {{ it.uom }}</td><td>{{ it.available_at_request }}</td></tr>{% endfor %}</tbody></table></div>
     <form method="post" action="{{ url_for('maintenance.approval_decide', aid=a.id) }}" class="panel-pad">
       <div class="field"><label data-i18n="m.comment">Comment (required for reject/return)</label><input name="comment"></div>
-      <div class="flex gap">
+      <div class="flex gap m-decide">
         <button class="btn btn-primary btn-sm" name="decision" value="approve"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="m.approve">Approve</span></button>
         <button class="btn btn-ghost btn-sm" name="decision" value="return" data-i18n="m.return">Return</button>
         <button class="btn btn-ghost btn-sm" name="decision" value="reject" style="color:var(--crit)" data-i18n="m.reject">Reject</button>

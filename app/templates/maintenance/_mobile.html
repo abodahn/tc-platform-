@@ -1,0 +1,149 @@
+{# Maintenance + Smart Factory layout for phones and tablets. Module-scoped:
+   the shell (drawer, top bar, 16px inputs, table scroll) lives in app.css; this
+   only shapes the maintenance and /factory pages that include it from
+   {% block head %}. Presentation only - no markup a route or form depends on. #}
+<style>
+/* ---------- every width ---------- */
+/* Labels below 12px were written for a 27" monitor; 12px is the floor. */
+.pln-band { font-size: 12px; }
+.content .mtl-item .mtl-time, .content .mkcard .mk-meta, .content .sf-kpi .l { font-size: 12px; }
+.content [style*="font-size:11px"]:not(.badge):not(.tag),
+.content [style*="font-size: 11px"]:not(.badge):not(.tag),
+.content [style*="font-size:11.5px"]:not(.badge):not(.tag),
+.content [style*="font-size: 11.5px"]:not(.badge):not(.tag) { font-size: 12px !important; }
+
+.m-facts { font-size: 12.5px; }
+.m-banner-sub { font-size: 12.5px; }
+.mh-name { flex: 1; min-width: 0; font-size: 13px; }
+.mh-name .muted { font-size: 12px; }
+.mkcard .mk-desc { font-size: 12.5px; margin-top: 6px; }
+.mkcard .mk-who { font-size: 12px; }
+.mk-empty { font-size: 12px; }
+
+/* Import: eight file tabs in one max-content pill pushed the page ~1000px wide
+   (and the active tab was never highlighted). They wrap instead. */
+.m-imptabs { width: auto !important; max-width: 100%; flex-wrap: wrap; gap: 2px; border-radius: var(--r-lg); }
+.m-imptabs > a { border-radius: var(--r-md); color: var(--muted); font-size: 13px; font-weight: 600; text-decoration: none; }
+.m-imptabs > a.on { background: var(--tc-red); color: #fff; }
+
+/* Ticket detail below the two-column width: one column, and the workflow
+   action (assign / diagnose / repair / test) comes straight after the issue
+   instead of under every other panel. */
+@media (max-width: 1199.98px) {
+  .m-detail { display: flex; flex-direction: column; gap: 16px; }
+  .m-detail > div { display: contents; }
+  .m-detail .panel { order: 3; margin-top: 0; }
+  .m-detail .m-issue { order: 1; }
+  .m-detail .m-actions { order: 2; }
+}
+
+/* Dashboard KPIs below desktop: the icon tucks into the corner so a tile is a
+   number and a label; a band of four stays one row on tablets instead of two
+   rows of half-empty tiles. */
+@media (max-width: 1199.98px) {
+  .m-kpis .kpi { padding: 12px 14px; }
+  .m-kpis .kpi .ktop { position: absolute; top: 12px; inset-inline-end: 12px; }
+  .m-kpis .kpi .kicon { width: 30px; height: 30px; border-radius: 9px; }
+  .m-kpis .kpi .kicon .ico { width: 16px; height: 16px; }
+  .m-kpis .kpi .kpi-go { display: none; }
+  .m-kpis .kpi .kval { margin-top: 0; font-size: 24px; padding-inline-end: 36px; }
+}
+@media (min-width: 640px) and (max-width: 1199.98px) {
+  .content .grid.cols-4.m-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* Touch screens cannot drag a card, and the keyboard hint is for desktops. */
+@media (hover: none) {
+  .mk-hint, .mkcard .mk-grip { display: none; }
+}
+
+/* ---------- phones ---------- */
+@media (max-width: 767.98px) {
+  /* The section name above every title repeats the menu; the title is enough.
+     Data eyebrows (the work-order number on a ticket) stay. */
+  .page-head .eyebrow[data-i18n^="nav."] { display: none; }
+  .page-head .eyebrow { font-size: 13px; letter-spacing: .06em; }
+  .page-head > .tag { align-self: flex-start; }
+  .m-h1-sep { display: none; }
+  .page-head h1 .badge { margin-inline-end: 6px; }
+
+  /* Helper text sized inline at 12-13px is the body text on a phone. */
+  .content [style*="font-size:12"]:not(.badge):not(.tag),
+  .content [style*="font-size: 12"]:not(.badge):not(.tag),
+  .content [style*="font-size:13px"]:not(.badge):not(.tag),
+  .content [style*="font-size: 13px"]:not(.badge):not(.tag),
+  .content [style*="font-size:11"]:not(.badge):not(.tag),
+  .content [style*="font-size: 11"]:not(.badge):not(.tag) { font-size: 14px !important; }
+  .panel-head .muted, .panel-pad > .muted, .panel-pad > p.muted, .panel-pad.muted,
+  .panel-pad .muted > span, .content > p.muted, .content > .muted, td > .muted,
+  .tbl-hint .muted, .mk-hint, .empty .muted, .page-head .sub .muted { font-size: 14px; }
+  .content .ac-desc, .content .sf-par, .content .er-sub { font-size: 14px; }
+  /* Short labels and timestamps sit one step under the body. */
+  .content .kpi .klabel, .content .sf-row .muted, .content .mtl-item .mtl-time, .content .sf-kpi .l { font-size: 13px; }
+
+  /* Lone links sitting in a line of helper text get a thumb-sized hit area. */
+  .panel-pad > .muted > a, .panel-pad.muted > a, .content > .muted > a, .tbl-hint .muted > a,
+  .content .tbl td > a, .content .tbl td > b > a, .mhealth > a, .mcal-sum a.v {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 40px; min-width: 40px;
+  }
+  .er-spk { min-width: 40px; min-height: 40px; }
+
+  /* Checkboxes big enough to hit with a thumb. */
+  .m-check { min-height: 44px; display: flex; align-items: center; gap: 10px; font-size: 15px !important; }
+  .m-check input[type=checkbox] { width: 22px !important; height: 22px !important; flex: 0 0 22px; margin: 0 !important; accent-color: var(--tc-red); }
+
+  /* New-ticket form: the fields own the rhythm, the grid gap only doubled it;
+     Submit stays docked at the bottom while the form scrolls. */
+  .m-form .grid { row-gap: 0 !important; }
+  .m-form .field { margin-bottom: 16px; }
+  .m-form .sticky-actions { margin-inline: 0; border-radius: 0 0 var(--r-xl) var(--r-xl); }
+
+  /* Ticket facts: two short columns read faster than ten stacked rows. */
+  .content .grid.m-facts { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 12px 14px; font-size: 14px; }
+  .m-facts .muted { font-size: 13px; }
+  .m-detail .mtl-item .mtl-body { font-size: 14px; }
+  .m-diag-meta { font-size: 14px !important; }
+
+  /* Approve / Return / Reject share the row evenly. */
+  .m-decide > .btn { flex: 1 1 0; justify-content: center; }
+
+  .m-banner-sub { font-size: 14px; }
+
+  /* Machine health / low stock rows: name on its own line, bar + status under it. */
+  .mhealth.m-mh { flex-wrap: wrap; row-gap: 2px; }
+  .mh-name { font-size: 14px; }
+  .mh-name .muted { font-size: 14px; }
+  .m-mh .mh-name { flex: 1 1 calc(100% - 20px); }
+  .mh-name a { display: inline-flex; align-items: center; min-height: 40px; }
+  .m-mh .eff { flex: 1 1 auto; width: auto !important; margin-inline-start: 20px; }
+
+  /* Kanban: columns stack into one list; empty stages shrink to their header. */
+  .mkanban { flex-direction: column; overflow: visible; gap: 12px; padding-bottom: 0; }
+  .mkcol { flex: none; width: auto; }
+  .mkcol .mkbody { max-height: none; overflow: visible; }
+  .mkcol:not(:has(.mkcard)) .mkbody { display: none; }
+  .mkcol:not(:has(.mkcard)) h4 { border-bottom: 0; }
+  .mkcol h4 { font-size: 14px; align-items: center; }
+  .content .mkcard .mk-meta { font-size: 13px; }
+  .mkcard .mk-desc { font-size: 14px; }
+  .mkcard .mk-who { font-size: 13px; }
+  .m-filters select { flex: 1 1 140px; min-width: 0; min-height: 44px; height: auto !important; }
+  .m-filters .spacer { display: none; }
+  .m-filters > .btn { margin-inline-start: auto; }
+
+  /* PM checklist: the new item gets the full width. */
+  .m-pm-add .field { flex: 1 1 100%; margin-bottom: 0; }
+  .m-pm-meta, .m-pm-item { font-size: 14px !important; }
+
+  /* Import tabs: a two-up grid of full-height buttons. */
+  .m-imptabs { display: grid; grid-template-columns: 1fr 1fr; }
+  .m-imptabs > a { display: flex; align-items: center; min-height: 44px; padding: 8px 10px !important; line-height: 1.25; font-size: 14px; }
+
+  /* Floor: the picture report stays the big button, the other two are rows. */
+  .floor-actions { gap: 10px; }
+  .floor-btn { min-height: 104px; }
+  .floor-btn:not(.primary) { flex-direction: row; justify-content: flex-start; min-height: 64px; padding: 12px 18px; gap: 14px; font-size: 16px; text-align: start; }
+  .floor-btn:not(.primary) .ico { width: 28px; height: 28px; }
+  .floor-btn small { font-size: 13px !important; }
+}
+</style>

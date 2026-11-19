@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ t.ticket_no }}{% endblock %}
+{% block head %}{% include "maintenance/_mobile.html" %}{% endblock %}
 {% macro part_row(item=none, required=false) %}
 <div class="grid cols-2">
   <div class="field"><label><span data-i18n="m.part">Spare part</span>
@@ -20,7 +21,7 @@
 <div class="page-head">
   <div>
     <div class="eyebrow">{{ t.work_order_no or 'Work order' }}</div>
-    <h1>{{ t.ticket_no }} · <span class="badge {{ mbadge(t.status) }}" style="font-size:14px;vertical-align:middle">{{ t.status|mhuman }}</span>
+    <h1>{{ t.ticket_no }}<span class="m-h1-sep"> · </span><span class="badge {{ mbadge(t.status) }}" style="font-size:14px;vertical-align:middle">{{ t.status|mhuman }}</span>
       {% if sla_risk and sla_risk >= 60 %}<span class="badge {{ 'b-critical' if sla_risk>=100 else 'b-warning' }}" style="font-size:13px;vertical-align:middle"><svg class="ico" style="width:12px;height:12px"><use href="#i-sparkles"></use></svg> <span data-i18n="m.ai_sla_risk">SLA risk</span> {{ sla_risk }}%</span>{% endif %}</h1>
     <div class="sub">{{ t.machine_code }} · {{ t.department or '—' }} · <span class="badge {{ mbadge(t.priority) }}">{{ t.priority|mhuman }}</span></div>
   </div>
@@ -33,14 +34,14 @@
   </div>
 </div>
 
-<div class="grid cols-3">
+<div class="grid cols-3 m-detail">
   {# ---- Left: info, diagnosis, requests, comments ---- #}
   <div class="span-2">
-    <div class="panel accent">
+    <div class="panel accent m-issue">
       <div class="panel-head"><h3 data-i18n="m.description">Issue</h3></div>
       <div class="panel-pad">
         <p style="margin:0 0 12px">{{ t.description }}</p>
-        <div class="grid cols-3" style="font-size:12.5px">
+        <div class="grid cols-3 m-facts">
           <div><div class="muted" data-i18n="m.requester">Requester</div><b>{{ t.requester or '—' }}</b></div>
           <div><div class="muted" data-i18n="m.area">Area</div><b>{{ t.area or '—' }}</b></div>
           <div><div class="muted" data-i18n="m.line">Line</div><b>{{ t.line_no or '—' }}</b></div>
@@ -66,7 +67,7 @@
         <div style="border-bottom:1px solid var(--line-2);padding-bottom:10px;margin-bottom:10px">
           <div class="flex between"><b>{{ d.fault_found }}</b><span class="tag">{{ d.root_cause|mhuman }}</span></div>
           <p class="muted" style="font-size:13px;margin:6px 0">{{ d.diagnosis }}</p>
-          <div style="font-size:12px"><b data-i18n="m.required_action">Action</b>: {{ d.required_action }} ·
+          <div class="m-diag-meta" style="font-size:12px"><b data-i18n="m.required_action">Action</b>: {{ d.required_action }} ·
             <b data-i18n="m.spare_needed">Spare needed</b>: {{ 'Yes' if d.spare_needed else 'No' }} · {{ d.technician }} · {{ d.created_at }}</div>
         </div>
         {% endfor %}
@@ -185,7 +186,7 @@
   {# ---- Right: actions + timeline + QR ---- #}
   <div>
     {# Workflow actions (contextual) #}
-    <div class="panel accent">
+    <div class="panel accent m-actions">
       <div class="panel-head"><h3 data-i18n="m.scenario">Workflow actions</h3></div>
       <div class="panel-pad">
         {% if t.status in ['submitted','under_review','reopened'] and mcan('maint_manage') %}
@@ -237,7 +238,7 @@
               <select name="root_cause">{% for rc in C.ROOT_CAUSES %}<option value="{{ rc }}" data-i18n="mx.{{ rc }}">{{ rc|mtext }}</option>{% endfor %}</select></div>
             <div class="field"><label data-i18n="m.diagnosis">Diagnosis</label><input name="diagnosis"></div>
             <div class="field"><label data-i18n="m.required_action">Required action</label><input name="required_action"></div>
-            <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px"><input type="checkbox" name="spare_needed" style="width:auto;height:auto"> <span data-i18n="m.spare_needed">Spare parts needed</span></label>
+            <label class="m-check" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px"><input type="checkbox" name="spare_needed" style="width:auto;height:auto"> <span data-i18n="m.spare_needed">Spare parts needed</span></label>
             <button class="btn btn-primary btn-block"><span data-i18n="m.add_diagnosis">Add diagnosis</span></button>
           </form>
 
@@ -258,7 +259,7 @@
             <div class="field"><label data-i18n="m.labour_hours">Labour hours (optional)</label><input type="number" name="labour_hours" step="0.25" min="0"></div>
             <div class="field"><label data-i18n="m.machine_running">Machine running</label>
               <select name="machine_running"><option>Yes</option><option>Partial</option><option>No</option></select></div>
-            <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px"><input type="checkbox" name="old_part_returned" style="width:auto;height:auto"> Old part returned</label>
+            <label class="m-check" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px"><input type="checkbox" name="old_part_returned" style="width:auto;height:auto"> Old part returned</label>
             <div class="field"><label>Final notes</label><input name="final_notes"></div>
             <div class="field"><label data-i18n="m.proof_photo">Repair photo</label>
               <input type="file" name="photos" accept="image/*" capture="environment" multiple style="height:auto;padding:9px;border:1px dashed var(--line);border-radius:var(--r-md);background:var(--panel);width:100%"></div>

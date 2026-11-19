@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Maintenance Dashboard{% endblock %}
+{% block head %}{% include "maintenance/_mobile.html" %}{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -35,7 +36,7 @@
 {% endmacro %}
 
 <div class="pln-band" data-i18n="m.band.work">Work today</div>
-<div class="grid cols-4">
+<div class="grid cols-4 m-kpis">
   {{ k('', 'kanban', kpis.open_tickets, 'm.open_tickets',
        url_for('maintenance.tickets', status='open')) }}
   {{ k('warn', 'alert', kpis.critical, 'm.critical',
@@ -47,7 +48,7 @@
 </div>
 
 <div class="pln-band" data-i18n="m.band.assets">Assets and parts</div>
-<div class="grid cols-4">
+<div class="grid cols-4 m-kpis">
   {{ k('warn', 'factory', kpis.machines_stopped, 'm.machines_stopped',
        url_for('maintenance.machines', status='stopped')) }}
   {{ k('info', 'settings', kpis.under_maint, 'm.under_maint',
@@ -59,7 +60,7 @@
 </div>
 
 <div class="pln-band" data-i18n="m.band.perf">Performance</div>
-<div class="grid cols-4">
+<div class="grid cols-4 m-kpis">
   {{ k('warn', 'boxes', kpis.low_stock, 'm.low_stock',
        url_for('maintenance.spares', stock='low')) }}
   {{ k('', 'clock', kpis.downtime_month, 'm.downtime_month') }}
@@ -71,7 +72,7 @@
   <svg class="ico"><use href="#i-sparkles"></use></svg>
   <div>
     <b data-i18n="nav.maint_ai">AI Insights — Predictive Maintenance</b><br>
-    <span style="color:rgba(255,255,255,.8);font-size:12.5px">
+    <span class="m-banner-sub" style="color:rgba(255,255,255,.8)">
       <b>{{ kpis.ai_at_risk }}</b> <span data-i18n="m.ai_at_risk">machines at risk</span> ·
       <span data-i18n="m.ai_offline">on-premise, works offline</span></span>
   </div>
@@ -121,10 +122,10 @@
       <a class="tag" href="{{ url_for('maintenance.machines') }}" data-i18n="dash.view_all">View all</a></div>
     <div class="panel-pad">
       {% for m in machines %}
-      <div class="mhealth">
+      <div class="mhealth m-mh">
         <span class="mh-dot" style="background:var(--{{ 'ok' if m.health_band=='good' else ('crit' if m.health_band=='crit' else 'warn') }})"></span>
-        <div style="flex:1"><b style="font-size:13px"><a href="{{ url_for('maintenance.machine_profile', mid=m.id) }}">{{ m.code }}</a></b>
-          <span class="muted" style="font-size:12px"> · {{ m.name }}</span></div>
+        <div class="mh-name"><b><a href="{{ url_for('maintenance.machine_profile', mid=m.id) }}">{{ m.code }}</a></b>
+          <span class="muted"> · {{ m.name }}</span></div>
         <div class="eff {{ 'good' if m.health_band=='good' else ('warn' if m.health_band=='warn' else '') }}" style="width:120px">
           <div class="track"><div class="fill" style="width:{{ m.health }}%"></div></div><b style="font-size:12px">{{ m.health }}</b>
         </div>
@@ -139,7 +140,7 @@
     <div class="panel-pad">
       {% for s in low %}
       <div class="mhealth"><svg class="ico" style="color:var(--warn)"><use href="#i-boxes"></use></svg>
-        <div style="flex:1;font-size:12.5px"><a href="{{ url_for('maintenance.spare_profile', sid=s.id) }}">{{ s.code }}</a> · {{ s.name }}</div>
+        <div class="mh-name"><a href="{{ url_for('maintenance.spare_profile', sid=s.id) }}">{{ s.code }}</a> · {{ s.name }}</div>
         <span class="badge {{ 'b-critical' if s.stock_qty<=0 else 'b-warning' }}">{{ s.stock_qty }}/{{ s.reorder_level }}</span></div>
       {% else %}<div class="empty muted" data-i18n="m.no_records">No records</div>{% endfor %}
     </div>

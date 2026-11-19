@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Maintenance Calendar{% endblock %}
 
-{% block head %}
+{% block head %}{% include "maintenance/_mobile.html" %}
 <style>
 /* ---------- Maintenance month calendar (page-scoped) ----------
    One markup tree, two shapes: a 7-column month grid on desktop, an agenda list
