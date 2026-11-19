@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "warehouse/_layout.html" %}
 {% block title %}Issue to order{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -48,7 +48,7 @@
     {% if plan.roll_tracked == False %}
     <p class="muted mt-2" data-i18n="wh.issue.qty_material">Quantity-tracked material — issued straight from the quantity on hand, there are no rolls to pick.</p>
     {% else %}
-    <table class="tbl mt-2">
+    <table class="tbl whc-stack mt-2">
       <thead><tr><th data-i18n="wh.field.rollno">Roll</th><th data-i18n="wh.field.shade">Shade lot</th>
         <th style="text-align:right" data-i18n="wh.field.width">Width (cm)</th>
         <th style="text-align:right" data-i18n="wh.field.free">Free</th>
@@ -56,7 +56,7 @@
         <th data-i18n="wh.field.bin">Bin</th></tr></thead>
       <tbody>
       {% for r in plan.rolls %}
-        <tr><td>{{ r.roll_no }}</td><td>{{ r.shade_lot or '—' }}</td>
+        <tr><td class="whc-key">{{ r.roll_no }}</td><td>{{ r.shade_lot or '—' }}</td>
           <td style="text-align:right">{{ '{:,.0f}'.format(r.width_cm) }}</td>
           <td style="text-align:right">{{ '{:,.1f}'.format(r.free_m) }}</td>
           <td style="text-align:right"><b>{{ '{:,.1f}'.format(r.take_m) }}</b></td>
@@ -99,7 +99,7 @@
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="wh.issue.reservations">Open reservations</h3></div>
   <div class="panel-pad">
-    <form method="get" class="flex gap center">
+    <form method="get" class="flex gap center whc-filters">
       <select name="res_order" onchange="this.form.submit()">
         <option value="" data-i18n="wh.filter.all_orders">All orders</option>
         {% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if res_order==o.id }}>{{ o.order_no }}</option>{% endfor %}
@@ -112,18 +112,18 @@
       <button class="btn btn-primary btn-sm" data-advance data-i18n="wh.issue.all_reserved">Issue all reserved for this order</button>
     </form>{% endif %}
 
-    <table class="tbl">
+    <table class="tbl whc-stack">
       <thead><tr><th data-i18n="wh.field.order">Customer order</th><th data-i18n="wh.field.material">Material</th>
         <th data-i18n="wh.field.rollno">Roll</th><th data-i18n="wh.field.shade">Shade lot</th>
         <th style="text-align:right" data-i18n="wh.field.qty">Quantity</th>
         {% if can('wh_manage') %}<th data-i18n="wh.action.release">Release</th>{% endif %}</tr></thead>
       <tbody>
       {% for a in allocs %}
-        <tr><td>#{{ a.order_id }}</td><td>{{ a.mat_code }}</td><td>{{ a.roll_no or '—' }}</td>
+        <tr><td>#{{ a.order_id }}</td><td>{{ a.mat_code }}</td><td class="whc-w2">{{ a.roll_no or '—' }}</td>
           <td class="muted">{{ a.shade_lot or '—' }}</td>
           <td style="text-align:right">{{ '{:,.1f}'.format(a.qty or 0) }} {{ a.uom }}</td>
           {% if can('wh_manage') %}
-          <td><form method="post" action="{{ url_for('warehouse.allocation_issue', alloc_id=a.id) }}">
+          <td class="whc-act whc-wide"><form method="post" action="{{ url_for('warehouse.allocation_issue', alloc_id=a.id) }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <input type="hidden" name="order_id" value="{{ a.order_id }}">
             <button class="btn btn-primary btn-sm" data-advance data-i18n="wh.action.issue">Issue now</button></form>

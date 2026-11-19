@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Traceability & DPP{% endblock %}
 {% macro pct_bar(p) %}<div class="pb-meter"><span style="width:{{ p }}%"></span></div>{% endmacro %}
 {% block content %}

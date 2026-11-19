@@ -7,6 +7,7 @@
 {% macro sel(name, value) %}{{ "selected" if form and form.get(name) == value }}{% endmacro %}
 {% macro chk(name) %}{{ "checked" if form and form.get(name) == "on" }}{% endmacro %}
 {% block title %}New Maintenance Ticket{% endblock %}
+{% block head %}{% include "maintenance/_mobile.html" %}{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -33,7 +34,7 @@
 </div>
 {% endif %}
 
-<form method="post" enctype="multipart/form-data" class="panel accent" style="max-width:980px">
+<form method="post" enctype="multipart/form-data" class="panel accent m-form" style="max-width:980px">
   <div class="panel-pad">
     <div class="grid cols-3">
       <div class="field" style="grid-column:span 1">
@@ -73,8 +74,8 @@
 
     <div class="grid cols-3">
       <div class="field"><label data-i18n="m.est_downtime">Estimated downtime (min)</label><input name="est_downtime_min" type="number" min="0" value="{{ v('est_downtime_min', '0') }}"></div>
-      <div class="field" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="safety_impact" {{ chk("safety_impact") }} style="width:auto;height:auto"> <span data-i18n="m.safety">Safety impact</span></label></div>
-      <div class="field" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="production_stopped" {{ chk("production_stopped") }} style="width:auto;height:auto"> <span data-i18n="m.prod_stopped">Production stopped</span></label></div>
+      <div class="field" style="display:flex;align-items:flex-end"><label class="m-check" style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="safety_impact" {{ chk("safety_impact") }} style="width:auto;height:auto"> <span data-i18n="m.safety">Safety impact</span></label></div>
+      <div class="field" style="display:flex;align-items:flex-end"><label class="m-check" style="display:flex;gap:8px;margin:0;align-items:center"><input type="checkbox" name="production_stopped" {{ chk("production_stopped") }} style="width:auto;height:auto"> <span data-i18n="m.prod_stopped">Production stopped</span></label></div>
     </div>
     <div class="field"><label data-i18n="m.remarks">Remarks</label><input name="remarks" value="{{ v('remarks') }}"></div>
     <div class="field">
@@ -84,7 +85,7 @@
     </div>
 {% if dup %}
     <div class="field" style="background:var(--warn-bg);border-radius:12px;padding:12px 14px">
-      <label style="display:flex;gap:9px;margin:0;align-items:flex-start;cursor:pointer">
+      <label class="m-check" style="display:flex;gap:9px;margin:0;align-items:flex-start;cursor:pointer">
         <input type="checkbox" name="allow_duplicate" style="width:auto;height:auto;margin-top:3px">
         <span><b data-i18n="m.dup_override">This is a separate fault — create the ticket anyway</b>
           <span class="muted" style="display:block;font-size:12.5px" data-i18n="m.dup_override_note">Leave this unticked and press Submit again to be stopped again.</span></span>
@@ -93,7 +94,7 @@
     <div class="muted" style="font-size:12.5px" data-i18n="m.dup_photos">Your photos were not kept — please choose them again.</div>
 {% endif %}
   </div>
-  <div class="modal-foot">
+  <div class="modal-foot sticky-actions">
     <a class="btn btn-ghost" href="{{ url_for('maintenance.dashboard') }}" data-i18n="m.cancel">Cancel</a>
     <button class="btn btn-primary" type="submit"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="m.submit">Submit</span></button>
   </div>

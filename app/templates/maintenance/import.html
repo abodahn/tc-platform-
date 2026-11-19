@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Import{% endblock %}
+{% block head %}{% include "maintenance/_mobile.html" %}{% endblock %}
 {% block content %}
 <div class="page-head">
   <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
@@ -8,7 +9,7 @@
   <a class="btn btn-ghost" href="{{ url_for('maintenance.settings') }}" data-i18n="nav.maint_settings">Settings</a>
 </div>
 
-<div class="seg" style="width:max-content;margin-bottom:18px">
+<div class="seg m-imptabs" style="width:max-content;margin-bottom:18px">
   {# Two of these tabs used to be called "Machines" and "Machine register", which is
      one word apart and sent the first real user to the wrong one. Name each tab by
      the FILE it takes, not by the thing it loads. #}

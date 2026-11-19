@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ m.code }}{% endblock %}
+{% block head %}{% include "maintenance/_mobile.html" %}{% endblock %}
 {% block content %}
 <div class="page-head">
   <div><div class="eyebrow">{{ m.type or 'Machine' }}</div>

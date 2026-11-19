@@ -1,4 +1,11 @@
 {% extends "base.html" %}
+{% block head %}{% include "_phone_dense.html" %}
+<style>
+  /* .table has no rules in app.css, so this table rendered with browser-default 1px cells */
+  .cst-orders th, .cst-orders td { padding: 10px 12px; border-bottom: 1px solid var(--line-2); }
+  .cst-orders thead th { text-align: start; color: var(--muted); font-weight: 600; font-size: 12px; border-bottom-color: var(--line); }
+</style>
+{% endblock %}
 {% block title %}Order Costing · Orders{% endblock %}
 
 {#  Eleven columns of four-decimal numbers is a spreadsheet, not a screen. This

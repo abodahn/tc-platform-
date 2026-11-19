@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}{{ case.case_no }} — Evaluation{% endblock %}
 {% block content %}
 {% set ev = case.evaluation %}

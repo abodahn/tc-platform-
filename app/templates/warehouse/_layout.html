@@ -1,0 +1,192 @@
+{#- Warehouse pages: base layout plus the module's phone/tablet presentation.
+    Storekeepers work these screens from a phone on the floor, so the key lists
+    (materials, rolls, reservations, counts) become one card per row below 768px,
+    filter bars and in-row forms get thumb-sized controls, and the receive
+    packing list becomes one card per roll. Presentation only. -#}
+{% extends "base.html" %}
+{% block content_class %}wh-page{% endblock %}
+{% block head %}
+<style>
+/* ---- All widths ---- */
+/* Sub-lines, notes and tags were 11px inline: too small to read at arm's length. */
+.wh-page .muted[style*="font-size"] { font-size: 12px !important; }
+.wh-page .tag { font-size: 12px; }
+.wh-page .sf-kpi .l { font-size: 12px; }
+
+/* Bare controls (filter bars, in-row forms, the packing list) take the field look
+   instead of the browser default. The combobox's hidden native select is left alone. */
+.wh-page .whc-filters select:not(.tc-cb-native),
+.wh-page .tbl input:not([type=hidden]):not([type=checkbox]),
+.wh-page .tbl select:not(.tc-cb-native) {
+  height: 36px; padding: 0 10px; min-width: 0; max-width: 100%;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--panel); color: var(--ink); font: inherit; font-size: 13.5px;
+}
+.wh-page .whc-filters select:not(.tc-cb-native) { height: 40px; min-width: 200px; }
+.wh-page .whc-filters select:focus, .wh-page .tbl input:focus, .wh-page .tbl select:focus {
+  outline: none; border-color: var(--tc-red); box-shadow: 0 0 0 4px rgba(237,28,36,.1);
+}
+.wh-page .whc-filters label { min-height: 40px; cursor: pointer; }
+.wh-page input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--tc-red); }
+/* `.field label` is display:block and `.field input` is a 44px full-width box, which
+   turned the roll-tracked checkbox into a big empty square on its own line. */
+.wh-page .field label.flex { display: flex; font-weight: 500; min-height: 44px; cursor: pointer; }
+.wh-page .field input[type=checkbox] { width: 20px; height: 20px; min-height: 0; flex: none; padding: 0; }
+.wh-page .field label.flex > span { flex: 1 1 0; min-width: 0; }
+
+.whc-lbl-gen, .wh-page td.whc-more { display: none; }   /* card labels and the row toggle: phones only */
+.wh-page table.tbl.whc-roll input:not([type=hidden]) { width: 100%; }
+.wh-page .whc-roll label { display: block; position: relative; }  /* keeps the sr-only label inside the scroll box */
+.wh-page #add-roll { margin-block: 10px 18px; }
+/* `.field input` padding beats the combobox's own, so the clear button sat on the label text. */
+.wh-page .field .tc-cb-input { padding-inline-end: 56px; }
+/* A heading-only pad followed by the table's own pad doubled the gap under the title. */
+.wh-page .panel > .panel-pad:has(> h3:only-child) + .panel-pad { padding-top: 0; }
+
+/* ---- Tablets and desktops ---- */
+@media (min-width: 768px) {
+  /* Wide lists scroll inside their box; wrapping squeezed codes and buttons to one word per line. */
+  .wh-page table.tbl td { white-space: nowrap; }
+  /* The packing list is a form: equal columns that fit the box, never a sideways scroll. */
+  .wh-page table.whc-roll { table-layout: fixed; width: 100%; }
+  .wh-page table.whc-roll th:first-child { width: 22%; }
+  .wh-page table.whc-roll th { white-space: normal; vertical-align: bottom; }
+  .wh-page table.whc-roll th, .wh-page table.whc-roll td { padding-inline: 6px; }
+}
+
+/* ---- Phones ---- */
+@media (max-width: 767.98px) {
+  .wh-page .page-head .eyebrow { display: none; }     /* the title already says where you are */
+
+  /* KPI tiles two-up, like the platform's own .kpi rows */
+  .content.wh-page .grid:has(> .sf-kpi) { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .wh-page .sf-kpis, .wh-page .grid:has(> .sf-kpi) { gap: 10px; }
+  .wh-page .sf-kpi { padding: 12px 14px; }
+  .wh-page .sf-kpi .v { font-size: 24px; }
+  .wh-page .sf-kpi .l { font-size: 12.5px; letter-spacing: .03em; }
+  .wh-page .muted[style*="font-size"] { font-size: 14px !important; }
+  .wh-page table.tbl:not(.whc-stack) td .muted[style*="font-size"] { font-size: 13px !important; }  /* dense matrices */
+
+  /* A panel inside a panel is a second frame eating 32px of a 360px screen. */
+  .wh-page .panel .panel { border: 0; box-shadow: none; background: transparent; border-radius: 0; }
+  .wh-page .panel .panel > .panel-head, .wh-page .panel .panel > .panel-pad { padding-inline: 0; }
+
+  /* Filter bars: one control per line */
+  .wh-page .whc-filters > select, .wh-page .whc-filters > .tc-cb { flex: 1 1 100%; min-width: 0; }
+  .wh-page .whc-filters select:not(.tc-cb-native) { width: 100%; height: 44px; min-width: 0; }
+  .wh-page .whc-filters > label { flex: 1 1 40%; min-height: 44px; }
+  .wh-page .whc-filters > .btn { flex: 1 1 auto; justify-content: center; }
+
+  .wh-page .tbl input:not([type=hidden]):not([type=checkbox]),
+  .wh-page .tbl select:not(.tc-cb-native) { height: 44px; }
+
+  /* An empty table is just its message: drop the header that would scroll sideways. */
+  .wh-page table.tbl:has(> tbody > tr:only-child > td[colspan]) > thead { display: none; }
+  .wh-page table.tbl td[colspan] { white-space: normal; }
+
+  /* Key lists: one card per row. Labels come from the column headers (script below). */
+  .wh-page table.whc-stack, .wh-page .whc-stack > tbody { display: block; width: 100%; white-space: normal; }
+  .wh-page .whc-stack > thead { display: none; }
+  .wh-page .whc-stack > tbody > tr {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-flow: row dense;
+    gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line);
+  }
+  .wh-page .whc-stack > tbody > tr:last-child { border-bottom: 0; }
+  .wh-page table.whc-stack > tbody > tr > td {
+    display: block; padding: 0; border: 0; background: none; min-width: 0;
+    text-align: start !important; overflow-wrap: anywhere;
+  }
+  .wh-page .whc-stack td.whc-key, .wh-page .whc-stack td.whc-wide, .wh-page .whc-stack td[colspan] { grid-column: 1 / -1; }
+  .wh-page .whc-stack td.whc-w2 { grid-column: span 2; }
+  .wh-page .whc-stack td[colspan] { text-align: center !important; padding: 8px 0; }
+  .wh-page .whc-stack td.whc-key:first-child { font-weight: 700; font-size: 15px; }
+  .wh-page .whc-stack td.whc-low { order: 1; }
+  .wh-page .whc-stack td.whc-act { order: 2; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .whc-lbl-gen { display: block; font-size: 12.5px; font-weight: 600; color: var(--muted); margin-bottom: 3px; }
+
+  /* Row actions: forms and buttons fill the card width */
+  .wh-page .whc-stack td.whc-act > form { flex: 1 1 140px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .wh-page .whc-stack td.whc-act > form[style*="display:flex"] { flex-basis: 100%; gap: 8px !important; }
+  .wh-page .whc-stack td.whc-act > .btn, .wh-page .whc-stack td.whc-act form .btn { flex: 1 1 auto; justify-content: center; }
+  .wh-page .whc-stack td.whc-act > a.tag { flex: 1 1 auto; justify-content: center; }
+  .wh-page .whc-stack form input[name=delta] { flex: 1 1 80px; width: auto !important; }
+  .wh-page .whc-stack form select[name=reason] { flex: 2 1 140px; }
+  .wh-page .whc-stack form input[name=note], .wh-page .whc-stack form input[name=new_bin] { flex: 1 1 120px; }
+  .wh-page .whc-stack td.whc-wide:not(.whc-act) > form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+  .wh-page .whc-stack td.whc-wide:not(.whc-act) > form > .btn { flex: 0 1 auto; justify-content: center; }
+  .wh-page .whc-stack > tbody > tr:first-child { padding-top: 4px; }
+
+  /* Folded rows (materials, rolls): a card shows its figures; the stock-keeping
+     forms open under one "Actions" toggle so a list of rolls stays scannable. */
+  .wh-page table.whc-stack > tbody > tr > td.whc-more { display: block; grid-column: 1 / -1; order: 2; }
+  .wh-page .whc-stack td.whc-act { order: 3; }
+  .wh-page .whc-stack tr.has-fold:not(.is-open) > td.whc-act,
+  .wh-page .whc-stack tr.has-fold:not(.is-open) > td > form { display: none; }
+  .whc-more .btn { width: 100%; justify-content: center; gap: 8px; }
+  .whc-more .btn::after {
+    content: ""; width: 7px; height: 7px; border: solid currentColor; border-width: 0 2px 2px 0;
+    transform: translateY(-2px) rotate(45deg); transition: transform .18s ease-out;
+  }
+  .whc-more .btn[aria-expanded="true"]::after { transform: translateY(2px) rotate(-135deg); }
+
+  /* Receive: one card per roll on the packing list */
+  .wh-page table.whc-roll, .wh-page .whc-roll > tbody { display: block; width: 100%; white-space: normal; counter-reset: whroll; }
+  .wh-page .whc-roll > thead { display: none; }
+  .wh-page .whc-roll > tbody > tr {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+    padding: 12px 14px 14px; margin-bottom: 10px; counter-increment: whroll;
+    border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel-2);
+  }
+  .wh-page .whc-roll > tbody > tr::before {
+    content: "#" counter(whroll); grid-column: 1 / -1;
+    font-weight: 700; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .wh-page table.whc-roll > tbody > tr > td { display: block; padding: 0; border: 0; background: none; min-width: 0; }
+  .wh-page .whc-roll > tbody > tr > td:first-child { grid-column: 1 / -1; }
+  .wh-page .whc-roll .whc-lbl {
+    position: static; width: auto; height: auto; margin: 0 0 6px; overflow: visible;
+    clip-path: none; white-space: normal; display: block;
+    font-size: 14px; font-weight: 600; color: var(--ink-2);
+  }
+  .wh-page table.tbl.whc-roll input:not([type=hidden]) { min-width: 0; }
+}
+</style>
+{% endblock %}
+{% block scripts %}
+<script>
+/* Label each cell of a .whc-stack table with its column header, carrying the
+   header's i18n key so a language switch re-translates it. Runs before app.js
+   applies the dictionary. Skips key/action cells and the empty-state row. */
+(function () {
+  document.querySelectorAll("table.whc-stack").forEach(function (tbl) {
+    var head = tbl.tHead && tbl.tHead.rows[0];
+    if (!head) return;
+    Array.prototype.forEach.call(tbl.tBodies, function (body) {
+      Array.prototype.forEach.call(body.rows, function (tr) {
+        if (tr.cells.length !== head.cells.length) return;
+        Array.prototype.forEach.call(tr.cells, function (td, i) {
+          if (td.matches(".whc-key, .whc-act")) return;
+          var th = head.cells[i], lbl = document.createElement("span");
+          lbl.className = "whc-lbl-gen";
+          if (th.hasAttribute("data-i18n")) lbl.setAttribute("data-i18n", th.getAttribute("data-i18n"));
+          lbl.textContent = th.textContent.trim();
+          td.insertBefore(lbl, td.firstChild);
+        });
+        if (tbl.classList.contains("whc-fold") && tr.querySelector("td.whc-act")) {
+          var cell = tr.insertCell(-1), btn = document.createElement("button");
+          cell.className = "whc-more";
+          btn.type = "button"; btn.className = "btn btn-ghost btn-sm";
+          btn.setAttribute("aria-expanded", "false");
+          btn.innerHTML = '<span data-i18n="wh.action.actions">Actions</span>';
+          btn.addEventListener("click", function () {
+            btn.setAttribute("aria-expanded", String(tr.classList.toggle("is-open")));
+          });
+          tr.classList.add("has-fold");
+          cell.appendChild(btn);
+        }
+      });
+    });
+  });
+})();
+</script>
+{% endblock %}

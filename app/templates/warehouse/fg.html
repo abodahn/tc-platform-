@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "warehouse/_layout.html" %}
 {% block title %}Finished goods{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -13,7 +13,7 @@
   </div>
 </div>
 
-<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap whc-filters">
   <select name="order_id" onchange="this.form.submit()">
     <option value="" data-i18n="wh.filter.all_orders">All orders</option>
     {% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if f_order==o.id }}>{{ o.order_no }} — {{ o.buyer }}</option>{% endfor %}

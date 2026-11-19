@@ -28,7 +28,7 @@
       <div class="ai-glass"><div class="k-val warn">{{ sev.warning }}</div><div class="k-lbl" data-i18n="ai.k_warnings">Warnings</div></div>
       <div class="ai-glass"><div class="k-val">{{ open_count }}</div><div class="k-lbl" data-i18n="ai.k_total">Total open</div></div>
       {% set topd = scores[0] if scores else None %}
-      <div class="ai-glass"><div class="k-val" {% if topd %}data-i18n="ai.dom.{{ topd.domain }}"{% endif %}>{{ topd.label if topd else '–' }}</div><div class="k-lbl" data-i18n="ai.k_toparea">Top risk area</div></div>
+      <div class="ai-glass"><div class="k-val k-text" {% if topd %}data-i18n="ai.dom.{{ topd.domain }}"{% endif %}>{{ topd.label if topd else '–' }}</div><div class="k-lbl" data-i18n="ai.k_toparea">Top risk area</div></div>
     </div>
   </div>
 </div>

@@ -58,7 +58,7 @@
     {% endfor %}
     {% if a.link %}<a class="btn btn-ghost btn-sm" href="{{ a.link }}" data-i18n="ai.view_record">View record</a>{% endif %}
   </div>
-  <form method="post" action="{{ url_for('intelligence.alert_feedback', alert_id=a.id) }}" class="flex gap center wrap" style="margin-top:10px">
+  <form method="post" action="{{ url_for('intelligence.alert_feedback', alert_id=a.id) }}" class="flex gap center wrap ai-fb" style="margin-top:10px">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <select name="verdict" style="max-width:180px">{% for v in verdicts %}<option value="{{ v }}">{{ v|replace('_',' ')|title }}</option>{% endfor %}</select>
     <input name="note" data-i18n-ph="ai.opt_note" placeholder="Optional note" style="max-width:280px">
