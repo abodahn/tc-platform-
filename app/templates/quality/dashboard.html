@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Quality{% endblock %}
 {% macro vb(v) %}{% set c={'pass':'#0f7a4d','fail':'#be123c','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v,'#6b7280') }}18;color:{{ c.get(v,'#6b7280') }}">{{ v }}</span>{% endmacro %}
 {% macro dhu(v) %}<span class="tag" style="background:{{ '#be123c' if v > limit else '#0f7a4d' }}18;color:{{ '#be123c' if v > limit else '#0f7a4d' }}">{{ '%.2f'|format(v) }}</span>{% endmacro %}

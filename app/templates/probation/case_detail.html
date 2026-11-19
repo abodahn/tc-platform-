@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "probation/_macros.html" import sbadge, obadge, daysleft %}
 {% block title %}{{ case.case_no }} · {{ case.employee.employee_name }}{% endblock %}
-{% block head %}{% include "_phone_dense.html" %}
+{% block head %}
 <style>
   /* free-standing inputs (criterion notes, comment, reason, dates) get the form-field look */
   .content .panel input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not(.field input) { height: 44px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); color: var(--ink); padding: 0 14px; font: inherit; font-size: 14px; }

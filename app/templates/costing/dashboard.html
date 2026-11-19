@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Order Costing{% endblock %}
 {% macro vtag(v) %}{% set c={'unfavourable':'#be123c','favourable':'#0f7a4d','on_plan':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v.flag,'#6b7280') }}18;color:{{ c.get(v.flag,'#6b7280') }}">{% if v.pct is not none %}{{ '{:+.1f}'.format(v.pct) }}%{% else %}—{% endif %}</span>{% endmacro %}
 {% macro mtag(p) %}{% if p is none %}<span class="muted">—</span>{% else %}<span class="tag" style="background:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}18;color:{{ '#be123c' if p < 0 else ('#b45309' if p < 8 else '#0f7a4d') }}">{{ '{:.1f}'.format(p) }}%</span>{% endif %}{% endmacro %}

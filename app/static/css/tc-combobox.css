@@ -83,6 +83,8 @@
 }
 .tc-cb-clear:hover { background: var(--panel-2); color: var(--ink); }
 .tc-cb-clear[hidden] { display: none; }
+/* `.field input` padding is more specific than .tc-cb-input's: keep room for the clear button */
+.field .tc-cb-input { padding-inline-end: 56px; }
 
 /* ---------- the popup ---------- */
 /* position:fixed, placed by JS from getBoundingClientRect, so no ancestor with
@@ -166,6 +168,11 @@
   .tc-cb-input { min-height: 46px; }
   .tc-cb-opt { padding-block: 13px; }
   .tc-cb-clear { width: 28px; height: 28px; font-size: 19px; }
+}
+/* Phones: a 40px hit area for the clear button (the glyph stays small). */
+@media (max-width: 767.98px) {
+  .tc-cb-input, .field .tc-cb-input { padding-inline-end: 64px; }
+  .tc-cb-clear { width: 40px; height: 40px; inset-inline-end: 24px; font-size: 19px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

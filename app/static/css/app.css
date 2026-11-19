@@ -489,9 +489,9 @@ a.kpi-link.is-on { border-color: var(--tc-red); box-shadow: inset 0 0 0 1px var(
   background: var(--tc-red); border-radius: 50%; border: 2px solid var(--panel);
 }
 .badge-count {
-  position: absolute; top: -4px; inset-inline-end: -4px; min-width: 18px; height: 18px;
+  position: absolute; top: -5px; inset-inline-end: -5px; min-width: 20px; height: 20px;
   padding: 0 5px; background: var(--tc-red); color: #fff; border-radius: 999px;
-  font-size: 10.5px; font-weight: 800; line-height: 18px; text-align: center;
+  font-size: 12px; font-weight: 800; line-height: 16px; text-align: center;
   border: 2px solid var(--panel); box-shadow: 0 2px 6px rgba(237,28,36,.4);
 }
 
@@ -775,7 +775,7 @@ a.kpi-link:hover .kpi-go, a.kpi-link:focus-visible .kpi-go { opacity: 1; }
 /* ---------- Tables ---------- */
 .tbl-wrap { overflow-x: auto; }
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.tbl th { text-align: start; color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; padding: 12px 16px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.tbl th { text-align: start; color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; padding: 12px 16px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 table.tbl td { padding: 13px 16px; border-bottom: 1px solid var(--line-2); }
 table.tbl tr:hover td { background: var(--panel-2); }
 table.tbl tr:last-child td { border-bottom: 0; }
@@ -914,7 +914,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .mt-0{margin-top:0}.mt-2{margin-top:8px}.mt-3{margin-top:12px}.mt-4{margin-top:16px}.mt-6{margin-top:24px}
 .flex { display: flex; } .between { justify-content: space-between; } .center { align-items: center; } .gap { gap: 12px; } .wrap { flex-wrap: wrap; }
 .divider { height: 1px; background: var(--line-2); margin: 18px 0; }
-.tag { font-size: 11px; padding: 3px 9px; border-radius: var(--r-pill); background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+.tag { font-size: 12px; padding: 3px 9px; border-radius: var(--r-pill); background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
 
 /* ---------- Maintenance module ---------- */
 .mtimeline { position: relative; padding-inline-start: 22px; }
@@ -1166,7 +1166,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   .notif-actions .tag { display: inline-flex; align-items: center; min-height: 40px; padding: 6px 12px; font-size: 13px; }
   .notif { padding: 14px 16px; }
   .notif .ntitle { font-size: 14px; }
-  .notif .nmsg { font-size: 13px; }
+  .notif .nmsg { font-size: 14px; }
+  .notif .ntime { font-size: 12px; }
+  /* drawer: section labels, counts and the brand/user sub-lines at 12px+ */
+  .brand-text span, .sf-meta span, .nav-label .nl-text, .nav-count { font-size: 12px; }
   .menu a { min-height: 44px; font-size: 14px; }
 
   /* Page frame */
@@ -1552,3 +1555,48 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
      first to itself, because it is the one that needs the width. */
   .li-head.request-line, .li-row.request-line { grid-template-columns: 1fr 1fr; }
 }
+
+/* ============================================================
+   Phone density pass (shared by every module): chips, sub-lines and row links
+   readable and tappable; loose filters get the field look on phones/tablets.
+   ============================================================ */
+@media (max-width: 767.98px) {
+  /* chips, badges and KPI captions at 12px; secondary lines inside tables at 13px
+     (beats the many inline font-size:11px sub-lines) */
+  .content .tag, .content .pb-badge, .content .sf-kpi .l { font-size: 12px; }
+  .content td .muted, .content td .tag { font-size: 13px !important; }
+  .content .panel-head .muted { font-size: 14px !important; }
+  .content .kpi .klabel { font-size: 14px; line-height: 1.35; }
+  .content .kpi .ktrend, .content .sf-row .muted { font-size: 12.5px !important; }
+  /* Arabic has no capitals to carry a 12px label: page eyebrows and KPI captions step up */
+  [dir="rtl"] .content .eyebrow, [dir="rtl"] .content .sf-kpi .l { font-size: 14px; letter-spacing: 0; }
+  /* KPI tile header: icon and state chip stay on one line; the hover-only arrow means nothing on touch */
+  .content .kpi .ktop .flex { flex-wrap: nowrap; }
+  .content .kpi .kpi-go { display: none; }
+  /* a row's title link (order no., code, name) above its sub-line: 40px+ tap height,
+     pulled back so the row barely grows */
+  .content td > a:first-child:not(:only-child):not(.btn):not(.tag) { display: inline-block; min-width: 40px; padding-block: 11px; margin-block: -6px; }
+  .content a.tag { min-width: 40px; justify-content: center; }
+  /* helper / explanation lines (many carry inline 12-13px sizes) and page-head buttons read at body size */
+  .content .panel-pad > p.muted, .content .panel-pad > div.muted, .content .panel-pad.muted,
+  .content > div.muted, .content > p.muted, .content form > div.muted, .content form > p.muted { font-size: 14px !important; }
+  .content .page-head .btn { font-size: 14px; }
+  .content .panel-pad > p:only-child { margin: 0; }
+  .content .sf-src a { display: inline-block; padding-block: 11px; margin-block: -9px; }
+  .content input[type=file] { font-size: 14px; }
+  .content input[type=file]::file-selector-button { min-height: 40px; padding: 0 14px; margin-inline-end: 10px;
+    border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel-2); color: var(--ink); font: inherit; }
+}
+/* Phones + tablets: free-standing filters and inputs (outside .field) get the field look instead of
+   the browser default. :where() keeps this at zero specificity, so any component's own rule wins. */
+@media (max-width: 1023.98px) {
+  :where(.content) :where(select:not([multiple]), input:not([type]), input[type=text], input[type=search],
+    input[type=number], input[type=date], input[type=email], input[type=tel], input[type=password], input[type=time], input[type=month]) {
+    min-height: 40px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel);
+    color: var(--ink); padding: 0 12px; font: inherit; }
+}
+/* `.table` (planning, costing, maintenance justifications) had no base style: browser-default
+   1px cells. Zero specificity so each page's own table rules still win. */
+:where(table.table) { width: 100%; border-collapse: collapse; }
+:where(table.table) :where(th, td) { padding: 8px 10px; text-align: start; vertical-align: middle; }
+:where(table.table) :where(th) { border-bottom: 1px solid var(--line); }

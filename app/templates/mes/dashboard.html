@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}MES{% endblock %}
 {% macro ragtag(r, txt) %}{% set c={'green':'#15803d','amber':'#b45309','red':'#be123c'} %}<span class="tag" style="background:{{ c.get(r,'#6b7280') }}18;color:{{ c.get(r,'#6b7280') }}">{{ txt }}</span>{% endmacro %}
 {% block content %}

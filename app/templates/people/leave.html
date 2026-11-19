@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Leave{% endblock %}
 {% macro st(s) %}{% set c={'pending':'#b45309','approved':'#0f7a4d','rejected':'#be123c','cancelled':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
 {% block content %}

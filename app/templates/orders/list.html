@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Orders{% endblock %}
 {% macro health(h) %}{% set c={'late':'#be123c','at_risk':'#b45309','on_track':'#0f7a4d'} %}<span class="tag" style="background:{{ c.get(h,'#6b7280') }}18;color:{{ c.get(h,'#6b7280') }}">{{ h|replace('_',' ') }}</span>{% endmacro %}
 {% block content %}

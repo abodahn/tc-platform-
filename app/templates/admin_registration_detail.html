@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}{{ acc.full_name or acc.username }}{% endblock %}
 {% block content %}
 {% set pending = acc.account_status in ('pending_verification','email_verified','pending_approval') %}

@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Skill matrix{% endblock %}
 {% macro lvl(n) %}{% set c={1:'#6b7280',2:'#1d4ed8',3:'#0369a1',4:'#0f7a4d',5:'#166534'} %}<span class="tag" style="background:{{ c.get(n,'#6b7280') }}18;color:{{ c.get(n,'#6b7280') }}">L{{ n }}</span>{% endmacro %}
 {% block content %}

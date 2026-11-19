@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Shipments{% endblock %}
 {% macro st(s) %}{% set c={'planned':'#6b7280','packed':'#1d4ed8','dispatched':'#b45309','delivered':'#0f7a4d','cancelled':'#be123c'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s|replace('_',' ') }}</span>{% endmacro %}
 {% block content %}

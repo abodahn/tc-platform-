@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Line capacity{% endblock %}
 {# Measured from the MES hourly record. "no actuals" is NOT 0% — a line the floor
    has never booked against has nothing to measure, and 0% would read as a dead line. #}
