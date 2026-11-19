@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% block content_class %}proc{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
 {% block title %}New Request{% endblock %}
 {% block content %}
 
@@ -258,7 +260,7 @@
     </div>
   </div>
 
-  <div class="flex gap wrap mt-4">
+  <div class="flex gap wrap mt-4 sticky-actions">
     <button class="btn btn-primary" type="submit" data-advance name="action" value="submit" data-i18n="proc.submit">Submit for approval</button>
     <button class="btn btn-ghost" type="submit" name="action" value="draft" data-i18n="proc.save_draft">Save as draft</button>
   </div>

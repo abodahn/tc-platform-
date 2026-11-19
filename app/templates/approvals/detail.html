@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% block content_class %}proc{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
 {% block title %}{{ pr.pr_no }}{% endblock %}
 {% block content %}
 
@@ -241,7 +243,7 @@
 
 <!-- Action box (only when the current user can act on the active step) -->
 {% if actionable and not pr.hold_reason %}
-<div class="panel accent mt-4">
+<div class="panel accent mt-4" id="prDecision">
   <div class="panel-head"><h3><span data-i18n="proc.your_action">Your decision</span> — {{ stage_label(actionable.stage) }}
     <span class="tag" data-i18n="proc.act.{{ actionable.action }}">{{ actionable.action_label }}</span></h3></div>
   <div class="panel-pad">
@@ -254,7 +256,7 @@
       <a class="btn btn-sm btn-ghost" href="{{ url_for('main.profile') }}#signature" data-i18n="proc.set_sig">Set signature</a>
     </div>
     {% endif %}
-    <form method="post" action="{{ url_for('approvals.approve', pr_id=pr.id) }}">
+    <form method="post" action="{{ url_for('approvals.approve', pr_id=pr.id) }}" id="prApprove">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <div class="field"><label data-i18n="proc.comment">Comment (optional)</label>
         <input name="comment" autocomplete="off" placeholder="Add a note to your approval…"></div>
@@ -1430,7 +1432,7 @@
     <div class="panel-head"><h3 data-i18n="proc.items">Line items</h3>
       <span class="muted">{{ pr.vendor or '' }}</span></div>
     <div class="panel-pad" style="overflow-x:auto">
-      <table class="tbl">
+      <table class="tbl pr-items">
         <thead><tr>
           <th>#</th><th data-i18n="proc.item">Item</th>
           <th data-i18n="proc.qty">Qty</th>
@@ -2041,5 +2043,27 @@
     </div>
   </details>
 </div>
+{#- Phone sign dock: the approver reads the line items and quotations below the
+    decision box, so the sign button follows them down the page. It submits the
+    SAME approve form (form="prApprove", same data-advance confirm); the full
+    decision box (comment, send back, hold, reject) is one tap away. Hidden while
+    that box is on screen, and on wider screens by procurement.css. -#}
+{% if actionable and not pr.hold_reason %}
+<div class="sticky-actions pr-dock" id="prDock">
+  <a class="btn btn-ghost" href="#prDecision"><span data-i18n="proc.your_action">Your decision</span></a>
+  <button class="btn btn-primary" type="submit" form="prApprove" data-advance>
+    <svg class="ico"><use href="#i-check"></use></svg>
+    <span data-i18n="proc.act.{{ actionable.action }}_sign">{{ act_sign }}</span></button>
+</div>
+<script>
+(function () {
+  var dock = document.getElementById('prDock'), box = document.getElementById('prDecision');
+  if (!dock || !box || !('IntersectionObserver' in window)) return;
+  new IntersectionObserver(function (es) {
+    dock.classList.toggle('is-off', es[0].isIntersecting);
+  }).observe(box);
+})();
+</script>
+{% endif %}
 
 {% endblock %}

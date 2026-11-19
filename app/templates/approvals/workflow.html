@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% block content_class %}proc{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
 {% block title %}Procurement workflow &amp; governance{% endblock %}
 {% block content %}
 
