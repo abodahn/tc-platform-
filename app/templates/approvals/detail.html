@@ -2057,11 +2057,13 @@
 </div>
 <script>
 (function () {
-  var dock = document.getElementById('prDock'), box = document.getElementById('prDecision');
-  if (!dock || !box || !('IntersectionObserver' in window)) return;
+  // Watch the real sign button, not the whole box: the dock steps aside only
+  // when the button it duplicates is actually on screen.
+  var dock = document.getElementById('prDock'), btn = document.querySelector('#prApprove [data-advance]');
+  if (!dock || !btn || !('IntersectionObserver' in window)) return;
   new IntersectionObserver(function (es) {
     dock.classList.toggle('is-off', es[0].isIntersecting);
-  }).observe(box);
+  }).observe(btn);
 })();
 </script>
 {% endif %}

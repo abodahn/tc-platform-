@@ -1,0 +1,149 @@
+/* Procurement module (app/templates/approvals/*): presentation only.
+   Every rule is scoped to main.content.proc (set by each page's content_class
+   block), so nothing here leaks into other modules. Loaded after app.css. */
+
+/* ---- All widths ------------------------------------------------------------ */
+
+/* Nothing in the module under 12px: ladder names, signature meta and RACI tags
+   were 10.5-11.5px, too small to read even at a desk. */
+.content.proc .tag,
+.content.proc .ladder-chips .lc,
+.content.proc .step .slabel,
+.content.proc .step .sname,
+.content.proc .sig-card .smeta,
+.content.proc .sig-card .sbox .waiting,
+.content.proc .ktrend,
+.content.proc .sf-kpi .l,
+.content.proc .mtile .mlabel,
+.content.proc .li-head { font-size: 12px; }
+.content.proc table.tbl tbody th { font-size: 12.5px; }
+.content.proc .step .slabel { font-size: 12.5px; }
+.content.proc :is([style*="font-size:9"], [style*="font-size: 9"],
+                  [style*="font-size:10"], [style*="font-size: 10"],
+                  [style*="font-size:11"], [style*="font-size: 11"]) { font-size: 12px !important; }
+
+/* "Draft from a description" box on the new-request form: it sits outside a
+   .field, so it got the browser's bare monospace textarea. */
+.content.proc #aiDraftText {
+  display: block; width: 100%; min-height: 64px; resize: vertical;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--panel); color: var(--ink); font-family: inherit; font-size: 14px; line-height: 1.5;
+}
+.content.proc #aiDraftText:focus { outline: none; border-color: var(--tc-red); box-shadow: 0 0 0 4px rgba(237,28,36,.1); }
+
+/* Request-line delete button: the base 34px height came after the shell's
+   phone rule and won; make it a square target on every width. */
+.content.proc .li-row .li-del { height: 40px; min-width: 40px; }
+
+/* The phone sign dock (detail page) is a phone-only control. */
+.content.proc .pr-dock { display: none; }
+.content.proc #prDecision { scroll-margin-top: calc(var(--topbar-h) + 12px); }
+
+/* ---- Tablets and phones ---------------------------------------------------- */
+@media (max-width: 767.98px) {
+  /* Helper copy is set inline at 11-13.5px across the module; on a phone that
+     is below reading size. 14px is the body size. Tags and badges keep theirs. */
+  .content.proc :is([style*="font-size:9"], [style*="font-size: 9"],
+                    [style*="font-size:10"], [style*="font-size: 10"],
+                    [style*="font-size:11"], [style*="font-size: 11"],
+                    [style*="font-size:12"], [style*="font-size: 12"],
+                    [style*="font-size:13"], [style*="font-size: 13"]):not(.tag):not(.badge) { font-size: 14px !important; }
+  .content.proc .tag { font-size: 12.5px; }
+  .content.proc table.tbl tbody th { font-size: 14px; }
+  .content.proc .panel-head .muted { font-size: 14px; }
+  .content.proc .ladder-chips .lc { font-size: 14px; padding: 6px 12px; }
+  .content.proc .kpi .klabel { font-size: 14px; }
+  /* Label/value tables (no header row, e.g. the workflow rungs) are two short
+     columns: let them wrap to the screen instead of the shell's one-line scroll,
+     so a list of signer tags is never cut at the edge. */
+  .content.proc table.tbl:not(:has(thead)) { white-space: normal; }
+  .content.proc table.tbl:not(:has(thead)) .tag { display: inline-block; max-width: 100%; margin-block: 2px; }
+  .content.proc .btn { font-size: 14px; }
+  .content.proc .sig-card .smeta { font-size: 14px; }
+  .content.proc .sig-card .sbox .waiting { font-size: 13px; }
+  .content.proc .total-bar { padding: 12px 14px; }
+
+  /* Docked action rows (sign dock, new-request submit row): the page frame is
+     12px on phones, and the assistant button lifts above the row instead of
+     covering its end. */
+  .content.proc .sticky-actions { margin-inline: -12px; padding-inline: 12px; }
+  body:has(.content.proc .sticky-actions:not(.is-off)) .gm-launch { inset-block-end: calc(80px + env(safe-area-inset-bottom)); }
+
+  /* Sign dock: the approver's main action stays under the thumb while they
+     read the line items and the quotations further down. It submits the same
+     approve form (form= attribute), through the same confirm dialog. */
+  .content.proc .pr-dock {
+    display: flex; flex-wrap: nowrap; position: fixed; inset-inline: 0; bottom: 0; margin: 0;
+    align-items: center; gap: 8px; padding-inline: 16px;
+    transition: transform .22s cubic-bezier(.22, 1, .36, 1), visibility 0s;
+  }
+  .content.proc .pr-dock > .btn { min-width: 0; min-height: 46px; }
+  .content.proc .pr-dock > .btn-ghost { flex: 0 0 auto; }
+  .content.proc .pr-dock > .btn-primary { flex: 1 1 auto; }
+  .content.proc .pr-dock > .btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* off: slid away and out of the tab order once the slide has finished */
+  .content.proc .pr-dock.is-off { transform: translateY(110%); pointer-events: none; visibility: hidden;
+    transition: transform .22s cubic-bezier(.22, 1, .36, 1), visibility 0s .22s; }
+}
+@supports not selector(:has(*)) {
+  @media (max-width: 767.98px) { .content.proc .sticky-actions, .content.proc .pr-dock { padding-inline-end: 84px; } }
+}
+@media (max-width: 767.98px) and (prefers-reduced-motion: reduce) {
+  .content.proc .pr-dock { transition: none; }
+}
+
+/* ---- Phones ---------------------------------------------------------------- */
+@media (max-width: 640px) {
+  /* Approval ladder: label and RACI tag share the first line, the signer's
+     full name wraps underneath instead of being cut to "Mahmoud Hass...". */
+  .content.proc .step {
+    display: grid; grid-template-columns: 36px minmax(0, 1fr) auto;
+    column-gap: 12px; row-gap: 2px; align-items: center; padding: 8px 0;
+  }
+  .content.proc .step .dot { grid-row: span 2; align-self: start; }
+  .content.proc .step .slabel { grid-column: 2; font-size: 14px; }
+  .content.proc .step > .tag { grid-column: 3; justify-self: end; white-space: nowrap; }
+  .content.proc .step .sname {
+    grid-column: 2 / -1; font-size: 13px; white-space: normal; overflow: visible; margin: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  /* New-request line: the description gets the full width, unit + qty + delete
+     share the second row. */
+  .content.proc .li-row.request-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
+  .content.proc .li-row.request-line > input[name="description[]"] { grid-column: 1 / -1; }
+  .content.proc .li-row.request-line .li-del { grid-column: 3; justify-self: stretch; height: 44px; min-width: 44px; }
+  .content.proc .cat-filter { flex: 1 1 100%; min-width: 0 !important; }
+  /* Phones: the legend names only the cards' second row (unit, qty). */
+  .content.proc .li-head.request-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
+  .content.proc .li-head.request-line > span:first-child { display: none; }
+}
+@media (max-width: 820px) {
+  /* app.css hides the line-item header under 820px, which left the quantity box
+     unnamed. A request line has only three fields, so keep the header as a
+     legend aligned to the cards' inner edge (12px padding + 1px border). */
+  .content.proc .li-head.request-line { display: grid; padding: 0 13px 6px; font-size: 13px; letter-spacing: .3px; }
+  /* app.css pins .li-del to column 2 for the 2-column catalogue row; a request
+     row keeps its own columns, so let the delete button take the next cell. */
+  .content.proc .li-row.request-line .li-del { grid-column: auto; }
+}
+
+@media (max-width: 720px) {
+  /* Detail page line items: each line becomes a two-row block that fits the
+     screen; the header becomes a matching two-row legend, so every number keeps
+     its translated column name. */
+  .content.proc table.pr-items, .content.proc table.pr-items > thead,
+  .content.proc table.pr-items > tbody { display: block; width: 100%; white-space: normal; }
+  .content.proc table.pr-items tr {
+    display: grid; grid-template-columns: 22px repeat(3, minmax(0, 1fr));
+    column-gap: 10px; row-gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line-2);
+  }
+  .content.proc table.pr-items thead tr { padding-top: 0; }
+  .content.proc table.pr-items :is(th, td) { display: block; padding: 0; border: 0; background: none; min-width: 0; }
+  .content.proc table.pr-items :is(th, td):nth-child(1) { grid-row: 1 / span 2; }
+  .content.proc table.pr-items :is(th, td):nth-child(2) { grid-column: 2 / -1; }
+  .content.proc table.pr-items :is(th, td):nth-child(n+3) { grid-row: 2; }
+  .content.proc table.pr-items :is(th, td):nth-child(n+4) { text-align: end; }
+  .content.proc table.pr-items tbody tr:last-child { border-bottom: 0; }
+}
