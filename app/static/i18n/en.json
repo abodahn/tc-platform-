@@ -3661,6 +3661,7 @@
   "user_exists": "That username already exists.",
   "user_invalid": "Please complete all required fields.",
   "user_saved": "User updated.",
+  "wh.action.actions": "Actions",
   "wh.action.add_material": "Add material",
   "wh.action.adjust": "Adjust",
   "wh.action.all_materials": "All materials",

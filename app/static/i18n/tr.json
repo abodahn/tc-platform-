@@ -3661,6 +3661,7 @@
   "user_exists": "Bu kullanıcı adı zaten var.",
   "user_invalid": "Lütfen tüm gerekli alanları doldurun.",
   "user_saved": "Kullanıcı güncellendi.",
+  "wh.action.actions": "İşlemler",
   "wh.action.add_material": "Malzeme ekle",
   "wh.action.adjust": "Düzelt",
   "wh.action.all_materials": "Tüm malzemeler",

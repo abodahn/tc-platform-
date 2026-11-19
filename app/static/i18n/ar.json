@@ -3661,6 +3661,7 @@
   "user_exists": "اسم المستخدم موجود بالفعل.",
   "user_invalid": "يرجى إكمال جميع الحقول المطلوبة.",
   "user_saved": "تم تحديث المستخدم.",
+  "wh.action.actions": "إجراءات",
   "wh.action.add_material": "إضافة خامة",
   "wh.action.adjust": "تسوية",
   "wh.action.all_materials": "كل الخامات",
