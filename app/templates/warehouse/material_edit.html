@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "warehouse/_layout.html" %}
 {% block title %}Edit material{% endblock %}
 {% block content %}
 <div class="page-head"><div><h1 data-i18n="wh.action.edit_material">Edit material</h1><div class="sub">{{ material.code }}</div></div>
@@ -23,7 +23,7 @@
     <div class="field"><label data-i18n="wh.field.width">Width (cm)</label><input type="number" min="0" step="any" name="width_cm" value="{{ material.width_cm or 0 }}"></div>
     <div class="field"><label data-i18n="wh.field.minlevel">Minimum level</label><input type="number" min="0" step="any" name="min_level" value="{{ material.min_level or 0 }}"></div>
     <div class="field"><label data-i18n="wh.field.reorder">Reorder level</label><input type="number" min="0" step="any" name="reorder_level" value="{{ material.reorder_level or 0 }}"></div>
-  </div><button class="btn btn-primary btn-sm mt-2" data-i18n="wh.action.save">Save</button></div>
+  </div><div class="sticky-actions mt-2"><button class="btn btn-primary btn-sm" data-i18n="wh.action.save">Save</button></div></div>
 </form>
 <form class="panel mt-4" method="post" action="{{ url_for('warehouse.material_active', mid=material.id) }}"><div class="panel-pad">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="active" value="{{ '0' if material.is_active else '1' }}">

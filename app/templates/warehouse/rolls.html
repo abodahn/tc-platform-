@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "warehouse/_layout.html" %}
 {% block title %}Fabric rolls{% endblock %}
 {% macro rst(s) %}{% set c={'available':'#0f7a4d','partial':'#b45309','consumed':'#6b7280','quarantine':'#be123c'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
 {% block content %}
@@ -16,7 +16,7 @@
   </div>
 </div>
 
-<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap whc-filters">
   <select name="material_id" onchange="this.form.submit()">
     <option value="" data-i18n="wh.filter.all_materials">All materials</option>
     {% for m in materials %}{% if m.roll_tracked %}<option value="{{ m.id }}" {{ 'selected' if f_material==m.id }}>{{ m.code }} — {{ m.name }}{% if m.color %} ({{ m.color }}){% endif %}</option>{% endif %}{% endfor %}
@@ -33,7 +33,7 @@
 </div></form>
 
 <div class="panel"><div class="panel-pad">
-  <table class="tbl">
+  <table class="tbl whc-stack whc-fold">
     <thead><tr>
       <th data-i18n="wh.field.rollno">Roll</th><th data-i18n="wh.field.material">Material</th>
       <th data-i18n="wh.field.shade">Shade lot</th><th data-i18n="wh.field.grade">Grade</th>
@@ -48,8 +48,8 @@
     <tbody>
     {% for r in rows %}
       <tr>
-        <td>{{ r.roll_no }}{% if can('wh_manage') %}<div><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.roll_edit', roll_id=r.id) }}" data-i18n="wh.action.edit_split">Edit / split</a></div>{% endif %}{% if r.grn_ref %}<div class="muted" style="font-size:11px">{{ r.grn_ref }}</div>{% endif %}</td>
-        <td>{{ r.mat_code }}<div class="muted" style="font-size:11px">{{ r.mat_name }}{% if r.mat_color %} · {{ r.mat_color }}{% endif %}</div></td>
+        <td class="whc-key">{{ r.roll_no }}{% if can('wh_manage') %}<div><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.roll_edit', roll_id=r.id) }}" data-i18n="wh.action.edit_split">Edit / split</a></div>{% endif %}{% if r.grn_ref %}<div class="muted" style="font-size:11px">{{ r.grn_ref }}</div>{% endif %}</td>
+        <td class="whc-key">{{ r.mat_code }}<div class="muted" style="font-size:11px">{{ r.mat_name }}{% if r.mat_color %} · {{ r.mat_color }}{% endif %}</div></td>
         <td>{{ r.shade_lot or '—' }}{% if r.supplier_lot %}<div class="muted" style="font-size:11px">{{ r.supplier_lot }}</div>{% endif %}</td>
         <td class="muted">{{ r.grade or '—' }}</td>
         <td style="text-align:right">{{ '{:,.0f}'.format(r.width_cm or 0) }}</td>
@@ -57,19 +57,19 @@
         <td style="text-align:right">{{ '{:,.1f}'.format(r.remaining_m or 0) }}</td>
         <td style="text-align:right">{% if (r.reserved_m or 0) > 0 %}<span class="tag" style="background:#b4530918;color:#b45309">{{ '{:,.1f}'.format(r.free_m) }}</span>{% else %}{{ '{:,.1f}'.format(r.free_m) }}{% endif %}</td>
         <td>{{ rst(r.status) }}</td>
-        <td class="muted">{% if can('wh_manage') %}<form method="post" action="{{ url_for('warehouse.bin_move') }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="roll_id" value="{{ r.id }}"><input name="new_bin" maxlength="40" required data-i18n-ph="wh.field.bin" placeholder="Bin"><button class="btn btn-ghost btn-sm" data-i18n="wh.bin.move">Move bin</button></form>{% endif %}{{ r.bin or '—' }}</td>
+        <td class="muted whc-wide">{% if can('wh_manage') %}<form method="post" action="{{ url_for('warehouse.bin_move') }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="roll_id" value="{{ r.id }}"><input name="new_bin" maxlength="40" required data-i18n-ph="wh.field.bin" placeholder="Bin"><button class="btn btn-ghost btn-sm" data-i18n="wh.bin.move">Move bin</button></form>{% endif %}{{ r.bin or '—' }}</td>
         <td class="muted">{{ (r.received_at or '')[:10] }}</td>
         {% if can('wh_manage') %}
-        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.issue', material_id=r.material_id, return_roll=r.id) }}#return" data-i18n="wh.action.return">Return</a></td>
+        <td class="whc-act"><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.issue', material_id=r.material_id, return_roll=r.id) }}#return" data-i18n="wh.action.return">Return</a></td>
         {# a fabric stock take is corrected on the ROLL — the material header follows it #}
-        <td><form method="post" action="{{ url_for('warehouse.adjust') }}" style="display:flex;gap:4px">
+        <td class="whc-act whc-wide"><form method="post" action="{{ url_for('warehouse.adjust') }}" style="display:flex;gap:4px">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <input type="hidden" name="roll_id" value="{{ r.id }}">
           <input type="number" step="any" name="delta" style="width:70px" data-i18n-ph="wh.field.delta" placeholder="+/-">
           <select name="reason" required>{% for reason in reasons %}<option value="{{ reason }}" data-i18n="wh.reason.{{ reason }}">{{ reason|replace('_',' ')|title }}</option>{% endfor %}</select>
           <input name="note" maxlength="200" data-i18n-ph="wh.field.notes" placeholder="Notes">
           <button class="btn btn-ghost btn-sm" data-i18n="wh.action.adjust">Adjust</button></form></td>
-        <td><form method="post" action="{{ url_for('warehouse.roll_hold', roll_id=r.id) }}">
+        <td class="whc-act"><form method="post" action="{{ url_for('warehouse.roll_hold', roll_id=r.id) }}">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <input type="hidden" name="hold" value="{{ '0' if r.status=='quarantine' else '1' }}">
           <button class="btn btn-ghost btn-sm" data-i18n="{{ 'wh.action.release_hold' if r.status=='quarantine' else 'wh.action.hold' }}">{{ 'Release' if r.status=='quarantine' else 'Quarantine' }}</button>

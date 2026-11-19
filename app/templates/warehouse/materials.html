@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "warehouse/_layout.html" %}
 {% block title %}Materials{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -17,7 +17,7 @@
   </div>
 </div>
 
-<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap">
+<form class="panel" method="get" style="margin-bottom:14px"><div class="panel-pad flex gap center wrap whc-filters">
   <select name="kind" onchange="this.form.submit()">
     <option value="" data-i18n="wh.filter.all_kinds">All kinds</option>
     {% for k in kinds %}<option value="{{ k }}" {{ 'selected' if f_kind==k }}>{{ k }}</option>{% endfor %}
@@ -30,7 +30,7 @@
 </div></form>
 
 <div class="panel"><div class="panel-pad">
-  <table class="tbl">
+  <table class="tbl whc-stack whc-fold">
     <thead><tr>
       <th data-i18n="wh.field.code">Code</th><th data-i18n="wh.field.name">Name</th>
       <th data-i18n="wh.field.kind">Kind</th><th data-i18n="wh.field.color">Colour</th>
@@ -44,9 +44,9 @@
     <tbody>
     {% for r in rows %}
       <tr>
-        <td>{% if r.roll_tracked %}<a href="{{ url_for('warehouse.rolls', material_id=r.id) }}">{{ r.code }}</a>{% else %}{{ r.code }}{% endif %}</td>
-        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.material_card', mid=r.id) }}" data-i18n="wh.card.link">Card</a> {{ r.name }}<div class="muted" style="font-size:11px">{{ r.composition or '' }}{% if r.supplier %} · {{ r.supplier }}{% endif %}</div></td>
-        <td class="muted">{{ r.kind }}</td><td class="muted">{{ r.color or '—' }}</td>
+        <td class="whc-key">{% if r.roll_tracked %}<a href="{{ url_for('warehouse.rolls', material_id=r.id) }}">{{ r.code }}</a>{% else %}{{ r.code }}{% endif %}</td>
+        <td class="whc-key"><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.material_card', mid=r.id) }}" data-i18n="wh.card.link">Card</a> {{ r.name }}<div class="muted" style="font-size:11px">{{ r.composition or '' }}{% if r.supplier %} · {{ r.supplier }}{% endif %}</div></td>
+        <td class="muted whc-low">{{ r.kind }}</td><td class="muted whc-low">{{ r.color or '—' }}</td>
         <td style="text-align:right">{{ '{:,.1f}'.format(r.stock_qty or 0) }} {{ r.uom }}</td>
         <td style="text-align:right">{{ '{:,.1f}'.format(r.reserved_qty or 0) }}</td>
         <td style="text-align:right">
@@ -57,7 +57,7 @@
         <td style="text-align:right">{{ '{:,.3f}'.format(r.avg_cost or 0) }}</td>
         {% if can('wh_manage') %}
         {# a roll-tracked header is DERIVED from its rolls: correct it on the roll #}
-        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.material_edit', mid=r.id) }}" data-i18n="wh.action.edit">Edit</a>
+        <td class="whc-act whc-wide"><a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.material_edit', mid=r.id) }}" data-i18n="wh.action.edit">Edit</a>
         {% if not r.is_active %}<form method="post" action="{{ url_for('warehouse.material_active', mid=r.id) }}">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="active" value="1">
           <button class="btn btn-ghost btn-sm" data-i18n="wh.action.reactivate">Reactivate</button></form>{% endif %}

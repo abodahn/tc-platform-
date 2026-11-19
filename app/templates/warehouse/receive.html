@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "warehouse/_layout.html" %}
 {% block title %}Receive material{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -25,14 +25,20 @@
 
     <div class="panel mt-4"><div class="panel-head"><h3 data-i18n="wh.recv.roll_hint">Roll-tracked materials (fabric, tape)</h3></div>
       <div class="panel-pad">
-        <table class="tbl"><thead><tr>
+        <table class="tbl whc-roll"><thead><tr>
           <th data-i18n="wh.field.rollno_in">Roll number (blank = auto)</th><th data-i18n="wh.field.length">Length (m)</th>
           <th data-i18n="wh.field.shade">Shade lot</th><th data-i18n="wh.field.suplot">Supplier lot</th>
           <th data-i18n="wh.field.width">Width (cm)</th><th data-i18n="wh.field.bin">Bin</th>
         </tr></thead><tbody id="packing-rows">
-          {% for i in range(5) %}<tr><td><input name="roll_no"></td><td><input type="number" step="any" name="length_m"></td>
-            <td><input name="shade_lot"></td><td><input name="supplier_lot"></td>
-            <td><input type="number" step="any" name="width_cm"></td><td><input name="bin"></td></tr>{% endfor %}
+          {# each input is wrapped in its label: read by screen readers, shown as the
+             card's field label on phones where the header row is hidden #}
+          {% for i in range(5) %}<tr>
+            <td><label><span class="whc-lbl sr-only" data-i18n="wh.field.rollno_in">Roll number (blank = auto)</span><input name="roll_no"></label></td>
+            <td><label><span class="whc-lbl sr-only" data-i18n="wh.field.length">Length (m)</span><input type="number" step="any" name="length_m"></label></td>
+            <td><label><span class="whc-lbl sr-only" data-i18n="wh.field.shade">Shade lot</span><input name="shade_lot"></label></td>
+            <td><label><span class="whc-lbl sr-only" data-i18n="wh.field.suplot">Supplier lot</span><input name="supplier_lot"></label></td>
+            <td><label><span class="whc-lbl sr-only" data-i18n="wh.field.width">Width (cm)</span><input type="number" step="any" name="width_cm"></label></td>
+            <td><label><span class="whc-lbl sr-only" data-i18n="wh.field.bin">Bin</span><input name="bin"></label></td></tr>{% endfor %}
         </tbody></table>
         <button type="button" class="btn btn-ghost btn-sm" id="add-roll" data-i18n="wh.action.add_roll">Add roll</button>
         <div class="grid cols-2">
@@ -49,7 +55,7 @@
       </div></div>
     </div>
 
-    <button class="btn btn-primary btn-sm mt-4" data-i18n="wh.action.receive">Receive material</button>
+    <div class="sticky-actions mt-4"><button class="btn btn-primary btn-sm" data-i18n="wh.action.receive">Receive material</button></div>
   </div>
 </form>
 <script>

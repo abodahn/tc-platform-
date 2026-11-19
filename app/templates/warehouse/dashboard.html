@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "warehouse/_layout.html" %}
 {% block title %}Warehouse{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -61,7 +61,7 @@
     <div class="panel-head"><h3 data-i18n="wh.dash.recent">Recent movements</h3>
       <a class="tag" href="{{ url_for('warehouse.export_csv', key='movements') }}" data-i18n="wh.action.export_ledger">Export ledger CSV</a></div>
     <div class="panel-pad">
-      <table class="tbl">
+      <table class="tbl whc-stack">
         <thead><tr><th data-i18n="wh.field.type">Type</th><th data-i18n="wh.field.material">Material</th>
           <th style="text-align:right" data-i18n="wh.field.qty">Quantity</th><th data-i18n="wh.field.date">When</th></tr></thead>
         <tbody>
@@ -69,7 +69,7 @@
           <tr><td>{{ v.type|replace('_',' ') }}{% if v.order_id %}<div class="muted" style="font-size:11px">order #{{ v.order_id }}</div>{% endif %}</td>
             <td>{{ v.mat_code or '—' }}{% if v.roll_no %}<div class="muted" style="font-size:11px">{{ v.roll_no }}</div>{% endif %}</td>
             <td style="text-align:right">{{ '{:,.1f}'.format(v.qty or 0) }} {{ v.uom or '' }}</td>
-            <td class="muted">{{ (v.created_at or '')[:16] }}</td></tr>
+            <td class="muted whc-w2">{{ (v.created_at or '')[:16] }}</td></tr>
         {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px" data-i18n="wh.empty.moves">No stock movements yet.</td></tr>{% endfor %}
         </tbody>
       </table>
