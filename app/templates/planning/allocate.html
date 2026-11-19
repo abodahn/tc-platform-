@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Load an order{% endblock %}
 {% macro feas(s, n) %}{% set c={'on_time':'#15803d','at_risk':'#b45309','late':'#be123c','unplanned':'#6b7280','no_capacity':'#7f1d1d','no_ship_date':'#6b7280'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}"><span data-i18n="pln.status.{{ s }}">{{ s|replace('_',' ') }}</span>{% if n %} {{ n }}d{% endif %}</span>{% endmacro %}
 {% block content %}

@@ -1,4 +1,19 @@
 {% extends "base.html" %}
+{% block head %}{% include "_phone_dense.html" %}
+<style>
+  /* .table has no rules in app.css, so these tables rendered with browser-default 1px cells */
+  .pln-board th, .pln-board td, .pln-orders th, .pln-orders td { padding: 10px 12px; border-bottom: 1px solid var(--line-2); }
+  .pln-board thead th, .pln-orders thead th { text-align: start; color: var(--muted); font-weight: 600; font-size: 12px; border-bottom-color: var(--line); }
+  /* Phones: band titles, legend and the weekday/date header of the load board at a readable size. */
+  @media (max-width: 767.98px) {
+    .pln-band { font-size: 12px; }
+    .pln-legend { font-size: 14px; }
+    .pln-day .pln-wd { font-size: 12px; }
+    .pln-day .pln-dd { font-size: 12.5px; }
+    .pln-st { font-size: 12px; }
+  }
+</style>
+{% endblock %}
 {% block title %}Production planning{% endblock %}
 
 {#  Nine equally-weighted KPI tiles in one row is a readout, not a dashboard: a

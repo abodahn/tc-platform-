@@ -1,0 +1,38 @@
+{# Phone fixes for shared components on the core / operations pages (not procurement,
+   warehouse or maintenance, which carry their own).
+   shortcut: these rules suit every module and belong in app.css's phone block; they live
+   here only while app.css is locked for the parallel mobile pass. Move them there and drop
+   this partial and its includes. #}
+<style>
+@media (max-width: 767.98px) {
+  /* chips, badges and KPI captions at 12px; secondary lines inside tables at 13px
+     (beats the many inline font-size:11px sub-lines) */
+  .content .tag, .content .pb-badge, .content .sf-kpi .l { font-size: 12px; }
+  .content td .muted, .content td .tag, .content .panel-head .muted { font-size: 13px !important; }
+  .content .kpi .klabel { font-size: 14px; line-height: 1.35; }
+  .content .kpi .ktrend, .content .sf-row .muted { font-size: 12.5px !important; }
+  /* Arabic has no capitals to carry a 12px label: page eyebrows and KPI captions step up */
+  [dir="rtl"] .content .eyebrow, [dir="rtl"] .content .sf-kpi .l { font-size: 14px; letter-spacing: 0; }
+  /* KPI tile header: icon and state chip stay on one line; the hover-only arrow means nothing on touch */
+  .content .kpi .ktop .flex { flex-wrap: nowrap; }
+  .content .kpi .kpi-go { display: none; }
+  /* a row's title link (order no., code, name) above its sub-line: 40px+ tap height,
+     pulled back so the row barely grows */
+  .content td > a:first-child:not(:only-child):not(.btn):not(.tag) { display: inline-block; min-width: 40px; padding-block: 11px; margin-block: -6px; }
+  .content a.tag { min-width: 40px; justify-content: center; }
+  /* helper / explanation lines (many carry inline 12-13px sizes) and page-head buttons read at body size */
+  .content .panel-pad > p.muted, .content .panel-pad > div.muted, .content .panel-pad.muted,
+  .content > div.muted, .content > p.muted, .content form > div.muted, .content form > p.muted { font-size: 14px !important; }
+  .content .page-head .btn { font-size: 14px; }
+  .content .panel-pad > p:only-child { margin: 0; }
+  .content .sf-src a { display: inline-block; padding-block: 11px; margin-block: -9px; }
+}
+/* Phones + tablets: free-standing filters and inputs (outside .field) get the field look instead of
+   the browser default. :where() keeps this at zero specificity, so any component's own rule wins. */
+@media (max-width: 1023.98px) {
+  :where(.content) :where(select:not([multiple]), input:not([type]), input[type=text], input[type=search],
+    input[type=number], input[type=date], input[type=email], input[type=tel], input[type=password], input[type=time], input[type=month]) {
+    min-height: 40px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel);
+    color: var(--ink); padding: 0 12px; font: inherit; }
+}
+</style>

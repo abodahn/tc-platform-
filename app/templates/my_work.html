@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}My Work{% endblock %}
-{% block head %}
+{% block head %}{% include "_phone_dense.html" %}
 <style>
   /* Phones: each queue row and its "View all" link is a full-size tap target;
      the status chip stays on one line and the title wraps beside it. */
@@ -10,6 +10,8 @@
     .content .row-line .tag { flex: none; white-space: nowrap; max-width: 46%; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
     .content .panel-pad > a:not(.row-line):last-child { display: flex; align-items: center; min-height: 44px; font-weight: 600; }
     .content .panel-pad > [class^="sev-"] .tag { font-size: 12px; }
+    /* the queue count sits beside its title instead of hanging off the card's corner */
+    .content .panel-head > .badge-count { position: static; font-size: 12px; min-width: 24px; height: 24px; line-height: 20px; box-shadow: none; }
   }
 </style>
 {% endblock %}

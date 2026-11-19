@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Initiate Evaluation{% endblock %}
-{% block head %}
+{% block head %}{% include "_phone_dense.html" %}
 <style>
   .pb-search { flex: 1 1 240px; height: 44px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); color: var(--ink); padding: 0 14px; font: inherit; font-size: 14px; }
   .pb-search:focus { outline: none; border-color: var(--tc-red); box-shadow: 0 0 0 4px rgba(237,28,36,.1); }

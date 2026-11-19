@@ -129,6 +129,9 @@
 .ai-alert .a-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); margin-top: 8px; }
 .ai-alert .a-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .ai-alert form { margin: 0; }
+/* Feedback row under an alert: the bare select + note box get the platform's field look */
+.ai-fb select, .ai-fb input[name=note] { height: 40px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); color: var(--ink); padding: 0 12px; font: inherit; font-size: 13px; }
+.ai-fb select:focus, .ai-fb input[name=note]:focus { outline: none; border-color: var(--tc-red); box-shadow: 0 0 0 4px rgba(237,28,36,.1); }
 .ai-tag { font-size: 11px; padding: 2px 8px; border-radius: var(--r-pill); background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
 
 /* assistant */
@@ -163,7 +166,12 @@
   .ai-tile .t-val { font-size: 26px; }
   .ai-chip { font-size: 12px; }
   .ai-row .r-title, .ai-rec .r-act { font-size: 14px; }
-  .ai-row .r-sub { font-size: 13px; }
+  .ai-row .r-sub { font-size: 14px; }
+  .ai-alert .a-why, .ai-alert .a-rec { font-size: 14px; }
+  .ai-alert .a-meta { font-size: 14px; gap: 6px 14px; }
+  .ai-tag { font-size: 12px; }
+  .ai-fb select, .ai-fb input[name=note] { height: 44px; flex: 1 1 140px; max-width: none !important; }
+  .ai-fb input[name=note] { flex-basis: 100%; }
   .ai-rec .r-ctx, .ai-impact .imp .l { font-size: 14px; }
   .ai-alert .a-actions .btn { min-width: 44px; justify-content: center; }
   .ai-card .hd { padding: 14px 16px; flex-wrap: wrap; gap: 8px; }

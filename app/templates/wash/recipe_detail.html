@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}{{ recipe.code }} · {{ recipe.name }}{% endblock %}
 {% macro st(s) %}{% set c={'approved':'#0f7a4d','retired':'#6b7280','draft':'#1d4ed8'} %}<span class="tag" style="background:{{ c.get(s,'#6b7280') }}18;color:{{ c.get(s,'#6b7280') }}">{{ s }}</span>{% endmacro %}
 {% macro vd(v) %}{% set c={'approved':'#0f7a4d','rejected':'#be123c','resubmit':'#b45309','pending':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v,'#6b7280') }}18;color:{{ c.get(v,'#6b7280') }}">{{ v }}</span>{% endmacro %}

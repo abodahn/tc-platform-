@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}Profile{% endblock %}
 {% block content %}
 
@@ -87,7 +88,7 @@
 
 <div class="panel mt-4" id="sigPanel">
   <div class="panel-head flex between center">
-    <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-edit"></use></svg>
+    <h3 class="flex gap center">{# no #i-edit symbol exists; the empty svg only left a gap #}
       <span data-i18n="sig.title">Digital signature</span></h3>
     <span class="badge b-live" id="sigBadge" style="{{ '' if cu.sig_png else 'display:none' }}">
       <span class="dot" style="background:var(--ok)"></span><span data-i18n="sig.saved">Saved</span></span>

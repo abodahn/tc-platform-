@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block head %}{% include "_phone_dense.html" %}{% endblock %}
 {% block title %}{{ order.order_no }} · Cost sheet{% endblock %}
 {% set catlabel = {'material':'Material','cm':'CM / labour','overhead':'Overhead','freight':'Freight & logistics','duty':'Duty','other':'Finance / other'} %}
 {% macro vtag(v) %}{% set c={'unfavourable':'#be123c','favourable':'#0f7a4d','on_plan':'#6b7280'} %}<span class="tag" style="background:{{ c.get(v.flag,'#6b7280') }}18;color:{{ c.get(v.flag,'#6b7280') }}">{{ '{:+,.2f}'.format(v.value) }}{% if v.pct is not none %} · {{ '{:+.1f}'.format(v.pct) }}%{% endif %}</span>{% endmacro %}

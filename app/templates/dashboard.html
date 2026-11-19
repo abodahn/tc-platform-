@@ -1,10 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Command Center{% endblock %}
-{% block head %}
+{% block head %}{% include "_phone_dense.html" %}
 <style>
-  /* Phones: the pulse tiles' labels and the one-line notes read at body size. */
+  /* Phones: the pulse tiles' sub-lines and the one-line notes read at a readable size (labels: _phone_dense). */
   @media (max-width: 767.98px) {
-    #factoryPulse .klabel { font-size: 14px; line-height: 1.35; }
     #factoryPulse .kpi .muted { font-size: 12.5px !important; }
     .dash-note { font-size: 14px !important; }
   }
