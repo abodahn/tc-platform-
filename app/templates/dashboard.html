@@ -52,7 +52,7 @@
     <div class="kval">{{ t.n }}{{ t.suffix }}</div>
     <div class="klabel" {{ loc(t.label) }}>{{ t.label.en }}</div>
     {% if t.total is not none and t.scope %}
-    <div class="muted" style="font-size:11.5px;margin-top:4px">{{ t.total }}
+    <div class="muted" style="font-size:12px;margin-top:4px">{{ t.total }}
       <span {{ loc(t.scope) }}>{{ t.scope.en }}</span></div>
     {% endif %}
   </a>

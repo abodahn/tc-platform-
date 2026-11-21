@@ -67,7 +67,7 @@
           <th data-i18n="ppl.field.status">Status</th></tr></thead>
         <tbody>
         {% for l in d.pending %}
-          <tr><td>{{ l.employee_name }}<div class="muted" style="font-size:11px">{{ l.employee_code }} · {{ l.department or '—' }}</div></td>
+          <tr><td>{{ l.employee_name }}<div class="muted" style="font-size:12px">{{ l.employee_code }} · {{ l.department or '—' }}</div></td>
             <td><span class="tag">{{ l.leave_type }}</span></td>
             <td style="font-variant-numeric:tabular-nums">{{ l.from_date }}</td>
             <td style="text-align:right">{{ '%g'|format(l.days or 0) }}</td>
@@ -91,7 +91,7 @@
         <th style="text-align:right" data-i18n="ppl.field.incentive">Incentive</th></tr></thead>
       <tbody>
       {% for o in d.top_operators %}
-        <tr><td>{{ o.employee_name }}<div class="muted" style="font-size:11px">{{ o.employee_code }}</div></td>
+        <tr><td>{{ o.employee_name }}<div class="muted" style="font-size:12px">{{ o.employee_code }}</div></td>
           <td class="muted">{{ o.department or '—' }}</td>
           <td style="text-align:right">{{ '{:,.0f}'.format(o.pieces or 0) }}</td>
           <td style="text-align:right">{{ '{:,.1f}'.format(o.earned_minutes or 0) }}</td>

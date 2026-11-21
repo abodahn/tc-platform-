@@ -80,7 +80,7 @@
       <tbody>
       {% for r in rows %}
         <tr><td style="font-variant-numeric:tabular-nums">{{ r.work_date }}</td>
-          <td>{{ r.employee_name }}<div class="muted" style="font-size:11px">{{ r.employee_code }}</div></td>
+          <td>{{ r.employee_name }}<div class="muted" style="font-size:12px">{{ r.employee_code }}</div></td>
           <td class="muted">{{ r.department or '—' }}</td><td>{{ att(r.status) }}</td>
           <td class="muted">{{ r.check_in or '—' }}</td><td class="muted">{{ r.check_out or '—' }}</td>
           <td style="text-align:right">{{ '{:,.2f}'.format(r.worked_hours or 0) }}</td>

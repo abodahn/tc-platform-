@@ -18,6 +18,8 @@ body {
 }
 [dir="rtl"] body { font-family: var(--font-rtl); }
 a { color: inherit; text-decoration: none; }
+/* form controls don't inherit the page font by default (Arial): Arabic button labels rendered small */
+button, input, select, textarea { font-family: inherit; }
 ::selection { background: rgba(237, 28, 36, .18); }
 
 /* ---------- App shell ---------- */
@@ -73,7 +75,7 @@ a { color: inherit; text-decoration: none; }
 }
 .brand-text { display: flex; flex-direction: column; gap: 1px; line-height: 1.14; min-width: 0; }
 .brand-text b { color: #fff; font-size: 15px; font-weight: 700; letter-spacing: .2px; }
-.brand-text span { color: var(--sidebar-ink-soft); font-size: 10px; font-weight: 600;
+.brand-text span { color: var(--sidebar-ink-soft); font-size: 12px; font-weight: 600;
   letter-spacing: .6px; text-transform: uppercase;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app.collapsed .brand { padding: 15px 0; justify-content: center; }
@@ -101,7 +103,7 @@ a { color: inherit; text-decoration: none; }
   width: 100%; display: flex; align-items: center; gap: 10px;
   background: transparent; border: 0; cursor: pointer; text-align: start;
   color: var(--sidebar-ink-soft); font-family: inherit;
-  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
   padding: 10px 10px 6px; border-radius: 9px; transition: color .15s;
 }
 .nav-label:hover { color: #eef1f6; }
@@ -109,12 +111,13 @@ a { color: inherit; text-decoration: none; }
 .nl-ico { flex: 0 0 auto; display: grid; place-items: center; color: var(--sidebar-ink-soft);
   opacity: .5; transition: color .15s, opacity .15s; }
 .nl-ico .ico { width: 15px; height: 15px; }
-.nl-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* long section names ("Maintenance & Spare Parts") wrap to a second line instead of an ellipsis */
+.nl-text { flex: 1 1 auto; min-width: 0; overflow: hidden; line-height: 1.3; }
 .nl-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; }
 /* Count: a quiet numeral, not a filled chip. Earns a faint tinted chip only when its
    section holds the current page — so the badge means "here", not just "how many". */
 .nav-count {
-  font: 700 10px/1 var(--font); letter-spacing: 0; font-variant-numeric: tabular-nums;
+  font: 700 12px/1 var(--font); letter-spacing: 0; font-variant-numeric: tabular-nums;
   min-width: 16px; padding: 2px 0; border-radius: 6px; text-align: center;
   color: var(--sidebar-ink-soft); opacity: .65;
   /* padding removed from the transition: nothing animates it, and a layout
@@ -189,7 +192,7 @@ a { color: inherit; text-decoration: none; }
 .nav-band {
   display: flex; align-items: center; gap: 8px;
   padding: 13px 11px 4px;
-  font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
   color: var(--sidebar-ink-soft); opacity: .66;
   user-select: none;
 }
@@ -353,7 +356,7 @@ a.kpi-link.is-on { border-color: var(--tc-red); box-shadow: inset 0 0 0 1px var(
 }
 .sf-meta { line-height: 1.25; min-width: 0; }
 .sf-meta b { color: #fff; font-size: 12.5px; font-weight: 600; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sf-meta span { color: var(--sidebar-ink-soft); font-size: 10.5px; }
+.sf-meta span { color: var(--sidebar-ink-soft); font-size: 12px; }
 .sf-collapse {
   width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; cursor: pointer;
   background: rgba(255,255,255,.05); border: 1px solid var(--sidebar-line);
@@ -491,7 +494,7 @@ a.kpi-link.is-on { border-color: var(--tc-red); box-shadow: inset 0 0 0 1px var(
 .badge-count {
   position: absolute; top: -5px; inset-inline-end: -5px; min-width: 20px; height: 20px;
   padding: 0 5px; background: var(--tc-red); color: #fff; border-radius: 999px;
-  font-size: 12px; font-weight: 800; line-height: 16px; text-align: center;
+  font-size: 12px; font-weight: 800; line-height: 16px; text-align: center; direction: ltr; unicode-bidi: isolate;
   border: 2px solid var(--panel); box-shadow: 0 2px 6px rgba(237,28,36,.4);
 }
 
@@ -513,7 +516,7 @@ a.kpi-link.is-on { border-color: var(--tc-red); box-shadow: inset 0 0 0 1px var(
 }
 .user .meta { line-height: 1.15; }
 .user .meta b { font-size: 13px; }
-.user .meta span { font-size: 11px; color: var(--muted); display: block; }
+.user .meta span { font-size: 12px; color: var(--muted); display: block; }
 .menu {
   position: absolute; top: 60px; inset-inline-end: 24px; min-width: 220px;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md);
@@ -597,7 +600,7 @@ a.notif:hover { background: var(--hover, rgba(127,127,127,.08)); }
 .notif .nicon { width: 34px; height: 34px; border-radius: 10px; flex: 0 0 34px; display: grid; place-items: center; }
 .notif .ntitle { font-weight: 600; font-size: 13px; }
 .notif .nmsg { color: var(--muted); font-size: 12px; margin-top: 2px; }
-.notif .ntime { color: var(--soft-ink); font-size: 11px; margin-top: 4px; }
+.notif .ntime { color: var(--soft-ink); font-size: 12px; margin-top: 4px; }
 .sev-info .nicon { background: var(--info-bg); color: var(--info); }
 .sev-warning .nicon { background: var(--warn-bg); color: var(--warn); }
 .sev-critical .nicon { background: var(--crit-bg); color: var(--crit); }
@@ -757,7 +760,7 @@ a.kpi-link:hover .kpi-go, a.kpi-link:focus-visible .kpi-go { opacity: 1; }
 .app-card .ac-icon { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: linear-gradient(135deg, rgba(237,28,36,.12), rgba(237,28,36,.04)); color: var(--tc-red); }
 .app-card h3 { margin: 0; font-size: 16px; }
 .app-card .ac-desc { color: var(--muted); font-size: 13px; line-height: 1.5; min-height: 38px; }
-.app-card .ac-meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
+.app-card .ac-meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 .app-card .ac-meta code { background: var(--panel-2); border: 1px solid var(--line); padding: 2px 8px; border-radius: 7px; color: var(--ink); }
 .app-card .ac-actions { display: flex; gap: 8px; margin-top: auto; }
 
@@ -914,6 +917,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .mt-0{margin-top:0}.mt-2{margin-top:8px}.mt-3{margin-top:12px}.mt-4{margin-top:16px}.mt-6{margin-top:24px}
 .flex { display: flex; } .between { justify-content: space-between; } .center { align-items: center; } .gap { gap: 12px; } .wrap { flex-wrap: wrap; }
 .divider { height: 1px; background: var(--line-2); margin: 18px 0; }
+/* Arabic: an English/number chip ("3-way matched", "SLA risk 100%") keeps its own reading order */
+[dir="rtl"] .tag, [dir="rtl"] .badge { unicode-bidi: plaintext; }
 .tag { font-size: 12px; padding: 3px 9px; border-radius: var(--r-pill); background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
 
 /* ---------- Maintenance module ---------- */
@@ -1139,7 +1144,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   .content [class*="grid"], .kpi-grid, .cards, .tiles, .stat-grid { grid-template-columns: 1fr !important; }
   .content [class*="grid"] > * { grid-column: auto !important; }
   /* KPI rows stay two-up: one KPI per row wastes the screen */
-  .content .grid:has(> .kpi) { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .content .grid:has(> .kpi), .content .grid:has(> .sf-kpi) { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .kpi { padding: 14px; }
   .kpi .kval { font-size: 24px; margin-top: 10px; }
   .kpi .kicon { width: 36px; height: 36px; border-radius: 10px; }
@@ -1269,7 +1274,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .tc-dialog::backdrop { background: rgba(2, 6, 23, .5); backdrop-filter: blur(2px); }
 
 /* ---------- HR / Probation module ---------- */
-.pb-badge { display:inline-block; font-size:11.5px; font-weight:700; padding:3px 10px;
+.pb-badge { display:inline-block; font-size:12px; font-weight:700; padding:3px 10px;
   border-radius:999px; white-space:nowrap; line-height:1.5; }
 .pb-ok   { background:var(--ok-bg);   color:var(--ok); }
 .pb-warn { background:var(--warn-bg); color:var(--warn); }
@@ -1500,7 +1505,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .sf-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
 .sf-kpi{border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 18px;background:var(--panel)}
 .sf-kpi .v{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
-.sf-kpi .l{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:4px}
+.sf-kpi .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:4px}
 .sf-g{color:var(--ok)} .sf-a{color:var(--warn)} .sf-r{color:var(--crit)}
 .sf-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line-2)}
 .sf-row:last-child{border-bottom:0}
