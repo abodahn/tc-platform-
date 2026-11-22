@@ -102,6 +102,8 @@ def checks():
     conn = get_db()
     conn.execute("INSERT INTO notifications (module, title, created_at) VALUES "
                  "('maintenance','not procurement','2026-01-01')")
+    conn.execute("INSERT INTO wh_movements (material_id, type, qty, ref, created_at) VALUES "
+                 "(?, 'adjust', 0, 'PO-88123', '2026-01-01')", (mat["id"],))
     conn.commit()
 
     def snap(names):
@@ -133,6 +135,7 @@ def checks():
     assert not [r for r in left if r[0] == "procurement" or str(r[1] or "").startswith("/procurement/pr/")]
     assert conn.execute("SELECT COUNT(*) FROM wh_movements WHERE ref LIKE 'PR-%'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM wh_movements WHERE ref LIKE 'TEST-PR-%'").fetchone()[0] > 0
+    assert conn.execute("SELECT COUNT(*) FROM wh_movements WHERE ref='PO-88123'").fetchone()[0] == 1,         "a supplier PO number that is not ours was retagged"
     assert conn.execute("SELECT stock_qty FROM wh_materials WHERE id=?", (mat["id"],)).fetchone()[0] == stock
     assert conn.execute("SELECT value FROM mnt_settings WHERE key='auto_reorder_pr'").fetchone()[0] == "0"
 
@@ -162,7 +165,69 @@ def checks():
         raise AssertionError("--apply ran without --i-understand")
     except SystemExit:
         pass
+    import config
+    config.Config.DATABASE_URL = "postgresql://refuse.invalid/x"
+    try:
+        R.main(["--db", config.Config.DB_PATH])
+        raise AssertionError("--db was silently ignored with DATABASE_URL set")
+    except SystemExit:
+        pass
+    finally:
+        config.Config.DATABASE_URL = ""
     conn.close()
+    pg_statements(R)
+
+
+def pg_statements(R):
+    """No PostgreSQL here, so record what apply() sends on the PG path: one transaction,
+    LOCK before the first read of data, TRUNCATE ... RESTART IDENTITY (transactional)
+    instead of setval (not), and any failure rolls back without a commit."""
+    from types import SimpleNamespace
+    from app.db import _translate_sql
+
+    class Rec:
+        def __init__(self, fail_on=None):
+            self.sql, self.fail_on = [], fail_on
+
+        def execute(self, sql, params=()):
+            if self.fail_on and sql.startswith(self.fail_on):
+                raise RuntimeError("injected")
+            self.sql.append(sql)
+            rows = [{"name": t} for t in R.PR_TABLES + ["notifications", "wh_movements"]]                 if "information_schema" in sql else [{"c": 1}]
+            return SimpleNamespace(fetchall=lambda: rows, fetchone=lambda: rows[0])
+
+        def commit(self):
+            self.sql.append("COMMIT")
+
+        def rollback(self):
+            self.sql.append("ROLLBACK")
+
+    real, R._pg = R._pg, lambda: True
+    try:
+        rec = Rec()
+        R.apply(rec, "20990101_0002")
+        s = rec.sql
+        assert s[0] == "COMMIT" and s[-1] == "COMMIT" and s.count("COMMIT") == 2, s
+        lock = next(i for i, q in enumerate(s) if q.startswith("LOCK TABLE"))
+        assert lock == 2 and s[lock].endswith("IN ACCESS EXCLUSIVE MODE"), s[:3]
+        assert all(t in s[lock] for t in R.PR_TABLES + ["notifications", "wh_movements"])
+        trunc = [q for q in s if q.startswith("TRUNCATE")]
+        assert len(trunc) == 1 and trunc[0].endswith(" RESTART IDENTITY"), trunc
+        # all 18 in ONE statement: PG refuses to truncate an FK parent on its own
+        assert trunc[0][9:-17].split(", ") == R.PR_TABLES, trunc
+        assert not [q for q in s if "setval" in q], "setval is not undone by a rollback"
+        for q in (s[lock], trunc[0]):   # app/db.py passes these through unchanged
+            assert _translate_sql(q)[0] == q
+        for step in ("LOCK", "CREATE", "DELETE", "TRUNCATE"):
+            rec = Rec(fail_on=step)
+            try:
+                R.apply(rec, "20990101_0003")
+                raise AssertionError("no error raised")
+            except RuntimeError:
+                pass
+            assert rec.sql[-1] == "ROLLBACK" and rec.sql.count("COMMIT") == 1, (step, rec.sql)
+    finally:
+        R._pg = real
 
 
 if __name__ == "__main__":

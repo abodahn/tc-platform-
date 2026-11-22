@@ -10,16 +10,21 @@ Render shell). Take a normal database backup first and run it in a quiet window.
 
 --apply, in one transaction (any error rolls back all of it):
   1. copies every row it deletes or changes into zz_backup_<YYYYMMDD_HHMM>_<table>
-     (CREATE TABLE AS SELECT, same database) - that is what --restore reads;
+     (CREATE TABLE AS SELECT, same database) - that is what --restore reads. They
+     hold copies of the uploaded files: DROP them once the restore window has passed;
   2. deletes the 18 pr_* transaction tables in child-first order, plus the procurement
      bell rows (notifications, mnt_notifications) and procurement AI alerts/predictions;
   3. restarts the id counters of the 18 tables (numbers come from row ids, see
      app/approvals/services.py doc_no) -> next PR/PO/GRN/DN/RFQ is ...-000001.
+     PostgreSQL: every table touched is locked first (ACCESS EXCLUSIVE, so no request
+     can land mid-reset) and counters restart with TRUNCATE ... RESTART IDENTITY, which
+     a rollback undoes (setval would not).
      Invoice numbers are the vendor's own, nothing to reset;
-  4. retags old stock references (wh_movements.ref, wh_rolls.grn_ref 'PR-..'/'PO-..'
-     -> 'TEST-PR-..'), because the warehouse door and receipt corrections look stock up
-     by that text and would match the NEW request that reuses the number. Quantities
-     are not touched;
+  4. retags old stock references (wh_movements.ref, wh_rolls.grn_ref equal to an old
+     PR/PO number -> 'TEST-PR-..'; other text such as a supplier PO is left alone),
+     because the warehouse door and receipt corrections look stock up by that exact
+     text and would match the NEW request that reuses the number. Quantities are not
+     touched;
   5. unlinks item-master requests from old PR lines (proc_item_requests.pr_id/line_no);
   6. pauses maintenance auto-reorder (mnt_settings auto_reorder_pr='0'), otherwise the
      next page load raises a request for every low spare and the list is not empty.
@@ -56,7 +61,10 @@ _PROC = "domain IN ('procurement','approvals')"
 DELETES = [("notifications", "module='procurement' OR link LIKE '/procurement/pr/%'"),
            ("mnt_notifications", "action_url LIKE '/procurement/pr/%'"),
            ("ai_alerts", _PROC), ("ai_predictions", _PROC)] + [(t, "1=1") for t in PR_TABLES]
-_OLD_NO = "UPPER(TRIM({0})) LIKE 'PR-%' OR UPPER(TRIM({0})) LIKE 'PO-%'"
+# only refs that ARE an old PR/PO number - a supplier/customer PO typed at the door stays as is
+_OLD_NO = ("UPPER(TRIM({0})) IN (SELECT UPPER(pr_no) FROM pr_requests WHERE pr_no IS NOT NULL "
+           "UNION SELECT UPPER(po_no) FROM pr_requests WHERE po_no IS NOT NULL "
+           "UNION SELECT UPPER(po_no) FROM pr_purchase_orders WHERE po_no IS NOT NULL)")
 # (table, key column, columns changed, which rows, SET clause)
 UPDATES = [("wh_movements", "id", ["ref"], _OLD_NO.format("ref"), "ref='TEST-'||ref"),
            ("wh_rolls", "id", ["grn_ref"], _OLD_NO.format("grn_ref"), "grn_ref='TEST-'||grn_ref"),
@@ -89,6 +97,16 @@ def _n(conn, table, where="1=1"):
 
 def _bk(stamp, table):
     return "zz_backup_%s_%s" % (stamp, table)
+
+
+def _lock(conn, have):
+    """PostgreSQL: lock every table the reset reads or writes, inside the caller's
+    transaction, so no app write lands between backup, delete and renumber. Gives up
+    after the session's lock_timeout (5s, app/db.py) and the caller rolls back."""
+    if _pg():
+        touched = dict.fromkeys(t for t in [u[0] for u in UPDATES] + [d[0] for d in DELETES]
+                                if t in have)
+        conn.execute("LOCK TABLE %s IN ACCESS EXCLUSIVE MODE" % ", ".join(touched))
 
 
 def _cols(conn, table):
@@ -143,11 +161,14 @@ def apply(conn, stamp=None):
     pg = _pg()
     conn.commit()
     if not pg:
-        conn.execute("BEGIN")          # sqlite3 would otherwise autocommit the CREATE TABLEs
+        # IMMEDIATE: hold the write lock from the first count, not from the first write;
+        # sqlite3 would otherwise autocommit the CREATE TABLEs
+        conn.execute("BEGIN IMMEDIATE")
     try:
         have = tables(conn)
         if any(t.startswith(_bk(stamp, "")) for t in have):
             raise SystemExit("backup tables for %s already exist - wait a minute and re-run" % stamp)
+        _lock(conn, have)
         made, done = [], []
         for t, k, cols, w, s in UPDATES:
             n = _n(conn, t, w) if t in have else 0
@@ -164,9 +185,8 @@ def apply(conn, stamp=None):
                 made.append(_bk(stamp, t))
                 done.append("deleted %s %d" % (t, n))
         reset = [t for t in PR_TABLES if t in have]
-        if pg:
-            for t in reset:
-                conn.execute("SELECT setval(pg_get_serial_sequence(?, 'id'), 1, false)", (t,))
+        if pg:   # tables are empty here; unlike setval, TRUNCATE is undone by a rollback
+            conn.execute("TRUNCATE %s RESTART IDENTITY" % ", ".join(reset))
         elif "sqlite_sequence" in have:
             conn.execute("DELETE FROM sqlite_sequence WHERE name IN (%s)"
                          % ",".join("?" * len(reset)), reset)
@@ -187,9 +207,10 @@ def restore(conn, stamp):
     pg = _pg()
     conn.commit()
     if not pg:
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE")
     try:
         have = tables(conn)
+        _lock(conn, have)
         if not any(t.startswith(_bk(stamp, "")) for t in have):
             raise SystemExit("no backup tables named %s*" % _bk(stamp, ""))
         busy = [t for t in PR_TABLES if t in have and _n(conn, t)]
@@ -235,6 +256,8 @@ def main(argv=None):
         if not os.path.isfile(a.db):
             ap.error("no such database file: %s" % a.db)
         import config
+        if config.Config.DATABASE_URL:   # get_db() would ignore --db and open PostgreSQL
+            ap.error("--db given but DATABASE_URL is set; unset it to work on a SQLite file")
         config.Config.DB_PATH = a.db
     from app.db import get_db
     if a.apply and not a.sure:
