@@ -80,7 +80,7 @@
   </div>
   <div class="panel-pad" style="overflow-x:auto">
     {% if v.rows %}
-    <table class="tbl">
+    <table class="tbl tbl-stack">
       <thead><tr>
         <th data-i18n="aging.request">Request</th>
         <th data-i18n="proc.dept">Department</th>
@@ -101,7 +101,7 @@
           <td>
             <div>{{ r.signers.role_names or '—' }}</div>
             {% if r.signers.people %}
-            <div class="muted" style="font-size:12px">{{ r.signers.people|join(', ') }}</div>
+            <div class="muted clamp-2" style="font-size:12px">{{ r.signers.people|join(', ') }}</div>
             {% else %}
             <div style="font-size:12px;color:var(--crit)" data-i18n="aging.nobody">Nobody active can sign this — delegate the authority or add a role holder.</div>
             {% endif %}

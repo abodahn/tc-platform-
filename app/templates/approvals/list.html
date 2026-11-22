@@ -43,7 +43,7 @@
 <div class="panel mt-4">
   <div class="panel-pad" style="overflow-x:auto">
     {% if prs %}
-    <table class="tbl">
+    <table class="tbl tbl-stack">
       <thead><tr>
         <th data-i18n="proc.pr">Request</th>
         <th data-i18n="proc.requester">Requester</th>
@@ -56,7 +56,7 @@
       {% for pr in prs %}
         <tr onclick="location.href='{{ url_for('approvals.detail', pr_id=pr.id) }}'" style="cursor:pointer">
           <td><div class="flex gap center" style="gap:7px">
-                <span style="font-weight:600">{{ pr.pr_no }}</span>
+                <span class="nw" style="font-weight:600">{{ pr.pr_no }}</span>
                 {#- Only the two that mean "move this up the queue" get a badge.
                     Tagging every normal request as well would make the colour
                     stop meaning anything, which is the whole point of it. -#}
@@ -71,7 +71,7 @@
           <td>{{ pr.department or '—' }}</td>
           <td><span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span></td>
           <td style="font-variant-numeric:tabular-nums">{% if money.get(pr.id) %}{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}{% else %}—{% endif %}</td>
-          <td class="muted" style="font-size:12px">{{ pr.request_date or (pr.created_at or '')[:10] }}</td>
+          <td class="muted nw" style="font-size:12px">{{ pr.request_date or (pr.created_at or '')[:10] }}</td>
         </tr>
       {% endfor %}
       </tbody>

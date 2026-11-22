@@ -366,6 +366,8 @@ a.kpi-link.is-on { border-color: var(--tc-red); box-shadow: inset 0 0 0 1px var(
 .sf-collapse:hover { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.18); }
 .sf-collapse .ico { transition: transform .24s cubic-bezier(.22,1,.36,1); }
 .app.collapsed .sf-collapse .ico { transform: rotate(180deg); }
+[dir="rtl"] .sf-collapse .ico { transform: scaleX(-1); }   /* the rail closes to the right */
+[dir="rtl"] .app.collapsed .sf-collapse .ico { transform: rotate(180deg) scaleX(-1); }
 
 /* ---- Collapsed (rail) mode ---- */
 .app.collapsed .nav { padding: 12px 8px; -webkit-mask-image: none; mask-image: none; }
@@ -1188,7 +1190,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   .modal-body { padding: 16px; }
   .modal-head, .modal-foot { padding: 14px 16px; }
   .modal-foot { flex-wrap: wrap; }
-  .tc-dialog { padding: 16px; }
+  dialog.tc-dialog { padding: 16px; }              /* beats the base .tc-dialog rule further down */
 
   /* Readable body text, inputs that do not trigger iOS zoom, 40px+ targets. */
   table.tbl { font-size: 14px; }
@@ -1216,6 +1218,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   .toasts { inset-inline: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
   .toast { min-width: 0; }
   .npops { top: calc(var(--topbar-h) + 8px); inset-inline-end: 8px; width: calc(100vw - 16px); }
+  .npop-title, .npop-msg { font-size: 14px; }
+  .npop:nth-child(n+4) { display: none; }   /* a burst of pop-ups would cover the page; the bell keeps them all */
+  .npop-x { min-width: 40px; min-height: 40px; margin: -10px; }   /* bigger target, same footprint */
 
   /* A page's main action stays in reach: put .sticky-actions on the button row
      and it docks to the bottom of the screen while the form scrolls. */
@@ -1605,3 +1610,54 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 :where(table.table) { width: 100%; border-collapse: collapse; }
 :where(table.table) :where(th, td) { padding: 8px 10px; text-align: start; vertical-align: middle; }
 :where(table.table) :where(th) { border-bottom: 1px solid var(--line); }
+
+/* ============================================================
+   Review fixes: Arabic data direction, table hints, list rows
+   ============================================================ */
+/* Latin data inside Arabic pages (codes, dates, English sentences): app.js lays it
+   out LTR (<bdi class="ltr-run">); codes and dates also get .nw so they never break. */
+[dir="rtl"] :is(.notif .ntitle, .notif .nmsg, .npop-title, .npop-msg, [data-perm-picker] .muted) { unicode-bidi: plaintext; }
+
+/* the open bell panel is never covered by the assistant button */
+@media (max-width: 1023.98px) { html:has(#notifPanel.open) .gm-launch { visibility: hidden; } }
+
+table.tbl .badge, .nw { white-space: nowrap; }
+.tbl td[colspan] { white-space: normal; }
+
+/* "More columns this way": a chevron at the end of a table's header row until
+   the first swipe (cue element inserted by app.js before the scroll box). */
+.tbl-cue { position: relative; height: 0; z-index: 3; pointer-events: none; }
+.tbl-cue::after {
+  content: ""; position: absolute; top: 8px; inset-inline-end: 6px; width: 28px; height: 28px;
+  border-radius: 50%; background: var(--ink) no-repeat center / 14px 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E");
+  box-shadow: 0 2px 8px rgba(2,6,23,.25); opacity: 0; transition: opacity .2s;
+}
+[dir="rtl"] .tbl-cue::after { transform: scaleX(-1); }
+.tbl-cue:has(+ .more-end:not(.more-start))::after { opacity: .85; }
+@media (prefers-reduced-motion: reduce) { .tbl-cue::after { transition: none; } }
+
+/* tablets: list tables with stacked phone rows fit their columns without a sideways scroll */
+@media (min-width: 768px) and (max-width: 1023.98px) { table.tbl-stack :is(th, td) { padding-inline: 10px; } }
+
+/* Supplier directory gets the width; the add form sits below it until there is room */
+.grid.cols-2.split-main { grid-template-columns: 1fr; }
+@media (min-width: 1440px) { .grid.cols-2.split-main { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); } }
+
+@media (max-width: 767.98px) {
+  /* stage / role chips inside a scrolling table wrap instead of running past the edge */
+  .tbl-hint > table:not(.tbl-stack) :is(.badge, .tag) { white-space: normal; max-width: 14ch; }
+  /* Key list pages: one stacked row per record (put .tbl-stack on the table):
+     the first cell is the title line, the rest flow under it. */
+  table.tbl-stack, table.tbl-stack tbody { display: block; width: 100%; white-space: normal !important; }
+  table.tbl-stack thead { display: none; }
+  table.tbl-stack tr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 12px 0; border-bottom: 1px solid var(--line-2); }
+  table.tbl-stack tr:last-child { border-bottom: 0; }
+  table.tbl-stack td { display: block; padding: 0 !important; border: 0 !important; background: none !important; }
+  table.tbl-stack td:first-child { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+  table.tbl-stack .clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  /* grid filter forms: label above a full-width control, like .field */
+  .content form[class*="grid"] > div > label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .content form[class*="grid"] > div > label + select,
+  .content form[class*="grid"] > div > label + input:not([type=checkbox]):not([type=radio]) { width: 100%; min-height: 44px; }
+}

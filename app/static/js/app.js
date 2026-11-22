@@ -380,6 +380,12 @@
       const pos = Math.abs(box.scrollLeft);
       box.classList.toggle("more-end", max > 1 && pos < max - 1);
       box.classList.toggle("more-start", max > 1 && pos > 1);
+      // swipe cue (chevron, CSS) sits just before the box; added the first time it is needed
+      if (max > 1 && !(box.previousElementSibling || {}).classList?.contains("tbl-cue")) {
+        const cue = document.createElement("div");
+        cue.className = "tbl-cue"; cue.setAttribute("aria-hidden", "true");
+        box.parentNode.insertBefore(cue, box);
+      }
     }
     function measure() {
       boxes.forEach(([box, tbl]) => {
@@ -393,6 +399,88 @@
       const ro = new ResizeObserver(() => requestAnimationFrame(measure));
       boxes.forEach(([box, tbl]) => { ro.observe(box); ro.observe(tbl); });
     } else window.addEventListener("resize", measure);
+  }
+
+  /* ---------------- Latin data on Arabic pages ----------------
+     Codes and dates that start with digits ("00-ACC-0001", "2026-08-06 16:42") are
+     reordered by the bidi algorithm inside an RTL line, so a storekeeper reads the
+     wrong code. A box whose whole text is Latin is laid out LTR (still aligned to the
+     start); inside Arabic text, each code / date token is isolated as LTR.
+     Translated strings (data-i18n etc.) are left alone. */
+  function isolateLatin() {
+    if (document.documentElement.dir !== "rtl") return;
+    const root = document.querySelector(".content");
+    if (!root) return;
+    const RTL_CH = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/, LATIN = /[A-Za-z0-9]/, MIXED = /[^A-Za-z\s]/;
+    const TOKEN = /\d{4}-\d\d-\d\d[ T]\d\d:\d\d(?::\d\d)?|(?:[A-Za-z0-9]+(?:[-\/.:#][A-Za-z0-9]+)+|\d+)[+%]?/g;
+    const SKIP = "script,style,textarea,select,option,svg,bdi,[contenteditable],[data-i18n],[data-loc-en],[data-num],[data-count]";
+    const boxOf = el => {
+      while (el !== root && getComputedStyle(el).display === "inline") el = el.parentElement;
+      return el;
+    };
+    const ltrBox = new Map();   // box -> false, or the text-align it keeps once LTR
+    const ops = [];             // DOM writes, run after every read
+    const bdi = (n, v) => {     // isolate text node n, which holds exactly v
+      const b = document.createElement("bdi");
+      b.dir = "ltr";
+      // one token (a code) or a date-time never breaks; anything longer wraps as usual
+      b.className = v.length <= 32 && /^(\S+|\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?)$/.test(v) ? "ltr-run nw" : "ltr-run";
+      n.parentNode.insertBefore(b, n); b.appendChild(n);
+    };
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const hits = [];
+    for (let n; (n = w.nextNode());) {
+      const v = n.nodeValue;
+      if (LATIN.test(v) && MIXED.test(v) && !/^\s*[\d.,]+\s*$/.test(v) && !n.parentElement.closest(SKIP)) hits.push(n);
+    }
+    hits.forEach(n => {
+      const v = n.nodeValue;
+      if (!RTL_CH.test(v)) {
+        const box = boxOf(n.parentElement);
+        if (!ltrBox.has(box)) {
+          const d = getComputedStyle(box);
+          const ok = box !== root && !RTL_CH.test(box.textContent) && !box.querySelector(SKIP) &&
+            /^(block|table-cell|list-item|inline-block)$/.test(d.display);
+          // keep the alignment it had in RTL; applied after the loop so reads never wait on writes
+          ltrBox.set(box, ok && (d.textAlign === "start" ? "right" : d.textAlign === "end" ? "left" : ""));
+        }
+        if (ltrBox.get(box) !== false) return;
+        // Latin text next to Arabic: isolate it; separators and spaces at either end stay outside
+        const m = v.match(/^([\s\u00b7\u2022\u2013\u2014:,;|\/-]*)([\s\S]*?)([\s\u00b7\u2022\u2013\u2014:,;|\/-]*)$/);
+        if (!MIXED.test(m[2]) || /^[\d.,]+$/.test(m[2])) return;
+        ops.push(() => {
+          let t = n;
+          if (m[1]) t = t.splitText(m[1].length);
+          if (m[3]) t.splitText(m[2].length);
+          bdi(t, m[2]);
+        });
+        return;
+      }
+      // Arabic text with codes / dates in it: isolate each token
+      const toks = [...v.matchAll(TOKEN)].filter(x => /\d/.test(x[0]) && /[^A-Za-z0-9]/.test(x[0]));
+      if (toks.length) ops.push(() => {
+        for (let i = toks.length - 1; i >= 0; i--) {
+          const t = n.splitText(toks[i].index);
+          t.splitText(toks[i][0].length);
+          bdi(t, toks[i][0]);
+        }
+      });
+    });
+    ops.forEach(f => f());
+    ltrBox.forEach((align, box) => {
+      if (align === false) return;
+      if (align) box.style.textAlign = align;
+      box.dir = "ltr";
+    });
+    // A native select showing a Latin value ("ACC-LBL-MAIN — Main woven label") clips
+    // the START of it in an RTL box, so the item code is lost: show it LTR.
+    const fit = s => {
+      const o = s.options[s.selectedIndex], v = o ? o.text : "";
+      s.dir = !RTL_CH.test(v) && LATIN.test(v) && MIXED.test(v) ? "ltr" : "";
+    };
+    root.querySelectorAll("select:not([multiple])").forEach(s => {
+      fit(s); s.addEventListener("change", () => fit(s));
+    });
   }
 
   /* ---------------- Animated counters ---------------- */
@@ -696,6 +784,7 @@
     initTables();   // before the i18n fetch, so wide tables never push the first paint sideways
     const initLang = cfg.lang || localStorage.getItem(LS.lang) || "en";
     await setLanguage(initLang, false);
+    isolateLatin();
 
     document.querySelectorAll("[data-lang-btn]").forEach(b =>
       b.addEventListener("click", () => setLanguage(b.getAttribute("data-lang-btn"))));

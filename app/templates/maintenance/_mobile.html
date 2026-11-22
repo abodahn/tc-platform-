@@ -130,6 +130,7 @@
   .m-filters select { flex: 1 1 140px; min-width: 0; min-height: 44px; height: auto !important; }
   .m-filters .spacer { display: none; }
   .m-filters > .btn { margin-inline-start: auto; }
+  @media (max-width: 399.98px) { .m-filters select { flex-basis: 100%; } }   /* two selects side by side truncate */
 
   /* PM checklist: the new item gets the full width. */
   .m-pm-add .field { flex: 1 1 100%; margin-bottom: 0; }
