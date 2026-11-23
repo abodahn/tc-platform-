@@ -572,11 +572,12 @@ def _cost_object_pairs(pr):
 # scratchpad/fit.py walks each column's magnitudes UP until it breaks, then reads
 # rendered pages back; keep it printing "0 problems".
 _PR_COLS = [
-    (8.0, "S", "l"), (22.0, "ITEM", "l"), (40.0, "Description", "l"),
+    (8.0, "S", "l"), (22.0, "ITEM", "l"), (32.0, "Description", "l"),
     (9.0, "UNIT", "l"), (17.0, "QTY", "r"), (16.5, "On Hand", "r"),
     (8.0, "Stock days", "r"), (10.5, "Pending qty", "r"),
     (15.0, "LAST ORDER QTY.", "r"), (14.0, "LAST ORDER DATE", "l"),
     (18.8, "VENDOR", "l"), (15.0, "UNIT PRICE", "r"), (19.0, "EST. COST", "r"),
+    (15.0, "VAT", "r"), (19.0, "AFTER VAT", "r"),
     (8.8, "CUR.", "l"), (16.0, "LAST ORDER PRICE", "r"), (19.0, "P.O#", "l"),
     (8.0, "Last Stock", "r"), (16.6, "PAY. COND.", "l"), (14.0, "DEL. COND.", "l"),
     (14.0, "ETA", "l"), (12.0, "LEAD Time", "l"),
@@ -667,6 +668,16 @@ def _pr_body(c, w, h, cm, bundle, money=True):
     # compute; it prints only when the warehouse rung has typed it. ETA falls
     # back to the requested date, as it always did.
     lead = _chosen_lead_time(bundle)
+    try:
+        vat_rate = float(pr.get("tax_rate") or 0)
+    except (TypeError, ValueError):
+        vat_rate = 0.0
+
+    def _vat(it, after=False):
+        est = float(it.get("est_cost") or 0)
+        v = round(est * vat_rate / 100.0, 2)
+        return _fmt(est + v if after else v)
+
     rows = [[str(i), it.get("item") or "", _line_desc(it),
              it.get("unit") or "", _qty_cell(it),
              _fmt(it.get("current_stock"), 0),
@@ -674,7 +685,9 @@ def _pr_body(c, w, h, cm, bundle, money=True):
              _fmt(it.get("pending_qty"), 0) if it.get("pending_qty") else "",
              _fmt(it.get("last_order_qty"), 0), it.get("last_order_date") or "",
              it.get("vendor") or pr.get("vendor") or "", (_fmt(it.get("unit_price")) if money else ""),
-             (_fmt(it.get("est_cost")) if money else ""), cur, (_fmt(it.get("last_order_price")) if money else ""),
+             (_fmt(it.get("est_cost")) if money else ""),
+             (_vat(it) if money else ""), (_vat(it, True) if money else ""),
+             cur, (_fmt(it.get("last_order_price")) if money else ""),
              pr.get("po_no") or "",
              "" if it.get("last_stock") is None else _fmt(it.get("last_stock"), 0),
              pr.get("payment_condition") or "",
@@ -691,7 +704,7 @@ def _pr_body(c, w, h, cm, bundle, money=True):
     # contract terms appear, and an Incoterm without its named place ("DDP C…")
     # is not a delivery condition.
     y = _table(c, w, cm, y, _PR_COLS, rows, h, pn, title=None,
-               wrap_col=[1, 2, 10, 17, 18], max_lines=4, font_size=6, pad=0.07 * cm,
+               wrap_col=[1, 2, 10, 19, 20], max_lines=4, font_size=6, pad=0.07 * cm,
                # a one-line row at 6 pt needs 0.42 cm, not the 0.6 cm sized for
                # 8.5 pt tables; every row saved is a line printed at full size
                row_h=0.42 * cm,
@@ -1059,12 +1072,21 @@ def po_pdf(bundle, po=None):
     y = _meta_grid(c, w, cm, y, meta_pairs)
 
     cur = pr.get("currency") or ""
-    rows = [[str(i), (it.get("item") or "", _line_desc(it)),
-             _fmt(it.get("qty")), _fmt(it.get("unit_price")), _fmt(it.get("est_cost"))]
-            for i, it in enumerate(items, 1)]
+    try:
+        vat_rate = float(pr.get("tax_rate") or 0)
+    except (TypeError, ValueError):
+        vat_rate = 0.0
+    rows = []
+    for i, it in enumerate(items, 1):
+        est = float(it.get("est_cost") or 0)
+        v = round(est * vat_rate / 100.0, 2)
+        rows.append([str(i), (it.get("item") or "", _line_desc(it)),
+                     _fmt(it.get("qty")), _fmt(it.get("unit_price")), _fmt(est),
+                     _fmt(v), _fmt(est + v)])
     y = _table(c, w, cm, y, [
-        (0.6, "#", "l"), (10.6, "ITEM / DESCRIPTION", "l"),
-        (1.6, "QTY", "r"), (2.4, "UNIT PRICE", "r"), (2.6, "TOTAL", "r")],
+        (0.6, "#", "l"), (6.0, "ITEM / DESCRIPTION", "l"),
+        (1.4, "QTY", "r"), (2.2, "UNIT PRICE", "r"), (2.4, "TOTAL", "r"),
+        (2.0, "VAT %g%%" % vat_rate, "r"), (2.6, "AFTER VAT", "r")],
         rows, h, pn, title="Order lines", wrap_col=1)
 
     y = _totals_block(c, w, cm, y, pr, cur)
@@ -1077,6 +1099,7 @@ def po_pdf(bundle, po=None):
             _tot = float(pr.get("total") or 0)
         except (TypeError, ValueError):
             _tot = 0.0
+        _tot = _tot * (1 + (vat_rate or 0) / 100.0)
         egp_eq = _tot * fx if (str(pr.get("currency") or "EGP").upper() != "EGP") else _tot
         c.setFont("Helvetica-Oblique", 8.5)
         c.setFillColorRGB(0.3, 0.3, 0.3)

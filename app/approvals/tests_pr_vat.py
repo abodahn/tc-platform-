@@ -64,6 +64,28 @@ def run():
                                                     "currency": "USD"}, buyer)
         chk("USD pricing with rate saved", ok, msg)
 
+        # ---- the printed PR and PO carry the VAT columns ------------------
+        from app.approvals import pdf as P
+        bundle = svc.get_pr(pr_id) if hasattr(svc, "get_pr") else None
+        if bundle:
+            pr_bytes = P.pr_pdf(bundle, money=True)
+            po_bytes = P.po_pdf(bundle)
+            try:
+                import io
+                from pypdf import PdfReader
+                def text(b):
+                    return " ".join(pg.extract_text() or "" for pg in PdfReader(io.BytesIO(b)).pages)
+                t_pr, t_po = text(pr_bytes), text(po_bytes)
+                chk("PR PDF has VAT + AFTER VAT columns", "VAT" in t_pr and "AFTER VAT" in t_pr)
+                chk("PR PDF prints the line VAT 5,250.00 and 42,750.00",
+                    "5,250.00" in t_pr and "42,750.00" in t_pr)
+                chk("PO PDF prints VAT 14% column and 42,750.00", "VAT 14%" in t_po and "42,750.00" in t_po)
+                hidden = text(P.pr_pdf(bundle, money=False))
+                chk("PR PDF without money hides the VAT figures", "5,250.00" not in hidden)
+            except ImportError:
+                chk("PDFs render", bool(pr_bytes) and bool(po_bytes))
+                print("  note  pypdf not installed — PDF text not read back")
+
     cl = app.test_client()
     with cl.session_transaction() as s:
         s["uid"] = admin["id"]
