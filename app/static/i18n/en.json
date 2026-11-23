@@ -2666,6 +2666,7 @@
   "proc.issue_po": "Issue Purchase Order",
   "proc.item": "Item",
   "proc.items": "Line items",
+  "proc.items_more": "more",
   "proc.k_approved": "Approved",
   "proc.k_myqueue": "Waiting on me",
   "proc.k_pending": "Pending approval",
