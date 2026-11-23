@@ -902,8 +902,11 @@ def attach_item_history(conn, pr_id, items):
             # wins, and an empty column falls back to what the history computes.
             # `is None` and not falsiness — a saved 0 is the store telling you
             # the shelf is empty, which is a different statement from silence.
-            if it.get("pending_qty") is None:
-                it["pending_qty"] = round(pending.get(k, 0.0), 3)
+            # Filled only when earlier orders are really still owed; with no
+            # such history the field stays EMPTY for the store to type in -- a
+            # computed 0 read as "we checked and nothing is coming".
+            if it.get("pending_qty") in (None, "") and pending.get(k, 0.0) > 0:
+                it["pending_qty"] = round(pending[k], 3)
             if not it.get("eta"):
                 it["eta"] = eta
             it["master_code"] = mc
