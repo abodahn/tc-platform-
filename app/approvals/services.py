@@ -393,14 +393,20 @@ _SIGN_PROMPTS = ("New request to sign", "Approval overdue", "Approval overdue (l
 def _clear_sign_prompts(conn, pr, steps, keep=()):
     """A rung left pending: mark read the unread sign/overdue prompts this request
     sent to anyone who could sign `steps`, except whoever can still sign a `keep`
-    step (a co-pending parallel rung). Other rows are left alone."""
+    step (a co-pending parallel rung). Proc admins count as signers of any rung:
+    they get the overdue alerts and may sign. Other rows are left alone."""
     def holders(rows):
-        out = set()
+        out = set(_proc_admins(conn)) if rows else set()
         for s in rows:
             out |= set(eligible_approvers(
                 conn, s["stage"], roles=_csv_set(_pr_field(s, "esc_role")) or None))
         return out
-    users = holders(steps) - holders(keep)
+    still = holders(keep)
+    if keep:  # whoever already signed a rung of this request may not sign another
+        still -= {r["approver_user"] for r in conn.execute(
+            "SELECT approver_user FROM pr_steps WHERE pr_id=? AND status='approved'",
+            (pr["id"],)).fetchall()}
+    users = holders(steps) - still
     if not users:
         return
     ph = ",".join(["?"] * len(users))
@@ -3168,13 +3174,18 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         remaining = conn.execute(
             "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
             (pr_id, step["seq"])).fetchall()
-        _clear_sign_prompts(conn, pr, [step], keep=remaining)
         if remaining:
-            for r in _reescalate_dual_role(conn, pr_id, pr, step["seq"]):
+            escalated = _reescalate_dual_role(conn, pr_id, pr, step["seq"])
+            # re-read: the re-escalation may have moved the co-pending rung to a superior
+            _clear_sign_prompts(conn, pr, [step], keep=conn.execute(
+                "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+                (pr_id, step["seq"])).fetchall())
+            for r in escalated:
                 _prompt_rung(conn, pr, [r],
                              f"{pr['pr_no']} needs your {stage_label(r['stage'])} approval.")
             conn.commit()
             return True, "partial"
+        _clear_sign_prompts(conn, pr, [step])
 
         # Whole rung approved -> advance to the next rung (activate all its steps).
         nxt_seq = conn.execute(
@@ -4143,11 +4154,9 @@ def post_stock_postings(pr_id, user=None, manual=False):
                             bell = None
                             try:
                                 bell = get_db()
-                                bell.execute(
-                                    "INSERT INTO notifications (severity,module,title,message,link,created_at) "
-                                    "VALUES (?,?,?,?,?,?)",
-                                    ("warning", "procurement", "Receipt not booked: ambiguous material",
-                                     f"{row['pr_no']}: {row['item']}", _pr_link(pr_id), _now()))
+                                notify_users(bell, _perm_holders(bell, ("proc_purchasing", "proc_receive")),
+                                             "warning", "Receipt not booked: ambiguous material",
+                                             f"{row['pr_no']}: {row['item']}", link=_pr_link(pr_id))
                                 bell.commit()
                             except Exception:
                                 if bell is not None:
@@ -7892,6 +7901,9 @@ def issue_from_stock(pr_id, issues, user, ip=None):
             conn.execute(
                 "UPDATE pr_requests SET status='closed', closed_at=?, current_seq=0 "
                 "WHERE id=?", (_now(), pr_id))
+            _clear_sign_prompts(conn, pr, conn.execute(
+                "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+                (pr_id, pr["current_seq"])).fetchall())
             conn.execute(
                 "UPDATE pr_steps SET status='skipped' WHERE pr_id=? AND status='pending'",
                 (pr_id,))

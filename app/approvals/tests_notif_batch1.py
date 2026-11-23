@@ -188,6 +188,12 @@ def run():
         svc.run_escalations()
         l2 = rows(pb, "Approval overdue (level 2)")
         assert sorted(r["target_user"] for r in l2) == sorted(admins), l2   # once each
+        # an admin signs the orphan rung: every admin's overdue alerts go read (#7)
+        ok, msg = svc.act_on_step(pb, {"username": "nb_admin", "role": "super_admin"}, "approve")
+        assert ok, msg
+        stale = [r for r in rows(pb) if not r["is_read"]
+                 and r["title"] in ("Approval overdue", "Approval overdue (level 2)")]
+        assert not stale, stale
         c = get_db()
         c.execute("UPDATE users SET is_active=1 WHERE username=?", ("nb_factory_manager",))
         c.commit()
