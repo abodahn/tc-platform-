@@ -212,6 +212,15 @@ def run():
         assert svc.reverse_receipt(pb, lb, 2, "counted twice", buyer) == (True, "")
         ev = event(m, pb)
         assert ev == {"Receipt corrected: " + pb_no: req | (PAY - {buyer["username"]})}, ev
+        # a return after receipt is ONE event: each person gets exactly one row
+        m = mark()
+        assert svc.return_to_supplier(pb, lb, 1, "damaged", buyer) == (True, "")
+        ev = event(m, pb)
+        assert ev == {"Goods rejected — debit note raised": (PUR | PAY) - req - {buyer["username"]},
+                      "Goods rejected on receipt": req}, ev
+        rows = [r["target_user"] for r in q("SELECT target_user FROM notifications "
+                                             "WHERE id>? AND module='procurement'", (m,))]
+        assert len(rows) == len(set(rows)), rows
         m = mark()
         assert svc.close_pr(pb, buyer) == (False, "reason_required")
         ok, msg = svc.close_pr(pb, buyer, reason="supplier discontinued the part")
@@ -261,23 +270,34 @@ def run():
 
         # ---- #12 delegation: refusal, add (dates + waiting count), revoke ----
         pf, _ = new_pr("Waiting on the store")                 # one request at the store rung
+        # and one at the manager rung, signable by n2_warehouse only through a third
+        # person's delegation: it must not be counted as waiting on their own rungs
+        pf2, _ = new_pr("Waiting on the manager")
+        ok, msg = svc.act_on_step(pf2, {"username": "n2_store2", "role": "storekeeper"}, "approve")
+        assert ok and cur_stage(pf2) == "warehouse_manager", (msg, cur_stage(pf2))
+        c = get_db()
+        c.execute("INSERT INTO proc_delegations (from_user, to_user, note, created_at) "
+                  "VALUES ('n2_warehouse_manager','n2_warehouse','','2026-01-01')")
+        c.commit()
+        c.close()
         m = mark()
         assert svc.add_delegation("n2_warehouse", "n2_outsider", None, None, "") \
             == (False, "delegate_cannot_sign")
         assert svc.add_delegation("n2_warehouse", "n2_cfo_off", None, None, "") \
             == (False, "delegate_cannot_sign")
-        assert not q("SELECT id FROM proc_delegations")
+        assert len(q("SELECT id FROM proc_delegations")) == 1      # only the third person's
         ok, msg = svc.add_delegation("n2_warehouse", "n2_finance", "2026-01-01", "2099-12-31", "")
         assert ok, msg
         ev = event(m)
         assert ev == {"You can now sign for n2_warehouse": {"n2_finance"},
                       "Signing delegated to n2_finance": {"n2_warehouse"}}, ev
-        queue = [p["id"] for p in svc.my_queue({"username": "n2_warehouse",
-                                                "role": signer["warehouse"]["role"]})]
-        assert pf in queue, queue                                 # the count is this queue
+        wh = {"username": "n2_warehouse", "role": signer["warehouse"]["role"]}
+        queue = [p["id"] for p in svc.my_queue(wh, own_only=True)]
+        assert pf in queue and pf2 not in queue, queue            # the count is this queue
+        assert pf2 in [p["id"] for p in svc.my_queue(wh)]
         for r in q("SELECT message FROM notifications WHERE id>?", (m,)):
             assert "2099-12-31" in r["message"] and "%d request(s)" % len(queue)                 in r["message"], r
-        did = q("SELECT id FROM proc_delegations")[0]["id"]
+        did = q("SELECT id FROM proc_delegations WHERE from_user='n2_warehouse'")[0]["id"]
         m = mark()
         svc.revoke_delegation(did)
         assert event(m) == {"Delegation revoked": {"n2_warehouse", "n2_finance"}}
@@ -285,6 +305,11 @@ def run():
         svc.revoke_delegation(did)                               # already revoked: silent
         assert event(m) == {}
         assert svc.cancel_pr(pf, reqr)[0]
+        assert svc.cancel_pr(pf2, reqr)[0]
+        c = get_db()
+        c.execute("UPDATE proc_delegations SET is_active=0")
+        c.commit()
+        c.close()
 
         # ---- #13 an auto-reorder request reaches real maintenance people ------
         bot = {"username": "auto-reorder", "full_name": "Auto Reorder", "id": None}

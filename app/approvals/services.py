@@ -1230,7 +1230,7 @@ def items_preview(prs, shown=3):
     return out
 
 
-def my_queue(user):
+def my_queue(user, own_only=False):
     """PRs currently waiting on a stage this user is allowed to act on.
 
     Batched: one query for the PRs, one for ALL their pending steps, and one
@@ -1255,7 +1255,8 @@ def my_queue(user):
     by_pr = {}
     for s in step_rows:
         by_pr.setdefault(s["pr_id"], []).append(s)
-    deleg = active_delegator_roles(user.get("username"))
+    # own_only: the user's own rungs, not ones they hold only through someone's delegation
+    deleg = set() if own_only else active_delegator_roles(user.get("username"))
     out = []
     for pr in prs:
         cur = [s for s in by_pr.get(pr["id"], []) if s["seq"] == pr["current_seq"]]
@@ -6970,7 +6971,8 @@ def add_delegation(from_user, to_user, from_date, to_date, note, user=None):
         frm = conn.execute("SELECT * FROM users WHERE username=?", (from_user,)).fetchone()
     finally:
         conn.close()
-    waiting = len(my_queue(dict(frm))) if frm else 0
+    # own rungs only: delegation does not chain, so the delegate cannot sign the rest
+    waiting = len(my_queue(dict(frm), own_only=True)) if frm else 0
     window = f"{from_date or 'now'} to {to_date or 'until revoked'}"
     conn = get_db()
     try:
@@ -8560,10 +8562,9 @@ def _correct_receipt(pr_id, item_id, qty, reason, user, ip, returned):
         audit(conn, pr_id, (user or {}).get("username"),
               "returned_after_receipt" if returned else "receipt_reversed",
               f"{item['item']} (line {item['id']}): {qty:g}; {reason}{note}", ip)
-        _notify_correction(conn, pr, user, "Receipt corrected",
-                           f"{qty:g} {item['item']} taken off the receipt"
-                           + (" and returned to the supplier" if returned else "")
-                           + f": {reason}")
+        if not returned:   # a return was already announced by _record_return
+            _notify_correction(conn, pr, user, "Receipt corrected",
+                               f"{qty:g} {item['item']} taken off the receipt: {reason}")
         conn.commit()
     finally:
         conn.close()
