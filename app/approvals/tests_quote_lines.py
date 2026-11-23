@@ -17,6 +17,7 @@ Proves:
   8. unit prices render at full precision; a quote in another currency is not
      pre-filled; lines changed after quoting are read at the current qty.
 """
+import io
 import os
 import re
 import sys
@@ -87,7 +88,7 @@ def run():
         print("\n1. line prices are saved; the server computes the amount")
         ok, why = svc.add_quote(pr_id, {"vendor": "Alpha", "amount": "1",
                                         "payment_terms": "30 days", "vat_applies": "1",
-                                        "lines": {i1: "7.31", i2: "20", i3: "100"}}, buyer)
+                                        "lines": {i1: "7.31", i2: "20", i3: "100"}}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         chk("a quote with line prices is recorded", ok, why)
         qa = one("SELECT * FROM pr_quotes WHERE pr_id=? AND vendor='Alpha'", pr_id)
         chk("its amount is the sum of the lines, not the posted 1",
@@ -101,7 +102,7 @@ def run():
             and rows[i1]["qty"] == 10, dict(rows[i1]))
         for bad in ("-1", "nan", "inf", "abc"):
             ok, why = svc.add_quote(pr_id, {"vendor": "Bad", "payment_terms": "Cash",
-                                            "lines": {i1: bad}}, buyer)
+                                            "lines": {i1: bad}}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
             chk("a unit price of %r is refused" % bad, (not ok) and why == "bad_amount", why)
         chk("and nothing was written for it",
             one("SELECT COUNT(*) n FROM pr_quotes WHERE vendor='Bad'")["n"] == 0)
@@ -109,7 +110,7 @@ def run():
         print("\n2. a blank line = not quoted -> partial; VAT on the computed total")
         ok, why = svc.add_quote(pr_id, {"vendor": "Beta", "payment_terms": "Cash",
                                         "vat_applies": "0",
-                                        "lines": {i1: "7.31", i2: "18.5", i3: " "}}, buyer)
+                                        "lines": {i1: "7.31", i2: "18.5", i3: " "}}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         chk("a quote with a blank line is accepted", ok, why)
         qs = {q["vendor"]: q for q in svc.get_pr(pr_id)["quotes"]}
         chk("Beta is partial, Alpha is not", qs["Beta"]["partial"] and not qs["Alpha"]["partial"])
@@ -163,7 +164,7 @@ def run():
             all('name="uprice_%d"' % i in html for i in (i1, i2, i3)))
 
         r = cli.post("/procurement/pr/%d/quote" % pr_id,
-                     data={"_csrf": "tok", "vendor": "Gamma", "amount": "999999",
+                     data={"_csrf": "tok", "file": (io.BytesIO(b"%PDF-1.4 test"), "q.pdf"), "vendor": "Gamma", "amount": "999999",
                            "payment_terms": "60 days", "vat_applies": "1",
                            "uprice_%d" % i1: "6", "uprice_%d" % i2: "",
                            "uprice_%d" % i3: "90"},
@@ -173,7 +174,7 @@ def run():
         chk("the route ignores a posted fake total", g and g["amount"] == 240.0,
             g and g["amount"])
         r = cli.post("/procurement/pr/%d/quote" % pr_id,
-                     data={"_csrf": "tok", "vendor": "Delta", "payment_terms": "Cash",
+                     data={"_csrf": "tok", "file": (io.BytesIO(b"%PDF-1.4 test"), "q.pdf"), "vendor": "Delta", "payment_terms": "Cash",
                            "uprice_%d" % i1: "8"},
                      content_type="multipart/form-data")
         flashes()
@@ -214,7 +215,7 @@ def run():
         print("\n6b. prices keep full precision (no 6-digit rounding)")
         ok, why = svc.add_quote(pr_id, {"vendor": "Zeta", "payment_terms": "Cash",
                                         "vat_applies": "0",
-                                        "lines": {i1: "15250.75", i2: "1234567"}}, buyer)
+                                        "lines": {i1: "15250.75", i2: "1234567"}}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         z = one("SELECT * FROM pr_quotes WHERE pr_id=? AND vendor='Zeta'", pr_id)
         chk("Zeta recorded at the exact sum", ok and z["amount"] == 5090775.5, z and z["amount"])
         html = cli.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
@@ -238,7 +239,7 @@ def run():
 
         print("\n6c. a chosen quote in another currency is not pre-filled")
         ok, why = svc.add_quote(pr_id, {"vendor": "FxCo", "currency": "USD",
-                                        "payment_terms": "Cash", "lines": {i1: "2"}}, buyer)
+                                        "payment_terms": "Cash", "lines": {i1: "2"}}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         fx = one("SELECT * FROM pr_quotes WHERE pr_id=? AND vendor='FxCo'", pr_id)
         svc.choose_quote(pr_id, fx["id"], buyer)
         html = cli.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
@@ -298,7 +299,7 @@ def run():
         chk("create_and_seed twice brings the table back, empty",
             one("SELECT COUNT(*) n FROM pr_quote_lines")["n"] == 0 and n_lines > 0)
         ok, _ = svc.add_quote(pr_id, {"vendor": "Echo", "payment_terms": "Cash",
-                                      "lines": {i1: "1"}}, buyer)
+                                      "lines": {i1: "1"}}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         chk("and quotes with lines can be added again", ok and one(
             "SELECT COUNT(*) n FROM pr_quote_lines")["n"] == 1)
 

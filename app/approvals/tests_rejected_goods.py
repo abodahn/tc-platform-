@@ -137,7 +137,7 @@ def run():
                 if not ok and msg == "needs_quotes":
                     for n, mult in (("A", 1.0), ("B", 1.05)):
                         svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "%s %s" % (VENDOR, n),
-                                              "amount": ORDER_QTY * UNIT * mult}, buyer)
+                                              "amount": ORDER_QTY * UNIT * mult}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
                     continue
                 if not ok and msg == "deviation_memo_required":
                     # later runs re-order a part that now has stock on the shelf,

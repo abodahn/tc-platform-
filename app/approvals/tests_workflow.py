@@ -136,12 +136,12 @@ with app.app_context():
     ok("RFQ GATE blocks purchasing at %d EGP with no quotes (%s)" % (TOTAL, msg),
        not okk and msg == "needs_quotes")
     need = int(C.quotes_required(TOTAL))
-    svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Vendor A", "amount": TOTAL}, buyer)
-    svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Vendor B", "amount": TOTAL * 1.03}, buyer)
+    svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Vendor A", "amount": TOTAL}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
+    svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Vendor B", "amount": TOTAL * 1.03}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
     okk, msg = svc.act_on_step(pr_id, buyer, "approve")
     ok("two quotes are short of DOAM §4.3's %d in this band (%s)" % (need, msg),
        not okk and msg == "needs_quotes")
-    svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Vendor C", "amount": TOTAL * 1.05}, buyer)
+    svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Vendor C", "amount": TOTAL * 1.05}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
     okk, msg = svc.act_on_step(pr_id, buyer, "approve")
     ok("%d DISTINCT vendor quotes satisfy the RFQ gate: %s" % (need, msg), okk)
     okk, msg = svc.act_on_step(pr_id, signer["factory_manager"], "approve")
@@ -192,8 +192,8 @@ with app.app_context():
         ok("override rfq_value_threshold=100000 -> the same PR now passes the gate",
            svc.rfq_gate_check(conn, row2) == (True, ""))
         svc.set_setting("rfq_value_threshold", "1000", admin)
-        svc.add_quote(pr2, {"payment_terms": "30 days", "vendor": "Vendor A", "amount": 30000}, admin)
-        svc.add_quote(pr2, {"payment_terms": "30 days", "vendor": "Vendor B", "amount": 31000}, admin)
+        svc.add_quote(pr2, {"payment_terms": "30 days", "vendor": "Vendor A", "amount": 30000}, admin, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
+        svc.add_quote(pr2, {"payment_terms": "30 days", "vendor": "Vendor B", "amount": 31000}, admin, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         ok("with 2 quotes and threshold 1000 the gate passes",
            svc.rfq_gate_check(conn, row2) == (True, ""))
         svc.set_setting("rfq_quote_min", "3", admin)

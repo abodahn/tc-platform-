@@ -220,7 +220,7 @@ def run():
             from app.approvals import constants as _C
             for i in range(max(int(_C.RFQ_QUOTE_MIN), 3)):
                 svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "RQ Vendor %d" % i, "amount": 3_000_000 + i},
-                              buyer)
+                              buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
             ok_, msg = svc.act_on_step(pr_id, admin, "approve")
             chk("...a super_admin is refused it (holds no CEO-rung role)",
                 (not ok_) and msg == "forbidden", msg)

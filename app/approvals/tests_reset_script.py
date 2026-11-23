@@ -76,7 +76,7 @@ def checks():
             ok, msg = svc.act_on_step(pr_id, signer[r["stage"]], "approve")
             if not ok and msg == "needs_quotes":
                 for n, m in (("A", 1.0), ("B", 1.05)):
-                    svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "RS Vendor %s" % n, "amount": qty * price * m}, buyer)
+                    svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "RS Vendor %s" % n, "amount": qty * price * m}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
                 continue
             assert ok, msg
             if msg == "approved":

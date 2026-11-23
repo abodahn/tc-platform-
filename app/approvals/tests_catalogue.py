@@ -382,7 +382,7 @@ with app.app_context():
             # records the price basis even on a spot buy.
             for n in range(int(svc.C.quotes_required(40.0 * 3))):
                 svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Quote Vendor %d" % n,
-                                      "amount": 120.0 + n}, buyer)
+                                      "amount": 120.0 + n}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
             continue
         if not a_ok:
             print("      (ladder stopped: " + str(a_msg) + ")")

@@ -616,6 +616,23 @@ MESSAGES = {
         "ar": "تم اختيار عرض السعر.",
         "tr": "Teklif seçildi.",
     },
+    # --- a quotation needs the supplier's own file ---------------------------
+    "Attach the supplier's quotation file.": {
+        "ar": "أرفق ملف عرض السعر الصادر من المورد.",
+        "tr": "Tedarikçinin teklif dosyasını ekleyin.",
+    },
+    "This quotation has no supplier file. Attach it (Edit this quotation) before choosing it.": {
+        "ar": "عرض السعر هذا بلا ملف من المورد. أرفقه (تعديل عرض السعر) قبل اختياره.",
+        "tr": "Bu teklifin tedarikçi dosyası yok. Seçmeden önce dosyayı ekleyin (Bu teklifi düzenle).",
+    },
+    "The quotation on file has no supplier document. Attach the supplier's quotation file before approving.": {
+        "ar": "عرض السعر المسجّل بلا مستند من المورد. أرفق ملف عرض السعر الصادر من المورد قبل الاعتماد.",
+        "tr": "Kayıtlı teklifin tedarikçi belgesi yok. Onaylamadan önce tedarikçinin teklif dosyasını ekleyin.",
+    },
+    "The chosen quotation has no supplier file. Attach it in the Vendor quotes panel before approving.": {
+        "ar": "عرض السعر المختار بلا ملف من المورد. أرفقه في لوحة عروض الموردين قبل الاعتماد.",
+        "tr": "Seçilen teklifin tedarikçi dosyası yok. Onaylamadan önce Tedarikçi teklifleri panelinden ekleyin.",
+    },
     "Receipt recorded.": {
         "ar": "تم تسجيل الاستلام.",
         "tr": "Mal kabulü kaydedildi.",

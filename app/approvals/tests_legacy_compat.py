@@ -120,7 +120,7 @@ def run():
                 for n, mult in (("A", 1.0), ("B", 1.06), ("C", 1.11)):
                     q_ok, q_msg = svc.add_quote(
                         pr_id, {"payment_terms": "30 days", "vendor": "Legacy Alt %s" % n,
-                                "amount": total * mult}, buyer)
+                                "amount": total * mult}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
                     if not q_ok:
                         msg = "add_quote refused: %s" % q_msg
                         break

@@ -148,7 +148,7 @@ def run():
         good, msg = svc.price_pr(pr_id, {li: 600000}, {"tax_rate": 0}, buyer)
         chk("Purchasing prices it at 600,000 (%s)" % pr_no, good, msg)
         for v in ("Vendor A", "Vendor B", "Vendor C"):     # §4.3 asks for three
-            svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": v, "amount": 600000}, buyer)
+            svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": v, "amount": 600000}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         ladder = [r["stage"] for r in conn.execute(
             "SELECT stage FROM pr_steps WHERE pr_id=? ORDER BY seq", (pr_id,)).fetchall()]
         chk("the ladder carries the CFO rung, CEO last",
@@ -279,7 +279,7 @@ def run():
         good, msg = svc.price_pr(d_id, {d_li: 600000}, {"tax_rate": 0}, buyer)
         chk("Purchasing prices it at 600,000 (%s)" % d_no, good, msg)
         for v in ("Vendor A", "Vendor B", "Vendor C"):
-            svc.add_quote(d_id, {"payment_terms": "30 days", "vendor": v, "amount": 600000}, buyer)
+            svc.add_quote(d_id, {"payment_terms": "30 days", "vendor": v, "amount": 600000}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         cfo_step = dict(conn.execute("SELECT esc_role, esc_from FROM pr_steps "
                                      "WHERE pr_id=? AND stage='cfo'", (d_id,)).fetchone())
         chk("the CFO rung ESCALATED instead of resting on the under-level buyer",

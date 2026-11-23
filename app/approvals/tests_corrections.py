@@ -93,7 +93,7 @@ def run():
                 if not ok and msg == "needs_quotes":
                     for n, mult in (("A", 1.0), ("B", 1.05)):
                         svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Quote %s" % n,
-                                              "amount": qty * UNIT * mult}, buyer)
+                                              "amount": qty * UNIT * mult}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
                     continue
                 if not ok and msg == "deviation_memo_required":
                     assert svc.set_doam_document(pr_id, "deviation_memo", "Replenishment agreed with the supplier ahead of the shutdown.", buyer)[0]
@@ -110,7 +110,7 @@ def run():
         p_inact, _ = approve("Inactive supplier", vendor="Third Vendor")
         svc.set_vendor_active(q("SELECT id FROM proc_vendors WHERE name='Third Vendor'")["id"], False, buyer)
         assert svc.issue_po(p_inact, buyer, force=True) == (False, "vendor_not_in_master")
-        assert svc.add_quote(p_inact, {"payment_terms": "30 days", "vendor": "third vendor", "amount": 5}, buyer) \
+        assert svc.add_quote(p_inact, {"payment_terms": "30 days", "vendor": "third vendor", "amount": 5}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK") \
             == (False, "vendor_inactive")
 
         pr_id, li = approve("Corrections")

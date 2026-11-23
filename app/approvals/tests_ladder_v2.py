@@ -129,8 +129,8 @@ def run():
 
         print("\n4. walking the 1,000 request: order, control before cfo, ceo last")
         conn = get_db()
-        conn.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency) "
-                     "VALUES (?,?,?,'EGP')", (small, "Ladder Vendor", 1000))
+        conn.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency, content_b64) "
+                     "VALUES (?,?,?,'EGP','JVBERi0xLjQK')", (small, "Ladder Vendor", 1000))
         conn.commit()
         conn.close()
         for who in ("lv_store", "lv_whm", "lv_buyer", "lv_pd"):
@@ -160,8 +160,8 @@ def run():
         print("\n5. one person cannot sign Financial Control AND CFO")
         sod = make("SoD", 1000)
         conn = get_db()
-        conn.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency) "
-                     "VALUES (?,?,?,'EGP')", (sod, "Ladder Vendor", 1000))
+        conn.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency, content_b64) "
+                     "VALUES (?,?,?,'EGP','JVBERi0xLjQK')", (sod, "Ladder Vendor", 1000))
         # the Financial Controller also holds the CFO's authority by delegation
         conn.execute("INSERT INTO proc_delegations (from_user, to_user, is_active, "
                      "created_at) VALUES ('lv_cfo','lv_fc',1,'2026-01-01')")
