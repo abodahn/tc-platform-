@@ -4482,7 +4482,7 @@
   "proc.guide.pur.prob.1.q": "«Satın alma aşamasını onaylamadan önce fiyatlandırmayı girin. Talebin henüz ticari değeri yok.»",
   "proc.guide.pur.prob.1.a": "Önce [[btn:proc.save_pricing]] düğmesine basın, sonra imzalayın.",
   "proc.guide.pur.prob.2.q": "Teklifleriniz olduğu halde rekabetçi teklif gerektiği mesajı.",
-  "proc.guide.pur.prob.2.a": "Mesaj 2 teklif der, ancak gerçek kural şudur: 50.000 EGP'ye kadar en az 1 teklif; 50.000 EGP üzerinde veya bir satır hedef fiyatın üzerindeyse farklı tedarikçilerden 3 teklif. Tek kaynak formu yalnızca 25.000 EGP'den itibaren ve 2'den az teklif varken görünür. Kontrol sonraki her aşamada tekrar çalışır.",
+  "proc.guide.pur.prob.2.a": "Mesaj 2 teklif der, ancak gerçek kural şudur: 50.000 EGP'ye kadar en az 1 teklif; 50.000 EGP üzerinde veya bir satır hedef fiyatın üzerindeyse farklı tedarikçilerden 3 teklif. Tek kaynak formu yalnızca 25.000 EGP'den itibaren ve 2'den az teklif varken görünür. Kontrol sonraki her aşamada tekrar çalışır. Tedarikçi dosyası ekli olmayan teklif sayılmaz: o teklifte «Dosya ekle»yi kullanın.",
   "proc.guide.pur.prob.3.q": "«Bu sipariş plan dışı…» mesajı ve sapma notu gerekiyor.",
   "proc.guide.pur.prob.3.a": "Bir satır hedefin, stok tavanının veya planın üzerinde fiyatlanmış. Notu yazın ve [[btn:proc.memo_save]] düğmesine basın.",
   "proc.guide.pur.prob.4.q": "Bir değişiklikten sonra üstünüzdeki imzalar geri çekildi.",

@@ -4482,7 +4482,7 @@
   "proc.guide.pur.prob.1.q": "«Enter the pricing before approving the Purchasing stage — the request has no commercial value yet.»",
   "proc.guide.pur.prob.1.a": "Press [[btn:proc.save_pricing]] first, then sign.",
   "proc.guide.pur.prob.2.q": "«Competitive quotes required…» even though you have quotes.",
-  "proc.guide.pur.prob.2.a": "The message says 2 quotes, but the rule is: at least 1 quote up to 50,000 EGP, and 3 quotes from different suppliers above 50,000 EGP or when a line is priced above its target. The single-source form only appears from 25,000 EGP with fewer than 2 quotes. The check runs again at every later stage.",
+  "proc.guide.pur.prob.2.a": "The message says 2 quotes, but the rule is: at least 1 quote up to 50,000 EGP, and 3 quotes from different suppliers above 50,000 EGP or when a line is priced above its target. The single-source form only appears from 25,000 EGP with fewer than 2 quotes. The check runs again at every later stage. A quote without the supplier's file attached does not count: use «Attach file» on that quote.",
   "proc.guide.pur.prob.3.q": "«This order is off plan…» and a deviation memo is required.",
   "proc.guide.pur.prob.3.a": "A line is priced above target, above the stock ceiling or above plan. Write the memo and press [[btn:proc.memo_save]].",
   "proc.guide.pur.prob.4.q": "Signatures above you were withdrawn after a change.",

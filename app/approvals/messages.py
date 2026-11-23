@@ -276,9 +276,9 @@ MESSAGES = {
         "ar": "اختر إدارة أو اكتب اسمها.",
         "tr": "Bir departman seçin veya adını yazın.",
     },
-    "Competitive quotes required — attach at least 2 vendor quotes for this order value, or record a single-source justification in the Vendor quotes panel.": {
-        "ar": "هذه القيمة تحتاج عرضَي سعر تنافسيين على الأقل من مورّدين. أرفقهما، أو سجّل مبرّر التوريد من مصدر واحد في لوحة «عروض أسعار المورّدين».",
-        "tr": "Bu tutar için en az 2 rekabetçi tedarikçi teklifi gerekir. Teklifleri ekleyin ya da «Tedarikçi teklifleri» panelinde tek kaynak gerekçesini kaydedin.",
+    "Competitive quotes required — attach at least 2 vendor quotes for this order value, or record a single-source justification in the Vendor quotes panel. Only quotations with the supplier's file attached count.": {
+        "ar": "هذه القيمة تحتاج عرضَي سعر تنافسيين على الأقل من مورّدين. أرفقهما، أو سجّل مبرّر التوريد من مصدر واحد في لوحة «عروض أسعار المورّدين». لا يُحتسب إلا عرض السعر المرفق به ملف المورّد.",
+        "tr": "Bu tutar için en az 2 rekabetçi tedarikçi teklifi gerekir. Teklifleri ekleyin ya da «Tedarikçi teklifleri» panelinde tek kaynak gerekçesini kaydedin. Yalnızca tedarikçi dosyası ekli teklifler sayılır.",
     },
     "Could not add delegation (": {
         "ar": "تعذّر إضافة التفويض (",

@@ -1932,7 +1932,8 @@ def approve(pr_id):
                                 "the request has no commercial value yet.",
                "needs_quotes": "Competitive quotes required — attach at least 2 vendor "
                                "quotes for this order value, or record a single-source "
-                               "justification in the Vendor quotes panel.",
+                               "justification in the Vendor quotes panel. Only quotations "
+                               "with the supplier's file attached count.",
                "needs_quote_file": "The quotation on file has no supplier document. "
                                    "Attach the supplier's quotation file before "
                                    "approving.",
