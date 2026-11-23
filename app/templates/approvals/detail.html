@@ -101,7 +101,7 @@
 {# DOAM Table 4 — budgeted or unbudgeted, and if unbudgeted, by how much. The
    panel now renders for a department with NO budget row too: "nothing is set"
    is the fact the CFO and CEO rungs are signing against. #}
-{% if pr.budget_state or (budget and budget.amount) %}
+{% if budget_on and (pr.budget_state or (budget and budget.amount)) %}
 <div class="panel mt-2"><div class="panel-pad">
   <div class="flex between center wrap gap" style="margin-bottom:8px">
     <b>{{ pr.department or '—' }} <span data-i18n="proc.budget">budget</span>

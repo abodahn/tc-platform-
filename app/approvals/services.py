@@ -3388,7 +3388,7 @@ def issue_po(pr_id, user, ip=None, force=False):
                 return False, "vendor_not_in_master"
     finally:
         conn.close()
-    if not force and not _unbudgeted_authority_given(pr_id, pr):
+    if C.BUDGET_CONTROL and not force and not _unbudgeted_authority_given(pr_id, pr):
         b = budget_status(pr["department"])   # PR already counted in 'spent' (approved)
         if b and b.get("amount") is not None and b.get("over"):
             return False, "over_budget"
@@ -6394,6 +6394,8 @@ def budget_check(conn, department, egp_total, period=None, pr_id=None):
     past the budget the request takes the department (None when the department
     simply has no budget — there is no line to be over).
     """
+    if not C.BUDGET_CONTROL:
+        return {"unbudgeted": False, "state": None, "over_by": None, "status": None}
     if not department:
         # No cost owner means no approved plan behind the spend, and a blank
         # department must not be the cheap way past this gate.

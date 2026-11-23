@@ -29,6 +29,8 @@ def run():
         config.Config.DATABASE_URL = ""
         config.Config.UPLOAD_DIR = Path(tmp) / "uploads"
         from app import create_app
+        from app.approvals import constants as _C
+        _C.BUDGET_CONTROL = True   # this test covers the budget control itself (off in production)
         app = create_app()
         from app.db import get_db
         from app.approvals import services as svc

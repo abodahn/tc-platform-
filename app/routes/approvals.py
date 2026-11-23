@@ -1352,7 +1352,8 @@ def detail(pr_id):
                            current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
                            match=svc.three_way_match(pr_id),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
-                           budget=svc.budget_status(pr.get("department")) if money == "full" else None,
+                           budget=svc.budget_status(pr.get("department")) if money == "full" and C.BUDGET_CONTROL else None,
+                           budget_on=C.BUDGET_CONTROL,
                            can_purchasing=can_purchasing, can_receive=can_receive, is_priced=is_priced,
                            # Offering a form the viewer cannot submit is worse
                            # than hiding it: Purchasing no longer releases payment.

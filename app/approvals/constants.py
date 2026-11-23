@@ -489,6 +489,11 @@ BUSINESS_CASE_OVER = 10_000_000
 # The owner's 2026-11-17 ladder is in force; the paper-form fallback is retained.
 DOAM_IN_FORCE = True
 
+# DOAM Table 4 budget control (budget verdict on routing, the L1 rung it adds,
+# the over-budget PO block and the request-page panel). Switched OFF for every
+# request on 2026-11-23 at the IT lead's request; True restores all of it.
+BUDGET_CONTROL = False
+
 
 def normalise_expenditure_kind(raw):
     """Read a declared expenditure type. Returns ("opex"|"capex", recognised).

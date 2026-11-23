@@ -36,6 +36,8 @@ def _app():
     config.Config.DB_PATH = os.path.join(tempfile.mkdtemp(), "budget.db")
     os.environ.pop("DATABASE_URL", None)
     from app import create_app
+    from app.approvals import constants as _C
+    _C.BUDGET_CONTROL = True   # this test covers the budget control itself (off in production)
     return create_app()
 
 
