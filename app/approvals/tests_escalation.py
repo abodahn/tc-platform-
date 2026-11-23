@@ -250,9 +250,9 @@ with app.app_context():
     # THE assertion that must never weaken: parking must not become self-approval.
     ok("the REQUESTER still cannot sign the parked rung",
        svc.act_on_step(pr1b, wm, "approve", comment="mine")[1] == "self_approval")
-    ok("an admin CAN clear the parked rung",
-       svc.act_on_step(pr1b, admin, "approve", comment="unblock")[0] is True)
-    ok("proc_admin was notified so a human can delegate or override",
+    ok("an admin who holds no rung role can NOT clear the parked rung (forbidden)",
+       svc.act_on_step(pr1b, admin, "approve", comment="unblock")[1] == "forbidden")
+    ok("proc_admin was notified so a human can assign the role or delegate it",
        conn.execute("SELECT COUNT(*) c FROM notifications WHERE title=?",
                     ("Approval rung needs a signer",)).fetchone()["c"] > 0)
     activate("esc_ceo")
@@ -383,7 +383,7 @@ with app.app_context():
     ok("the full value ladder was written, nothing skipped",
        conn.execute("SELECT COUNT(*) c FROM pr_steps WHERE pr_id=?",
                     (pr5,)).fetchone()["c"] == len(C.build_ladder(2500000)))
-    ok("the CEO's own rung is parked (esc_role='') for an admin to clear",
+    ok("the CEO's own rung is parked (esc_role='') and admins are alerted",
        conn.execute("SELECT COUNT(*) c FROM pr_steps WHERE pr_id=? AND esc_role=''",
                     (pr5,)).fetchone()["c"] >= 1)
     # He is refused 'forbidden' rather than 'self_approval' here because the first
@@ -404,9 +404,10 @@ with app.app_context():
     ok("...and the admin IS among them",
        admin["username"] in {r["target_user"] for r in notes})
     okk, msg = svc.act_on_step(pr5, admin, "approve")
-    ok("an admin CAN move the parked request along (%s)" % msg, okk)
+    ok("an admin who holds no rung role can NOT sign it (%s)" % msg,
+       not okk and msg == "forbidden")
     # a delegation is the documented way out: delegate the CEO's authority and the
-    # parked rung becomes signable by a real human instead of only by an admin.
+    # parked rung becomes signable by a real holder of that authority.
     svc.add_delegation("esc_ceo", "esc_fm", None, None, "cover", admin)
     _ceo_step = [s for s in steps_of(conn, pr5) if s["stage"] == "ceo"][0]
     _deleg_user = dict(conn.execute("SELECT * FROM users WHERE username=?",
@@ -503,7 +504,7 @@ with app.app_context():
        [s for _, s in ladder_shape(conn, prg)] == C.build_ladder(600000))
     ok("the appended value rungs were not escalated (normal requester)",
        all(s["esc_role"] is None for s in steps_of(conn, prg)))
-    okk, msg = svc.act_on_step(prg, admin, "approve")
+    okk, msg = svc.act_on_step(prg, pm, "approve")
     ok("RFQ GATE still blocks purchasing at 600 000 with no quotes (%s)" % msg,
        not okk and msg == "needs_quotes")
 

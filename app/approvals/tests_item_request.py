@@ -360,7 +360,11 @@ with app.app_context():
     ok(f"the PR itself is unchanged ({pr2_no} still {pr2_after['status']})",
        pr2_after["status"] == pr2_before["status"]
        and pr2_after["current_seq"] == pr2_before["current_seq"])
-    a_ok2, _ = svc.act_on_step(pr2_id, admin, "approve", "still fine", ip="127.0.0.1")
+    # signed by the rung's own role holder: admins sign only rungs they hold
+    cur2 = conn.execute("SELECT stage FROM pr_steps WHERE pr_id=? AND status='pending' "
+                        "ORDER BY seq LIMIT 1", (pr2_id,)).fetchone()
+    a_ok2, _ = svc.act_on_step(pr2_id, signer[cur2["stage"]], "approve", "still fine",
+                               ip="127.0.0.1")
     ok("...and it still walks the ladder after the rejection", a_ok2)
 
     print("\n--- 4b. a request whose PR vanishes leaves no broken row ---------")

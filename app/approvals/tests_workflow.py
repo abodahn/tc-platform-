@@ -218,6 +218,13 @@ with app.app_context():
     pr3, _ = svc.create_pr({"title": "WF sod", "department": "Production", "currency": "EGP"},
                            [{"item": "Belt", "qty": 1, "unit_price": 500}], admin, submit=True)
     okk, msg = svc.act_on_step(pr3, admin, "approve")
+    ok("the super_admin holds no warehouse role, so is refused the rung (%s)" % msg,
+       not okk and msg == "forbidden")
+    # an admin who DOES hold the rung (factory_manager + proc_admin) and raised it
+    fm_admin = dict(fmgr, extra_perms='["proc_admin"]')
+    pr4, _ = svc.create_pr({"title": "WF sod 2", "department": "Production", "currency": "EGP"},
+                           [{"item": "Belt", "qty": 1, "unit_price": 500}], fm_admin, submit=True)
+    okk, msg = svc.act_on_step(pr4, fm_admin, "approve")
     ok("override sod_admin_exempt=0 -> the admin can no longer self-approve (%s)" % msg,
        not okk and msg == "self_approval")
 

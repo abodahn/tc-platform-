@@ -302,8 +302,9 @@ def apply_l2_domain(stages, domain):
     return [s for s in stages if s != drop]
 
 
-# Which platform roles may act on each stage. super_admin (and anyone with the
-# proc_admin permission) can act on ANY stage — handled in the service layer.
+# Which platform roles may act on each stage. super_admin and proc_admin get NO
+# signing bypass: an admin signs only a stage their own role (or an active
+# delegation) is mapped to here.
 #
 # If two DOAM roles are the same person at T&C (Managing Director and CEO, or
 # Financial Director and CFO), map both stages to that one role here rather than
@@ -405,8 +406,8 @@ STAGE_ROLES = {
 # refused. Procurement authority is granted here, in the document's terms, not
 # by handing out proc_approve.
 #
-# super_admin / proc_admin are absent on purpose: the platform-admin override is
-# checked BEFORE this in can_act(), stays audited, and must keep working.
+# super_admin / proc_admin are absent on purpose: admin roles hold no DOAM
+# authority and sign no rung (can_act() has no admin bypass).
 ROLE_LEVEL = {
     "board": "BOD",
     # L1 — commits major spend, and unbudgeted spend to the L1 limit (Table 4).

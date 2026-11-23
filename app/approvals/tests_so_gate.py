@@ -292,18 +292,22 @@ def run():
         assert ok, "the master data's own name was read as free text: %s" % msg
 
         # ---- SoD: the drafter of a forecast may not also agree it ------------
-        # A forecast is now a full alternative to the sales order, and can_act()
-        # grants a standing proc_admin override — so without this one holder of
-        # proc_admin could invent a cost object and spend against it alone.
+        # A forecast is now a full alternative to the sales order, so one person
+        # must not invent a cost object and spend against it alone.
         padmin = {"username": "padmin", "role": "it_director", "id": 77}   # holds proc_admin
         scd = {"username": "scd2", "role": "supply_chain_director", "id": 78}
-        ok, ref = svc.create_forecast({"ref": "FC-SELF"}, padmin)
+        scd1 = {"username": "scd1", "role": "supply_chain_director", "id": 79}
+        ok, ref = svc.create_forecast({"ref": "FC-SELF"}, scd1)
         assert ok, ref
         conn = get_db()
         fid = conn.execute("SELECT id FROM proc_forecasts WHERE ref=?",
                            ("FC-SELF",)).fetchone()["id"]
         conn.close()
+        # proc_admin is no SC-D signature: admins sign only what their role holds.
         ok, msg = svc.agree_forecast(fid, padmin)
+        assert not ok and msg == "not_authorised", (
+            "a proc_admin with no SC-D role agreed a forecast: %s / %s" % (ok, msg))
+        ok, msg = svc.agree_forecast(fid, scd1)
         assert not ok and msg == "own_forecast", (
             "the drafter agreed their own forecast: %s / %s" % (ok, msg))
         ok, msg = svc.agree_forecast(fid, scd)

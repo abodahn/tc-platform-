@@ -76,6 +76,18 @@ def run():
 
         seat = [0]
 
+        def rung_signer(pr_id, stage, i):
+            """A fresh holder of the role that signs `stage` on this request (the
+            escalated role when the rung climbed). Admin roles sign nothing they
+            do not hold, so a convenient super_admin is no signer."""
+            conn = get_db()
+            st = conn.execute("SELECT * FROM pr_steps WHERE pr_id=? AND stage=? "
+                              "AND status='pending' ORDER BY seq", (pr_id, stage)).fetchone()
+            conn.close()
+            roles = svc.step_roles(st) if st else svc.stage_role(stage)
+            role = sorted(r for r in roles if C.holds_authority(r, stage))[0]
+            return {"username": "signer%d" % i, "role": role, "id": 100 + i}
+
         def walk_to(pr_id, stage):
             """Sign rungs until `stage` is the live one — a DIFFERENT signer every
             time (the seat counter never repeats), so neither the self-approval
@@ -90,20 +102,24 @@ def run():
                     "status='pending'",
                     (pr_id, row(pr_id)["current_seq"])).fetchall()]
                 conn.close()
-                who = {"username": "signer%d" % i, "role": "super_admin", "id": 100 + i}
                 if stage in cur:
-                    return who
+                    return rung_signer(pr_id, stage, i)
                 assert cur, "ran out of ladder before reaching %s" % stage
+                who = rung_signer(pr_id, cur[0], i)
                 ok, msg = svc.act_on_step(pr_id, who, "approve")
                 assert ok, "could not walk past %s: %s" % (cur, msg)
             raise AssertionError("never reached %s" % stage)
 
-        def next_signer():
-            """A fresh eligible signer. Used where walk_to cannot be: signing is
-            the thing that must be refused."""
+        def next_signer(pr_id):
+            """A fresh eligible signer of the live rung. Used where walk_to cannot
+            be: signing is the thing that must be refused."""
             seat[0] += 1
-            return {"username": "signer%d" % seat[0], "role": "super_admin",
-                    "id": 100 + seat[0]}
+            conn = get_db()
+            stage = conn.execute("SELECT s.stage FROM pr_steps s JOIN pr_requests p "
+                                 "ON p.id=s.pr_id WHERE s.pr_id=? AND s.seq=p.current_seq "
+                                 "AND s.status='pending'", (pr_id,)).fetchone()["stage"]
+            conn.close()
+            return rung_signer(pr_id, stage, seat[0])
 
         def row(pr_id):
             conn = get_db()
@@ -437,7 +453,7 @@ def run():
         conn.commit(); conn.close()
         ok, msg = svc.dispose_pr(ret, {"username": "admin"})
         assert ok, msg
-        ok, msg = svc.act_on_step(ret, next_signer(), "approve")
+        ok, msg = svc.act_on_step(ret, next_signer(ret), "approve")
         assert not ok and msg == "retired", (
             "a record retired from the register was signed anyway: %s / %s" % (ok, msg))
         assert row(ret)["status"] == "pending", "the retired record advanced"

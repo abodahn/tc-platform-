@@ -161,8 +161,15 @@ def run():
             """One rung, signed by a fresh authorised person (no self-approval,
             no dual role). Returns (ok, msg) exactly as the web POST would."""
             seat[0] += 1
+            conn = get_db()
+            st = conn.execute("SELECT s.* FROM pr_steps s JOIN pr_requests p ON "
+                              "p.id=s.pr_id WHERE s.pr_id=? AND s.seq=p.current_seq "
+                              "AND s.status='pending'", (pr_id,)).fetchone()
+            conn.close()
+            # a real holder of the rung's role: admin roles sign nothing they do not hold
+            role = sorted(r for r in svc.step_roles(st) if C.holds_authority(r, st["stage"]))[0]
             return svc.act_on_step(
-                pr_id, {"username": "boss%d" % seat[0], "role": "super_admin",
+                pr_id, {"username": "boss%d" % seat[0], "role": role,
                         "id": 100 + seat[0]}, "approve")
 
         def sign_until(pr_id, stage):

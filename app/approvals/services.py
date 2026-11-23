@@ -286,12 +286,13 @@ def ladder_signer_health(conn=None):
 
     A rung whose roles have no active holder is a SILENT deadlock, not an error:
     resolve_escalation() treats "nobody eligible at all" as unchanged, so the
-    request simply sits there until a platform admin notices and signs it. This
-    reports the condition before a request lands on it.
+    request simply sits there until somebody is given the role or a delegation
+    (admins cannot sign it). This reports the condition before a request lands
+    on it.
 
     Covers the DOAM ladder and any legacy rung not in it, so the answer stays
     right whichever ladder DOAM_IN_FORCE selects. Per rung:
-      roles         the role keys that may sign it (admin override applied)
+      roles         the role keys that may sign it (stage-role override applied)
       level         the DOAM §3.2 authority level the rung commits at
       underlevel    those roles that do NOT hold it (they cannot sign the rung)
       unregistered  those roles that are in no role registry at all
@@ -344,8 +345,9 @@ def eligible_approvers(conn, stage, roles=None):
 
 
 def _proc_admins(conn):
-    """Usernames who can act on any stage / fix a stuck ladder: super_admin plus
-    every role holding the proc_admin permission."""
+    """Usernames alerted to fix a stuck ladder (by assigning a role or a
+    delegation — they do not sign it): super_admin plus every role holding the
+    proc_admin permission."""
     roles = [k for k in effective_roles()
              if k == "super_admin" or has_permission(k, "proc_admin")]
     if not roles:
@@ -384,8 +386,8 @@ def active_delegator_roles(username):
 
 def can_act(user, stage, _deleg=None, _roles=None):
     """May this user approve/reject the given ladder stage? True for the stage's
-    own roles, for super_admin / proc_admin, or for anyone actively delegated a
-    qualifying role by another user. Pass `_deleg` (a prefetched set from
+    own roles, or for anyone actively delegated a qualifying role by another
+    user. Admin roles get no signing bypass. Pass `_deleg` (a prefetched set from
     active_delegator_roles) and `_roles` (a prefetched stage_roles_map) when
     checking many stages in a loop so those lookups run one query in total
     instead of one per stage."""
@@ -394,9 +396,10 @@ def can_act(user, stage, _deleg=None, _roles=None):
     if (user.get("account_status") or "active") != "active":
         return False
     role = user.get("role")
-    if role == "super_admin" or user_has_permission(user, "proc_admin"):
-        return True
-    if not user_has_permission(user, "proc_approve"):
+    # No admin bypass: super_admin / proc_admin manage procurement but sign ONLY
+    # the rungs their own role (or an active delegation) holds. A purchasing user
+    # holding proc_admin once signed a Warehouse Manager rung through the bypass.
+    if not (user_has_permission(user, "proc_approve") or user_has_permission(user, "proc_admin")):
         return False
     if _roles is None:
         _roles = stage_roles_map()
@@ -476,9 +479,8 @@ def can_sign_role(role_key, stage=None):
     commit that money rather than parking on a signature can_act would refuse.
     Called without a stage (the settings dropdown) it answers the permission
     half only, which is the question that screen asks."""
-    if role_key == "super_admin" or has_permission(role_key, "proc_admin"):
-        return True
-    if not has_permission(role_key, "proc_approve"):
+    if not (has_permission(role_key, "proc_approve")
+            or has_permission(role_key, "proc_admin")):
         return False
     return stage is None or C.holds_authority(role_key, stage)
 
@@ -490,8 +492,8 @@ def resolve_escalation(conn, stage, requester, _roles=None, _chain=None,
     Returns (roles, reason):
       (None, "")             nothing changes — either somebody OTHER than the
                              requester can already sign this stage, or nobody at
-                             all is eligible for it (an unstaffed stage: exactly
-                             today's behaviour, an admin signs or it waits);
+                             all is eligible for it (an unstaffed stage: it
+                             waits, and ladder_signer_health() reports it);
       ({roles}, "escalated") nobody who normally signs the stage may sign it on
                              THIS request (they are the requester, or `_busy` — they
                              already signed another rung and the dual-role rule
@@ -530,11 +532,11 @@ def resolve_escalation(conn, stage, requester, _roles=None, _chain=None,
         nxt = {chain.get(r) or "" for r in level} - {""} - seen
         if not nxt:
             break
-        # Role half (admin, or holds the rung's authority level) here; the
-        # per-person half (active, proc_approve incl. extra_perms) is role_holders'.
+        # Role half (holds the rung's authority level — admin roles get no
+        # shortcut, can_act would refuse them) here; the per-person half
+        # (active, proc_approve incl. extra_perms) is role_holders'.
         found = {r for r in nxt
-                 if (r == "super_admin" or has_permission(r, "proc_admin")
-                     or C.holds_authority(r, stage))
+                 if C.holds_authority(r, stage)
                  and role_holders(conn, {r}) - {requester} - busy}
         if found:
             return found, "escalated"
@@ -551,7 +553,7 @@ def step_roles(step, _roles=None):
     """Effective signing roles for ONE ladder step: the escalated superior role(s)
     when the rung was escalated, else the stage's configured roles. A step whose
     esc_role is the empty string (the climb found nobody) keeps the stage's own
-    roles, so an admin can still sign it."""
+    roles, so a holder of those roles (or a delegate) can still sign it."""
     esc = _csv_set(_pr_field(step, "esc_role"))
     if esc:
         return esc
@@ -1965,9 +1967,9 @@ def submit_pr(pr_id, user, ip=None):
             # Parking keeps every guarantee that matters: the rung is written with
             # esc_role='' so step_roles() falls back to the stage's own roles, which
             # means the REQUESTER is still refused by the self-approval check and only
-            # an admin (or a delegate, once one exists) can clear it. Nothing is
-            # silently stuck either — every proc_admin gets a CRITICAL alert naming
-            # the rung and the three ways to unblock it. This is exactly what
+            # a delegate or a newly assigned role holder can clear it (admins have no
+            # signing bypass). Nothing is silently stuck either — every proc_admin
+            # gets a CRITICAL alert naming the rung and the two ways to unblock it. This is exactly what
             # _reconcile_value_ladder already does for a value rung that joins after
             # pricing, so submit and reconcile now behave the same way.
             labels = ", ".join(stage_label(s) for s in blocked)
@@ -1979,13 +1981,13 @@ def submit_pr(pr_id, user, ip=None):
                   f"signer for it, and no superior above that role has anyone free to "
                   f"sign it (either nobody is configured above it, or every superior is "
                   f"the requester or the only possible signer of another rung of this "
-                  f"same request). An admin or a delegate must clear that rung.", ip)
+                  f"same request). A delegate or a newly assigned role holder must clear that rung.", ip)
             notify_users(conn, _proc_admins(conn), "critical",
                          "Approval rung needs a signer",
                          f"{pr['pr_no']} is circulating, but {labels} has no one who may "
                          f"sign it: {pr['requester']} raised the request and is the only "
-                         f"eligible signer. Delegate the authority, add a second role "
-                         f"holder, or sign as admin.",
+                         f"eligible signer. Delegate the authority or add a second role "
+                         f"holder.",
                          link=_pr_link(pr_id))
         # Two ADJACENT rungs that both escalate to the SAME role are one
         # signature, not two, and asking for both is a deadlock: segregation of
@@ -2387,7 +2389,7 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                       f"{stage_label(s)} joined the ladder after pricing, but nobody who "
                       f"normally signs it may on this request (the originator, or they "
                       f"already signed another rung) and no superior above that role has "
-                      f"anyone free to sign it — a delegation or an admin is needed.")
+                      f"anyone free to sign it — a delegation or a second role holder is needed.")
                 notify_users(conn, _proc_admins(conn), "critical",
                              "Approval stage cannot be signed",
                              f"{(row['pr_no'] if row else pr_id)}: {stage_label(s)} was "
@@ -4608,15 +4610,14 @@ def agree_forecast(fc_id, user):
     WHO: the DOAM planning authority. Table 4 L2 — "SC-D owns operational and
     inventory replenishment" — so this is exactly the authority that signs the
     'scd' rung of the approval ladder, and it is checked with the SAME can_act()
-    the ladder uses rather than a new permission: supply_chain_director, plus
-    the standing super_admin / proc_admin override that can_act() already grants.
+    the ladder uses rather than a new permission: supply_chain_director or an
+    active delegate of one. Admin roles get no override here either.
 
     Separation of duties: the drafter may not be the agreer. Anyone who may
-    raise a request may draft a forecast, and can_act("scd") carries the
-    standing super_admin / proc_admin override — without this guard one holder
-    of proc_admin could draft a forecast, agree it themselves and then raise
-    unlimited direct-material spend against it with no client order and no
-    second signature. Same shape as the SoD escalation in submit_pr.
+    raise a request may draft a forecast — without this guard one SC-D could
+    draft a forecast, agree it themselves and then raise unlimited
+    direct-material spend against it with no client order and no second
+    signature. Same shape as the SoD escalation in submit_pr.
     Returns (ok, msg)."""
     if not can_act(user, "scd"):
         return False, "not_authorised"
@@ -5082,8 +5083,9 @@ def authorize_advance(pr_id, pct, guarantee_ref, user, ip=None):
         guarantee_ref = str(guarantee_ref or "").strip()[:120]
         if rule["guarantee"] and not guarantee_ref:
             return False, "guarantee_required"
-        # Who is signing. can_act() already encodes delegation, proc_admin and
-        # the permission check — a second role test here would drift from it.
+        # Who is signing. can_act() already encodes delegation, the authority
+        # level and the permission check (no admin bypass) — a second role test
+        # here would drift from it.
         _roles = stage_roles_map(conn)
         stage = next((s for s in rule["stages"] if can_act(user, s, _roles=_roles)), None)
         if not stage:

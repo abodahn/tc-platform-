@@ -36,7 +36,7 @@ def run():
 
     with app.app_context():
         from app.db import get_db
-        from app.approvals import services as svc
+        from app.approvals import services as svc, constants as C
         from app.maintenance import workflow as wf, eng_justification as E
 
         admin = {"username": "admin", "role": "super_admin", "id": 1}
@@ -68,14 +68,18 @@ def run():
             masks the answer we are actually testing."""
             for n in range(1, 12):
                 conn = get_db()
-                stages = [r["stage"] for r in conn.execute(
-                    "SELECT stage FROM pr_steps WHERE pr_id=? AND seq="
+                steps = conn.execute(
+                    "SELECT * FROM pr_steps WHERE pr_id=? AND seq="
                     "(SELECT current_seq FROM pr_requests WHERE id=?) AND status='pending'",
-                    (pr_id, pr_id)).fetchall()]
+                    (pr_id, pr_id)).fetchall()
                 conn.close()
+                stages = [r["stage"] for r in steps]
                 if not stages:
                     return False, "no_active_step"
-                signer = {"username": "sig%d" % n, "role": "super_admin", "id": 100 + n}
+                # a real holder of the rung's role: admins sign only rungs they hold
+                role = sorted(x for x in svc.step_roles(steps[0])
+                              if C.holds_authority(x, steps[0]["stage"]))[0]
+                signer = {"username": "sig%d" % n, "role": role, "id": 100 + n}
                 r = svc.act_on_step(pr_id, signer, "approve")
                 if "purchasing" in stages:
                     return r

@@ -214,8 +214,9 @@ def run():
             tr = svc.I18N.get(key) or ()
             chk("findings wording %-22s is real EN/AR/TR" % key,
                 len(tr) == 3 and all(t.strip() for t in tr) and len(set(tr)) == 3)
-        # A platform admin is still able to clear the rung — the override path.
-        chk("a platform admin can still sign the parked rung", svc.can_act(admin, "control"))
+        # No override path: a platform admin signs only rungs their role holds.
+        # The rung is cleared by mapping a role that holds L1, or a delegation.
+        chk("a platform admin can NOT sign the unsignable rung", not svc.can_act(admin, "control"))
         svc.set_stage_meta("control", reset_role=True, user=admin)
 
         # ---- 4. the climb walks PAST an under-level superior ---------------

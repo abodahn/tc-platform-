@@ -138,9 +138,19 @@ def run():
         # §4.3's lowest sourcing band still wants one recorded quote; that gate is
         # not this control's business, so satisfy it and let the ladder run.
         svc.add_quote(c, {"vendor": "Lamp Co", "amount": 5000}, buyer)
-        for i, admin in enumerate(({"username": "boss%d" % n, "role": "super_admin",
-                                    "id": 100 + n} for n in range(1, 9))):
-            ok, msg = svc.act_on_step(c, admin, "approve")
+        from app.approvals import constants as C
+        for i in range(8):
+            conn = get_db()
+            st = conn.execute("SELECT s.* FROM pr_steps s JOIN pr_requests p ON "
+                              "p.id=s.pr_id WHERE s.pr_id=? AND s.seq=p.current_seq "
+                              "AND s.status='pending'", (c,)).fetchone()
+            conn.close()
+            if st is None:
+                break
+            # a real holder of the rung's role: admin roles sign nothing they do not hold
+            role = sorted(r for r in svc.step_roles(st) if C.holds_authority(r, st["stage"]))[0]
+            ok, msg = svc.act_on_step(c, {"username": "boss%d" % (i + 1), "role": role,
+                                          "id": 101 + i}, "approve")
             if msg == "not_pending":
                 break
             assert ok, "the DOAM permits unbudgeted spend up to the L1 limit — it " \

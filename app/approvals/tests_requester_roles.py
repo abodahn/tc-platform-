@@ -158,13 +158,21 @@ def run():
         chk("it carries a director rung", own, [s["stage"] for s in steps])
         # Owner's ladder (2026-11-17): the CEO rung is on every request and this
         # site has ONE CEO, so the CEO may not take the director's rung as well
-        # (dual_role would then strand the CEO rung). The rung is PARKED for an
-        # admin or a delegation; act_on_step still refuses the requester.
+        # (dual_role would then strand the CEO rung). The rung is PARKED: admins
+        # are alerted and staff it with a role holder or a delegation — they do
+        # not sign it themselves; act_on_step still refuses the requester.
         _admin = {"username": "admin", "role": "super_admin"}
+
+        def other_holder(s):
+            role = sorted(r for r in svc.step_roles(s) if C.holds_authority(r, s["stage"]))[0]
+            return {"username": "rq_other_" + role, "role": role}
+
         for s in own:
             chk("%s rung is parked, not re-pointed onto the sole CEO (esc_role=%r)"
                 % (s["stage"], s["esc_role"]), s["esc_role"] == "")
-            chk("...an admin can sign it", svc.can_act_step(_admin, s))
+            chk("...an admin who does not hold the role cannot sign it",
+                not svc.can_act_step(_admin, s))
+            chk("...another holder of the rung's role can", svc.can_act_step(other_holder(s), s))
 
         # ---- 4. the CFO --------------------------------------------------------
         print("\n4. the CFO raises a 600,000 request")
@@ -175,7 +183,9 @@ def run():
         for s in cfo_rung:
             chk("the CFO rung is parked, not re-pointed onto the sole CEO (esc_role=%r)"
                 % s["esc_role"], s["esc_role"] == "")
-            chk("...an admin can sign it", svc.can_act_step(_admin, s))
+            chk("...an admin who does not hold the role cannot sign it",
+                not svc.can_act_step(_admin, s))
+            chk("...another holder of the rung's role can", svc.can_act_step(other_holder(s), s))
 
         # ---- 5. the top of the chart ----------------------------------------
         print("\n5. the CEO raises a 3,000,000 request (nobody above the CEO)")
@@ -197,13 +207,14 @@ def run():
                 c.commit()
                 admin = dict(c.execute("SELECT * FROM users WHERE role='super_admin' "
                                        "AND is_active=1 LIMIT 1").fetchone())
+                md = mkuser(c, "rq_md", "managing_director")
             finally:
                 c.close()
             ok_, msg = svc.act_on_step(pr_id, ceo, "approve")
             chk("the CEO is REFUSED on his own top rung", (not ok_) and msg == "self_approval",
                 msg)
             print("        (esc_role=%r: nobody sits above the CEO, so this rung is"
-                  " signed by an admin, a Managing Director, or a delegation)" % s["esc_role"])
+                  " signed by a Managing Director or a delegation; admins are alerted)" % s["esc_role"])
             # 3,000,000 also needs competing quotes (RFQ gate) — the buyer's job,
             # skipped by the walk above. Supply them so only the CEO rung is tested.
             from app.approvals import constants as _C
@@ -211,7 +222,10 @@ def run():
                 svc.add_quote(pr_id, {"vendor": "RQ Vendor %d" % i, "amount": 3_000_000 + i},
                               buyer)
             ok_, msg = svc.act_on_step(pr_id, admin, "approve")
-            chk("...and an admin can sign it, so it is never stranded", ok_, msg)
+            chk("...a super_admin is refused it (holds no CEO-rung role)",
+                (not ok_) and msg == "forbidden", msg)
+            ok_, msg = svc.act_on_step(pr_id, md, "approve")
+            chk("...and the Managing Director signs it, so it is never stranded", ok_, msg)
 
     # ---- 6. the form itself --------------------------------------------------
     print("\n6. the request form opens for them")

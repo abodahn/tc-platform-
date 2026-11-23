@@ -141,10 +141,16 @@ with app.app_context():
        % own_step["esc_role"], own_step["esc_role"] == "")
     ok("the requester cannot sign the parked rung",
        svc.act_on_step(pr2, wm, "approve")[1] == "self_approval")
-    ok("a platform admin clears it", svc.act_on_step(pr2, admin, "approve")[0])
-    ok("the parked rung is signed by the admin, not the requester",
+    ok("a platform admin who holds no rung role can NOT clear it (forbidden)",
+       svc.act_on_step(pr2, admin, "approve")[1] == "forbidden")
+    # The way out is staffing: the alerted admin assigns the store role to
+    # somebody else (or delegates it), and THAT person signs.
+    store2 = mk("ab_store2", "storekeeper")
+    ok("a newly assigned storekeeper clears it", svc.act_on_step(pr2, store2, "approve")[0])
+    ok("the parked rung is signed by the role holder, not the requester",
        [s for s in steps(pr2) if s["stage"] == "warehouse"][0]["approver_user"]
-       == admin["username"])
+       == "ab_store2")
+    mk("ab_store2", "storekeeper", active=0)    # back to one store person for section 3
     # Pricing no longer appends rungs (every rung is on from submit), so nothing
     # can join later onto somebody who already signed.
     _before = [r["stage"] for r in steps(pr2)]
