@@ -67,6 +67,17 @@ def run():
             chk("preview carries no price field",
                 all(set(l) == {"item", "qty", "unit"} for l in lines))
             chk("empty input -> no query, empty map", svc.items_preview([]) == {})
+            w = svc.waiting_on([svc.get_pr(pr_id)["pr"]])
+            chk("waiting_on names the current rung of a pending request",
+                w.get(pr_id, {}).get("kind") in ("sign", "nobody") and w[pr_id]["stage"], w)
+            chk("...and never lists the requester as its signer",
+                "listitems_req" not in w.get(pr_id, {}).get("who", []), w)
+            d_id, _ = svc.create_pr({"title": "draft one", "department": "Maintenance"},
+                                    [{"item": "X", "qty": 1, "unit_price": 0}],
+                                    users["req"], submit=False, priced=False)
+            wd = svc.waiting_on([svc.get_pr(d_id)["pr"]])
+            chk("a draft waits on its requester", wd.get(d_id, {}).get("kind") == "requester", wd)
+            chk("empty list -> empty map", svc.waiting_on([]) == {})
             total = "{:,.0f}".format(svc.get_pr(pr_id)["pr"]["total"] or 0)
 
         def line_of(h):
@@ -82,6 +93,9 @@ def run():
                 r = cl.get(url)
                 html = r.get_data(as_text=True)
                 chk("%s %s opens" % (who, url), r.status_code == 200, r.status_code)
+                if url == "/procurement/list":
+                    chk("%s list has the Waiting for column" % who,
+                        'data-i18n="proc.waiting_for"' in html)
                 if url == "/procurement/" and pr_no not in html:
                     continue   # landing shows only recent/queue; list page is the contract
                 chk("%s %s shows the first 3 items" % (who, url),

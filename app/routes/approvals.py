@@ -249,7 +249,8 @@ def listing():
     return render_template("approvals/list.html", active="proc_list",
                            prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES,
                            money=svc.money_views(user, prs),
-                           items=svc.items_preview(prs))
+                           items=svc.items_preview(prs),
+                           waiting=svc.waiting_on(prs))
 
 
 # --------------------------------------------------------------------------

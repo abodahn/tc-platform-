@@ -50,6 +50,7 @@
         <th data-i18n="proc.requester">Requester</th>
         <th data-i18n="proc.dept">Department</th>
         <th data-i18n="proc.status">Status</th>
+        <th data-i18n="proc.waiting_for">Waiting for</th>
         <th data-i18n="proc.total">Total</th>
         <th data-i18n="proc.date">Date</th>
       </tr></thead>
@@ -72,6 +73,18 @@
           <td>{{ pr.requester_name or pr.requester }}</td>
           <td>{{ pr.department or '—' }}</td>
           <td><span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span></td>
+          {% set w = waiting.get(pr.id) %}
+          <td style="font-size:12.5px;min-width:160px">
+            {% if not w %}<span class="muted">—</span>
+            {% elif w.kind == 'hold' %}<span class="badge b-pending" data-i18n="proc.waiting_hold">On hold</span>
+            {% elif w.kind == 'requester' %}<span class="muted" data-i18n="proc.waiting_requester">Requester</span>:
+              <b>{{ w.who[0] }}</b>
+            {% else %}
+              <div class="muted">{{ w.stage }}</div>
+              {% if w.kind == 'nobody' %}<b style="color:var(--crit)" data-i18n="proc.waiting_nobody">No signer — admin must assign</b>
+              {% else %}<b>{{ w.who|join(', ') }}</b>{% endif %}
+            {% endif %}
+          </td>
           <td style="font-variant-numeric:tabular-nums">{% if money.get(pr.id) %}{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}{% else %}—{% endif %}</td>
           <td class="muted nw" style="font-size:12px">{{ pr.request_date or (pr.created_at or '')[:10] }}</td>
         </tr>

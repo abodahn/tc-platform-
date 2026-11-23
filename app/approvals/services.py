@@ -1213,6 +1213,61 @@ def list_prs(status=None, requester=None, limit=500):
         conn.close()
 
 
+def waiting_on(prs):
+    """{pr_id: {"stage": label or None, "who": [full names], "kind": ...}} for the
+    list's "Waiting for" column. kind: 'sign' (a pending rung: who may sign it,
+    delegates included, never the requester), 'nobody' (a pending rung nobody
+    may sign), 'requester' (draft / sent back), 'hold'. Others are absent.
+    Signer sets are computed once per (stage, escalated roles), so a long list
+    costs a handful of queries, not one per row."""
+    out = {}
+    pend = [p for p in prs if p.get("status") == "pending"]
+    for p in prs:
+        if p.get("status") == "pending" and p.get("hold_reason"):
+            out[p["id"]] = {"kind": "hold", "stage": None, "who": []}
+        elif p.get("status") in ("draft", "rejected"):
+            out[p["id"]] = {"kind": "requester", "stage": None,
+                            "who": [p.get("requester_name") or p.get("requester") or ""]}
+    pend = [p for p in pend if p["id"] not in out]
+    if not pend:
+        return out
+    conn = get_db()
+    try:
+        ph = ",".join("?" * len(pend))
+        steps = conn.execute(
+            "SELECT s.pr_id, s.stage, s.esc_role FROM pr_steps s JOIN pr_requests r "
+            "ON r.id=s.pr_id WHERE s.pr_id IN (%s) AND s.status='pending' "
+            "AND s.seq=r.current_seq ORDER BY s.pr_id, s.id" % ph,
+            tuple(p["id"] for p in pend)).fetchall()
+        cache, names = {}, {}
+        by_pr = {}
+        for st in steps:
+            key = (st["stage"], st["esc_role"])
+            if key not in cache:
+                esc = st["esc_role"]
+                cache[key] = set() if esc == "" else set(
+                    eligible_approvers(conn, st["stage"], roles=_csv_set(esc) or None))
+            by_pr.setdefault(st["pr_id"], []).append((st["stage"], cache[key]))
+        users = set().union(*cache.values()) if cache else set()
+        if users:
+            uph = ",".join("?" * len(users))
+            for r in conn.execute("SELECT username, full_name FROM users WHERE username IN (%s)"
+                                  % uph, tuple(users)).fetchall():
+                names[r["username"]] = r["full_name"] or r["username"]
+    finally:
+        conn.close()
+    for p in pend:
+        rungs = by_pr.get(p["id"], [])
+        if not rungs:
+            continue
+        who = sorted({names.get(u, u) for _, ppl in rungs for u in ppl
+                      if u != p.get("requester")})
+        out[p["id"]] = {"kind": "sign" if who else "nobody",
+                        "stage": " + ".join(dict.fromkeys(stage_label(st) for st, _ in rungs)),
+                        "who": who}
+    return out
+
+
 def items_preview(prs, shown=3):
     """{pr_id: (first `shown` lines as {item, qty, unit}, count of the rest)} for
     the list rows, in ONE query. Name/qty/unit only — never a price column, so
