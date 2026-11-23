@@ -2666,6 +2666,7 @@
   "proc.issue_po": "إصدار أمر الشراء",
   "proc.item": "الصنف",
   "proc.items": "الأصناف",
+  "proc.items_more": "أخرى",
   "proc.k_approved": "معتمد",
   "proc.k_myqueue": "بانتظار قراري",
   "proc.k_pending": "بانتظار الاعتماد",

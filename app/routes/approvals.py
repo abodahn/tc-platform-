@@ -113,6 +113,7 @@ def index():
         "approvals/index.html", active="procurement",
         kpi=svc.counts(user), queue=queue, recent=recent,
         money=svc.money_views(user, queue + recent),
+        items=svc.items_preview(queue + recent),
         show_value=(svc.money_view(user) == "full"),
         can_create=user_can("proc_create"))
 
@@ -247,7 +248,8 @@ def listing():
     prs = svc.list_prs(status=status, requester=(user["username"] if mine else None))
     return render_template("approvals/list.html", active="proc_list",
                            prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES,
-                           money=svc.money_views(user, prs))
+                           money=svc.money_views(user, prs),
+                           items=svc.items_preview(prs))
 
 
 # --------------------------------------------------------------------------

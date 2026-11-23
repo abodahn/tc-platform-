@@ -1099,6 +1099,32 @@ def list_prs(status=None, requester=None, limit=500):
         conn.close()
 
 
+def items_preview(prs, shown=3):
+    """{pr_id: (first `shown` lines as {item, qty, unit}, count of the rest)} for
+    the list rows, in ONE query. Name/qty/unit only — never a price column, so
+    the line is safe to show a requester who must not see money."""
+    ids = list(dict.fromkeys(_pr_field(pr, "id") for pr in prs))
+    if not ids:
+        return {}
+    conn = get_db()
+    try:
+        ph = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT pr_id, item, qty, unit FROM pr_items WHERE pr_id IN ({ph}) "
+            "ORDER BY pr_id, seq, id", tuple(ids)).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        lines, more = out.get(r["pr_id"], ([], 0))
+        if len(lines) < shown:
+            lines.append({"item": r["item"] or "", "qty": r["qty"], "unit": r["unit"] or ""})
+        else:
+            more += 1
+        out[r["pr_id"]] = (lines, more)
+    return out
+
+
 def my_queue(user):
     """PRs currently waiting on a stage this user is allowed to act on.
 

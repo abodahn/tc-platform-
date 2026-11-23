@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "approvals/_items_line.html" import items_line %}
 {% block content_class %}proc{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
 {% block title %}Requests{% endblock %}
@@ -66,7 +67,8 @@
                   {{ '🔴 Top urgent' if pr.priority == 'top_urgent' else '🟠 Urgent' }}</span>
                 {% endif %}
               </div>
-              <div class="muted" style="font-size:12px">{{ pr.title }}</div></td>
+              <div class="muted" style="font-size:12px">{{ pr.title }}</div>
+              {{ items_line(items.get(pr.id)) }}</td>
           <td>{{ pr.requester_name or pr.requester }}</td>
           <td>{{ pr.department or '—' }}</td>
           <td><span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span></td>

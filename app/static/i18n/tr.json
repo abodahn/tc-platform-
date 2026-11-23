@@ -2666,6 +2666,7 @@
   "proc.issue_po": "Satın Alma Emri Ver",
   "proc.item": "Kalem",
   "proc.items": "Kalemler",
+  "proc.items_more": "daha",
   "proc.k_approved": "Onaylandı",
   "proc.k_myqueue": "Beni bekliyor",
   "proc.k_pending": "Onay bekliyor",
