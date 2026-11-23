@@ -69,13 +69,6 @@ def audit(conn, pr_id, actor, action, detail="", ip=None):
         "VALUES (?,?,?,?,?,?)", (pr_id, actor, action, detail, ip, _now()))
 
 
-def bell(conn, severity, title, message, link=None):
-    """Broadcast an event on the platform notifications bell (module=procurement)."""
-    conn.execute(
-        "INSERT INTO notifications (severity, module, title, message, link, created_at) "
-        "VALUES (?,?,?,?,?,?)", (severity, "procurement", title, message, link, _now()))
-
-
 def notify_users(conn, usernames, severity, title, message, link=None, module="procurement"):
     """Send a per-user bell notification to each username (deduped, skips blanks),
     and, when SMTP is configured, an email to those who allow it."""
@@ -344,18 +337,85 @@ def eligible_approvers(conn, stage, roles=None):
     return list(stage_signers(conn, stage, roles))
 
 
+def _perm_holders(conn, perm):
+    """Active accounts holding `perm` (a name or a tuple of names) through their
+    role — DB overlay included, '*' counts — or their own extra_perms."""
+    return [r["username"] for r in conn.execute(
+        "SELECT username, role, extra_perms FROM users WHERE is_active=1 "
+        "AND COALESCE(account_status,'active')='active'").fetchall()
+        if user_has_permission(dict(r), perm)]
+
+
 def _proc_admins(conn):
     """Usernames alerted to fix a stuck ladder (by assigning a role or a
-    delegation — they do not sign it): super_admin plus every role holding the
-    proc_admin permission."""
-    roles = [k for k in effective_roles()
-             if k == "super_admin" or has_permission(k, "proc_admin")]
-    if not roles:
-        return []
-    ph = ",".join(["?"] * len(roles))
-    return [r["username"] for r in conn.execute(
-        f"SELECT username FROM users WHERE is_active=1 AND role IN ({ph})",
-        tuple(roles)).fetchall()]
+    delegation — they do not sign it): super_admin plus every active account
+    holding proc_admin, by role or per-user grant."""
+    return _perm_holders(conn, "proc_admin")
+
+
+def _step_signers(conn, pr, step):
+    """Who may sign this pending step of this request — never the requester.
+    Empty for a parked rung (esc_role '': the climb found nobody free) and for a
+    rung whose roles have no active holder; both need an admin, not a prompt."""
+    esc = _pr_field(step, "esc_role")
+    if esc == "":
+        return set()
+    people = eligible_approvers(conn, step["stage"], roles=_csv_set(esc) or None)
+    return set(people) - {pr["requester"]}
+
+
+def _prompt_rung(conn, pr, rows, message, exclude=(), alerted=()):
+    """'New request to sign' to everyone who may sign `rows` (the rung that just
+    became current). A step nobody may sign sends the proc admins one critical
+    alert instead, unless its stage is in `alerted` (already told this pass)."""
+    targets, orphan = set(), []
+    for r in rows:
+        people = _step_signers(conn, pr, r)
+        targets |= people
+        if not people and r["stage"] not in alerted:
+            orphan.append(r["stage"])
+    notify_users(conn, targets - set(exclude), "warning", "New request to sign", message,
+                 link=_pr_link(pr["id"]))
+    _alert_no_signer(conn, pr, orphan)
+
+
+def _alert_no_signer(conn, pr, stages):
+    if not stages:
+        return
+    labels = " + ".join(stage_label(s) for s in stages)
+    notify_users(conn, _proc_admins(conn), "critical", "Approval rung has no signer",
+                 f"{pr['pr_no']} is waiting at {labels}, but nobody other than the "
+                 f"requester ({pr['requester']}) may sign it. Delegate the authority or add "
+                 f"a second role holder.", link=_pr_link(pr["id"]))
+
+
+_SIGN_PROMPTS = ("New request to sign", "Approval overdue", "Approval overdue (level 2)")
+
+
+def _clear_sign_prompts(conn, pr, steps, keep=()):
+    """A rung left pending: mark read the unread sign/overdue prompts this request
+    sent to anyone who could sign `steps`, except whoever can still sign a `keep`
+    step (a co-pending parallel rung). Proc admins count as recipients for any rung:
+    they get the overdue alerts (they cannot sign it). Other rows are left alone."""
+    def holders(rows):
+        out = set(_proc_admins(conn)) if rows else set()
+        for s in rows:
+            out |= set(eligible_approvers(
+                conn, s["stage"], roles=_csv_set(_pr_field(s, "esc_role")) or None))
+        return out
+    still = holders(keep)
+    if keep:  # whoever already signed a rung of this request may not sign another
+        still -= {r["approver_user"] for r in conn.execute(
+            "SELECT approver_user FROM pr_steps WHERE pr_id=? AND status='approved'",
+            (pr["id"],)).fetchall()}
+    users = holders(steps) - still
+    if not users:
+        return
+    ph = ",".join(["?"] * len(users))
+    conn.execute(
+        f"UPDATE notifications SET is_read=1 WHERE module='procurement' AND link=? "
+        f"AND COALESCE(is_read,0)=0 AND title IN (?,?,?) AND target_user IN ({ph})",
+        (_pr_link(pr["id"]),) + _SIGN_PROMPTS + tuple(users))
 
 
 def _pr_link(pr_id):
@@ -2069,15 +2129,11 @@ def submit_pr(pr_id, user, ip=None):
         # Notify every approver on the first rung that a request needs signing —
         # the ESCALATED role when that rung was re-pointed, so the notification
         # reaches whoever actually has to sign it.
-        targets = set()
-        for stage in rungs[0]:
-            e_role = (esc.get(stage) or (None, None))[0]
-            targets |= set(eligible_approvers(conn, stage,
-                                              roles=_csv_set(e_role) or None))
         first_label = " + ".join(stage_label(s) for s in rungs[0])
-        notify_users(conn, list(targets), "warning", "New request to sign",
+        _prompt_rung(conn, pr, [{"stage": s, "esc_role": (esc.get(s) or (None,))[0]}
+                                for s in rungs[0]],
                      f"{pr['pr_no']} ({pr['title'] or ''}) needs your {first_label} approval.",
-                     link=_pr_link(pr_id))
+                     alerted=blocked)
         conn.commit()
         return True, ""
     finally:
@@ -2219,20 +2275,19 @@ def _withdraw_signatures_on_changed_terms(conn, pr, before, uname, ip, why):
     reapproval_users = {s["approver_user"] for s in steps if s["approver_user"]} | {pr["requester"]}
     new_seq = min(step["seq"] for step in steps)
     if new_seq < (pr["current_seq"] or 0):
+        _clear_sign_prompts(conn, pr, conn.execute(
+            "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr["id"], pr["current_seq"])).fetchall())
         conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (new_seq, pr["id"]))
         conn.execute("UPDATE pr_steps SET activated_at=? WHERE pr_id=? AND seq=?",
                      (now, pr["id"], new_seq))
         rows = conn.execute(
             "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
             (pr["id"], new_seq)).fetchall()
-        targets = set()
-        for r in rows:
-            targets |= set(eligible_approvers(
-                conn, r["stage"], roles=_csv_set(_pr_field(r, "esc_role")) or None))
-        notify_users(conn, targets - reapproval_users, "warning", "New request to sign",
+        _prompt_rung(conn, pr, rows,
                      f"{pr['pr_no']} needs your "
                      f"{' + '.join(stage_label(r['stage']) for r in rows)} approval.",
-                     link=_pr_link(pr["id"]))
+                     exclude=reapproval_users)
     who = ", ".join("%s (%s)" % (stage_label(s["stage"]), s["approver_user"] or "")
                     for s in steps)
     audit(conn, pr["id"], uname, "signatures_recollected",
@@ -2732,6 +2787,10 @@ def send_back(pr_id, to_seq, reason, user, ip=None):
             "approver_role=NULL, acted_at=NULL, comment=NULL "
             "WHERE pr_id=? AND seq >= ?", (pr_id, to_seq))
         conn.execute("UPDATE pr_requests SET current_seq=? WHERE id=?", (to_seq, pr_id))
+        _clear_sign_prompts(conn, pr, cur)
+        _alert_no_signer(conn, pr, [r["stage"] for r in conn.execute(
+            "SELECT * FROM pr_steps WHERE pr_id=? AND seq=?", (pr_id, to_seq)).fetchall()
+            if not _step_signers(conn, pr, r)])
 
         uname = (user or {}).get("username") or "system"
         lost = [r for r in reopened if r["approver_user"]]
@@ -3083,6 +3142,9 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
                 (comment or f"Rejected at {stage_label(step['stage'])}", pr_id))
             audit(conn, pr_id, uname, "rejected",
                   f"{stage_label(step['stage'])} rejected: {comment or ''}", ip)
+            _clear_sign_prompts(conn, pr, conn.execute(
+                "SELECT * FROM pr_steps WHERE pr_id=? AND seq=?",
+                (pr_id, step["seq"])).fetchall())
             notify_users(conn, [pr["requester"]], "warning", "Request rejected",
                          f"{pr['pr_no']} was rejected at {stage_label(step['stage'])}"
                          + (f": {comment}" if comment else "."), link=_pr_link(pr_id))
@@ -3112,17 +3174,20 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
 
         # Parallel rung: if co-approvers at this seq are still pending, wait.
         remaining = conn.execute(
-            "SELECT COUNT(*) c FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
-            (pr_id, step["seq"])).fetchone()["c"]
-        if remaining > 0:
-            for r in _reescalate_dual_role(conn, pr_id, pr, step["seq"]):
-                notify_users(conn, eligible_approvers(
-                    conn, r["stage"], roles=_csv_set(r["esc_role"])),
-                    "warning", "New request to sign",
-                    f"{pr['pr_no']} needs your {stage_label(r['stage'])} approval.",
-                    link=_pr_link(pr_id))
+            "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+            (pr_id, step["seq"])).fetchall()
+        if remaining:
+            escalated = _reescalate_dual_role(conn, pr_id, pr, step["seq"])
+            # re-read: the re-escalation may have moved the co-pending rung to a superior
+            _clear_sign_prompts(conn, pr, [step], keep=conn.execute(
+                "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+                (pr_id, step["seq"])).fetchall())
+            for r in escalated:
+                _prompt_rung(conn, pr, [r],
+                             f"{pr['pr_no']} needs your {stage_label(r['stage'])} approval.")
             conn.commit()
             return True, "partial"
+        _clear_sign_prompts(conn, pr, [step])
 
         # Whole rung approved -> advance to the next rung (activate all its steps).
         nxt_seq = conn.execute(
@@ -3136,14 +3201,9 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             nxt_rows = conn.execute(
                 "SELECT * FROM pr_steps WHERE pr_id=? AND seq=?", (pr_id, nxt_seq)).fetchall()
             nxt_stages = [r["stage"] for r in nxt_rows]
-            targets = set()
-            for r in nxt_rows:
-                targets |= set(eligible_approvers(
-                    conn, r["stage"], roles=_csv_set(_pr_field(r, "esc_role")) or None))
-            notify_users(conn, list(targets), "warning", "New request to sign",
+            _prompt_rung(conn, pr, nxt_rows,
                          f"{pr['pr_no']} needs your "
-                         f"{' + '.join(stage_label(s) for s in nxt_stages)} approval.",
-                         link=_pr_link(pr_id))
+                         f"{' + '.join(stage_label(s) for s in nxt_stages)} approval.")
             conn.commit()
             return True, "advanced"
 
@@ -3409,10 +3469,11 @@ def issue_po(pr_id, user, ip=None, force=False):
         audit(conn, pr_id, user.get("username"), "po_issued",
               f"PO {po_no} issued" if len(pos) == 1
               else f"{len(pos)} purchase orders issued, one per vendor: {each}", ip)
-        bell(conn, "info", "Purchase Order issued",
-             f"{po_no} issued for {pr['pr_no']}." if len(pos) == 1
-             else f"{len(pos)} purchase orders issued for {pr['pr_no']}, "
-                  f"one per vendor: {each}.")
+        notify_users(conn, [pr["requester"]] + _perm_holders(conn, "proc_receive"),
+                     "info", "Purchase Order issued",
+                     f"{po_no} issued for {pr['pr_no']}." if len(pos) == 1
+                     else f"{len(pos)} purchase orders issued for {pr['pr_no']}, "
+                          f"one per vendor: {each}.", link=_pr_link(pr_id))
         conn.commit()
         return True, po_no
     finally:
@@ -3526,8 +3587,10 @@ def revise_po(pr_id, reason, user, ip=None):
             (pr_id, new_rev, reason, pr["po_no"], snapshot, uname, _now()))
         conn.execute("UPDATE pr_requests SET po_rev=? WHERE id=?", (new_rev, pr_id))
         audit(conn, pr_id, uname, "po_revised", f"PO revision {new_rev}: {reason}", ip)
-        bell(conn, "info", "PO revised",
-             f"{pr['po_no']} (ref {pr['pr_no']}) revised — Rev {new_rev}: {reason}")
+        notify_users(conn, [pr["requester"]] + _perm_holders(conn, "proc_receive"),
+                     "info", "PO revised",
+                     f"{pr['po_no']} (ref {pr['pr_no']}) revised — Rev {new_rev}: {reason}",
+                     link=_pr_link(pr_id))
         conn.commit()
         return True, new_rev
     finally:
@@ -3571,9 +3634,11 @@ def _record_grn(conn, pr_id, pr, lines, user, notes=None, reject_reason=None):
         detail = ", ".join(f"{l['item']} +{l['quarantined']:g}" for l in excess)
         audit(conn, pr_id, uname, "over_delivery_quarantined",
               f"{grn_no}: over-delivery held in quarantine — {detail}")
-        bell(conn, "warning", "Over-delivery quarantined",
-             f"{grn_no} ({pr['pr_no']}): {detail}. Not added to stock — accept or "
-             f"return it.", link=_pr_link(pr_id))
+        # minus the two told below, so nobody gets this title twice
+        notify_users(conn, set(_perm_holders(conn, "proc_purchasing"))
+                     - {pr["requester"], uname}, "warning", "Over-delivery quarantined",
+                     f"{grn_no} ({pr['pr_no']}): {detail}. Not added to stock — accept or "
+                     f"return it.", link=_pr_link(pr_id))
         notify_users(conn, [pr["requester"], uname],
                      "warning", "Over-delivery quarantined",
                      f"{pr['pr_no']}: the supplier delivered more than ordered "
@@ -3600,10 +3665,11 @@ def _record_grn(conn, pr_id, pr, lines, user, notes=None, reject_reason=None):
               f"{grn_no}: rejected over-delivery returned with the driver — {detail}"
               + (f" ({reject_reason})" if reject_reason else "")
               + ". No debit note: the order did not cover it.")
-        bell(conn, "warning", "Surplus delivery rejected",
-             f"{grn_no} ({pr['pr_no']}): {detail} was above the ordered quantity and "
-             f"was refused. Not stocked, not payable, no debit note.",
-             link=_pr_link(pr_id))
+        notify_users(conn, _perm_holders(conn, "proc_purchasing"),
+                     "warning", "Surplus delivery rejected",
+                     f"{grn_no} ({pr['pr_no']}): {detail} was above the ordered quantity "
+                     f"and was refused. Not stocked, not payable, no debit note.",
+                     link=_pr_link(pr_id))
     return grn_id, grn_no
 
 
@@ -3659,10 +3725,12 @@ def _record_return(conn, pr_id, pr, lines, reason, user, grn_id=None):
         audit(conn, pr_id, uname, "goods_rejected",
               f"{dn_no}: returned to {vendor or 'the supplier'} — {detail}"
               + (f" ({reason})" if reason else ""))
-        bell(conn, "warning", "Goods rejected — debit note raised",
-             f"{dn_no} ({pr['pr_no']}): {detail} returned to "
-             f"{vendor or 'the supplier'}. Payable value reduced by "
-             f"{round(net + tax, 2):,.2f}.", link=_pr_link(pr_id))
+        # carries the amount, so Purchasing and Payables only — never the requester
+        notify_users(conn, set(_perm_holders(conn, ("proc_purchasing", "proc_pay")))
+                     - {pr["requester"]}, "warning", "Goods rejected — debit note raised",
+                     f"{dn_no} ({pr['pr_no']}): {detail} returned to "
+                     f"{vendor or 'the supplier'}. Payable value reduced by "
+                     f"{round(net + tax, 2):,.2f}.", link=_pr_link(pr_id))
         notify_users(conn, [pr["requester"], uname], "warning", "Goods rejected on receipt",
                      f"{pr['pr_no']}: {detail} rejected and returned to "
                      f"{vendor or 'the supplier'}. Debit note {dn_no}"
@@ -4088,11 +4156,9 @@ def post_stock_postings(pr_id, user=None, manual=False):
                             bell = None
                             try:
                                 bell = get_db()
-                                bell.execute(
-                                    "INSERT INTO notifications (severity,module,title,message,link,created_at) "
-                                    "VALUES (?,?,?,?,?,?)",
-                                    ("warning", "procurement", "Receipt not booked: ambiguous material",
-                                     f"{row['pr_no']}: {row['item']}", _pr_link(pr_id), _now()))
+                                notify_users(bell, _perm_holders(bell, ("proc_purchasing", "proc_receive")),
+                                             "warning", "Receipt not booked: ambiguous material",
+                                             f"{row['pr_no']}: {row['item']}", link=_pr_link(pr_id))
                                 bell.commit()
                             except Exception:
                                 if bell is not None:
@@ -5409,6 +5475,10 @@ def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
                 return False, "needs_admin"      # committed spend: admin decision only
         elif not (is_owner or is_purchasing or is_admin):
             return False, "forbidden"
+        if pr["status"] == "pending":
+            _clear_sign_prompts(conn, pr, conn.execute(
+                "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+                (pr_id, pr["current_seq"])).fetchall())
         conn.execute("UPDATE pr_requests SET status='cancelled', current_seq=0 WHERE id=?",
                      (pr_id,))
         conn.execute("UPDATE pr_purchase_orders SET status='cancelled' WHERE pr_id=?", (pr_id,))
@@ -6617,8 +6687,8 @@ def run_escalations():
     Level 1 (unchanged): the active step is older than SLA_HOURS_PER_STAGE ->
       flag it (escalated / escalated_at) and warn the stage's approvers.
     Level 2: the same step is older than 2x the SLA and escalated2_at is not
-      set yet -> stamp escalated2_at, raise a CRITICAL bell broadcast and
-      notify the stage's approvers plus every active super_admin.
+      set yet -> stamp escalated2_at and notify (CRITICAL) the stage's
+      approvers plus every active proc admin — one row each, no broadcast.
     Pricing stall: a pending, still-unpriced PR submitted more than
       SLA_HOURS_PER_STAGE (48h) ago -> remind Purchasing once per PR (the
       audit trail's 'pricing_reminder' event doubles as the dedupe flag).
@@ -6665,9 +6735,8 @@ def run_escalations():
                              (_now(), step["id"]))
                 audit(conn, pr["id"], "system", "escalated",
                       f"{stage_label(step['stage'])} overdue ({round(hrs)}h)")
-                targets = eligible_approvers(
-                    conn, step["stage"],
-                    roles=_csv_set(_pr_field(step, "esc_role")) or None) or [pr["requester"]]
+                # nobody may sign it (parked / unstaffed): the admins, never the requester
+                targets = _step_signers(conn, pr, step) or _proc_admins(conn)
                 notify_users(conn, targets, "warning", "Approval overdue",
                              f"{pr['pr_no']} has waited {round(hrs)}h at {stage_label(step['stage'])}.",
                              link=_pr_link(pr["id"]))
@@ -6678,16 +6747,9 @@ def run_escalations():
                              (_now(), step["id"]))
                 audit(conn, pr["id"], "system", "escalated2",
                       f"{stage_label(step['stage'])} critically overdue ({round(hrs)}h, >2x SLA)")
-                admins = [r["username"] for r in conn.execute(
-                    "SELECT username FROM users WHERE is_active=1 AND role='super_admin'"
-                ).fetchall()]
-                targets = set(eligible_approvers(
-                    conn, step["stage"],
-                    roles=_csv_set(_pr_field(step, "esc_role")) or None)) | set(admins)
-                bell(conn, "critical", "Approval overdue (level 2)",
-                     f"{pr['pr_no']} stuck {round(hrs)}h at {stage_label(step['stage'])} — "
-                     f"more than twice the stage SLA.", link=_pr_link(pr["id"]))
-                notify_users(conn, list(targets), "critical", "Approval overdue (level 2)",
+                # one set, so a signer who is also an admin gets one row
+                targets = _step_signers(conn, pr, step) | set(_proc_admins(conn))
+                notify_users(conn, targets, "critical", "Approval overdue (level 2)",
                              f"{pr['pr_no']} has waited {round(hrs)}h at "
                              f"{stage_label(step['stage'])} — management attention needed.",
                              link=_pr_link(pr["id"]))
@@ -7841,6 +7903,9 @@ def issue_from_stock(pr_id, issues, user, ip=None):
             conn.execute(
                 "UPDATE pr_requests SET status='closed', closed_at=?, current_seq=0 "
                 "WHERE id=?", (_now(), pr_id))
+            _clear_sign_prompts(conn, pr, conn.execute(
+                "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+                (pr_id, pr["current_seq"])).fetchall())
             conn.execute(
                 "UPDATE pr_steps SET status='skipped' WHERE pr_id=? AND status='pending'",
                 (pr_id,))

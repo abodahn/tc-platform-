@@ -131,7 +131,10 @@ def checks():
     row = one("SELECT status, last_error FROM pr_stock_postings WHERE pr_id=?", amb)
     assert row == {"status": "failed", "last_error": "ambiguous_material"}, row
     assert svc.post_stock_postings(amb)["failed"] == 1
-    assert one("SELECT COUNT(*) c FROM notifications WHERE title='Receipt not booked: ambiguous material'")["c"] == 1
+    # once per recipient (buyers + receivers), never a broadcast row
+    bells = one("SELECT COUNT(*) c, COUNT(DISTINCT target_user) u, COUNT(target_user) t "
+                "FROM notifications WHERE title='Receipt not booked: ambiguous material'")
+    assert bells["c"] == bells["u"] == bells["t"] > 0, bells
     assert one("SELECT COALESCE(SUM(stock_qty),0) s FROM wh_materials WHERE code LIKE 'AMB-%'")["s"] == 0
 
     bad, line = make("Failed receipt", "Outbox spare", 3, 10)
