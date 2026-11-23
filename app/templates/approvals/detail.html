@@ -9,6 +9,39 @@
     services.attach_item_history() computes them on every read, because a stored
     copy is wrong the moment the next order for the same part lands. Shown on the
     warehouse screen AND the main item table, so one macro serves both. -#}
+{#- Unit price per request line on the add / edit quotation forms. A blank box
+    = the supplier did not quote that line. The line totals and the sum are a
+    live preview only: the server recomputes them from the unit prices. -#}
+{% macro quote_line_inputs(items, q=None) %}
+<div class="tbl-wrap" style="margin:4px 0 6px">
+<table class="tbl" data-qlines>
+  <thead><tr>
+    <th data-i18n="proc.item">Item</th>
+    <th style="text-align:end" data-i18n="proc.qty">Qty</th>
+    <th data-i18n="proc.unit_price">Unit price</th>
+    <th style="text-align:end" data-i18n="proc.quote.line_total">Line total</th>
+  </tr></thead>
+  <tbody>
+  {% for it in items %}{% set l = q.lines.get(it.id) if q else None %}
+    <tr>
+      <td>{{ it.item }}</td>
+      <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '%g'|format(it.qty or 0) }} {{ it.unit or '' }}</td>
+      <td><input type="number" name="uprice_{{ it.id }}" min="0" step="any" inputmode="decimal"
+                 style="max-width:120px" data-qty="{{ it.qty or 0 }}" aria-label="{{ it.item }}"
+                 value="{{ l.unit_price if l else '' }}"></td>
+      <td style="text-align:end;font-variant-numeric:tabular-nums" data-line-out>—</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+  <tfoot><tr>
+    <th colspan="3" data-i18n="proc.quote.before_vat">Before VAT</th>
+    <th style="text-align:end;font-variant-numeric:tabular-nums" data-lines-out>—</th>
+  </tr></tfoot>
+</table>
+</div>
+<div class="muted" style="font-size:12px;margin-bottom:8px" data-i18n="proc.quote.lines_hint">Leave a line blank if the supplier did not quote it. When any line has a price, the amount is the sum of the lines.</div>
+{% endmacro %}
+
 {% macro item_history(it) %}
 <div class="muted" style="font-size:12px;display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
   {% if it.stock_days is not none %}
@@ -616,6 +649,21 @@
         Local market first: research prioritises suppliers inside your radius, then national / online options.</div>
     </div>
     <datalist id="vlistAll">{% for v in (vendors or []) %}<option value="{{ v.name if v.name is defined else v }}"></option>{% endfor %}</datalist>
+    {#- The chosen quotation's line prices PRE-FILL a line that has no price yet.
+        Nothing is saved until Purchasing presses Save pricing. -#}
+    {% set chosen_q = b.quotes|selectattr('is_chosen')|first %}
+    {#- A quote in another currency is NOT copied: its figures would be saved
+        under the request's currency and understate the total by the FX rate. -#}
+    {% if chosen_q and chosen_q.lines and chosen_q.currency != pr.currency %}
+    <div class="muted" style="font-size:12.5px;margin-bottom:8px">
+      <span data-i18n="proc.quote.prefill_fx">The chosen quotation is in another currency, so its prices were not pre-filled.</span>
+      <b>{{ chosen_q.vendor }} · {{ chosen_q.currency }}</b></div>
+    {% set chosen_q = None %}
+    {% elif chosen_q and chosen_q.lines %}
+    <div class="muted" style="font-size:12.5px;margin-bottom:8px">
+      <span data-i18n="proc.quote.prefilled">Unit prices are pre-filled from the chosen quotation. Review them, then press Save pricing.</span>
+      <b>{{ chosen_q.vendor }} · {{ chosen_q.currency }}</b></div>
+    {% endif %}
     <form method="post" action="{{ url_for('approvals.price', pr_id=pr.id) }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <div style="overflow-x:auto">
@@ -712,8 +760,9 @@
             </td>
             <td>
               <div style="display:flex;gap:6px;align-items:center">
+                {% set qline = chosen_q.lines.get(it.id) if chosen_q and chosen_q.lines else None %}
                 <input type="number" name="price_{{ it.id }}" id="price_{{ it.id }}" min="0" step="any"
-                       value="{{ '%g'|format(it.unit_price or 0) }}" style="max-width:150px">
+                       value="{{ it.unit_price or (qline.unit_price if qline else 0) }}" style="max-width:150px">
                 <button type="button" class="btn btn-ghost btn-sm mr-btn" title="Market price research"
                         data-target="price_{{ it.id }}" data-item="{{ it.item }}"
                         data-desc="{{ it.description or '' }}" data-unit="{{ it.unit or '' }}"
@@ -1727,7 +1776,7 @@
         {#- Amount is stored BEFORE VAT; quotes are ranked on the after-VAT
             figure (q.after_vat) so a VAT-free price is compared fairly. Rows
             older than the VAT question show the bare amount and dashes. -#}
-        <div class="tbl-wrap" style="margin-bottom:12px">
+        <div class="tbl-wrap" style="margin-bottom:12px;container-type:inline-size">
         <table class="tbl">
           <thead><tr>
             <th data-i18n="proc.vendor_l">Vendor</th>
@@ -1743,7 +1792,8 @@
             <tr style="{{ 'background:var(--ok-bg)' if q.is_chosen else '' }}">
               <td><div style="font-weight:600">{{ q.vendor }}
                   {% if money and q.after_vat == quote_cmp.lowest %}<span class="tag" style="color:var(--ok)">lowest</span>{% endif %}
-                  {% if q.is_chosen %}<span class="badge b-approved">✓ chosen</span>{% endif %}</div>
+                  {% if q.is_chosen %}<span class="badge b-approved">✓ chosen</span>{% endif %}
+                  {% if q.partial %}<span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span>{% endif %}</div>
                   {% if q.warranty %}<div class="muted" style="font-size:11.5px">{{ q.warranty }}</div>{% endif %}
                   {% if q.rfq_id %}<div class="muted" style="font-size:11.5px">↩ {{ b.rfqs|selectattr('id','equalto',q.rfq_id)|map(attribute='rfq_no')|first }}</div>{% endif %}
                   {% if money and q.filename %}<a class="tag" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename }}</a>{% endif %}</td>
@@ -1772,7 +1822,7 @@
             </tr>
             {% if can_purchasing and not q.is_chosen %}
             <tr><td colspan="7" style="padding-top:0">
-              <details style="position:sticky;inset-inline-start:0;max-width:calc(100vw - 72px);white-space:normal">
+              <details style="position:sticky;inset-inline-start:0;max-width:calc(100vw - 72px);max-width:min(calc(100vw - 72px), calc(100cqw - 16px));white-space:normal">
                 <summary class="btn btn-ghost btn-sm" data-i18n="proc.quote.edit">Edit this quotation</summary>
                 <form method="post" style="margin-top:10px" data-vat-form
                       action="{{ url_for('approvals.edit_quote', pr_id=pr.id, quote_id=q.id) }}">
@@ -1806,6 +1856,7 @@
                       <span data-i18n="proc.warranty">Warranty</span>
                       <input name="warranty" value="{{ q.warranty or '' }}"></label>
                   </div>
+                  <div style="margin-top:10px">{{ quote_line_inputs(b['items'], q) }}</div>
                   <div class="muted" style="margin-top:8px"><span data-i18n="proc.quote.after_vat">After VAT</span>:
                     <b data-vat-out></b></div>
                   <button class="btn btn-sm" style="margin-top:10px" data-i18n="proc.save">Save</button>
@@ -1817,6 +1868,49 @@
           </tbody>
         </table>
         </div>
+        {#- Price per item: rows = request lines, columns = the quotes that carry
+            line prices. The lowest unit price on a line is highlighted (ties
+            too). Deliberately show_commercial, not the `money` flag the quote
+            totals use: money_view is true for the requester/warehouse on an
+            unpriced request, and unit prices must stay hidden from them until
+            Purchasing has priced it (same rule as the request's unit prices). -#}
+        {% if show_commercial and quote_matrix %}
+        <h4 style="margin:4px 0 6px" data-i18n="proc.quote.matrix">Price per item</h4>
+        <div class="tbl-wrap" style="margin-bottom:12px">
+        <table class="tbl">
+          <thead><tr>
+            <th data-i18n="proc.item">Item</th>
+            {% for q in quote_matrix.quotes %}
+            <th style="text-align:end">{{ q.vendor }}
+              {% if q.partial %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span></div>{% endif %}
+              {% if q.stale %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.stale">Request lines changed, totals recalculated</span></div>{% endif %}</th>
+            {% endfor %}
+          </tr></thead>
+          <tbody>
+          {% for r in quote_matrix.rows %}
+            <tr>
+              <td><div style="font-weight:600">{{ r.item.item }}</div>
+                <div class="muted" style="font-size:11.5px">{{ '%g'|format(r.item.qty or 0) }} {{ r.item.unit or '' }}</div></td>
+              {% for c in r.cells %}
+              <td style="text-align:end;font-variant-numeric:tabular-nums{{ ';background:var(--ok-bg)' if c and c.best }}">
+                {% if c %}
+                <div style="{{ 'font-weight:700;color:var(--ok)' if c.best }}">{% if c.best %}<span data-i18n-title="proc.quote.lowest_item" title="Lowest unit price">▼</span> {% endif %}{{ '{:,.2f}'.format(c.unit_price) }}</div>
+                <div class="muted" style="font-size:11.5px">{{ '{:,.2f}'.format(c.line_total) }}</div>
+                {% else %}<span class="muted" data-i18n-title="proc.quote.not_quoted" title="Not quoted">—</span>{% endif %}
+              </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr><th data-i18n="proc.quote.before_vat">Before VAT</th>
+              {% for q in quote_matrix.quotes %}<th style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(q.amount or 0) }} {{ q.currency }}</th>{% endfor %}</tr>
+            <tr><th data-i18n="proc.quote.after_vat">After VAT</th>
+              {% for q in quote_matrix.quotes %}<th style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(q.after_vat) }} {{ q.currency }}</th>{% endfor %}</tr>
+          </tfoot>
+        </table>
+        </div>
+        {% endif %}
         {% else %}
         <div class="muted" style="margin-bottom:12px" data-i18n="proc.no_quotes2">Add competing quotes to compare vendors.</div>
         {% endif %}
@@ -2013,7 +2107,7 @@
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <div class="grid cols-2">
               <div class="field"><label data-i18n="proc.vendor_l">Vendor</label><input name="vendor" list="vlist" required autocomplete="off" data-terms-for="quote"></div>
-              <div class="field"><label data-i18n="proc.quote.amount_ex">Amount before VAT</label><input name="amount" type="number" step="any" min="0" required></div>
+              <div class="field"><label data-i18n="proc.quote.amount_ex">Amount before VAT</label><input name="amount" type="number" step="any" min="0"></div>
               <div class="field"><label data-i18n="proc.quote.vat_q">Subject to 14% VAT</label>
                 <select name="vat_applies">
                   <option value="1" selected data-i18n="proc.quote.vat_yes">Yes</option>
@@ -2033,6 +2127,7 @@
                 </select></div>
               {% endif %}
             </div>
+            {{ quote_line_inputs(b['items']) }}
             <div class="field"><label data-i18n="proc.quote_file">Quote file (optional)</label><input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv"></div>
             <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_quote">+ Add quote</button>
           </form>
@@ -2054,7 +2149,23 @@
           document.querySelectorAll("form[data-vat-form]").forEach(function (f) {
             var a = f.querySelector("[name=amount]"), v = f.querySelector("[name=vat_applies]"),
                 o = f.querySelector("[data-vat-out]"), vn = f.querySelector("[data-terms-for=quote]");
+            var ql = f.querySelectorAll("[data-qlines] input[data-qty]");
+            function lines() {
+              var sum = 0, any = false;
+              ql.forEach(function (i) {
+                var u = parseFloat(i.value), out = i.closest("tr").querySelector("[data-line-out]");
+                if (isNaN(u)) { out.textContent = "—"; return; }
+                var t = Math.round(u * parseFloat(i.dataset.qty) * 100) / 100;
+                any = true; sum += t;
+                out.textContent = t.toLocaleString(undefined, {maximumFractionDigits: 2});
+              });
+              var so = f.querySelector("[data-lines-out]");
+              if (so) so.textContent = any ? sum.toLocaleString(undefined, {maximumFractionDigits: 2}) : "—";
+              a.readOnly = any;
+              if (any) a.value = Math.round(sum * 100) / 100;
+            }
             function upd() {
+              if (ql.length) lines();
               var n = parseFloat(a.value);
               o.textContent = isNaN(n) ? "—" : (v.value === "1" ? n * (1 + R) : n)
                 .toLocaleString(undefined, {maximumFractionDigits: 2});

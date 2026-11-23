@@ -9,6 +9,7 @@ platform-bell notification.
 """
 import hashlib
 import logging
+import math
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -969,6 +970,7 @@ def get_pr(pr_id):
             except Exception:
                 conn.rollback()
         quotes = [dict(r) for r in quotes]
+        _attach_quote_lines(conn, quotes, items)
         for q in quotes:
             q["after_vat"] = quote_after_vat(q)
         quotes.sort(key=lambda q: q["after_vat"])     # cheapest real cost first
@@ -6005,6 +6007,94 @@ def quote_after_vat(q):
     return amt
 
 
+def _attach_quote_lines(conn, quotes, items):
+    """Give each quote its per-line prices: q["lines"] = {pr_item_id: row} and
+    q["partial"] when it prices some of the request's lines but not all. A quote
+    with no lines is total-only, as every quote was before pr_quote_lines.
+
+    The request's lines can change after quoting (warehouse qty review, owner
+    deletes a line), so lines are read against the CURRENT items: a line whose
+    item is gone is dropped, line_total = unit price x current qty, and the
+    quote's amount becomes their sum (q["stale"] flags that it moved). Ranking
+    and the matrix then agree with what is on screen."""
+    qty_of = {it["id"]: float(it["qty"] or 0) for it in items}
+    by_q = {}
+    ids = [q["id"] for q in quotes]
+    if ids:
+        try:
+            for r in conn.execute(
+                    "SELECT quote_id, pr_item_id, unit_price, qty, line_total "
+                    "FROM pr_quote_lines WHERE quote_id IN (%s)" % ",".join("?" for _ in ids),
+                    ids).fetchall():
+                by_q.setdefault(r["quote_id"], {})[r["pr_item_id"]] = dict(r)
+        except Exception:
+            conn.rollback()      # database predating the table: all quotes total-only
+    for q in quotes:
+        stored = by_q.get(q["id"], {})
+        lines = {}
+        for item_id, ln in stored.items():
+            if item_id not in qty_of:
+                continue
+            qty = qty_of[item_id]
+            lines[item_id] = dict(ln, qty=qty, line_total=round(float(ln["unit_price"] or 0) * qty, 2))
+        q["lines"] = lines
+        q["partial"] = bool(lines) and bool(set(qty_of) - set(lines))
+        q["stale"] = len(lines) != len(stored) or any(
+            abs(float(stored[i]["qty"] or 0) - lines[i]["qty"]) > 1e-9 for i in lines)
+        if q["stale"]:
+            q["amount"] = round(sum(ln["line_total"] for ln in lines.values()), 2)
+
+
+def _quote_lines_from(conn, pr_id, posted):
+    """Validate posted unit prices {pr_item_id: raw} against THIS request's lines.
+
+    Returns (lines, error) with lines = [(pr_item_id, unit, qty, line_total)].
+    A blank = the supplier did not quote that line. The line total uses the
+    request's own quantity, never a posted figure."""
+    lines = []
+    for it in conn.execute("SELECT id, qty FROM pr_items WHERE pr_id=? ORDER BY seq, id",
+                           (pr_id,)).fetchall():
+        raw = posted.get(it["id"], posted.get(str(it["id"])))
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            unit = float(str(raw).strip())
+        except ValueError:
+            return None, "bad_amount"
+        if not math.isfinite(unit) or unit < 0:
+            return None, "bad_amount"
+        qty = float(it["qty"] or 0)
+        lines.append((it["id"], unit, qty, round(unit * qty, 2)))
+    return lines, ""
+
+
+def _save_quote_lines(conn, quote_id, lines):
+    conn.execute("DELETE FROM pr_quote_lines WHERE quote_id=?", (quote_id,))
+    now = _now()
+    for item_id, unit, qty, total in lines:
+        conn.execute("INSERT INTO pr_quote_lines (quote_id, pr_item_id, unit_price, qty, "
+                     "line_total, created_at) VALUES (?,?,?,?,?,?)",
+                     (quote_id, item_id, unit, qty, total, now))
+
+
+def quote_matrix(items, quotes):
+    """Items x the quotes that carry line prices, for the per-item comparison.
+    Each cell is the quote's line (or None = not quoted); cell["best"] marks the
+    lowest unit price on that item when two or more suppliers priced it (ties
+    are all marked). None when no quote has line prices."""
+    cols = [q for q in quotes if q.get("lines")]
+    if not cols:
+        return None
+    rows = []
+    for it in items:
+        cells = [q["lines"].get(it["id"]) for q in cols]
+        prices = [c["unit_price"] for c in cells if c]
+        best = min(prices) if len(prices) > 1 else None
+        rows.append({"item": it, "cells": [
+            dict(c, best=(c["unit_price"] == best)) if c else None for c in cells]})
+    return {"quotes": cols, "rows": rows}
+
+
 def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=None, ip=None):
     terms = (data.get("payment_terms") or "").strip()
     if not terms:
@@ -6027,6 +6117,13 @@ def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=N
         _bad = _refuse_self_commercial(_pr, user, "quote")
         if _bad:
             return False, _bad
+        # Priced lines make the amount: their sum, computed here. A posted
+        # total is ignored then; with no priced line it is a total-only quote.
+        lines, err = _quote_lines_from(conn, pr_id, data.get("lines") or {})
+        if err:
+            return False, err
+        amount = (round(sum(ln[3] for ln in lines), 2) if lines
+                  else float(data.get("amount") or 0))
 
         # THIS request, so a stray id cannot attach a quote to another PR's RFQ.
         # Unresolvable (bad id, or a database predating the table) -> no link,
@@ -6040,24 +6137,27 @@ def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=N
             except Exception:
                 conn.rollback()
                 rfq_id = None
-        conn.execute(
+        cur = conn.execute(
             """INSERT INTO pr_quotes
                (pr_id, vendor, amount, currency, lead_time_days, warranty,
                 filename, content_type, content_b64, notes, uploaded_by, created_at,
                 payment_terms, vat_applies, vat_rate"""
             + (", rfq_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)" if rfq_id
                else ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"),
-            (pr_id, data.get("vendor"), float(data.get("amount") or 0),
+            (pr_id, data.get("vendor"), amount,
              data.get("currency") or "EGP",
              int(data["lead_time_days"]) if str(data.get("lead_time_days") or "").strip() else None,
              data.get("warranty"), filename, content_type, content_b64, data.get("notes"),
              user.get("username") if user else "system", _now(),
              terms, vat, C.QUOTE_VAT_RATE)
             + ((rfq_id,) if rfq_id else ()))
+        if lines:
+            _save_quote_lines(conn, cur.lastrowid, lines)
         if rfq_id:
             conn.execute("UPDATE pr_rfqs SET status='answered' WHERE id=?", (rfq_id,))
         audit(conn, pr_id, user.get("username") if user else "system", "quote_added",
-              f"Quote from {data.get('vendor')} @ {data.get('amount')}"
+              f"Quote from {data.get('vendor')} @ {amount:,.2f}"
+              + (f" ({len(lines)} line price(s))" if lines else "")
               + (f" (answers RFQ #{rfq_id})" if rfq_id else ""), ip)
         conn.commit()
         return True, ""
@@ -6150,6 +6250,16 @@ def update_quote(quote_id, data, user=None, ip=None):
                                    "partially_received", "received", "closed", "cancelled"):
             return False, "locked"
 
+        # Line prices, when the form posted them: they replace the quote's lines
+        # and, when any is priced, their sum replaces the posted amount.
+        lines = None
+        if "lines" in data:
+            lines, err = _quote_lines_from(conn, q["pr_id"], data.get("lines") or {})
+            if err:
+                return False, err
+            if lines:
+                data = dict(data, amount=round(sum(ln[3] for ln in lines), 2))
+
         sets, args, changed = [], [], []
         for col in _QUOTE_EDITABLE:
             if col not in data:
@@ -6186,11 +6296,27 @@ def update_quote(quote_id, data, user=None, ip=None):
             if vid != (q["vendor_id"] if "vendor_id" in q.keys() else None):
                 sets.append("vendor_id=?")
                 args.append(vid)
-        if not sets:
+        lines_changed = False
+        if lines is not None:
+            # Unit price AND qty: a re-save after the request's qty changed must
+            # refresh the frozen line totals. Tolerance, not ==, on floats.
+            old = {r["pr_item_id"]: (r["unit_price"], r["qty"]) for r in conn.execute(
+                "SELECT pr_item_id, unit_price, qty FROM pr_quote_lines WHERE quote_id=?",
+                (quote_id,)).fetchall()}
+            new = {ln[0]: (ln[1], ln[2]) for ln in lines}
+            lines_changed = old.keys() != new.keys() or any(
+                abs(float(old[k][0] or 0) - new[k][0]) > 1e-9
+                or abs(float(old[k][1] or 0) - new[k][1]) > 1e-9 for k in new)
+            if lines_changed:
+                changed.append("line prices: %d line(s)" % len(lines))
+        if not sets and not lines_changed:
             return True, "no_change"
 
-        conn.execute("UPDATE pr_quotes SET %s WHERE id=?" % ", ".join(sets),
-                     args + [quote_id])
+        if sets:
+            conn.execute("UPDATE pr_quotes SET %s WHERE id=?" % ", ".join(sets),
+                         args + [quote_id])
+        if lines_changed:
+            _save_quote_lines(conn, quote_id, lines)
         audit(conn, q["pr_id"], (user or {}).get("username") or "system", "quote_edited",
               "Quotation from %s amended — %s" % (q["vendor"] or "?", "; ".join(changed) or "vendor link"),
               ip)
@@ -6223,6 +6349,7 @@ def delete_quote(quote_id, user=None, ip=None):
         if pr and pr["status"] in ("approved", "po_issued", "in_transit",
                                    "partially_received", "received", "closed", "cancelled"):
             return False, "locked"
+        conn.execute("DELETE FROM pr_quote_lines WHERE quote_id=?", (quote_id,))
         conn.execute("DELETE FROM pr_quotes WHERE id=?", (quote_id,))
         # The RFQ it answered is unanswered again if nothing else replied to it.
         rid = q["rfq_id"] if "rfq_id" in q.keys() else None

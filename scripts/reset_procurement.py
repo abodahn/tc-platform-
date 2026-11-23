@@ -52,10 +52,10 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Child-first. Ten of these have no FK to pr_requests, so every one is deleted explicitly.
+# Child-first. Most of these have no FK to pr_requests, so every one is deleted explicitly.
 PR_TABLES = ["pr_rfq_excluded", "pr_item_issues", "pr_stock_postings", "pr_grn_quarantine",
              "pr_returns", "pr_grn", "pr_payments", "pr_invoices", "pr_po_revisions",
-             "pr_purchase_orders", "pr_quotes", "pr_rfqs", "pr_attachments", "pr_sign_events",
+             "pr_purchase_orders", "pr_quote_lines", "pr_quotes", "pr_rfqs", "pr_attachments", "pr_sign_events",
              "pr_events", "pr_steps", "pr_items", "pr_requests"]
 _PROC = "domain IN ('procurement','approvals')"
 DELETES = [("notifications", "module='procurement' OR link LIKE '/procurement/pr/%'"),

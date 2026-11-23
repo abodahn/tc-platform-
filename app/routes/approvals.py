@@ -1359,6 +1359,7 @@ def detail(pr_id):
                            current_stage_label=cur_label, amounts=svc.pr_amounts(pr),
                            match=svc.three_way_match(pr_id),
                            quote_cmp=svc.quote_comparison(bundle.get("quotes", [])),
+                           quote_matrix=svc.quote_matrix(bundle["items"], bundle.get("quotes", [])),
                            budget=svc.budget_status(pr.get("department")) if money == "full" and C.BUDGET_CONTROL else None,
                            budget_on=C.BUDGET_CONTROL,
                            can_purchasing=can_purchasing, can_receive=can_receive, is_priced=is_priced,
@@ -1465,13 +1466,21 @@ def resolve_stuck_posting(pr_id, posting_id):
 # --------------------------------------------------------------------------
 # Multi-quote comparison
 # --------------------------------------------------------------------------
+def _posted_line_prices(f, items):
+    """{pr_item_id: raw unit price} for the uprice_<id> boxes the form sent."""
+    return {it["id"]: f.get("uprice_%s" % it["id"]) for it in items
+            if ("uprice_%s" % it["id"]) in f}
+
+
 @bp.route("/pr/<int:pr_id>/quote", methods=["POST"])
 @login_required
 @permission_required("proc_create")
 def add_quote(pr_id):
-    if not svc.get_pr(pr_id):
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
         abort(404)
     f = request.form
+    lines = _posted_line_prices(f, bundle["items"])
     fn = ct = b64 = None
     file = request.files.get("file")
     if file and file.filename:
@@ -1484,7 +1493,8 @@ def add_quote(pr_id):
             return redirect(url_for("approvals.detail", pr_id=pr_id))
         fn, ct, b64 = file.filename, (file.mimetype or "application/octet-stream"), \
             base64.b64encode(raw).decode("ascii")
-    if not f.get("vendor") or not f.get("amount"):
+    if not f.get("vendor") or not (f.get("amount") or any(
+            str(v or "").strip() for v in lines.values())):
         flash("Vendor and amount are required for a quote.", "error")
         return redirect(url_for("approvals.detail", pr_id=pr_id))
     ok, code = svc.add_quote(pr_id, {
@@ -1495,6 +1505,8 @@ def add_quote(pr_id):
         "vat_applies": f.get("vat_applies", "1"),
         # The RFQ this quotation came back against, when it answers one.
         "rfq_id": f.get("rfq_id", "").strip(),
+        # Unit price per request line; the amount is then their sum (service).
+        "lines": lines,
     }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
     ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
     flash("Quote added." if ok else _QUOTE_ERRORS.get(code) or ui.get(str(code) + "_flash") or
@@ -1561,6 +1573,10 @@ def edit_quote(pr_id, quote_id):
     data = {k: f.get(k) for k in ("vendor", "amount", "currency", "lead_time_days",
                                   "warranty", "notes", "payment_terms", "vat_applies")
             if k in f}
+    bundle = svc.get_pr(pr_id)
+    lines = _posted_line_prices(f, bundle["items"]) if bundle else {}
+    if lines:
+        data["lines"] = lines
     ok, msg = svc.update_quote(quote_id, data, user=_u(), ip=_ip())
     flash(("No change." if msg == "no_change" else "Quotation updated.")
           if ok else _QUOTE_ERRORS.get(msg, "Could not update the quotation (%s)." % msg),
