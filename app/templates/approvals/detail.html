@@ -762,6 +762,7 @@
               <div style="display:flex;gap:6px;align-items:center">
                 {% set qline = chosen_q.lines.get(it.id) if chosen_q and chosen_q.lines else None %}
                 <input type="number" name="price_{{ it.id }}" id="price_{{ it.id }}" min="0" step="any"
+                       data-qty="{{ '%g'|format(it.qty or 0) }}" class="pf-price"
                        value="{{ it.unit_price or (qline.unit_price if qline else 0) }}" style="max-width:150px">
                 <button type="button" class="btn btn-ghost btn-sm mr-btn" title="Market price research"
                         data-target="price_{{ it.id }}" data-item="{{ it.item }}"
@@ -797,24 +798,68 @@
           <input name="vendor" autocomplete="off" value="{{ pr.vendor or '' }}"></div>
         <div class="field"><label data-i18n="proc.payment_l">Payment condition</label>
           <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}" {{ 'selected' if pr.payment_condition==p }}>{{ p }}</option>{% endfor %}</select></div>
-        {#- VAT / tax rate removed from this screen on request (spec §2).
-
-            It is NOT posted at all now, and price_pr() treats an absent tax_rate
-            as "leave what is there" rather than zero — so a request that already
-            carries a rate keeps it, and only new requests start at 0.
-
-            Consequence, recorded here because it is not visible on the screen:
-            approval routing uses egp_commitment(), which is deliberately
-            TAX-INCLUSIVE (DOAM §3.4 — "the total value of a commitment"). With
-            the rate at 0 the ladder routes on the net figure again, so a request
-            just under a threshold no longer picks up the rung its gross value
-            would have crossed. Restoring that control without bringing the field
-            back is one line: default the column to the company VAT rate. -#}
+        {#- VAT is back by owner's request (2026-11-23): Yes = the company 14%.
+            An unpriced request starts at Yes; a priced one keeps what it has.
+            The rate feeds egp_commitment(), which is tax-inclusive on purpose. -#}
+        {% set cur_vat = (pr.tax_rate or 0) if pr.pricing_status == 'priced' else 14 %}
+        <div class="field"><label data-i18n="proc.vat_l">VAT</label>
+          <select name="tax_rate" id="pfVat">
+            <option value="0" {{ 'selected' if not cur_vat }} data-i18n="proc.vat_no">No VAT</option>
+            <option value="14" {{ 'selected' if cur_vat == 14 }}>VAT 14%</option>
+            {% if cur_vat and cur_vat != 14 %}<option value="{{ '%g'|format(cur_vat) }}" selected>VAT {{ '%g'|format(cur_vat) }}%</option>{% endif %}
+          </select></div>
+      </div>
+      {#- Foreign currency: the rate is asked for right here, next to the
+          currency, and the EGP equivalent is worked out as it is typed. The box
+          is disabled (so not posted) while the currency is EGP. -#}
+      <div class="grid cols-4 mt-3" id="pfFxRow">
+        <div class="field"><label><span data-i18n="proc.fx.rate_input">FX rate to EGP</span>
+          (1 <span id="pfCur">{{ pr.currency }}</span> = ? EGP)</label>
+          <input type="number" name="fx_rate" id="pfFx" min="0" step="any" inputmode="decimal"
+                 value="{{ '%g'|format(pr.fx_rate) if pr.fx_rate and pr.fx_rate != 1 else '' }}"></div>
+        <div class="field"><label data-i18n="proc.fx.egp_equiv">EGP equivalent</label>
+          <output id="pfEgp" class="input" style="display:block;font-weight:700;font-variant-numeric:tabular-nums">—</output></div>
+      </div>
+      <div class="flex gap wrap mt-3" style="font-size:13px;font-variant-numeric:tabular-nums" id="pfTotals">
+        <span><span class="muted" data-i18n="proc.subtotal">Subtotal</span>: <b id="pfSub">0</b></span>
+        <span><span class="muted" data-i18n="proc.vat_l">VAT</span>: <b id="pfTax">0</b></span>
+        <span><span class="muted" data-i18n="proc.after_vat">After VAT</span>: <b id="pfGrand">0</b></span>
+      </div>
+      <div>
       </div>
       <div class="flex gap wrap mt-3">
         <button class="btn btn-primary" type="submit">
           <svg class="ico"><use href="#i-check"></use></svg>
           <span data-i18n="proc.save_pricing">Save pricing</span></button>
+      <script>
+      (function () {
+        var cur = document.querySelector('form [name="currency"]');
+        var fx = document.getElementById("pfFx"), vat = document.getElementById("pfVat");
+        if (!fx || !cur) return;
+        function n(v) { return Number(v || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+        function calc() {
+          var sub = 0;
+          document.querySelectorAll(".pf-price").forEach(function (el) {
+            sub += (parseFloat(el.value) || 0) * (parseFloat(el.dataset.qty) || 0);
+          });
+          var rate = parseFloat(vat.value) || 0, tax = sub * rate / 100, grand = sub + tax;
+          var c = cur.value, foreign = c && c !== "EGP";
+          document.getElementById("pfSub").textContent = n(sub) + " " + c;
+          document.getElementById("pfTax").textContent = n(tax) + " " + c;
+          document.getElementById("pfGrand").textContent = n(grand) + " " + c;
+          document.getElementById("pfCur").textContent = c;
+          document.getElementById("pfFxRow").hidden = !foreign;
+          fx.disabled = !foreign; fx.required = foreign;
+          var r = parseFloat(fx.value) || 0;
+          document.getElementById("pfEgp").textContent = foreign && r > 0 ? n(grand * r) + " EGP" : "\u2014";
+        }
+        document.addEventListener("input", function (e) {
+          if (e.target === fx || (e.target.classList && e.target.classList.contains("pf-price"))) calc();
+        });
+        cur.addEventListener("change", calc); vat.addEventListener("change", calc);
+        calc();
+      })();
+      </script>
       </div>
     </form>
   </div>
@@ -908,7 +953,7 @@
     {% if show_commercial and fxr != 1 %}
     <div class="muted" style="margin-bottom:10px;font-size:13px">
       <span data-i18n="proc.fx.egp_equiv">EGP equivalent</span>:
-      <b style="font-variant-numeric:tabular-nums;color:var(--ink)">{{ '{:,.2f}'.format((pr.total or 0) * fxr) }} EGP</b>
+      <b style="font-variant-numeric:tabular-nums;color:var(--ink)">{{ '{:,.2f}'.format((amounts.grand if amounts else (pr.total or 0)) * fxr) }} EGP</b>
       · <span data-i18n="proc.fx.routing_hint">approval thresholds route on this EGP value, not the foreign figure.</span>
     </div>
     {% endif %}
@@ -1486,7 +1531,9 @@
           <th>#</th><th data-i18n="proc.item">Item</th>
           <th data-i18n="proc.qty">Qty</th>
           {% if show_commercial %}<th data-i18n="proc.unit_price">Unit price</th>
-          <th data-i18n="proc.cost">Est. cost</th>{% endif %}
+          <th data-i18n="proc.cost">Est. cost</th>
+          <th><span data-i18n="proc.vat_l">VAT</span> {{ '%g'|format(amounts.tax_rate) }}%</th>
+          <th data-i18n="proc.after_vat">After VAT</th>{% endif %}
         </tr></thead>
         <tbody>
         {% for it in b['items'] %}
@@ -1547,6 +1594,9 @@
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(it.unit_price or 0) }}</td>
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(it.est_cost or 0) }}</td>
+            {% set lvat = (it.est_cost or 0) * amounts.tax_rate / 100 %}
+            <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(lvat) }}</td>
+            <td style="font-variant-numeric:tabular-nums;font-weight:600">{{ '{:,.2f}'.format((it.est_cost or 0) + lvat) }}</td>
             {% endif %}
           </tr>
         {% endfor %}
@@ -1557,15 +1607,18 @@
         <div class="flex between" style="padding:4px 0;font-size:13px">
           <span class="muted" data-i18n="proc.subtotal">Subtotal</span>
           <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.subtotal) }} {{ pr.currency }}</span></div>
-        {% if amounts.tax_rate %}
         <div class="flex between" style="padding:4px 0;font-size:13px">
-          <span class="muted">VAT ({{ '%g'|format(amounts.tax_rate) }}%)</span>
+          <span class="muted"><span data-i18n="proc.vat_l">VAT</span> ({{ '%g'|format(amounts.tax_rate) }}%)</span>
           <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.tax) }} {{ pr.currency }}</span></div>
-        {% endif %}
         <div class="total-bar mt-2">
           <span data-i18n="proc.grand_total">Grand total</span>
           <span class="tval">{{ '{:,.2f}'.format(amounts.grand) }} {{ pr.currency }}</span>
         </div>
+        {% if pr.fx_rate and pr.fx_rate != 1 and pr.currency != 'EGP' %}
+        <div class="flex between" style="padding:4px 0;font-size:13px">
+          <span class="muted" data-i18n="proc.fx.egp_equiv">EGP equivalent</span>
+          <span style="font-variant-numeric:tabular-nums;font-weight:600">{{ '{:,.2f}'.format(amounts.grand * pr.fx_rate) }} EGP</span></div>
+        {% endif %}
       </div>
       {% else %}
       <div class="flex gap center mt-3" style="font-size:12.5px;color:var(--muted)">
