@@ -154,7 +154,7 @@ def run():
         assert "300.00" in dn[0]["message"]
         ok, msg = svc.receive_items(pa, {li: 6}, store)          # 3 outstanding -> 3 over
         assert ok, msg
-        qr = {r["target_user"] for r in rows(pa, "Over-delivery quarantined")}
+        qr = {r["target_user"] for r in rows(pa, "Over-delivery awaiting decision")}
         assert "nb_purchasing" in qr, qr
         assert len(rows(pa, "Over-delivery quarantined", "nb_req")) == 1   # not twice
 

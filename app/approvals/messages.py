@@ -376,6 +376,10 @@ MESSAGES = {
         "ar": "إشعار المدين غير موجود.",
         "tr": "Borç dekontu bulunamadı.",
     },
+    "That person cannot sign procurement requests (no approval permission, or the account is inactive). Choose a delegate who can sign.": {
+        "ar": "هذا الشخص لا يملك التوقيع على طلبات الشراء (ليست لديه صلاحية الاعتماد، أو حسابه غير نشط). اختر مفوَّضًا يملك التوقيع.",
+        "tr": "Bu kişi satın alma taleplerini imzalayamaz (onay yetkisi yok ya da hesabı pasif). İmza yetkisi olan bir vekil seçin.",
+    },
     "Delegation added.": {
         "ar": "تمت إضافة التفويض.",
         "tr": "Yetki devri eklendi.",

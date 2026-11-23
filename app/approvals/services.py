@@ -423,6 +423,37 @@ def _pr_link(pr_id):
     return f"/procurement/pr/{pr_id}"
 
 
+def _requester_people(conn, pr):
+    """Who hears 'your request' news: the requester when that is a real active
+    account. A request raised by the maintenance bridge has a system requester
+    ('auto-reorder'), so its news goes to the linked ticket's requester and
+    assignee plus the maintenance managers and storekeepers instead of nobody."""
+    who = _pr_field(pr, "requester")
+    active = "is_active=1 AND COALESCE(account_status,'active')='active'"
+    if who and conn.execute(f"SELECT 1 FROM users WHERE username=? AND {active}",
+                            (who,)).fetchone():
+        return {who}
+    if _pr_field(pr, "source_module") != "maintenance" and who != "auto-reorder":
+        return {who} if who else set()
+    out = {r["username"] for r in conn.execute(
+        f"SELECT username FROM users WHERE {active} "
+        "AND role IN ('maintenance_manager','storekeeper')").fetchall()}
+    ref = str(_pr_field(pr, "source_ref") or "")
+    if ref.startswith("ticket:") and ref[7:].isdigit():
+        from app.maintenance.services import _requester_usernames, _usernames_for
+        t = conn.execute("SELECT assigned_to FROM mnt_tickets WHERE id=?",
+                         (int(ref[7:]),)).fetchone()
+        out |= set(_requester_usernames(conn, int(ref[7:])))
+        out |= set(_usernames_for(conn, [t["assigned_to"]] if t else []))
+    return out
+
+
+def _other_side(conn, user):
+    """Purchasing and Finance correct each other's documents: whoever did not act."""
+    return set(_perm_holders(conn, "proc_purchasing" if user_has_permission(
+        dict(user or {}), "proc_pay") else "proc_pay"))
+
+
 # --------------------------------------------------------------------------
 # authority
 # --------------------------------------------------------------------------
@@ -2310,7 +2341,7 @@ def _withdraw_signatures_on_changed_terms(conn, pr, before, uname, ip, why):
             "approver_role=NULL, sig_png=NULL, acted_at=NULL, comment=NULL, "
             "escalated=0, escalated_at=NULL, escalated2_at=NULL WHERE id=?",
             (step["id"],))
-    reapproval_users = {s["approver_user"] for s in steps if s["approver_user"]} | {pr["requester"]}
+    reapproval_users = {s["approver_user"] for s in steps if s["approver_user"]} | _requester_people(conn, pr)
     new_seq = min(step["seq"] for step in steps)
     if new_seq < (pr["current_seq"] or 0):
         _clear_sign_prompts(conn, pr, conn.execute(
@@ -2688,7 +2719,7 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None)
         cur = meta.get("currency") or pr["currency"]
         audit(conn, pr_id, (user or {}).get("username"), "priced",
               f"Pricing entered by Purchasing — total {total:,.2f} {cur}", ip)
-        notify_users(conn, [pr["requester"]], "info", "Request priced",
+        notify_users(conn, _requester_people(conn, pr), "info", "Request priced",
                      f"{pr['pr_no']} has been priced by Purchasing and is moving "
                      f"through the approval ladder.", link=_pr_link(pr_id))
         conn.commit()
@@ -2840,7 +2871,7 @@ def send_back(pr_id, to_seq, reason, user, ip=None):
                                                            r["approver_user"])
                                                for r in lost))), ip)
         notify_users(conn, [r["approver_user"] for r in lost if r["approver_user"]]
-                     + [pr["requester"]], "warning",
+                     + list(_requester_people(conn, pr)), "warning",
                      "Sent back: %s" % (pr["pr_no"] or "a request"),
                      "%s sent this back to %s: %s" % (uname, stage_label(target["stage"]),
                                                       reason),
@@ -2916,7 +2947,7 @@ def hold_request(pr_id, reason, user, ip=None):
                      "WHERE id=?", (reason[:1000], uname, _now(), pr_id))
         audit(conn, pr_id, uname, "held",
               "Put ON HOLD at %s — %s" % (stage_label(cur[0]["stage"]), reason), ip)
-        notify_users(conn, [pr["requester"]], "warning",
+        notify_users(conn, _requester_people(conn, pr), "warning",
                      "On hold: %s" % (pr["pr_no"] or "your request"),
                      "%s put this on hold: %s" % (uname, reason),
                      link=_pr_link(pr_id))
@@ -2955,7 +2986,7 @@ def resume_request(pr_id, note, user, ip=None):
         audit(conn, pr_id, uname, "resumed",
               "Hold lifted — was: %s%s"
               % (held, (" | " + note.strip()) if (note or "").strip() else ""), ip)
-        notify_users(conn, [pr["requester"]], "info",
+        notify_users(conn, _requester_people(conn, pr), "info",
                      "Resumed: %s" % (pr["pr_no"] or "your request"),
                      "%s lifted the hold and the approvals are moving again." % uname,
                      link=_pr_link(pr_id))
@@ -3183,7 +3214,7 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             _clear_sign_prompts(conn, pr, conn.execute(
                 "SELECT * FROM pr_steps WHERE pr_id=? AND seq=?",
                 (pr_id, step["seq"])).fetchall())
-            notify_users(conn, [pr["requester"]], "warning", "Request rejected",
+            notify_users(conn, _requester_people(conn, pr), "warning", "Request rejected",
                          f"{pr['pr_no']} was rejected at {stage_label(step['stage'])}"
                          + (f": {comment}" if comment else "."), link=_pr_link(pr_id))
             conn.commit()
@@ -3253,7 +3284,7 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         audit(conn, pr_id, uname, "fully_approved",
               f"All approvals complete. PO {po_no} drafted.", ip)
         # tell the requester it's approved, and purchasing that a PO is ready
-        notify_users(conn, [pr["requester"]], "info", "Request approved",
+        notify_users(conn, _requester_people(conn, pr), "info", "Request approved",
                      f"{pr['pr_no']} is fully approved. PO {po_no} drafted.", link=_pr_link(pr_id))
         notify_users(conn, eligible_approvers(conn, "purchasing"), "info", "PO ready to issue",
                      f"{pr['pr_no']} approved — issue PO {po_no}.", link=_pr_link(pr_id))
@@ -3507,7 +3538,7 @@ def issue_po(pr_id, user, ip=None, force=False):
         audit(conn, pr_id, user.get("username"), "po_issued",
               f"PO {po_no} issued" if len(pos) == 1
               else f"{len(pos)} purchase orders issued, one per vendor: {each}", ip)
-        notify_users(conn, [pr["requester"]] + _perm_holders(conn, "proc_receive"),
+        notify_users(conn, _requester_people(conn, pr) | set(_perm_holders(conn, "proc_receive")),
                      "info", "Purchase Order issued",
                      f"{po_no} issued for {pr['pr_no']}." if len(pos) == 1
                      else f"{len(pos)} purchase orders issued for {pr['pr_no']}, "
@@ -3625,7 +3656,7 @@ def revise_po(pr_id, reason, user, ip=None):
             (pr_id, new_rev, reason, pr["po_no"], snapshot, uname, _now()))
         conn.execute("UPDATE pr_requests SET po_rev=? WHERE id=?", (new_rev, pr_id))
         audit(conn, pr_id, uname, "po_revised", f"PO revision {new_rev}: {reason}", ip)
-        notify_users(conn, [pr["requester"]] + _perm_holders(conn, "proc_receive"),
+        notify_users(conn, _requester_people(conn, pr) | set(_perm_holders(conn, "proc_receive")),
                      "info", "PO revised",
                      f"{pr['po_no']} (ref {pr['pr_no']}) revised — Rev {new_rev}: {reason}",
                      link=_pr_link(pr_id))
@@ -3672,12 +3703,12 @@ def _record_grn(conn, pr_id, pr, lines, user, notes=None, reject_reason=None):
         detail = ", ".join(f"{l['item']} +{l['quarantined']:g}" for l in excess)
         audit(conn, pr_id, uname, "over_delivery_quarantined",
               f"{grn_no}: over-delivery held in quarantine — {detail}")
-        # minus the two told below, so nobody gets this title twice
-        notify_users(conn, set(_perm_holders(conn, "proc_purchasing"))
-                     - {pr["requester"], uname}, "warning", "Over-delivery quarantined",
+        # Purchasing decides; the requester side is told once; never the booker
+        buyers = set(_perm_holders(conn, "proc_purchasing")) - {uname}
+        notify_users(conn, buyers, "warning", "Over-delivery awaiting decision",
                      f"{grn_no} ({pr['pr_no']}): {detail}. Not added to stock — accept or "
                      f"return it.", link=_pr_link(pr_id))
-        notify_users(conn, [pr["requester"], uname],
+        notify_users(conn, _requester_people(conn, pr) - buyers - {uname},
                      "warning", "Over-delivery quarantined",
                      f"{pr['pr_no']}: the supplier delivered more than ordered "
                      f"({detail}). Held in quarantine on {grn_no}.", link=_pr_link(pr_id))
@@ -3765,11 +3796,13 @@ def _record_return(conn, pr_id, pr, lines, reason, user, grn_id=None):
               + (f" ({reason})" if reason else ""))
         # carries the amount, so Purchasing and Payables only — never the requester
         notify_users(conn, set(_perm_holders(conn, ("proc_purchasing", "proc_pay")))
-                     - {pr["requester"]}, "warning", "Goods rejected — debit note raised",
+                     - _requester_people(conn, pr) - {uname}, "warning",
+                     "Goods rejected — debit note raised",
                      f"{dn_no} ({pr['pr_no']}): {detail} returned to "
                      f"{vendor or 'the supplier'}. Payable value reduced by "
                      f"{round(net + tax, 2):,.2f}.", link=_pr_link(pr_id))
-        notify_users(conn, [pr["requester"], uname], "warning", "Goods rejected on receipt",
+        notify_users(conn, _requester_people(conn, pr) - {uname}, "warning",
+                     "Goods rejected on receipt",
                      f"{pr['pr_no']}: {detail} rejected and returned to "
                      f"{vendor or 'the supplier'}. Debit note {dn_no}"
                      + (f" — {reason}" if reason else "") + ".", link=_pr_link(pr_id))
@@ -3953,7 +3986,7 @@ def mark_in_transit(pr_id, user, note=None, ip=None):
         audit(conn, pr_id, uname, "marked_in_transit",
               "Order dispatched by the supplier — on the way"
               + (" (%s)" % note.strip() if (note or "").strip() else ""), ip)
-        notify_users(conn, [pr_requester(conn, pr_id)], "info",
+        notify_users(conn, _requester_people(conn, pr), "info",
                      "On the way: %s" % (pr["pr_no"] or "your request"),
                      "The supplier has dispatched this order."
                      + (" %s" % note.strip() if (note or "").strip() else ""),
@@ -4078,9 +4111,17 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
         audit(conn, pr_id, user.get("username") if user else "system", "goods_received",
               ("Fully received" if fully else "Partial receipt") + f" — {grn_no}"
               + (f": {notes}" if notes else ""), ip)
-        if fully and effective:      # nothing accepted = a pure over-delivery, not a confirmation
-            notify_users(conn, [pr["requester"]], "info", "Delivery confirmed",
-                         f"{pr['pr_no']} fully received ({grn_no}).", link=_pr_link(pr_id))
+        if effective:      # nothing accepted = a pure over-delivery, not a confirmation
+            booker = (user or {}).get("username") or "system"
+            buyers = set(_perm_holders(conn, "proc_purchasing")) - {booker}
+            notify_users(conn, buyers, "info", "Goods received - record the invoice",
+                         f"{pr['pr_no']}: {'full' if fully else 'partial'} receipt booked "
+                         f"({grn_no}). Record the supplier invoice.", link=_pr_link(pr_id))
+            notify_users(conn, _requester_people(conn, pr) - buyers - {booker}, "info",
+                         "Delivery confirmed" if fully else "Partial delivery received",
+                         f"{pr['pr_no']} fully received ({grn_no})." if fully else
+                         f"{pr['pr_no']}: part of the order arrived ({grn_no}); the rest "
+                         f"is still outstanding.", link=_pr_link(pr_id))
         if post_stock:
             _queue_stock_postings(conn, pr_id, "grn:%s" % grn_id, effective, grn_id=grn_id)
         conn.commit()
@@ -4396,8 +4437,34 @@ def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64
         conn.commit()
     finally:
         conn.close()
-    three_way_match(pr_id)   # refresh cached match
+    match = three_way_match(pr_id) or {}   # refresh cached match
+    _notify_invoice(pr_id, (data.get("invoice_no") or "").strip() or "invoice",
+                    (user or {}).get("username") or "system", match)
     return True, ""
+
+
+def _notify_invoice(pr_id, inv_no, recorder, match):
+    """Payables hear an invoice is in; a failed 3-way match also goes to whoever
+    recorded it and to Purchasing. Amounts stay inside Purchasing/Finance."""
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        bad = match.get("status") == "mismatch"
+        told = set()
+        if bad:
+            told = (set(_perm_holders(conn, "proc_purchasing")) | {recorder}) - {"system"}
+            notify_users(conn, told, "warning", "3-way match mismatch",
+                         f"{inv_no} on {pr['pr_no']} does not match the order and receipt: "
+                         + ("; ".join(match.get("flags") or []) or "check the lines")[:600],
+                         link=_pr_link(pr_id))
+        notify_users(conn, set(_perm_holders(conn, "proc_pay")) - told - {recorder},
+                     "warning" if bad else "info", "Invoice ready for payment",
+                     f"{inv_no} recorded on {pr['pr_no']}"
+                     + (" — the 3-way match FAILED, check it before paying." if bad else
+                        " and matched to the order and receipt."), link=_pr_link(pr_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def three_way_match(pr_id):
@@ -5203,6 +5270,10 @@ def authorize_advance(pr_id, pct, guarantee_ref, user, ip=None):
               f"DOAM §4.3: advance of {pct:.1f}% authorised by "
               f"{stage_label(stage) if stage else 'Procurement admin'}"
               + (f", bank guarantee {guarantee_ref}" if guarantee_ref else ""), ip)
+        notify_users(conn, set(_perm_holders(conn, "proc_pay")) - {(user or {}).get("username")},
+                     "info", "Advance payment authorised",
+                     f"{pr['pr_no']}: an advance of {pct:.1f}% was authorised by "
+                     f"{stage_label(stage)} — it can now be paid.", link=_pr_link(pr_id))
         conn.commit()
         return True, ""
     finally:
@@ -5379,8 +5450,13 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         audit(conn, pr_id, user.get("username") if user else "system", "payment",
               f"Paid {amount:,.2f} ({pstatus})", ip)
         if pstatus == "paid":
-            notify_users(conn, [pr["requester"]], "info", "Payment complete",
-                         f"{pr['pr_no']} is fully paid.", link=_pr_link(pr_id))
+            buyers = set(_perm_holders(conn, "proc_purchasing"))
+            notify_users(conn, buyers, "info", "Ready to close",
+                         f"{pr['pr_no']} is fully paid — close the request.",
+                         link=_pr_link(pr_id))
+            notify_users(conn, _requester_people(conn, pr) - buyers, "info",
+                         "Payment complete", f"{pr['pr_no']} is fully paid.",
+                         link=_pr_link(pr_id))
         conn.commit()
         return True, pstatus
     finally:
@@ -5411,6 +5487,12 @@ def close_pr(pr_id, user, ip=None, reason=None):
         audit(conn, pr_id, user.get("username") if user else "system", "closed",
               ("Short-closed: " + reason[:500] if short else "Closed")
               + (f"; budget released {released:,.2f}" if released else ""), ip)
+        if short:
+            full = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+            notify_users(conn, _requester_people(conn, full) - {(user or {}).get("username")},
+                         "warning", "Request short-closed",
+                         f"{full['pr_no']} was closed before everything arrived; the rest "
+                         f"will not be delivered. Reason: {reason[:300]}", link=_pr_link(pr_id))
         conn.commit()
         return True, ""
     finally:
@@ -5513,10 +5595,22 @@ def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
                 return False, "needs_admin"      # committed spend: admin decision only
         elif not (is_owner or is_purchasing or is_admin):
             return False, "forbidden"
+        told = _requester_people(conn, pr)
         if pr["status"] == "pending":
-            _clear_sign_prompts(conn, pr, conn.execute(
+            cur = conn.execute(
                 "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
-                (pr_id, pr["current_seq"])).fetchall())
+                (pr_id, pr["current_seq"])).fetchall()
+            for st in cur:
+                told |= _step_signers(conn, pr, st)
+            _clear_sign_prompts(conn, pr, cur)
+        on_order = pr["status"] in ("po_issued", "in_transit")
+        if on_order:
+            told |= set(_perm_holders(conn, "proc_receive"))
+        notify_users(conn, told - {uname}, "warning", "Request cancelled",
+                     f"{pr['pr_no']} was cancelled by {uname}."
+                     + (f" Its purchase order {pr['po_no'] or ''} is cancelled too — do not "
+                        f"receive goods against it." if on_order else ""),
+                     link=_pr_link(pr_id))
         conn.execute("UPDATE pr_requests SET status='cancelled', current_seq=0 WHERE id=?",
                      (pr_id,))
         conn.execute("UPDATE pr_purchase_orders SET status='cancelled' WHERE pr_id=?", (pr_id,))
@@ -6861,10 +6955,32 @@ def add_delegation(from_user, to_user, from_date, to_date, note, user=None):
         return False, "invalid"
     conn = get_db()
     try:
+        # role_holders() silently drops a delegate who cannot sign, so refuse one
+        # here rather than save a delegation that covers nobody.
+        to = conn.execute("SELECT * FROM users WHERE username=? AND is_active=1 "
+                          "AND COALESCE(account_status,'active')='active'",
+                          (to_user,)).fetchone()
+        if not to or not _may_sign(to):
+            return False, "delegate_cannot_sign"
         conn.execute(
             """INSERT INTO proc_delegations (from_user, to_user, from_date, to_date, note, created_at)
                VALUES (?,?,?,?,?,?)""",
             (from_user, to_user, from_date or None, to_date or None, note, _now()))
+        conn.commit()
+        frm = conn.execute("SELECT * FROM users WHERE username=?", (from_user,)).fetchone()
+    finally:
+        conn.close()
+    waiting = len(my_queue(dict(frm))) if frm else 0
+    window = f"{from_date or 'now'} to {to_date or 'until revoked'}"
+    conn = get_db()
+    try:
+        notify_users(conn, [to_user], "info", "You can now sign for " + from_user,
+                     f"{from_user} delegated their procurement signing to you, {window}. "
+                     f"{waiting} request(s) are waiting on their rungs now.",
+                     link="/procurement/")
+        notify_users(conn, [from_user], "info", "Signing delegated to " + to_user,
+                     f"{to_user} may sign for you, {window}. {waiting} request(s) are "
+                     f"waiting on your rungs now.", link="/procurement/")
         conn.commit()
         return True, ""
     finally:
@@ -6874,7 +6990,14 @@ def add_delegation(from_user, to_user, from_date, to_date, note, user=None):
 def revoke_delegation(deleg_id):
     conn = get_db()
     try:
+        d = conn.execute("SELECT * FROM proc_delegations WHERE id=? AND is_active=1",
+                         (deleg_id,)).fetchone()
         conn.execute("UPDATE proc_delegations SET is_active=0 WHERE id=?", (deleg_id,))
+        if d:
+            notify_users(conn, [d["from_user"], d["to_user"]], "info", "Delegation revoked",
+                         f"The delegation from {d['from_user']} to {d['to_user']} was revoked; "
+                         f"{d['to_user']} can no longer sign for {d['from_user']}.",
+                         link="/procurement/")
         conn.commit()
         return True, ""
     finally:
@@ -7970,7 +8093,7 @@ def warehouse_revise(pr_id, qtys, stocks, user, ip=None, fields=None):
             # The new value may need rungs the old one did not.
             _reconcile_value_ladder(conn, pr_id, pr["department"], new_total)
 
-        notify_users(conn, [pr["requester"]], "info",
+        notify_users(conn, _requester_people(conn, pr), "info",
                      "Quantity corrected on %s" % (pr["pr_no"] or "your request"),
                      "The warehouse checked stock and adjusted your request: "
                      + " | ".join(changed)[:400],
@@ -8116,7 +8239,7 @@ def issue_from_stock(pr_id, issues, user, ip=None):
               "issued_from_stock" if not fully else "met_from_stock",
               " | ".join(done)[:2000], ip)
         notify_users(
-            conn, [pr["requester"]], "info",
+            conn, _requester_people(conn, pr), "info",
             ("%s met from stock" if fully else "%s partly met from stock")
             % (pr["pr_no"] or "Your request"),
             (" | ".join(done)[:400]) + ("" if fully else
@@ -8229,7 +8352,7 @@ def reverse_stock_issue(pr_id, line_id, user, ip=None):
                                     "%g returned to %s" % (issued, code),
                                            " — request reopened" if reopened else ""), ip)
         notify_users(
-            conn, [pr["requester"]], "info",
+            conn, _requester_people(conn, pr), "info",
             "Stock issue reversed on %s" % (pr["pr_no"] or "your request"),
             "%g %s went back to stock%s." % (issued, ln["item"],
                                              " and the request is circulating again"
@@ -8437,11 +8560,23 @@ def _correct_receipt(pr_id, item_id, qty, reason, user, ip, returned):
         audit(conn, pr_id, (user or {}).get("username"),
               "returned_after_receipt" if returned else "receipt_reversed",
               f"{item['item']} (line {item['id']}): {qty:g}; {reason}{note}", ip)
+        _notify_correction(conn, pr, user, "Receipt corrected",
+                           f"{qty:g} {item['item']} taken off the receipt"
+                           + (" and returned to the supplier" if returned else "")
+                           + f": {reason}")
         conn.commit()
     finally:
         conn.close()
     post_stock_postings(pr_id, user)
     return True, ""
+
+
+def _notify_correction(conn, pr, user, title, what):
+    """A void / reversal: the requester side and the other desk hear it, with no
+    amounts (the requester reads this), never the person who made it."""
+    notify_users(conn, (_requester_people(conn, pr) | _other_side(conn, user))
+                 - {(user or {}).get("username")}, "warning", f"{title}: {pr['pr_no']}",
+                 f"{pr['pr_no']}: {what}"[:600], link=_pr_link(pr["id"]))
 
 
 def reverse_receipt(pr_id, item_id, qty, reason, user, ip=None):
@@ -8521,6 +8656,9 @@ def void_invoice(inv_id, reason, user, ip=None):
                      (pr_id, inv["po_id"], inv["invoice_no"], inv["currency"], -float(inv["amount"] or 0),
                       -float(inv["tax"] or 0), inv_id, reason, (user or {}).get("username"), _now()))
         audit(conn, pr_id, (user or {}).get("username"), "invoice_voided", f"Invoice #{inv_id}: {reason}", ip)
+        _notify_correction(conn, conn.execute("SELECT * FROM pr_requests WHERE id=?",
+                                              (pr_id,)).fetchone(), user, "Invoice voided",
+                           f"invoice {inv['invoice_no'] or ''} was voided: {reason}")
         conn.commit()
     finally:
         conn.close()
@@ -8558,6 +8696,7 @@ def reverse_payment(pay_id, reason, user, ip=None):
         status = _payment_status(paid, match, pr_amounts(pr)["grand"])
         conn.execute("UPDATE pr_requests SET paid_amount=?, payment_status=? WHERE id=?", (round(paid, 2), status, pr_id))
         audit(conn, pr_id, (user or {}).get("username"), "payment_reversed", f"Payment #{pay_id}: {reason}", ip)
+        _notify_correction(conn, pr, user, "Payment reversed", f"a payment was reversed: {reason}")
         conn.commit()
         return True, ""
     finally:

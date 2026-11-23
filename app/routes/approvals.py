@@ -1878,8 +1878,10 @@ def add_delegation():
     ok, msg = svc.add_delegation(f.get("from_user"), f.get("to_user"),
                                  f.get("from_date"), f.get("to_date"),
                                  f.get("note", "").strip(), user=_u())
-    flash("Delegation added." if ok else f"Could not add delegation ({msg}).",
-          "success" if ok else "error")
+    flash("Delegation added." if ok else
+          "That person cannot sign procurement requests (no approval permission, or the "
+          "account is inactive). Choose a delegate who can sign." if msg == "delegate_cannot_sign"
+          else f"Could not add delegation ({msg}).", "success" if ok else "error")
     return redirect(url_for("approvals.delegations"))
 
 
