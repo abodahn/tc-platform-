@@ -2843,6 +2843,7 @@
   "proc.vat_l": "VAT",
   "proc.vat_no": "No VAT",
   "proc.after_vat": "After VAT",
+  "proc.in_place_tag": "Super admin signed in place of",
   "proc.subtotal": "Subtotal",
   "proc.switch_hint": "Pick a department to view or edit its approval route.",
   "proc.tax": "Tax",

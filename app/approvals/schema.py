@@ -324,6 +324,10 @@ _STEP_MIGRATIONS = [
     # evidenced from system records at all. Defaults to 'approve', so every row
     # written before this migration keeps exactly the meaning it was given.
     ("action_type", "ALTER TABLE pr_steps ADD COLUMN action_type TEXT DEFAULT 'approve'"),
+    # Who a super-admin signature stood in for ("Mostafa Bekhit (Warehouse
+    # Manager)"). NULL = signed by the rung's own holder. Shown as a warning on
+    # the ladder, the signature card and the audit trail.
+    ("in_place_of", "ALTER TABLE pr_steps ADD COLUMN in_place_of TEXT"),
 ]
 
 # Columns added to pr_requests after first release (tax + goods receipt + PO email

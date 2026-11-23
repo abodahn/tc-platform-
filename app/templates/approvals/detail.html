@@ -208,6 +208,10 @@
           <span class="tag" title="{{ s.esc_why }}">{{ L.ui.esc_tag if s.esc_role else L.ui.esc_stuck }}</span>
           {% endif %}
           <span class="sname">{{ s.approver_name or ('…' if s.status=='pending' else '—') }}</span>
+          {% if s.in_place_of %}
+          <span class="badge b-pending" title="{{ s.in_place_of }}">&#9888;
+            <span data-i18n="proc.in_place_tag">Super admin signed in place of</span>: {{ s.in_place_of }}</span>
+          {% endif %}
           {% if s.age_hours is defined %}
           <span class="sname" style="font-weight:700;color:{{ 'var(--crit)' if s.overdue else ('var(--warn)' if s.due_soon else 'var(--muted)') }}">
             {{ s.age_hours|round|int }}h{{ ' · overdue' if s.overdue else (' · due soon' if s.due_soon else '') }}</span>
@@ -1675,6 +1679,8 @@
             </div>
             <div class="smeta">{{ s.approver_name or '' }}{% if s.acted_at %} · {{ s.acted_at[:16] }}{% endif %}</div>
             {% if s.esc_from %}<div class="smeta" style="color:var(--warn)">{{ s.esc_why }}</div>{% endif %}
+            {% if s.in_place_of %}<div class="smeta" style="color:var(--warn);font-weight:600">&#9888;
+              <span data-i18n="proc.in_place_tag">Super admin signed in place of</span>: {{ s.in_place_of }}</div>{% endif %}
           </div>
           {% endfor %}
         </div>
@@ -2299,8 +2305,8 @@
     <div class="panel-pad">
     <ul class="tl">
       {% for e in b.events %}
-      <li>
-        <div class="tl-act">{{ e.action|replace('_',' ')|title }}{% if e.detail and (money_full or (money and e.action not in ('invoice_added','payment','debit_note_settled'))) %} — <span style="font-weight:400">{{ e.detail }}</span>{% endif %}</div>
+      <li{% if e.action == 'signed_in_place' %} style="color:var(--warn)"{% endif %}>
+        <div class="tl-act">{% if e.action == 'signed_in_place' %}&#9888; <span data-i18n="proc.in_place_tag">Super admin signed in place of</span>{% else %}{{ e.action|replace('_',' ')|title }}{% endif %}{% if e.detail and (money_full or (money and e.action not in ('invoice_added','payment','debit_note_settled'))) %} — <span style="font-weight:400">{{ e.detail }}</span>{% endif %}</div>
         <div class="tl-meta">{{ e.actor }} · {{ (e.created_at or '')[:16] }}</div>
       </li>
       {% endfor %}

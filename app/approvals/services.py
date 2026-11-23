@@ -1827,6 +1827,35 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
         conn.close()
 
 
+def _record_in_place(conn, pr_id, step, roles, signer, ip=None):
+    """A super admin just signed a rung its own role does not hold: stamp the
+    step with WHO it stood in for, write a warning to the audit trail, and tell
+    those holders. Returns the "in place of" text."""
+    roles = set(roles or ())
+    holders = []
+    if roles:
+        marks = ",".join("?" * len(roles))
+        holders = conn.execute(
+            "SELECT username, full_name FROM users WHERE role IN (%s) "
+            "AND COALESCE(account_status,'active')='active' ORDER BY id" % marks,
+            tuple(sorted(roles))).fetchall()
+    names = ", ".join((h["full_name"] or h["username"]) for h in holders)
+    label = stage_label(step["stage"])
+    who = ("%s (%s)" % (names, label)) if names else label
+    try:
+        conn.execute("UPDATE pr_steps SET in_place_of=? WHERE id=?", (who, step["id"]))
+    except Exception:
+        pass                    # pre-migration database: the audit row below still records it
+    audit(conn, pr_id, signer, "signed_in_place",
+          "\u26a0 Super admin %s signed %s IN PLACE OF %s." % (signer, label, who), ip)
+    pr = conn.execute("SELECT pr_no FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+    notify_users(conn, [h["username"] for h in holders if h["username"] != signer],
+                 "warning", "Signed in your place",
+                 "%s: the super admin (%s) signed the %s step in your place."
+                 % (pr["pr_no"] if pr else pr_id, signer, label), link=_pr_link(pr_id))
+    return who
+
+
 def pr_amounts(pr):
     """Return {subtotal, tax_rate, tax, grand} for a PR dict/row."""
     subtotal = float(pr.get("total") or 0) if isinstance(pr, dict) else float(pr["total"] or 0)
