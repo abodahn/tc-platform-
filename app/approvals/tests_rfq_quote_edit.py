@@ -153,9 +153,9 @@ def run():
             conn.close()
 
         svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "alpha trading llc", "amount": 9000,
-                              "currency": "EGP", "lead_time_days": 20}, buyer)
+                              "currency": "EGP", "lead_time_days": 20}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Beta Supply", "amount": 9500,
-                              "currency": "EGP"}, buyer)
+                              "currency": "EGP"}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         q1 = one("SELECT * FROM pr_quotes WHERE pr_id=? ORDER BY id", pr_id)
 
         ok, msg = svc.update_quote(q1["id"], {"amount": 8800, "vendor": "Alpha Trading LLC"},

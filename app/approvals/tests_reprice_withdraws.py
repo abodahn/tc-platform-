@@ -58,7 +58,7 @@ def run():
         assert ok, msg
         for vendor in ("Vendor A", "Vendor B", "Vendor C"):
             ok, msg = svc.add_quote(pid, {"payment_terms": "30 days", "vendor": vendor, "amount": 600000},
-                                    signer["purchasing"])
+                                    signer["purchasing"], filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
             assert ok, msg
 
         def look():

@@ -12,6 +12,7 @@ Proves:
   4. old rows (no terms, no VAT answer) and a database without the new columns
      still read and render; the migration is idempotent.
 """
+import io
 import os
 import re
 import sys
@@ -93,17 +94,17 @@ def run():
 
         # ---------------------------------------------------------- quote ----
         print("\n2. payment terms are required on a quotation")
-        ok, why = svc.add_quote(pr_id, {"vendor": "Alpha", "amount": 100}, buyer)
+        ok, why = svc.add_quote(pr_id, {"vendor": "Alpha", "amount": 100}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         chk("a missing value is refused by the service", (not ok) and why == "terms_required", why)
         ok, why = svc.add_quote(pr_id, {"vendor": "Alpha", "amount": 100,
-                                        "payment_terms": "  "}, buyer)
+                                        "payment_terms": "  "}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         chk("so is a blank", (not ok) and why == "terms_required", why)
 
         print("\n3. VAT 14%: the amount is BEFORE VAT")
         ok, _ = svc.add_quote(pr_id, {"vendor": "Alpha", "amount": 90000,
-                                      "payment_terms": "30 days", "vat_applies": "1"}, buyer)
+                                      "payment_terms": "30 days", "vat_applies": "1"}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         ok2, _ = svc.add_quote(pr_id, {"vendor": "Beta", "amount": 100000,
-                                       "payment_terms": "Cash", "vat_applies": "0"}, buyer)
+                                       "payment_terms": "Cash", "vat_applies": "0"}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         chk("both quotes are recorded", ok and ok2)
         qs = {q["vendor"]: q for q in svc.get_pr(pr_id)["quotes"]}
         chk("VAT yes -> after VAT = 1.14 x", qs["Alpha"]["after_vat"] == 102600.0,
@@ -167,7 +168,7 @@ def run():
         chk("with a translated message", want in f and want != "Enter the payment terms "
             "the supplier is offering.", f)
         r = cli.post("/procurement/pr/%d/quote" % pr_id,
-                     data={"_csrf": "tok", "vendor": "Gamma", "amount": "5000",
+                     data={"_csrf": "tok", "file": (io.BytesIO(b"%PDF-1.4 test"), "q.pdf"), "vendor": "Gamma", "amount": "5000",
                            "payment_terms": "30 days", "vat_applies": "1"},
                      content_type="multipart/form-data")
         flashes()

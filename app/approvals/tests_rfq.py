@@ -207,7 +207,7 @@ def run():
         # ---------------------------------------------------------------
         target = rfqs[1]                                   # Betatrim's RFQ
         ok, msg = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": B, "amount": 6800,
-                                        "rfq_id": target["id"]}, buyer)
+                                        "rfq_id": target["id"]}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         assert ok, msg
         quote = q("SELECT vendor, amount, rfq_id FROM pr_quotes WHERE pr_id=? "
                   "ORDER BY id DESC", pr_id)[0]
@@ -218,9 +218,9 @@ def run():
                  rfqs[0]["id"])[0]["status"] == "sent", "an unanswered RFQ must stay 'sent'"
         # a quote that answers nothing is still a quote, and an id from another
         # request can never attach itself here
-        ok, _ = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Walk-in", "amount": 7100}, buyer)
+        ok, _ = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Walk-in", "amount": 7100}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         assert ok
-        ok, _ = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Ghost", "amount": 1, "rfq_id": 99999}, buyer)
+        ok, _ = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Ghost", "amount": 1, "rfq_id": 99999}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         assert ok
         assert q("SELECT rfq_id FROM pr_quotes WHERE pr_id=? AND vendor='Ghost'",
                  pr_id)[0]["rfq_id"] is None, "a stray RFQ id must not link"
@@ -238,7 +238,7 @@ def run():
         legacy = svc.get_pr(pr_id)
         assert legacy and legacy["rfqs"] == [], "the request page must not need the table"
         assert legacy["quotes"], "quotes must still read"
-        ok, msg = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Old Ways", "amount": 500}, buyer)
+        ok, msg = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Old Ways", "amount": 500}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         assert ok, "quoting must survive a missing RFQ table: %s" % msg
 
         print("PASS: one RFQ per vendor, empty price boxes, no value printed, "

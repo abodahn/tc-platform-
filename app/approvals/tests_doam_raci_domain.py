@@ -293,7 +293,7 @@ def run():
         price(j, 5000)
         conn = get_db(); aj = _acts(conn, j); conn.close()
         assert aj == OPEX_ACTS, aj
-        svc.add_quote(j, {"payment_terms": "30 days", "vendor": "Quote Vendor", "amount": 5000}, buyer)  # §4.3 band 1
+        svc.add_quote(j, {"payment_terms": "30 days", "vendor": "Quote Vendor", "amount": 5000}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")  # §4.3 band 1
         okk, msg = svc.act_on_step(j, sk, "approve")      # store rung
         assert okk, msg
         okk, msg = svc.act_on_step(j, wh, "approve")      # Warehouse Manager rung

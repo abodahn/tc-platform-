@@ -68,8 +68,9 @@ def run():
             conn = get_db()
             for _ in range(n):
                 bid[0] += 1
-                conn.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, "
-                             "currency, created_at) VALUES (?,?,?,?,datetime('now'))",
+                conn.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency, "
+                             "content_b64, created_at) VALUES (?,?,?,?,'JVBERi0xLjQK',"
+                             "datetime('now'))",
                              (pr_id, "Vendor %d" % bid[0], amount, "EGP"))
             conn.commit()
             conn.close()

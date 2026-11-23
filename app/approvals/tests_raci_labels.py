@@ -131,7 +131,7 @@ def run():
             if not ok and msg == "needs_quotes":
                 for n, mult in (("A", 1.0), ("B", 1.06), ("C", 1.11)):
                     svc.add_quote(pid, {"payment_terms": "30 days", "vendor": "RACI Quote %s" % n,
-                                        "amount": 800000 * mult}, buyer)
+                                        "amount": 800000 * mult}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
                 continue
             if not ok:
                 break

@@ -1472,6 +1472,23 @@ def _posted_line_prices(f, items):
             if ("uprice_%s" % it["id"]) in f}
 
 
+def _quote_upload():
+    """(filename, content_type, base64, error) for the posted quotation file.
+    All None when no file was sent; error is the flash text when it is refused."""
+    file = request.files.get("file")
+    if not (file and file.filename):
+        return None, None, None, None
+    if not file.filename.lower().endswith(_ATTACH_EXT):
+        return None, None, None, "Unsupported quote file type."
+    raw = file.read()
+    if len(raw) > _MAX_ATTACH:
+        return None, None, None, "Quote file too large (max 3 MB)."
+    if not raw:
+        return None, None, None, "Attach the supplier's quotation file."
+    return (file.filename, file.mimetype or "application/octet-stream",
+            base64.b64encode(raw).decode("ascii"), None)
+
+
 @bp.route("/pr/<int:pr_id>/quote", methods=["POST"])
 @login_required
 @permission_required("proc_create")
@@ -1481,18 +1498,10 @@ def add_quote(pr_id):
         abort(404)
     f = request.form
     lines = _posted_line_prices(f, bundle["items"])
-    fn = ct = b64 = None
-    file = request.files.get("file")
-    if file and file.filename:
-        if not file.filename.lower().endswith(_ATTACH_EXT):
-            flash("Unsupported quote file type.", "error")
-            return redirect(url_for("approvals.detail", pr_id=pr_id))
-        raw = file.read()
-        if len(raw) > _MAX_ATTACH:
-            flash("Quote file too large (max 3 MB).", "error")
-            return redirect(url_for("approvals.detail", pr_id=pr_id))
-        fn, ct, b64 = file.filename, (file.mimetype or "application/octet-stream"), \
-            base64.b64encode(raw).decode("ascii")
+    fn, ct, b64, bad = _quote_upload()
+    if bad:          # a missing file is refused by the service, after the terms
+        flash(bad, "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
     if not f.get("vendor") or not (f.get("amount") or any(
             str(v or "").strip() for v in lines.values())):
         flash("Vendor and amount are required for a quote.", "error")
@@ -1519,7 +1528,7 @@ def add_quote(pr_id):
 @permission_required("proc_purchasing")
 def choose_quote(pr_id, quote_id):
     ok, msg = svc.choose_quote(pr_id, quote_id, _u(), ip=_ip())
-    flash("Quote selected." if ok else f"Could not select quote ({msg}).",
+    flash("Quote selected." if ok else _QUOTE_ERRORS.get(msg) or f"Could not select quote ({msg}).",
           "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
@@ -1547,6 +1556,9 @@ _QUOTE_ERRORS = {
     "terms_required": "Enter the payment terms the supplier is offering.",
     "not_found": "Quotation not found.",
     "unavailable": "Could not reach the quotations table.",
+    "attachment_required": "Attach the supplier's quotation file.",
+    "no_attachment": "This quotation has no supplier file. Attach it (Edit this "
+                     "quotation) before choosing it.",
 }
 
 
@@ -1577,7 +1589,12 @@ def edit_quote(pr_id, quote_id):
     lines = _posted_line_prices(f, bundle["items"]) if bundle else {}
     if lines:
         data["lines"] = lines
-    ok, msg = svc.update_quote(quote_id, data, user=_u(), ip=_ip())
+    fn, ct, b64, bad = _quote_upload()
+    if bad:
+        flash(bad, "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    ok, msg = svc.update_quote(quote_id, data, user=_u(), ip=_ip(),
+                               filename=fn, content_type=ct, content_b64=b64)
     flash(("No change." if msg == "no_change" else "Quotation updated.")
           if ok else _QUOTE_ERRORS.get(msg, "Could not update the quotation (%s)." % msg),
           "success" if ok else "error")
@@ -1917,7 +1934,14 @@ def approve(pr_id):
                                 "the request has no commercial value yet.",
                "needs_quotes": "Competitive quotes required — attach at least 2 vendor "
                                "quotes for this order value, or record a single-source "
-                               "justification in the Vendor quotes panel.",
+                               "justification in the Vendor quotes panel. Only quotations "
+                               "with the supplier's file attached count.",
+               "needs_quote_file": "The quotation on file has no supplier document. "
+                                   "Attach the supplier's quotation file before "
+                                   "approving.",
+               "chosen_quote_no_file": "The chosen quotation has no supplier file. "
+                                       "Attach it in the Vendor quotes panel before "
+                                       "approving.",
                "self_approval": "You cannot approve your own request — raising it is "
                                 "your signature.",
                "dual_role": "You already signed another stage of this request — a "

@@ -167,8 +167,8 @@ def run():
         # so the RFQ gate is satisfied and the ladder can actually be walked.
         conn = get_db()
         for v in ("Vendor A", "Vendor B", "Vendor C"):
-            conn.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency) "
-                         "VALUES (?,?,?,'EGP')", (pr_id, v, 60000))
+            conn.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency, content_b64) "
+                         "VALUES (?,?,?,'EGP','JVBERi0xLjQK')", (pr_id, v, 60000))
         conn.commit()
         conn.close()
 

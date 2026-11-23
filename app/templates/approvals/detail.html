@@ -1762,9 +1762,11 @@
         {% if money and quote_cmp and quote_cmp.saving %}
         <span class="badge b-approved" data-i18n-title="proc.saving">▼ {{ '{:,.0f}'.format(quote_cmp.saving) }} {{ pr.currency }}</span>
         {% endif %}
+        {#- Only quotations with the supplier's file count toward the rule. -#}
+        {% set n_filed = b.quotes|selectattr('has_file')|list|length %}
         {% if rfq_required %}
-        <span class="badge {{ 'b-approved' if (b.quotes|length >= rfq_min or pr.single_source_reason) else 'b-warning' }}">
-          <span data-i18n="proc.rfq.quotes_label">Quotes:</span> {{ b.quotes|length }}
+        <span class="badge {{ 'b-approved' if (n_filed >= rfq_min or pr.single_source_reason) else 'b-warning' }}">
+          <span data-i18n="proc.rfq.quotes_label">Quotes:</span> {{ n_filed }}
           <span data-i18n="proc.rfq.of_required">of</span> {{ rfq_min }}
           <span data-i18n="proc.rfq.required_for">required for orders ≥</span>
           {{ '{:,.0f}'.format(rfq_threshold) }} EGP
@@ -1796,7 +1798,8 @@
                   {% if q.partial %}<span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span>{% endif %}</div>
                   {% if q.warranty %}<div class="muted" style="font-size:11.5px">{{ q.warranty }}</div>{% endif %}
                   {% if q.rfq_id %}<div class="muted" style="font-size:11.5px">↩ {{ b.rfqs|selectattr('id','equalto',q.rfq_id)|map(attribute='rfq_no')|first }}</div>{% endif %}
-                  {% if money and q.filename %}<a class="tag" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename }}</a>{% endif %}</td>
+                  {% if not q.has_file %}<div><span class="badge b-warning" data-i18n="proc.quote.no_file">No attachment</span></div>
+                  {% elif money %}<a class="tag" style="overflow-wrap:anywhere" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename or 'quote' }}</a>{% endif %}</td>
               <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money %}{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}{% else %}—{% endif %}</td>
               <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money and q.vat_applies == 1 %}{{ '{:,.0f}'.format(q.after_vat - q.amount) }}{% elif money and q.vat_applies == 0 %}<span class="muted" data-i18n="proc.quote.no_vat">No VAT</span>{% else %}—{% endif %}</td>
               <td style="font-variant-numeric:tabular-nums;text-align:end;font-weight:600">{% if money and q.vat_applies in (0, 1) %}{{ '{:,.0f}'.format(q.after_vat) }} {{ q.currency }}{% else %}—{% endif %}</td>
@@ -1804,10 +1807,11 @@
               <td class="muted">{{ (q.lead_time_days ~ 'd') if q.lead_time_days else '—' }}</td>
               <td style="text-align:end">
                 {% if can_purchasing and not q.is_chosen %}
+                {% if q.has_file %}
                 <form method="post" action="{{ url_for('approvals.choose_quote', pr_id=pr.id, quote_id=q.id) }}" style="display:inline">
                   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
                   <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.choose">Choose</button>
-                </form>
+                </form>{% endif %}
                 {#- Removing a price that is no longer on the table. The CHOSEN
                     quotation has neither control: it is what the ladder routed
                     on and what the PO was raised from. Choose another first. -#}
@@ -1824,7 +1828,7 @@
             <tr><td colspan="7" style="padding-top:0">
               <details style="position:sticky;inset-inline-start:0;max-width:calc(100vw - 72px);max-width:min(calc(100vw - 72px), calc(100cqw - 16px));white-space:normal">
                 <summary class="btn btn-ghost btn-sm" data-i18n="proc.quote.edit">Edit this quotation</summary>
-                <form method="post" style="margin-top:10px" data-vat-form
+                <form method="post" style="margin-top:10px" data-vat-form enctype="multipart/form-data"
                       action="{{ url_for('approvals.edit_quote', pr_id=pr.id, quote_id=q.id) }}">
                   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
                   <div class="flex gap wrap" style="gap:12px;align-items:flex-end">
@@ -1855,13 +1859,29 @@
                     <label style="flex:1 1 160px">
                       <span data-i18n="proc.warranty">Warranty</span>
                       <input name="warranty" value="{{ q.warranty or '' }}"></label>
+                    <label style="flex:1 1 200px;min-width:0">
+                      <span data-i18n="{{ 'proc.quote.replace_file' if q.has_file else 'proc.quote.attach_file' }}">{{ 'Replace file' if q.has_file else 'Attach file' }}</span>
+                      <input type="file" name="file" style="max-width:100%"
+                             accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv"></label>
                   </div>
+                  <div class="muted" style="font-size:12px;margin-top:4px" data-i18n="proc.quote.file_hint">PDF, PNG, JPG, WEBP, XLSX or CSV, max 3 MB. Required: a quotation without the supplier's file cannot be chosen or counted.</div>
                   <div style="margin-top:10px">{{ quote_line_inputs(b['items'], q) }}</div>
                   <div class="muted" style="margin-top:8px"><span data-i18n="proc.quote.after_vat">After VAT</span>:
                     <b data-vat-out></b></div>
                   <button class="btn btn-sm" style="margin-top:10px" data-i18n="proc.save">Save</button>
                 </form>
               </details>
+            </td></tr>
+            {% elif can_purchasing and not q.has_file and not rfq_locked %}
+            {#- A chosen quotation from before files were required: attach only. -#}
+            <tr><td colspan="7" style="padding-top:0">
+              <form method="post" enctype="multipart/form-data" class="flex gap wrap" style="gap:8px;align-items:center"
+                    action="{{ url_for('approvals.edit_quote', pr_id=pr.id, quote_id=q.id) }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="file" name="file" required style="max-width:100%" title="Attach file" data-i18n-title="proc.quote.attach_file"
+                       accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv">
+                <button class="btn btn-sm" data-i18n="proc.quote.attach_file">Attach file</button>
+              </form>
             </td></tr>
             {% endif %}
           {% endfor %}
@@ -1883,6 +1903,7 @@
             {% for q in quote_matrix.quotes %}
             <th style="text-align:end">{{ q.vendor }}
               {% if q.partial %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span></div>{% endif %}
+              {% if not q.has_file %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.no_file">No attachment</span></div>{% endif %}
               {% if q.stale %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.stale">Request lines changed, totals recalculated</span></div>{% endif %}</th>
             {% endfor %}
           </tr></thead>
@@ -2087,7 +2108,7 @@
           <strong data-i18n="proc.rfq.single_source">Single-source justification</strong>: {{ pr.single_source_reason }}
         </div>
         {% endif %}
-        {% if can_purchasing and rfq_required and (b.quotes|length) < rfq_min and not rfq_locked %}
+        {% if can_purchasing and rfq_required and n_filed < rfq_min and not rfq_locked %}
         <details style="margin-bottom:12px">
           <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.rfq.waive">Waive competitive quotes (single source)</summary>
           <form method="post" action="{{ url_for('approvals.single_source', pr_id=pr.id) }}" class="mt-2">
@@ -2128,7 +2149,8 @@
               {% endif %}
             </div>
             {{ quote_line_inputs(b['items']) }}
-            <div class="field"><label data-i18n="proc.quote_file">Quote file (optional)</label><input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv"></div>
+            <div class="field"><label data-i18n="proc.quote_file">Supplier's quotation file *</label><input type="file" name="file" required style="max-width:100%" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv">
+              <div class="muted" style="font-size:12px;margin-top:4px" data-i18n="proc.quote.file_hint">PDF, PNG, JPG, WEBP, XLSX or CSV, max 3 MB. Required: a quotation without the supplier's file cannot be chosen or counted.</div></div>
             <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_quote">+ Add quote</button>
           </form>
           <datalist id="vlist">{% for v in (vendors or []) %}<option value="{{ v.name }}"></option>{% endfor %}</datalist>

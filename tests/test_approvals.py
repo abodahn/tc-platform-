@@ -4,6 +4,7 @@ any ladder stage, so one admin session can sign the whole ladder — but it cann
 also RAISE the request it signs: DOAM §3.4 forbids approving a transaction that
 names you as requestor, and no role or setting waives that. Route-driven tests
 therefore raise as a requester and sign as the admin."""
+import io
 import pytest
 
 from _support import login_admin, login_as, get_csrf
@@ -90,8 +91,8 @@ def _gate_and_price(svc, pid, user, unit_price=48000.0):
     item_id = svc.get_pr(pid)["items"][0]["id"]
     assert svc.price_pr(pid, {item_id: unit_price}, {"tax_rate": 0}, user)[0] is True
     assert svc.act_on_step(pid, user, "approve") == (False, "needs_quotes")
-    svc.add_quote(pid, {"vendor": "High Trak", "amount": unit_price}, user)
-    svc.add_quote(pid, {"vendor": "Delta", "amount": unit_price + 4000}, user)
+    svc.add_quote(pid, {"vendor": "High Trak", "amount": unit_price}, user, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
+    svc.add_quote(pid, {"vendor": "Delta", "amount": unit_price + 4000}, user, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
 
 
 def test_full_cycle_create_sign_po(app_client):
@@ -188,7 +189,7 @@ def test_full_cycle_create_sign_po(app_client):
     # two DISTINCT vendor quotes satisfy the RFQ rule
     for vendor, amt in (("High Trak", "48000"), ("Delta", "52000")):
         c.post(f"/procurement/pr/{pr_id}/quote",
-               data={"_csrf": get_csrf(c), "vendor": vendor, "amount": amt,
+               data={"_csrf": get_csrf(c), "file": (io.BytesIO(b"%PDF-1.4 test"), "q.pdf"), "vendor": vendor, "amount": amt,
                      "payment_terms": "30 days"},
                content_type="multipart/form-data", follow_redirects=True)
 
@@ -286,7 +287,7 @@ def test_quotes_add_choose_and_compare(app_client):
     pid = _pr_id(a, "Quote me")
     for vendor, amt in (("High Trak", "48000"), ("Delta", "52000")):
         c.post(f"/procurement/pr/{pid}/quote",
-               data={"_csrf": get_csrf(c), "vendor": vendor, "amount": amt,
+               data={"_csrf": get_csrf(c), "file": (io.BytesIO(b"%PDF-1.4 test"), "q.pdf"), "vendor": vendor, "amount": amt,
                      "payment_terms": "30 days", "vat_applies": "0"},
                content_type="multipart/form-data", follow_redirects=True)
     with a.app_context():

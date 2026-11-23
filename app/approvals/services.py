@@ -988,7 +988,7 @@ def get_pr(pr_id):
             "SELECT id, filename, content_type, size, uploaded_by, created_at "
             "FROM pr_attachments WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
         _qcols = ("id, pr_id, vendor, amount, currency, lead_time_days, warranty, "
-                  "filename, is_chosen, notes, created_at")
+                  "filename, is_chosen, notes, created_at, " + _Q_HAS_FILE + " AS has_file")
         # Newest columns first, falling back for a database predating them. The
         # request page is the hottest read in the module; it must never depend
         # on a migration having landed.
@@ -3132,6 +3132,11 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
             ok_rfq, rfq_msg = rfq_gate_check(conn, pr)
             if not ok_rfq:
                 return False, rfq_msg
+            # The chosen supplier's own quotation file is what the price rests
+            # on. Only a quote recorded before files were required can be here.
+            if conn.execute("SELECT 1 FROM pr_quotes WHERE pr_id=? AND is_chosen=1 AND NOT "
+                            + _Q_HAS_FILE + " LIMIT 1", (pr_id,)).fetchone():
+                return False, "chosen_quote_no_file"
 
         # Engineering gate (DOAM §6): a spares / MRO / workshop requisition needs
         # an Engineering-Head-signed justification before Procurement accepts it,
@@ -6190,10 +6195,17 @@ def quote_matrix(items, quotes):
     return {"quotes": cols, "rows": rows}
 
 
+# A quotation counts only with the supplier's own document behind it: a figure
+# typed into a form is not evidence. Rows from before this rule may lack one.
+_Q_HAS_FILE = "(content_b64 IS NOT NULL AND content_b64 <> '')"
+
+
 def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=None, ip=None):
     terms = (data.get("payment_terms") or "").strip()
     if not terms:
         return False, "terms_required"
+    if not content_b64:
+        return False, "attachment_required"
     vat = _vat_flag(data.get("vat_applies"))
     conn = get_db()
     try:
@@ -6268,6 +6280,8 @@ def choose_quote(pr_id, quote_id, user, ip=None):
                          (quote_id, pr_id)).fetchone()
         if not q:
             return False, "not_found"
+        if not q["content_b64"]:
+            return False, "no_attachment"
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?",
                           (pr_id,)).fetchone()
         if not pr:
@@ -6322,13 +6336,16 @@ def _vendor_id_for(conn, name):
         return None
 
 
-def update_quote(quote_id, data, user=None, ip=None):
+def update_quote(quote_id, data, user=None, ip=None, filename=None, content_type=None,
+                 content_b64=None):
     """Correct a supplier quotation already on file.
 
     Locked once the quotation has been CHOSEN: the chosen price is what the
     ladder routed on and what the PO was raised from, so editing it afterwards
     would move a figure people have already signed against. Un-choose it first
-    — that is a visible act with its own audit line.
+    — that is a visible act with its own audit line. One exception: a chosen
+    quotation recorded before files were required may receive its file (attach
+    only, never replace, nothing else changed) — that moves no figure.
 
     Returns (ok, msg).
     """
@@ -6337,7 +6354,7 @@ def update_quote(quote_id, data, user=None, ip=None):
         q = conn.execute("SELECT * FROM pr_quotes WHERE id=?", (quote_id,)).fetchone()
         if not q:
             return False, "not_found"
-        if q["is_chosen"]:
+        if q["is_chosen"] and not (content_b64 and not q["content_b64"] and not data):
             return False, "chosen"
         pr = conn.execute("SELECT status FROM pr_requests WHERE id=?",
                           (q["pr_id"],)).fetchone()
@@ -6404,6 +6421,10 @@ def update_quote(quote_id, data, user=None, ip=None):
                 or abs(float(old[k][1] or 0) - new[k][1]) > 1e-9 for k in new)
             if lines_changed:
                 changed.append("line prices: %d line(s)" % len(lines))
+        if content_b64:
+            sets += ["filename=?", "content_type=?", "content_b64=?"]
+            args += [filename, content_type, content_b64]
+            changed.append("file: %s -> %s" % (q["filename"] or "none", filename))
         if not sets and not lines_changed:
             return True, "no_change"
 
@@ -6544,14 +6565,23 @@ def rfq_gate_check(conn, pr):
         logging.getLogger(__name__).warning(
             "DOAM 4.4: deviation quote requirement unavailable (%s)", exc)
     if str(_pr_field(pr, "single_source_reason") or "").strip():
-        return True, ""          # justified single/sole-source purchase
+        # Justified single/sole-source purchase — but a quote on file for it
+        # still has to be the supplier's document, not a typed figure.
+        row = conn.execute("SELECT COUNT(*) n, SUM(CASE WHEN " + _Q_HAS_FILE
+                           + " THEN 1 ELSE 0 END) f FROM pr_quotes WHERE pr_id=?",
+                           (_pr_field(pr, "id"),)).fetchone()
+        if int(row["n"] or 0) and not int(row["f"] or 0):
+            return False, "needs_quote_file"
+        return True, ""
     # "Competitive" means distinct VENDORS, not just distinct quote rows — two quotes
-    # typed against the same supplier must not satisfy the rule.
+    # typed against the same supplier must not satisfy the rule. Only quotes
+    # with the supplier's file attached count.
     try:
         n = conn.execute("SELECT COUNT(DISTINCT NULLIF(TRIM(vendor),'')) c FROM pr_quotes "
-                         "WHERE pr_id=?", (_pr_field(pr, "id"),)).fetchone()["c"]
+                         "WHERE pr_id=? AND " + _Q_HAS_FILE,
+                         (_pr_field(pr, "id"),)).fetchone()["c"]
     except Exception:
-        n = conn.execute("SELECT COUNT(*) c FROM pr_quotes WHERE pr_id=?",
+        n = conn.execute("SELECT COUNT(*) c FROM pr_quotes WHERE pr_id=? AND " + _Q_HAS_FILE,
                          (_pr_field(pr, "id"),)).fetchone()["c"]
     if int(n or 0) < required_quotes:
         return False, "needs_quotes"
