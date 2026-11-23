@@ -645,6 +645,21 @@ CREATE TABLE IF NOT EXISTS pr_item_issues (
     reversed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_pr_item_issues_line ON pr_item_issues(pr_item_id);
+
+-- A supplier's unit price per request line. No row for a line = the supplier
+-- did not quote it (a partial quote). A quote with no rows at all is a
+-- total-only quote, exactly as before this table existed. line_total is
+-- unit_price x qty, computed on the server; pr_quotes.amount is their sum.
+CREATE TABLE IF NOT EXISTS pr_quote_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    quote_id INTEGER NOT NULL,
+    pr_item_id INTEGER NOT NULL,
+    unit_price REAL,
+    qty REAL,
+    line_total REAL,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_pr_quote_lines_q ON pr_quote_lines(quote_id);
 """
 
 # Columns added to pr_quotes after first release: the RFQ a returned quotation
