@@ -214,9 +214,17 @@ def run():
             tr = svc.I18N.get(key) or ()
             chk("findings wording %-22s is real EN/AR/TR" % key,
                 len(tr) == 3 and all(t.strip() for t in tr) and len(set(tr)) == 3)
-        # No override path: a platform admin signs only rungs their role holds.
-        # The rung is cleared by mapping a role that holds L1, or a delegation.
-        chk("a platform admin can NOT sign the unsignable rung", not svc.can_act(admin, "control"))
+        # The super admin may sign any rung in place of its holder (audited);
+        # proc_admin gets no override. Otherwise the rung is cleared by mapping
+        # a role that holds L1, or a delegation.
+        chk("the super admin CAN sign the unsignable rung in place",
+            admin["role"] == "super_admin" and svc.can_act(admin, "control"))
+        padmin = mk("al_padmin", "purchasing_manager")
+        conn.execute("UPDATE users SET extra_perms='[\"proc_admin\"]' WHERE username='al_padmin'")
+        conn.commit()
+        padmin = dict(conn.execute("SELECT * FROM users WHERE username='al_padmin'").fetchone())
+        chk("a proc_admin who holds no L1 role can NOT sign it",
+            svc.user_has_permission(padmin, "proc_admin") and not svc.can_act(padmin, "control"))
         svc.set_stage_meta("control", reset_role=True, user=admin)
 
         # ---- 4. the climb walks PAST an under-level superior ---------------

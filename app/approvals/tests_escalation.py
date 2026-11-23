@@ -250,8 +250,16 @@ with app.app_context():
     # THE assertion that must never weaken: parking must not become self-approval.
     ok("the REQUESTER still cannot sign the parked rung",
        svc.act_on_step(pr1b, wm, "approve", comment="mine")[1] == "self_approval")
-    ok("an admin who holds no rung role can NOT clear the parked rung (forbidden)",
-       svc.act_on_step(pr1b, admin, "approve", comment="unblock")[1] == "forbidden")
+    _padmin = {"username": "esc_padmin", "role": "purchasing_manager",
+               "extra_perms": ["proc_admin"]}
+    ok("a proc_admin who holds no rung role can NOT clear the parked rung (forbidden)",
+       svc.act_on_step(pr1b, _padmin, "approve", comment="unblock")[1] == "forbidden")
+    ok("the super admin CAN clear the parked rung in place",
+       admin["role"] == "super_admin"
+       and svc.act_on_step(pr1b, admin, "approve", comment="unblock")[0])
+    ok("...and that in-place signature is audited",
+       conn.execute("SELECT COUNT(*) c FROM pr_events WHERE pr_id=? AND action='signed_in_place'",
+                    (pr1b,)).fetchone()["c"] == 1)
     ok("proc_admin was notified so a human can assign the role or delegate it",
        conn.execute("SELECT COUNT(*) c FROM notifications WHERE title=?",
                     ("Approval rung needs a signer",)).fetchone()["c"] > 0)
@@ -403,9 +411,11 @@ with app.app_context():
        {r["target_user"] for r in notes} <= set(svc._proc_admins(conn)))
     ok("...and the admin IS among them",
        admin["username"] in {r["target_user"] for r in notes})
-    okk, msg = svc.act_on_step(pr5, admin, "approve")
-    ok("an admin who holds no rung role can NOT sign it (%s)" % msg,
+    okk, msg = svc.act_on_step(pr5, _padmin, "approve")
+    ok("a proc_admin who holds no rung role can NOT sign it (%s)" % msg,
        not okk and msg == "forbidden")
+    okk, msg = svc.act_on_step(pr5, admin, "approve")
+    ok("the super admin CAN sign it in place (%s)" % msg, okk)
     # a delegation is the documented way out: delegate the CEO's authority and the
     # parked rung becomes signable by a real holder of that authority.
     svc.add_delegation("esc_ceo", "esc_fm", None, None, "cover", admin)

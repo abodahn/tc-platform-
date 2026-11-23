@@ -188,10 +188,14 @@ def run():
         svc.run_escalations()
         l2 = rows(pb, "Approval overdue (level 2)")
         assert sorted(r["target_user"] for r in l2) == sorted(admins), l2   # once each
-        # admins cannot sign it (no admin bypass); once a role holder is back and
-        # signs the orphan rung, every admin's overdue alerts go read (#7)
-        ok, msg = svc.act_on_step(pb, {"username": "nb_admin", "role": "super_admin"}, "approve")
-        assert not ok, msg
+        # proc_admin cannot sign it (no bypass); the super admin could, in place.
+        # Once a role holder is back and signs the orphan rung, every admin's
+        # overdue alerts go read (#7)
+        ok, msg = svc.act_on_step(pb, {"username": "nb_padmin", "role": "purchasing_manager",
+                                       "extra_perms": ["proc_admin"]}, "approve")
+        assert not ok and msg == "forbidden", msg
+        assert svc.can_act_step({"username": "nb_admin", "role": "super_admin"},
+                                cur_steps(pb)[0])
         c = get_db()
         c.execute("UPDATE users SET is_active=1 WHERE username=?", ("nb_factory_manager",))
         c.commit()

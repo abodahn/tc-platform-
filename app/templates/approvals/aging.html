@@ -103,7 +103,7 @@
             {% if r.signers.people %}
             <div class="muted clamp-2" style="font-size:12px">{{ r.signers.people|join(', ') }}</div>
             {% else %}
-            <div style="font-size:12px;color:var(--crit)" data-i18n="aging.nobody">Nobody active can sign this — delegate the authority or add a role holder.</div>
+            <div style="font-size:12px;color:var(--crit)" data-i18n="aging.nobody">No role holder can sign this — the super admin can sign it in place, or delegate the authority or add a role holder.</div>
             {% endif %}
           </td>
           <td style="font-variant-numeric:tabular-nums">

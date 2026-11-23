@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Admins sign only the rungs their own role holds.
+"""proc_admin signs only the rungs its own role holds; super_admin signs any.
     python -m app.approvals.tests_no_admin_sign
 
 Regression for a production incident: a purchasing user who also held the
 proc_admin permission signed the Warehouse Manager rung of a purchase request,
-because can_act() let super_admin / proc_admin sign ANY rung. Now:
-  * a purchasing user with proc_admin, and a super_admin, are refused that rung;
+because can_act() let proc_admin sign ANY rung. Now:
+  * a purchasing user with proc_admin is refused that rung;
+  * a super_admin may sign any rung in place of its holder (audited as
+    'signed_in_place'), even two rungs of one request, but never their own;
   * the real Warehouse Manager signs it;
   * an active delegate of the Warehouse Manager signs it;
   * an admin who DOES hold the Warehouse Manager role signs it.
@@ -74,18 +76,21 @@ with app.app_context():
         assert st["stage"] == "warehouse_manager", st["stage"]
         return pr_id, dict(st)
 
-    print("\n--- admins who do not hold the rung are refused ------------------")
+    def signed_in_place(pr_id):
+        return conn.execute("SELECT COUNT(*) FROM pr_events WHERE pr_id=? "
+                            "AND action='signed_in_place'", (pr_id,)).fetchone()[0]
+
+    print("\n--- proc_admin without the rung role is refused ------------------")
     pr1, step1 = at_wh_manager_rung("A")
     ok("the purchasing user with proc_admin really holds proc_admin",
        svc.user_has_permission(buyer_admin, "proc_admin"))
-    for who, label in ((buyer_admin, "a purchasing user with proc_admin"),
-                       (super_admin, "a super_admin")):
-        ok("can_act_step says no to %s" % label, not svc.can_act_step(who, step1))
-        okk, msg = svc.act_on_step(pr1, who, "approve")
-        ok("%s is refused the Warehouse Manager rung (%s)" % (label, msg),
-           not okk and msg == "forbidden")
-        okk, msg = svc.act_on_step(pr1, who, "reject", comment="not mine")
-        ok("...and cannot reject it either (%s)" % msg, not okk and msg == "forbidden")
+    ok("can_act_step says no to a purchasing user with proc_admin",
+       not svc.can_act_step(buyer_admin, step1))
+    okk, msg = svc.act_on_step(pr1, buyer_admin, "approve")
+    ok("a purchasing user with proc_admin is refused the Warehouse Manager rung (%s)" % msg,
+       not okk and msg == "forbidden")
+    okk, msg = svc.act_on_step(pr1, buyer_admin, "reject", comment="not mine")
+    ok("...and cannot reject it either (%s)" % msg, not okk and msg == "forbidden")
     ok("the rung is still pending and unsigned",
        conn.execute("SELECT status, approver_user FROM pr_steps WHERE id=?",
                     (step1["id"],)).fetchone()["status"] == "pending")
@@ -96,6 +101,34 @@ with app.app_context():
     ok("the signature is his",
        conn.execute("SELECT approver_user FROM pr_steps WHERE id=?",
                     (step1["id"],)).fetchone()["approver_user"] == "nas_whm")
+    ok("...and no in-place audit row for a role holder", signed_in_place(pr1) == 0)
+
+    print("\n--- super_admin signs any rung in place of its holder, audited ---")
+    pr4, step4 = at_wh_manager_rung("D")
+    ok("can_act_step says yes to a super_admin", svc.can_act_step(super_admin, step4))
+    okk, msg = svc.act_on_step(pr4, super_admin, "approve")
+    ok("a super_admin signs the Warehouse Manager rung (%s)" % msg, okk)
+    ok("the signature is the super_admin's",
+       conn.execute("SELECT approver_user FROM pr_steps WHERE id=?",
+                    (step4["id"],)).fetchone()["approver_user"] == "nas_root")
+    ok("a 'signed_in_place' audit row records it", signed_in_place(pr4) == 1)
+
+    pr5, _ = svc.create_pr({"title": "E", "department": "Production", "currency": "EGP"},
+                           [{"item": "Spindle E", "qty": 1, "unit_price": 0}],
+                           requester, submit=True, priced=False)
+    okk, msg = svc.act_on_step(pr5, super_admin, "approve")
+    ok("a super_admin signs the store rung (%s)" % msg, okk)
+    okk, msg = svc.act_on_step(pr5, super_admin, "approve")
+    ok("...and the Warehouse Manager rung of the same request (%s)" % msg, okk)
+    ok("both in-place signatures are audited", signed_in_place(pr5) == 2)
+
+    pr6, _ = svc.create_pr({"title": "F", "department": "Production", "currency": "EGP"},
+                           [{"item": "Spindle F", "qty": 1, "unit_price": 0}],
+                           super_admin, submit=True, priced=False)
+    okk, msg = svc.act_on_step(pr6, super_admin, "approve")
+    ok("a super_admin who raised the request is refused (%s)" % msg,
+       not okk and msg == "self_approval")
+    ok("...and no in-place audit row is written", signed_in_place(pr6) == 0)
 
     print("\n--- a delegate of the Warehouse Manager signs it -----------------")
     pr2, step2 = at_wh_manager_rung("B")
@@ -104,9 +137,9 @@ with app.app_context():
     svc.add_delegation("nas_whm", "nas_deleg", None, None, "leave cover", super_admin)
     okk, msg = svc.act_on_step(pr2, deleg, "approve")
     ok("with an active delegation the delegate signs (%s)" % msg, okk)
-    ok("...and the admins are still refused on a delegated ladder",
+    ok("...proc_admin is still refused on a delegated ladder, super_admin is not",
        not svc.can_act(buyer_admin, "warehouse_manager")
-       and not svc.can_act(super_admin, "warehouse_manager"))
+       and svc.can_act(super_admin, "warehouse_manager"))
 
     print("\n--- an admin who DOES hold the role signs it ---------------------")
     whm_admin = mk("nas_whm_admin", "warehouse_manager", '["proc_admin"]')

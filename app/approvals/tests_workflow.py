@@ -218,7 +218,11 @@ with app.app_context():
     pr3, _ = svc.create_pr({"title": "WF sod", "department": "Production", "currency": "EGP"},
                            [{"item": "Belt", "qty": 1, "unit_price": 500}], admin, submit=True)
     okk, msg = svc.act_on_step(pr3, admin, "approve")
-    ok("the super_admin holds no warehouse role, so is refused the rung (%s)" % msg,
+    ok("the super_admin may sign any rung, but never their own request (%s)" % msg,
+       not okk and msg == "self_approval")
+    okk, msg = svc.act_on_step(pr3, dict(fmgr, role="purchasing_manager",
+                                         extra_perms='["proc_admin"]'), "approve")
+    ok("a proc_admin without the warehouse role is refused the rung (%s)" % msg,
        not okk and msg == "forbidden")
     # an admin who DOES hold the rung (factory_manager + proc_admin) and raised it
     fm_admin = dict(fmgr, extra_perms='["proc_admin"]')
