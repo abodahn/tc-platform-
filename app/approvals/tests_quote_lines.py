@@ -13,7 +13,9 @@ Proves:
      while pr_items keeps its prices until Purchasing saves;
   6. a requester (no money yet) and a storekeeper see no unit prices;
   7. editing a quote's lines recomputes its amount; the migration is idempotent
-     and a database without the table still reads.
+     and a database without the table still reads;
+  8. unit prices render at full precision; a quote in another currency is not
+     pre-filled; lines changed after quoting are read at the current qty.
 """
 import os
 import re
@@ -205,9 +207,66 @@ def run():
         html = cli.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
         pre = {i: re.search(r'name="price_%d"[^>]*value="([^"]*)"' % i, html) for i in (i1, i2, i3)}
         chk("the pricing form is pre-filled from the chosen quote",
-            all(pre.values()) and [pre[i].group(1) for i in (i1, i2, i3)] == ["7.31", "20", "100"],
+            all(pre.values()) and [float(pre[i].group(1)) for i in (i1, i2, i3)] == [7.31, 20, 100],
             {i: p and p.group(1) for i, p in pre.items()})
         chk("with a note saying so", 'data-i18n="proc.quote.prefilled"' in html)
+
+        print("\n6b. prices keep full precision (no 6-digit rounding)")
+        ok, why = svc.add_quote(pr_id, {"vendor": "Zeta", "payment_terms": "Cash",
+                                        "vat_applies": "0",
+                                        "lines": {i1: "15250.75", i2: "1234567"}}, buyer)
+        z = one("SELECT * FROM pr_quotes WHERE pr_id=? AND vendor='Zeta'", pr_id)
+        chk("Zeta recorded at the exact sum", ok and z["amount"] == 5090775.5, z and z["amount"])
+        html = cli.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
+        chk("the edit form shows the exact unit prices",
+            re.search(r'name="uprice_%d"[^>]*value="15250\.75"' % i1, html)
+            and re.search(r'name="uprice_%d"[^>]*value="1234567(\.0)?"' % i2, html))
+        cli.post("/procurement/pr/%d/quote/%d/edit" % (pr_id, z["id"]),
+                 data={"_csrf": "tok", "payment_terms": "Cash", "vat_applies": "0",
+                       "warranty": "1 year", "uprice_%d" % i1: "15250.75",
+                       "uprice_%d" % i2: "1234567", "uprice_%d" % i3: ""})
+        flashes()
+        z2 = one("SELECT * FROM pr_quotes WHERE id=?", z["id"])
+        chk("re-saving the edit form does not drift the amount",
+            z2["amount"] == 5090775.5 and z2["warranty"] == "1 year",
+            (z2["amount"], z2["warranty"]))
+        svc.choose_quote(pr_id, z["id"], buyer)
+        html = cli.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
+        pre1 = re.search(r'name="price_%d"[^>]*value="([^"]*)"' % i1, html)
+        chk("the pricing pre-fill is not rounded", pre1 and float(pre1.group(1)) == 15250.75,
+            pre1 and pre1.group(1))
+
+        print("\n6c. a chosen quote in another currency is not pre-filled")
+        ok, why = svc.add_quote(pr_id, {"vendor": "FxCo", "currency": "USD",
+                                        "payment_terms": "Cash", "lines": {i1: "2"}}, buyer)
+        fx = one("SELECT * FROM pr_quotes WHERE pr_id=? AND vendor='FxCo'", pr_id)
+        svc.choose_quote(pr_id, fx["id"], buyer)
+        html = cli.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
+        pre1 = re.search(r'name="price_%d"[^>]*value="([^"]*)"' % i1, html)
+        chk("no USD price is copied into the EGP request",
+            fx["currency"] == "USD" and pre1 and float(pre1.group(1)) == 0,
+            pre1 and pre1.group(1))
+        chk("with a note naming the currency", 'data-i18n="proc.quote.prefill_fx"' in html)
+
+        print("\n6d. request lines changed after quoting")
+        run_sql("UPDATE pr_items SET qty=20 WHERE id=?", i1)
+        run_sql("DELETE FROM pr_items WHERE id=?", i3)
+        b = svc.get_pr(pr_id)
+        a = [q for q in b["quotes"] if q["vendor"] == "Alpha"][0]
+        chk("a deleted line drops out of the quote", i3 not in a["lines"])
+        chk("line total follows the current qty", a["lines"][i1]["line_total"] == 146.2,
+            a["lines"][i1]["line_total"])
+        chk("the amount is the sum of the visible lines, flagged stale",
+            a["amount"] == 226.2 and a["stale"], (a["amount"], a["stale"]))
+        chk("ranking uses the recomputed figure", a["after_vat"] == round(226.2 * 1.14, 2),
+            a["after_vat"])
+        m = svc.quote_matrix(b["items"], b["quotes"])
+        chk("the matrix has no row for the deleted line",
+            [r["item"]["id"] for r in m["rows"]] == [i1, i2])
+        chk("an old total-only quote is not stale",
+            not [q for q in b["quotes"] if q["vendor"] == "Legacy"][0]["stale"])
+        html = cli.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
+        chk("the matrix marks the recalculated quote", 'data-i18n="proc.quote.stale"' in html)
 
         print("\n7. no unit prices without money visibility")
         for name in ("ql_req", "ql_store"):

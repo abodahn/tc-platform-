@@ -905,7 +905,7 @@ def get_pr(pr_id):
             except Exception:
                 conn.rollback()
         quotes = [dict(r) for r in quotes]
-        _attach_quote_lines(conn, quotes, {r["id"] for r in items})
+        _attach_quote_lines(conn, quotes, items)
         for q in quotes:
             q["after_vat"] = quote_after_vat(q)
         quotes.sort(key=lambda q: q["after_vat"])     # cheapest real cost first
@@ -5906,10 +5906,17 @@ def quote_after_vat(q):
     return amt
 
 
-def _attach_quote_lines(conn, quotes, item_ids):
+def _attach_quote_lines(conn, quotes, items):
     """Give each quote its per-line prices: q["lines"] = {pr_item_id: row} and
     q["partial"] when it prices some of the request's lines but not all. A quote
-    with no lines is total-only, as every quote was before pr_quote_lines."""
+    with no lines is total-only, as every quote was before pr_quote_lines.
+
+    The request's lines can change after quoting (warehouse qty review, owner
+    deletes a line), so lines are read against the CURRENT items: a line whose
+    item is gone is dropped, line_total = unit price x current qty, and the
+    quote's amount becomes their sum (q["stale"] flags that it moved). Ranking
+    and the matrix then agree with what is on screen."""
+    qty_of = {it["id"]: float(it["qty"] or 0) for it in items}
     by_q = {}
     ids = [q["id"] for q in quotes]
     if ids:
@@ -5922,8 +5929,19 @@ def _attach_quote_lines(conn, quotes, item_ids):
         except Exception:
             conn.rollback()      # database predating the table: all quotes total-only
     for q in quotes:
-        q["lines"] = by_q.get(q["id"], {})
-        q["partial"] = bool(q["lines"]) and bool(item_ids - set(q["lines"]))
+        stored = by_q.get(q["id"], {})
+        lines = {}
+        for item_id, ln in stored.items():
+            if item_id not in qty_of:
+                continue
+            qty = qty_of[item_id]
+            lines[item_id] = dict(ln, qty=qty, line_total=round(float(ln["unit_price"] or 0) * qty, 2))
+        q["lines"] = lines
+        q["partial"] = bool(lines) and bool(set(qty_of) - set(lines))
+        q["stale"] = len(lines) != len(stored) or any(
+            abs(float(stored[i]["qty"] or 0) - lines[i]["qty"]) > 1e-9 for i in lines)
+        if q["stale"]:
+            q["amount"] = round(sum(ln["line_total"] for ln in lines.values()), 2)
 
 
 def _quote_lines_from(conn, pr_id, posted):
@@ -6177,10 +6195,15 @@ def update_quote(quote_id, data, user=None, ip=None):
                 args.append(vid)
         lines_changed = False
         if lines is not None:
-            old = {r["pr_item_id"]: r["unit_price"] for r in conn.execute(
-                "SELECT pr_item_id, unit_price FROM pr_quote_lines WHERE quote_id=?",
+            # Unit price AND qty: a re-save after the request's qty changed must
+            # refresh the frozen line totals. Tolerance, not ==, on floats.
+            old = {r["pr_item_id"]: (r["unit_price"], r["qty"]) for r in conn.execute(
+                "SELECT pr_item_id, unit_price, qty FROM pr_quote_lines WHERE quote_id=?",
                 (quote_id,)).fetchall()}
-            lines_changed = old != {ln[0]: ln[1] for ln in lines}
+            new = {ln[0]: (ln[1], ln[2]) for ln in lines}
+            lines_changed = old.keys() != new.keys() or any(
+                abs(float(old[k][0] or 0) - new[k][0]) > 1e-9
+                or abs(float(old[k][1] or 0) - new[k][1]) > 1e-9 for k in new)
             if lines_changed:
                 changed.append("line prices: %d line(s)" % len(lines))
         if not sets and not lines_changed:

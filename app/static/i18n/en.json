@@ -4111,6 +4111,8 @@
   "proc.quote.lowest_item": "Lowest unit price",
   "proc.quote.not_quoted": "Not quoted",
   "proc.quote.prefilled": "Unit prices are pre-filled from the chosen quotation. Review them, then press Save pricing.",
+  "proc.quote.prefill_fx": "The chosen quotation is in another currency, so its prices were not pre-filled.",
+  "proc.quote.stale": "Request lines changed, totals recalculated",
   "proc.lead_days": "Lead days",
   "proc.currency": "Currency",
   "proc.save": "Save",

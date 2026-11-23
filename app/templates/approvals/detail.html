@@ -28,7 +28,7 @@
       <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '%g'|format(it.qty or 0) }} {{ it.unit or '' }}</td>
       <td><input type="number" name="uprice_{{ it.id }}" min="0" step="any" inputmode="decimal"
                  style="max-width:120px" data-qty="{{ it.qty or 0 }}" aria-label="{{ it.item }}"
-                 value="{{ '%g'|format(l.unit_price) if l else '' }}"></td>
+                 value="{{ l.unit_price if l else '' }}"></td>
       <td style="text-align:end;font-variant-numeric:tabular-nums" data-line-out>—</td>
     </tr>
   {% endfor %}
@@ -652,10 +652,17 @@
     {#- The chosen quotation's line prices PRE-FILL a line that has no price yet.
         Nothing is saved until Purchasing presses Save pricing. -#}
     {% set chosen_q = b.quotes|selectattr('is_chosen')|first %}
-    {% if chosen_q and chosen_q.lines %}
+    {#- A quote in another currency is NOT copied: its figures would be saved
+        under the request's currency and understate the total by the FX rate. -#}
+    {% if chosen_q and chosen_q.lines and chosen_q.currency != pr.currency %}
+    <div class="muted" style="font-size:12.5px;margin-bottom:8px">
+      <span data-i18n="proc.quote.prefill_fx">The chosen quotation is in another currency, so its prices were not pre-filled.</span>
+      <b>{{ chosen_q.vendor }} · {{ chosen_q.currency }}</b></div>
+    {% set chosen_q = None %}
+    {% elif chosen_q and chosen_q.lines %}
     <div class="muted" style="font-size:12.5px;margin-bottom:8px">
       <span data-i18n="proc.quote.prefilled">Unit prices are pre-filled from the chosen quotation. Review them, then press Save pricing.</span>
-      <b>{{ chosen_q.vendor }}</b></div>
+      <b>{{ chosen_q.vendor }} · {{ chosen_q.currency }}</b></div>
     {% endif %}
     <form method="post" action="{{ url_for('approvals.price', pr_id=pr.id) }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -755,7 +762,7 @@
               <div style="display:flex;gap:6px;align-items:center">
                 {% set qline = chosen_q.lines.get(it.id) if chosen_q and chosen_q.lines else None %}
                 <input type="number" name="price_{{ it.id }}" id="price_{{ it.id }}" min="0" step="any"
-                       value="{{ '%g'|format(it.unit_price or (qline.unit_price if qline else 0)) }}" style="max-width:150px">
+                       value="{{ it.unit_price or (qline.unit_price if qline else 0) }}" style="max-width:150px">
                 <button type="button" class="btn btn-ghost btn-sm mr-btn" title="Market price research"
                         data-target="price_{{ it.id }}" data-item="{{ it.item }}"
                         data-desc="{{ it.description or '' }}" data-unit="{{ it.unit or '' }}"
@@ -1861,7 +1868,10 @@
         </div>
         {#- Price per item: rows = request lines, columns = the quotes that carry
             line prices. The lowest unit price on a line is highlighted (ties
-            too). Same money rule as the request's own unit prices. -#}
+            too). Deliberately show_commercial, not the `money` flag the quote
+            totals use: money_view is true for the requester/warehouse on an
+            unpriced request, and unit prices must stay hidden from them until
+            Purchasing has priced it (same rule as the request's unit prices). -#}
         {% if show_commercial and quote_matrix %}
         <h4 style="margin:4px 0 6px" data-i18n="proc.quote.matrix">Price per item</h4>
         <div class="tbl-wrap" style="margin-bottom:12px">
@@ -1870,7 +1880,8 @@
             <th data-i18n="proc.item">Item</th>
             {% for q in quote_matrix.quotes %}
             <th style="text-align:end">{{ q.vendor }}
-              {% if q.partial %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span></div>{% endif %}</th>
+              {% if q.partial %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span></div>{% endif %}
+              {% if q.stale %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.stale">Request lines changed, totals recalculated</span></div>{% endif %}</th>
             {% endfor %}
           </tr></thead>
           <tbody>
