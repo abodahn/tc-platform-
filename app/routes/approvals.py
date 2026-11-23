@@ -1621,6 +1621,13 @@ def edit_quote(pr_id, quote_id):
     flash(("No change." if msg == "no_change" else "Quotation updated.")
           if ok else _QUOTE_ERRORS.get(msg, "Could not update the quotation (%s)." % msg),
           "success" if ok else "error")
+    # Filing the document of the CHOSEN quote (chosen before files were
+    # required, or before its prices flowed onto the request): bring the
+    # request's prices and VAT in line with it now.
+    chosen = ok and b64 and bundle and any(
+        q.get("id") == quote_id and q.get("is_chosen") for q in bundle.get("quotes") or [])
+    if chosen and svc.apply_chosen_quote(pr_id, quote_id, _u(), ip=_ip())[0]:
+        flash("Quote selected — its prices and VAT are now the request's prices.", "success")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 

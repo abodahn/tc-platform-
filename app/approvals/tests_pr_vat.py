@@ -148,6 +148,42 @@ def run():
     html = cl.get("/procurement/pr/%d" % usd).get_data(as_text=True)
     # 10 x 100 = 1,000 USD; +14% = 1,140; x 50 = 57,000 EGP
     chk("USD request shows EGP equivalent incl. VAT (57,000)", "57,000.00 EGP" in html)
+    # ---- legacy: a quote chosen BEFORE prices flowed and before files were
+    # required. Attaching its file re-applies its prices + VAT to the request.
+    with app.app_context():
+        from app.db import get_db
+        leg, _ = svc.create_pr({"title": "Legacy", "department": "Maintenance"},
+                               [{"item": "SPA-SEW", "qty": 50, "unit_price": 0}],
+                               {"username": "tech", "id": 9}, priced=False)
+        ln = svc.get_pr(leg)["items"][0]["id"]
+        svc.price_pr(leg, {ln: 700}, {"tax_rate": "0"}, buyer)
+        c = get_db()
+        c.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency, is_chosen, "
+                  "payment_terms, vat_applies, vat_rate, created_at) "
+                  "VALUES (?,?,?,?,1,?,1,0.14,?)", (leg, "Old Vendor", 37500, "EGP",
+                                                    "30 days", "2026-11-20"))
+        c.commit()
+        lq = c.execute("SELECT id FROM pr_quotes WHERE pr_id=?", (leg,)).fetchone()["id"]
+        c.close()
+    cl2 = app.test_client()
+    with cl2.session_transaction() as s:
+        s["uid"] = admin["id"]
+        s["ep"] = 0
+    cl2.get("/procurement/pr/%d" % leg)
+    with cl2.session_transaction() as s:
+        tok = s.get("_csrf_token")
+    import io
+    r = cl2.post("/procurement/pr/%d/quote/%d/edit" % (leg, lq),
+                 data={"_csrf": tok, "file": (io.BytesIO(b"%PDF-1.4 legacy"), "q.pdf")},
+                 content_type="multipart/form-data")
+    with app.app_context():
+        from app.db import get_db
+        prl = dict(get_db().execute("SELECT * FROM pr_requests WHERE id=?", (leg,)).fetchone())
+        it = svc.get_pr(leg)["items"][0]
+        chk("attaching the chosen quote's file applies its price (750) and VAT 14 (%s, %s, %s)"
+            % (r.status_code, it["unit_price"], prl["tax_rate"]),
+            r.status_code in (302, 303) and it["unit_price"] == 750 and prl["tax_rate"] == 14)
+
     print("\nALL PASS" if OK[0] else "\nSOME FAILED")
     return OK[0]
 
