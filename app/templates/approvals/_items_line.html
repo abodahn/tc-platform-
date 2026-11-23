@@ -6,7 +6,7 @@
 <div class="pr-items-line">
   {%- for l in lines -%}
   {%- if not loop.first %}<span class="sep" aria-hidden="true"> · </span>{% endif -%}
-  <span class="it"><bdi dir="auto" class="nm" title="{{ l.item }}">{{ l.item }}</bdi>&nbsp;<bdi dir="ltr">×{{ '{:g}'.format(l.qty or 0) }}</bdi>{% if l.unit %}&nbsp;<bdi dir="auto">{{ l.unit }}</bdi>{% endif %}</span>
+  <span class="it"><bdi dir="auto" class="nm" title="{{ l.item }}">{{ l.item }}</bdi>&nbsp;<bdi dir="ltr">×{{ '{:,.3f}'.format(l.qty or 0).rstrip('0').rstrip('.') }}</bdi>{% if l.unit %}&nbsp;<bdi dir="auto">{{ l.unit }}</bdi>{% endif %}</span>
   {%- endfor -%}
   {%- if more %}<span class="sep" aria-hidden="true"> · </span><span class="it"><bdi dir="ltr">+{{ more }}</bdi>&nbsp;<span data-i18n="proc.items_more">more</span></span>{% endif -%}
 </div>

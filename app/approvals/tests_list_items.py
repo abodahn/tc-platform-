@@ -52,7 +52,7 @@ def run():
                 {"title": "for warehouse needs", "department": "Maintenance",
                  "currency": "EGP"},
                 [{"item": n, "qty": q, "unit": "Pcs", "unit_price": 0}
-                 for n, q in zip(names, (4, 2, 1.5, 3, 1))],
+                 for n, q in zip(names, (4, 1500000, 1.5, 3, 1))],
                 users["req"], submit=True, priced=False)
             bundle = svc.get_pr(pr_id)
             ok, msg = svc.price_pr(pr_id, {it["id"]: 98765 for it in bundle["items"]},
@@ -68,6 +68,10 @@ def run():
                 all(set(l) == {"item", "qty", "unit"} for l in lines))
             chk("empty input -> no query, empty map", svc.items_preview([]) == {})
             total = "{:,.0f}".format(svc.get_pr(pr_id)["pr"]["total"] or 0)
+
+        def line_of(h):
+            h = h[h.find('class="pr-items-line"'):]
+            return h[:h.find("</div>")]
 
         for who in ("req", "buyer"):
             cl = app.test_client()
@@ -88,7 +92,8 @@ def run():
                     "+2</bdi>" in html and 'data-i18n="proc.items_more"' in html)
                 chk("%s %s isolates names for bidi" % (who, url),
                     'dir="auto" class="nm" title="سير ناقل"' in html)
-                chk("%s %s formats qty" % (who, url), "×1.5" in html and "×4<" in html)
+                chk("%s %s formats qty" % (who, url), "×1.5<" in html and "×4<" in html
+                    and "×1,500,000<" in html and "e+" not in line_of(html))
                 # The Total column follows the existing money_views() rules; the
                 # items line itself must never carry a price for anyone.
                 line = html[html.find('class="pr-items-line"'):]
