@@ -170,6 +170,27 @@ def run():
         row = one("SELECT stock_days FROM pr_items WHERE id=?", line)
         chk("typing 0 stores 0 — the store saying the shelf is empty",
             row["stock_days"] == 0, row["stock_days"])
+        # pending with no open orders anywhere: left EMPTY for the store, not 0
+        cl.post("/procurement/pr/%d/warehouse" % pr_id,
+                data={"_csrf": tok, "whpending_qty_%d" % line: ""})
+        it = svc.get_pr(pr_id)["items"][0]
+        chk("no open orders in history -> pending stays empty, not 0",
+            it.get("pending_qty") in (None, ""), it.get("pending_qty"))
+        # an earlier order with a PO out and nothing received -> autofilled
+        other = one("SELECT pr_id FROM pr_items WHERE id=?", line)["pr_id"]
+        db = get_db()
+        db.execute("INSERT INTO pr_requests (pr_no, requester, status, is_active, created_at) "
+                   "VALUES ('PR-TEST-OPEN','someone','po_issued',1,'2026-01-01')")
+        db.commit()
+        open_id = one("SELECT id FROM pr_requests WHERE pr_no='PR-TEST-OPEN'")["id"]
+        src = one("SELECT item_id, item FROM pr_items WHERE id=?", line)
+        db.execute("INSERT INTO pr_items (pr_id, item_id, item, qty, received_qty) VALUES (?,?,?,?,?)",
+                   (open_id, src["item_id"], src["item"], 7, 2))
+        db.commit()
+        db.close()
+        it = svc.get_pr(other)["items"][0]
+        chk("an open order still owing 5 fills pending automatically",
+            float(it.get("pending_qty") or 0) == 5, it.get("pending_qty"))
 
         # ---- the stage still cannot move money ------------------------------
         before = one("SELECT unit_price, vendor FROM pr_items WHERE id=?", line)
