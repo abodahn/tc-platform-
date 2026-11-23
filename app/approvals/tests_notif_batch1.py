@@ -109,7 +109,7 @@ def run():
                 ok, msg = svc.act_on_step(pid, signer[st[0]["stage"]], "approve")
                 if not ok and msg == "needs_quotes":
                     for v in ("NB A", "NB B", "NB C"):
-                        svc.add_quote(pid, {"vendor": v, "amount": 1000}, buyer)
+                        svc.add_quote(pid, {"payment_terms": "30 days", "vendor": v, "amount": 1000}, buyer)
                     continue
                 assert ok, (st[0]["stage"], msg)
                 if msg == "approved":
