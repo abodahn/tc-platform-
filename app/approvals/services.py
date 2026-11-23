@@ -212,7 +212,7 @@ def stage_roles_map(conn=None):
     out = {k: set(v) for k, v in STAGE_ROLES.items()}
     valid = set(effective_roles())
     for r in rows:
-        if r["stage"] not in LADDER:
+        if r["stage"] not in C.SIGNING_STAGES:
             continue                        # only ladder stages are ever signed
         picked = {x.strip() for x in str(r["role"] or "").split(",") if x.strip()} & valid
         if picked:
@@ -299,7 +299,8 @@ def ladder_signer_health(conn=None):
     try:
         rmap = stage_roles_map(conn)
         registry = set(effective_roles())
-        stages = list(C.DOAM_LADDER) + [s for s in C.LADDER if s not in C.DOAM_LADDER]
+        stages = [C.HR_HEAD_STAGE] + list(C.DOAM_LADDER) + [
+            s for s in C.LADDER if s not in C.DOAM_LADDER]
         out = []
         for stage in stages:
             roles = sorted(rmap.get(stage, ()))
@@ -2132,6 +2133,15 @@ def submit_pr(pr_id, user, ip=None):
                 else {"unbudgeted": False, "state": None, "over_by": None, "status": None})
         _stages = dept_ladder(conn, pr["department"], _route_on,
                               _pr_field(pr, "expenditure_kind"), pr_id=pr_id)
+        # HR Director signs every Human Resources request first (OPEX and CAPEX),
+        # unless the requester holds that rung's role: DOAM §3.4 self-approval is
+        # absolute, and raising the request is already their signature.
+        if C.is_hr_department(pr["department"]):
+            _req_role = conn.execute("SELECT role FROM users WHERE username=?",
+                                     (pr["requester"],)).fetchone()
+            if not (_req_role and _req_role["role"] in
+                    stage_roles_map(conn).get(C.HR_HEAD_STAGE, ())):
+                _stages = [C.HR_HEAD_STAGE] + _stages
         # DOAM §4.3 — a single-source award is signed one level above the value
         # tier. Applied here as well as in set_single_source(), because the
         # justification can be recorded on the draft before it is ever submitted.
@@ -7573,7 +7583,8 @@ def escalation_rows(lang="en"):
             "role_key": k, "label": L["role"].get(k, k),
             "superior": sup, "superior_label": L["role"].get(sup, sup),
             "is_default": sup == (C.DEFAULT_ESCALATION.get(k) or ""),
-            "signs": [L["stage"].get(s, s) for s in LADDER if k in roles_map.get(s, set())],
+            "signs": [L["stage"].get(s, s) for s in C.SIGNING_STAGES
+                      if k in roles_map.get(s, set())],
         })
     return out
 
@@ -7768,7 +7779,7 @@ def set_stage_meta(stage, roles=None, explanation=None, user=None, ip=None,
     Returns (ok, msg)."""
     if stage not in C.STAGE_LABELS:
         return False, "unknown_stage"
-    if roles and stage not in LADDER:
+    if roles and stage not in C.SIGNING_STAGES:
         return False, "not_a_signing_stage"     # the requester signs by submitting
     valid = set(effective_roles())
     picked = [r for r in (roles or []) if r in valid]
@@ -7978,6 +7989,8 @@ def workflow_view(department=None, lang="en"):
         conn.close()
 
     matrix, thr_source = _effective_matrix(department, settings=settings)
+    if C.is_hr_department(department):          # submit_pr puts it first for HR
+        matrix = [(C.HR_HEAD_STAGE, 0.0)] + list(matrix)
     all_roles = effective_roles()
 
     from app.approvals import i18n_text as T
@@ -8018,7 +8031,7 @@ def workflow_view(department=None, lang="en"):
             "exists": k in all_roles,
             "perms": ["*"] if "*" in perms else [p2 for p2 in perms if p2.startswith("proc_")],
             "can_approve": has_permission(k, "proc_approve"),
-            "signs": [s for s in LADDER if k in roles_map.get(s, set())],
+            "signs": [s for s in C.SIGNING_STAGES if k in roles_map.get(s, set())],
             "explanation": p["text"], "explanation_custom": p["custom"],
             "edit": p["edit"],
             "updated_by": p["updated_by"], "updated_at": p["updated_at"],

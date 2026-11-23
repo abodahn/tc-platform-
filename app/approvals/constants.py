@@ -89,8 +89,24 @@ DOAM_LADDER = ["warehouse", "warehouse_manager", "purchasing", "factory_manager"
 RETIRED_STAGES = ("scd", "bod")
 # One signing order for every stage, current or legacy, whatever added the rung.
 # Re-pricing sorts pending rungs by it; any other stage sorts just before cfo.
-LADDER_RANK = ["warehouse", "warehouse_manager", "purchasing", "factory_manager",
+LADDER_RANK = ["hr_head", "warehouse", "warehouse_manager", "purchasing", "factory_manager",
                "scd", "finance", "control", "cfo", "ceo", "bod"]
+
+
+# --- HR Director rung (owner decision 2026-11-23) ----------------------------
+# A request whose department is Human Resources is signed by the HR Director
+# BEFORE the store, then continues up the normal ladder. It is not in
+# DOAM_LADDER (that is every request's ladder); submit_pr prepends it, and
+# nothing else adds or removes it. Skipped when the requester holds the rung's
+# role: raising the request is their signature (DOAM §3.4).
+HR_HEAD_STAGE = "hr_head"
+# Compared with case and ALL whitespace removed, so "HR ", "h r" and
+# "Human  Resources" match too.
+HR_DEPARTMENTS = {"humanresources", "hr", "h.r", "h.r.", "الموارد البشرية".replace(" ", "")}
+
+
+def is_hr_department(department):
+    return re.sub(r"\s+", "", str(department or "")).lower() in HR_DEPARTMENTS
 
 
 def ladder_rank(stage):
@@ -104,6 +120,7 @@ LADDER = LEGACY_LADDER
 # reads the same as the signature block on the paper form.
 STAGE_LABELS = {
     "requester": "Requester",
+    "hr_head": "HR Director",
     "warehouse": "Warehouse",
     "warehouse_manager": "Warehouse Manager",
     "purchasing": "Procurement Manager",
@@ -123,6 +140,7 @@ STAGE_LABELS = {
 # rather than named individuals — which is what "approved one level above the
 # value tier" (single-source, §4.3) needs in order to mean anything.
 DOAM_LEVEL = {
+    "hr_head": "L4",        # a demand-side signature, never above the store's
     "warehouse": "L4",
     "warehouse_manager": "L4",
     "purchasing": "L4",
@@ -209,7 +227,7 @@ CONTROL_ORIGINS = ("single_source", "unbudgeted", "deviation")
 #
 # Nothing here moves WHO signs or in what order; build_ladder is untouched.
 # CAPEX reviewers include the store, its manager, Purchasing and Financial Control.
-CAPEX_REVIEW_STAGES = ("warehouse", "warehouse_manager", "purchasing", "scd", "control")
+CAPEX_REVIEW_STAGES = ("hr_head", "warehouse", "warehouse_manager", "purchasing", "scd", "control")
 # top rung of the value ladder -> the stages that commit ALONGSIDE it.
 OPEX_JOINT_APPROVERS = {"ceo": ("cfo",)}
 
@@ -378,6 +396,7 @@ STAGE_ROLES = {
     #   * and a site with no storekeeper account still moves. Narrowing this to
     #     {storekeeper} stalls every request at rung 1 for such a site, which is
     #     a worse failure than the one the split was added to fix.
+    "hr_head": {"hr_director"},
     "warehouse": {"storekeeper", "warehouse_manager"},
     "warehouse_manager": {"warehouse_manager"},
     "purchasing": {"purchasing_manager"},
@@ -428,6 +447,8 @@ ROLE_LEVEL = {
     "supply_chain_director": "L2",
     "plant_director": "L2",
     "factory_manager": "L2",
+    # L3 — the DOAM's functional heads. Signs only the HR Director rung (L4).
+    "hr_director": "L3",
     # These two sign the Financial Director's rung at T&C (STAGE_ROLES['finance']),
     # so those accounts carry its level. That is a statement about T&C's staffing,
     # not about the DOAM: the day Finance says a finance_user is L4, this line
@@ -676,6 +697,8 @@ _ACTIVE_MATRIX = OPEX_MATRIX if DOAM_IN_FORCE else APPROVAL_MATRIX
 # Supply Chain Director or the Board — two stages the live ladder actually uses.
 LADDER = _ACTIVE_LADDER
 ACTIVE_MATRIX = _ACTIVE_MATRIX
+# Every stage a role can be mapped to: the ladder plus the department-only rung.
+SIGNING_STAGES = [HR_HEAD_STAGE] + list(LADDER)
 
 # Purchasing enters pricing here; the request cannot pass this rung unpriced.
 PRICING_GATE_STAGE = "purchasing"
@@ -839,6 +862,8 @@ PROC_ROLE_PERMS = {
     # signer and no error. Same grants as cfo/ceo: approve, and raise their own.
     "supply_chain_director": ["proc_view", "proc_create", "proc_approve"],
     "plant_director": ["proc_view", "proc_create", "proc_approve"],
+    # Signs the HR Director rung of Human Resources requests and raises their own.
+    "hr_director": ["proc_view", "proc_create", "proc_approve"],
     # DOAM §7.3.4 "FIND owns payment", and Table 4 L2 "FIN-D owns payment
     # control". Releasing payment was gated on proc_purchasing, so the buyer who
     # committed the spend could also pay it and Finance could not — the exact
@@ -869,6 +894,7 @@ PROC_ROLE_LABELS = {
     "warehouse_manager": "Warehouse Manager",
     "supply_chain_director": "Supply Chain Director",
     "plant_director": "Plant Director",
+    "hr_director": "HR Director",
     "financial_director": "Financial Director",
     "managing_director": "Managing Director",
     "board": "Board of Directors",
@@ -1512,6 +1538,11 @@ OPTIONAL_FIELDS = (
 # Default explanation text per ladder stage. Seeded into proc_stage_meta and
 # used as the fallback whenever an admin resets a stage's explanation.
 STAGE_EXPLAIN = {
+    "hr_head": (
+        "Human Resources requests only. The HR Director confirms the department "
+        "really needs what was asked for before it reaches the store; the request "
+        "then follows the normal ladder. Not added when the HR Director raised the "
+        "request themselves — submitting it is their signature."),
     "warehouse_manager": (
         "The Warehouse Manager reviews what the store recorded and corrects it "
         "before the request reaches a buyer: coverage in days, what is already on "
@@ -1585,6 +1616,10 @@ STAGE_EXPLAIN = {
 
 # Default explanation per role that signs somewhere in the cycle.
 ROLE_EXPLAIN = {
+    "hr_director": (
+        "Heads Human Resources. Signs the HR Director stage — the first signature on "
+        "every Human Resources request — and may raise requests of their own, which "
+        "start at the Warehouse stage. Does not price, buy or pay."),
     "storekeeper": (
         "Holds the store. Signs the Warehouse stage: confirms live stock, last order "
         "quantity and last order price, and receives the goods against the PO."),

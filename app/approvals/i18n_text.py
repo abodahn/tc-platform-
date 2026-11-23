@@ -17,6 +17,10 @@ Acronyms stay acronyms inside the sentence: PR, PO, RFQ, EGP, FX, OEM, CFO, CEO.
 
 # --- Ladder stages (proc_stage_meta.explanation_ar / _tr) ------------------
 STAGE_AR = {
+    "hr_head": (
+        "لطلبات الموارد البشرية فقط. مدير الموارد البشرية يؤكّد أن القسم يحتاج فعلًا "
+        "ما طُلب قبل أن يصل الطلب إلى المخزن، ثم يكمل الطلب سلسلة الموافقات المعتادة. "
+        "لا تُضاف هذه المرحلة إذا كان مدير الموارد البشرية هو مقدّم الطلب — فإرساله هو توقيعه."),
     "requester": (
         "أي مستخدم لديه صلاحية «إنشاء طلبات الشراء» يفتح الطلب ويحدّد المطلوب: "
         "الصنف، الكمية، الوحدة، المواصفات، والقسم الذي يُطلب له. إرسال الطلب هو "
@@ -86,6 +90,11 @@ STAGE_AR = {
 }
 
 STAGE_TR = {
+    "hr_head": (
+        "Yalnızca İnsan Kaynakları talepleri. İK Direktörü, talep depoya ulaşmadan "
+        "önce departmanın istenen şeye gerçekten ihtiyacı olduğunu teyit eder; talep "
+        "ardından normal onay zincirini izler. Talebi İK Direktörü açtıysa bu aşama "
+        "eklenmez — göndermek onun imzasıdır."),
     "requester": (
         "«Satın alma talebi oluşturma» yetkisi olan her kullanıcı talebi açar ve "
         "neyin gerektiğini yazar: malzeme, miktar, birim, teknik özellik ve hangi "
@@ -164,6 +173,10 @@ STAGE_TR = {
 
 # --- Roles (proc_role_meta.explanation_ar / _tr) ---------------------------
 ROLE_AR = {
+    "hr_director": (
+        "يرأس الموارد البشرية. يوقّع على مرحلة مدير الموارد البشرية — أول توقيع على كل "
+        "طلب من الموارد البشرية — ويمكنه إنشاء طلباته الخاصة، وتبدأ هذه من مرحلة المخزن. "
+        "لا يُسعّر ولا يشتري ولا يدفع."),
     "storekeeper": (
         "أمين المخزن. يوقّع على مرحلة المخزن: يؤكّد المخزون الفعلي وكمية آخر طلب "
         "وسعره، ويستلم الأصناف مقابل أمر الشراء (PO)."),
@@ -223,6 +236,10 @@ ROLE_AR = {
 }
 
 ROLE_TR = {
+    "hr_director": (
+        "İnsan Kaynaklarının başıdır. İK Direktörü aşamasını — her İnsan Kaynakları "
+        "talebinin ilk imzası — imzalar ve kendi taleplerini açabilir; bunlar Depo "
+        "aşamasından başlar. Fiyatlandırmaz, satın almaz, ödeme yapmaz."),
     "storekeeper": (
         "Depo sorumlusudur. Depo aşamasını imzalar: güncel stoku, son sipariş "
         "miktarını ve son sipariş fiyatını teyit eder ve malları PO karşılığında "
@@ -539,20 +556,20 @@ DOC = {
 # =========================================================================
 
 STAGE_LABEL = {
-    "en": {"requester": "Requester", "warehouse": "Warehouse",
+    "en": {"requester": "Requester", "hr_head": "HR Director", "warehouse": "Warehouse",
            "warehouse_manager": "Warehouse Manager",
            "control": "Financial Control",
            "factory_manager": "Factory Manager", "purchasing": "Purchasing",
            "finance": "Finance", "cfo": "CFO", "ceo": "CEO",
            "scd": "Supply Chain Director", "bod": "Board of Directors"},
-    "ar": {"requester": "مقدّم الطلب", "warehouse": "المخزن",
+    "ar": {"requester": "مقدّم الطلب", "hr_head": "مدير الموارد البشرية", "warehouse": "المخزن",
            "warehouse_manager": "مدير المخزن",
            "control": "الكنترول المالي",
            "factory_manager": "مدير المصنع", "purchasing": "المشتريات",
            "finance": "الإدارة المالية", "cfo": "المدير المالي (CFO)",
            "ceo": "الرئيس التنفيذي (CEO)",
            "scd": "مدير سلسلة الإمداد", "bod": "مجلس الإدارة"},
-    "tr": {"requester": "Talep eden", "warehouse": "Depo",
+    "tr": {"requester": "Talep eden", "hr_head": "İK Direktörü", "warehouse": "Depo",
            "warehouse_manager": "Depo Müdürü",
            "control": "Finansal Kontrol",
            "factory_manager": "Fabrika Müdürü", "purchasing": "Satın Alma",
@@ -774,6 +791,7 @@ ROLE_LABEL = {
         "ceo": "الرئيس التنفيذي (CEO)",
         "supply_chain_director": "مدير سلسلة الإمداد",
         "plant_director": "مدير عام المصنع",
+        "hr_director": "مدير الموارد البشرية",
         "financial_director": "المدير المالي",
         "managing_director": "العضو المنتدب",
         "board": "مجلس الإدارة",
@@ -812,6 +830,7 @@ ROLE_LABEL = {
         "ceo": "Genel Müdür (CEO)",
         "supply_chain_director": "Tedarik Zinciri Direktörü",
         "plant_director": "Fabrika Direktörü",
+        "hr_director": "İK Direktörü",
         "financial_director": "Mali İşler Direktörü",
         "managing_director": "Murahhas Aza",
         "board": "Yönetim Kurulu",

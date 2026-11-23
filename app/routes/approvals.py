@@ -68,6 +68,14 @@ def _u():
     return current_user()
 
 
+def _hr_depts():
+    """Departments the ladder preview puts the HR Director rung in front of —
+    none for a viewer who holds that rung (their request skips it)."""
+    if (_u() or {}).get("role") in svc.stage_role(C.HR_HEAD_STAGE):
+        return []
+    return sorted(C.HR_DEPARTMENTS)
+
+
 def _ip():
     return request.headers.get("X-Forwarded-For", request.remote_addr or "")
 
@@ -328,6 +336,7 @@ def new():
                            matrix=C.ACTIVE_MATRIX, ladder=C.LADDER,
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
+                           hr_depts=_hr_depts(),
                            item_categories=svc.item_categories(),
                            pick_i18n=_PICK_I18N.get(
                                ((_u() or {}).get("lang_pref") or "en"), _PICK_I18N["en"]),
@@ -1171,6 +1180,7 @@ def edit(pr_id):
                            matrix=C.ACTIVE_MATRIX, ladder=C.LADDER,
                            dept_matrices=svc.all_dept_matrices(),
                            stage_labels=C.STAGE_LABELS, prefill=prefill,
+                           hr_depts=_hr_depts(),
                            editing=pr, edit_items=bundle["items"],
                            item_categories=svc.item_categories(),
                            can_price=_can_price())

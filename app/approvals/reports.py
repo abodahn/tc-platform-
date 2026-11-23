@@ -75,6 +75,7 @@ _STATUS_OPTS = [
 ]
 
 _STAGE_OPTS = [
+    ("hr_head", "HR Director", "مدير الموارد البشرية", "İK Direktörü"),
     ("warehouse", "Warehouse", "المخازن", "Depo"),
     ("warehouse_manager", "Warehouse Manager", "مدير المخزن", "Depo Müdürü"),
     ("factory_manager", "Factory Manager", "مدير المصنع", "Fabrika Müdürü"),

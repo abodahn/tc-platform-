@@ -21,6 +21,7 @@ CAST = [
     # Two warehouse rungs now, not one. The store rung is the STOREKEEPER's and
     # the review rung above it is the MANAGER's, so one account can no longer
     # walk both — which is the entire point of splitting them.
+    ("hrd.tester",   "hr_director",           "HR Director Tester",  "HR DIRECTOR rung — first signature on Human Resources requests"),
     ("wh.tester",    "warehouse_manager",     "Warehouse Tester",    "Warehouse MANAGER rung — reviews and corrects what the store recorded"),
     ("whm.tester",   "warehouse_manager",     "Warehouse Mgr Tester","Second Warehouse Manager — needed when wh.tester raised the request"),
     ("buyer.tester", "purchasing_manager",    "Purchasing Tester",   "PRICING GATE: enters the commercial value, runs sourcing"),

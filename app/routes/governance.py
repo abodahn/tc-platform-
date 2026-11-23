@@ -249,8 +249,9 @@ def procurement_rules():
         # opposite of the ladder the requests actually route on.
         "threshold": C.ACTIVE_MATRIX.get(s, 0),
         "roles": sorted(C.STAGE_ROLES.get(s, ())),
-        "kind": "demand" if C.ACTIVE_MATRIX.get(s, 0) <= 0 else "value",
-    } for s in C.LADDER]
+        "kind": ("hr" if s == C.HR_HEAD_STAGE else
+                 "demand" if C.ACTIVE_MATRIX.get(s, 0) <= 0 else "value"),
+    } for s in C.SIGNING_STAGES]
     out["examples"] = [(amount, C.build_ladder(amount))
                        for amount in (5_000, 12_000, 48_000, 250_000)]
     out["rfq_min"] = C.RFQ_QUOTE_MIN

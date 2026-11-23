@@ -56,7 +56,8 @@
         {% for s in proc.stages %}
         <tr>
           <td><b>{{ s.label }}</b><div class="muted" style="font-size:11px">{{ s.stage }}</div></td>
-          <td>{% if s.kind == 'demand' %}<span class="tag" data-i18n="gov.rules.demand">Always required</span>
+          <td>{% if s.kind == 'hr' %}<span class="tag" data-i18n="gov.rules.hr_only">HR department only</span>
+              {% elif s.kind == 'demand' %}<span class="tag" data-i18n="gov.rules.demand">Always required</span>
               {% else %}<span class="tag" data-i18n="gov.rules.value">Value-gated</span>{% endif %}</td>
           <td dir="ltr">{{ '{:,.0f}'.format(s.threshold) }}</td>
           <td>{% for r in s.roles %}<span class="tag">{{ r }}</span> {% endfor %}

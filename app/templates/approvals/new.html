@@ -323,6 +323,7 @@
   var MATRIX = {{ matrix|tojson }};              // global default: stage -> threshold
   var LADDER = {{ ladder|tojson }};               // ordered stage keys
   var LABELS = {{ stage_labels|tojson }};         // stage -> label
+  var HR_DEPTS = {{ (hr_depts or [])|tojson }};   // departments the HR Director signs first
   var DEPT_MATRICES = {{ dept_matrices|tojson }}; // department -> {stage: threshold} (custom matrices)
   var rows = document.getElementById('rows');
   var totalVal = document.getElementById('totalVal');   // absent in requester view
@@ -390,6 +391,9 @@
     var custom = DEPT_MATRICES[dept];        // undefined => use the global default
     var m = custom || MATRIX;
     var chips = ['<span class="lc req">'+ (LABELS.requester||'Requester') +'</span>'];
+    if (HR_DEPTS.indexOf(String(dept).replace(/\s+/g,'').toLowerCase()) >= 0) {
+      chips.push('<span class="arrow">›</span><span class="lc">'+(LABELS.hr_head||'HR Director')+'</span>');
+    }
     if (!CAN_PRICE) {
       // Requester view: show only the always-required demand stages, then note
       // that value-based approvals join once Purchasing has priced the request.
