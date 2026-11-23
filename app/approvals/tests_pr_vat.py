@@ -89,6 +89,9 @@ def run():
         items = {it["id"]: it for it in svc.get_pr(two)["items"]}
         chk("line 1 unit price now 60,000", items[a]["unit_price"] == 60000, items[a]["unit_price"])
         chk("line 2 unit price now 900", items[b_]["unit_price"] == 900, items[b_]["unit_price"])
+        chk("every line carries the chosen supplier's exact name",
+            all(it["vendor"] == "High Track" for it in items.values()),
+            [it["vendor"] for it in items.values()])
         prq = dict(get_db().execute("SELECT * FROM pr_requests WHERE id=?", (two,)).fetchone())
         am = svc.pr_amounts(prq)
         chk("request total = 120,900 and VAT 14%% from the quote (%s)" % am,
@@ -183,6 +186,8 @@ def run():
         chk("attaching the chosen quote's file applies its price (750) and VAT 14 (%s, %s, %s)"
             % (r.status_code, it["unit_price"], prl["tax_rate"]),
             r.status_code in (302, 303) and it["unit_price"] == 750 and prl["tax_rate"] == 14)
+        chk("...and the line's supplier becomes the chosen one (%s)" % it["vendor"],
+            it["vendor"] == "Old Vendor" and prl["vendor"] == "Old Vendor")
 
     print("\nALL PASS" if OK[0] else "\nSOME FAILED")
     return OK[0]

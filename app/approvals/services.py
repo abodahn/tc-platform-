@@ -6315,6 +6315,26 @@ def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=N
         conn.close()
 
 
+def _sync_line_vendors(conn, pr_id, quote_id, vendor):
+    """The chosen quotation's supplier becomes the supplier on the lines it
+    prices — exactly as the quote names it (Arabic or English), so the line,
+    the header and the PO never show two spellings of one supplier. A quote
+    with per-item lines sets only those lines; one without sets every line."""
+    vendor = (vendor or "").strip()
+    if not vendor:
+        return
+    try:
+        ids = [r["pr_item_id"] for r in conn.execute(
+            "SELECT pr_item_id FROM pr_quote_lines WHERE quote_id=?", (quote_id,)).fetchall()]
+    except Exception:
+        ids = []
+    if ids:
+        conn.execute("UPDATE pr_items SET vendor=? WHERE pr_id=? AND id IN (%s)"
+                     % ",".join("?" * len(ids)), (vendor, pr_id, *ids))
+    else:
+        conn.execute("UPDATE pr_items SET vendor=? WHERE pr_id=?", (vendor, pr_id))
+
+
 def choose_quote(pr_id, quote_id, user, ip=None):
     """Mark one quote as chosen (clears the others) and adopt its vendor on the PR."""
     conn = get_db()
@@ -6340,6 +6360,7 @@ def choose_quote(pr_id, quote_id, user, ip=None):
         conn.execute("UPDATE pr_quotes SET is_chosen=0 WHERE pr_id=?", (pr_id,))
         conn.execute("UPDATE pr_quotes SET is_chosen=1 WHERE id=?", (quote_id,))
         conn.execute("UPDATE pr_requests SET vendor=? WHERE id=?", (q["vendor"], pr_id))
+        _sync_line_vendors(conn, pr_id, quote_id, q["vendor"])
         if pr["status"] == "pending":
             _withdraw_signatures_on_changed_terms(
                 conn, pr, before, (user or {}).get("username") or "system", ip,
@@ -6389,8 +6410,10 @@ def apply_chosen_quote(pr_id, quote_id, user, ip=None):
     rate = (float(q["vat_rate"] or 0.14) if "vat_rate" in keys else 0.14) if vat_on else 0.0
     if 0 < rate <= 1:          # quotes store VAT as a fraction (0.14); requests as a percent
         rate = round(rate * 100, 4)
-    meta = {"tax_rate": str(rate), "currency": (q["currency"] or "") if "currency" in keys else ""}
-    return price_pr(pr_id, prices, meta, user, ip=ip)
+    meta = {"tax_rate": str(rate), "currency": (q["currency"] or "") if "currency" in keys else "",
+            "vendor": q["vendor"] or ""}
+    return price_pr(pr_id, prices, meta, user, ip=ip,
+                    vendors={i: (q["vendor"] or "") for i in prices})
 
 
 # --- supplier quotation editing (Procurement & Warehouse spec §5) -----------
