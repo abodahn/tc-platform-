@@ -280,8 +280,8 @@ def ladder_signer_health(conn=None):
 
     A rung whose roles have no active holder is a SILENT deadlock, not an error:
     resolve_escalation() treats "nobody eligible at all" as unchanged, so the
-    request simply sits there until somebody is given the role or a delegation
-    (admins cannot sign it). This reports the condition before a request lands
+    request simply sits there until somebody is given the role or a delegation,
+    or the super admin signs it in place (proc_admin cannot). This reports the condition before a request lands
     on it.
 
     Covers the DOAM ladder and any legacy rung not in it, so the answer stays
@@ -386,8 +386,8 @@ def _alert_no_signer(conn, pr, stages):
     labels = " + ".join(stage_label(s) for s in stages)
     notify_users(conn, _proc_admins(conn), "critical", "Approval rung has no signer",
                  f"{pr['pr_no']} is waiting at {labels}, but nobody other than the "
-                 f"requester ({pr['requester']}) may sign it. Delegate the authority or add "
-                 f"a second role holder.", link=_pr_link(pr["id"]))
+                 f"requester ({pr['requester']}) may sign it. The super admin can sign it in "
+                 f"place, or delegate the authority or add a second role holder.", link=_pr_link(pr["id"]))
 
 
 _SIGN_PROMPTS = ("New request to sign", "Approval overdue", "Approval overdue (level 2)")
@@ -447,8 +447,8 @@ def active_delegator_roles(username):
 
 def can_act(user, stage, _deleg=None, _roles=None):
     """May this user approve/reject the given ladder stage? True for the stage's
-    own roles, or for anyone actively delegated a qualifying role by another
-    user. Admin roles get no signing bypass. Pass `_deleg` (a prefetched set from
+    own roles, for super_admin (any rung, audited), or for anyone actively
+    delegated a qualifying role by another user. proc_admin gets no bypass. Pass `_deleg` (a prefetched set from
     active_delegator_roles) and `_roles` (a prefetched stage_roles_map) when
     checking many stages in a loop so those lookups run one query in total
     instead of one per stage."""
@@ -457,9 +457,12 @@ def can_act(user, stage, _deleg=None, _roles=None):
     if (user.get("account_status") or "active") != "active":
         return False
     role = user.get("role")
-    # No admin bypass: super_admin / proc_admin manage procurement but sign ONLY
-    # the rungs their own role (or an active delegation) holds. A purchasing user
-    # holding proc_admin once signed a Warehouse Manager rung through the bypass.
+    # super_admin holds every authority and may sign ANY rung in place of its
+    # holder (owner's decision, 2026-11-23); each such signature is audited as
+    # "in place of". proc_admin gets NO bypass: a purchasing user holding
+    # proc_admin once signed a Warehouse Manager rung through it.
+    if role == "super_admin":
+        return True
     if not (user_has_permission(user, "proc_approve") or user_has_permission(user, "proc_admin")):
         return False
     if _roles is None:
@@ -2079,13 +2082,13 @@ def submit_pr(pr_id, user, ip=None):
                   f"signer for it, and no superior above that role has anyone free to "
                   f"sign it (either nobody is configured above it, or every superior is "
                   f"the requester or the only possible signer of another rung of this "
-                  f"same request). A delegate or a newly assigned role holder must clear that rung.", ip)
+                  f"same request). The super admin (in place), a delegate or a newly assigned role holder must clear that rung.", ip)
             notify_users(conn, _proc_admins(conn), "critical",
                          "Approval rung needs a signer",
                          f"{pr['pr_no']} is circulating, but {labels} has no one who may "
                          f"sign it: {pr['requester']} raised the request and is the only "
-                         f"eligible signer. Delegate the authority or add a second role "
-                         f"holder.",
+                         f"eligible signer. The super admin can sign it in place, or "
+                         f"delegate the authority or add a second role holder.",
                          link=_pr_link(pr_id))
         # Two ADJACENT rungs that both escalate to the SAME role are one
         # signature, not two, and asking for both is a deadlock: segregation of
@@ -2482,7 +2485,7 @@ def _reconcile_value_ladder(conn, pr_id, department, total):
                       f"{stage_label(s)} joined the ladder after pricing, but nobody who "
                       f"normally signs it may on this request (the originator, or they "
                       f"already signed another rung) and no superior above that role has "
-                      f"anyone free to sign it — a delegation or a second role holder is needed.")
+                      f"anyone free to sign it — the super admin can sign it in place, or a delegation or a second role holder is needed.")
                 notify_users(conn, _proc_admins(conn), "critical",
                              "Approval stage cannot be signed",
                              f"{(row['pr_no'] if row else pr_id)}: {stage_label(s)} was "
@@ -3079,7 +3082,9 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         if (decision == "approve" and pr["requester"] == uname
                 and not bool_setting(conn, "allow_self_approval")):
             return False, "self_approval"
-        if not (_is_admin and bool_setting(conn, "sod_admin_exempt")):
+        # super_admin may sign several rungs of one request (full authority);
+        # only the self-approval rule above still applies to them.
+        if role != "super_admin" and not (_is_admin and bool_setting(conn, "sod_admin_exempt")):
             other = conn.execute(
                 "SELECT 1 FROM pr_steps WHERE pr_id=? AND id!=? AND approver_user=? "
                 "AND status IN ('approved','rejected') LIMIT 1",
@@ -3209,6 +3214,10 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
               f"{stage_label(step['stage'])} {C.STEP_ACTION_PAST[act]} "
               f"({C.STEP_ACTION_CODE[act]}) — {C.STEP_ACTION_WHY[act]}"
               + (f" {comment}" if comment else ""), ip)
+        if role == "super_admin" and role not in (
+                _csv_set(_pr_field(step, "esc_role")) or _roles.get(step["stage"], set())):
+            audit(conn, pr_id, uname, "signed_in_place",
+                  f"Super admin signed {stage_label(step['stage'])} in place of its holder.", ip)
 
         # Parallel rung: if co-approvers at this seq are still pending, wait.
         remaining = conn.execute(

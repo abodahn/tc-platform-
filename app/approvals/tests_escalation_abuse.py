@@ -141,9 +141,12 @@ with app.app_context():
        % own_step["esc_role"], own_step["esc_role"] == "")
     ok("the requester cannot sign the parked rung",
        svc.act_on_step(pr2, wm, "approve")[1] == "self_approval")
-    ok("a platform admin who holds no rung role can NOT clear it (forbidden)",
-       svc.act_on_step(pr2, admin, "approve")[1] == "forbidden")
-    # The way out is staffing: the alerted admin assigns the store role to
+    ok("the super admin could clear it in place",
+       admin["role"] == "super_admin" and svc.can_act_step(admin, own_step))
+    ok("a proc_admin who holds no rung role can NOT clear it (forbidden)",
+       svc.act_on_step(pr2, {"username": "ab_padmin", "role": "purchasing_manager",
+                             "extra_perms": ["proc_admin"]}, "approve")[1] == "forbidden")
+    # The other way out is staffing: the alerted admin assigns the store role to
     # somebody else (or delegates it), and THAT person signs.
     store2 = mk("ab_store2", "storekeeper")
     ok("a newly assigned storekeeper clears it", svc.act_on_step(pr2, store2, "approve")[0])

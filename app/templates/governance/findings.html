@@ -22,7 +22,7 @@
   <div class="panel-pad"><div class="badge b-critical" data-i18n="gov.find.uncheckable">This check could not be run &mdash; the result below is NOT an all-clear.</div>
     <div class="muted" style="font-size:12px;margin-top:6px" dir="ltr">{{ f.unsignable_error }}</div></div>
   {% endif %}
-  <div class="panel-pad"><div class="muted" style="font-size:12.5px" data-i18n="gov.find.unsignable_note">A request that reaches one of these rungs waits for a signature nobody holds the role to give. Nothing reports an error &mdash; it simply stops, and a platform administrator cannot sign it in the role holders' place. Assign the role to a person in Admin &rarr; Users, or point the stage at a staffed role in Procurement &rarr; Settings.</div></div>
+  <div class="panel-pad"><div class="muted" style="font-size:12.5px" data-i18n="gov.find.unsignable_note">A request that reaches one of these rungs waits for a signature nobody holds the role to give. Nothing reports an error &mdash; it simply stops until the super admin signs it in place of the role holder (audited), the authority is delegated, or a role holder is added. Assign the role to a person in Admin &rarr; Users, or point the stage at a staffed role in Procurement &rarr; Settings.</div></div>
   {% if f.unsignable %}
   <div class="tbl-wrap"><table class="tbl">
     <thead><tr><th data-i18n="gov.col.stage">Stage</th><th data-i18n="gov.col.roles">Signed by</th><th data-i18n="gov.col.holders">Holders</th></tr></thead>

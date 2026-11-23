@@ -159,9 +159,12 @@ def run():
         # Owner's ladder (2026-11-17): the CEO rung is on every request and this
         # site has ONE CEO, so the CEO may not take the director's rung as well
         # (dual_role would then strand the CEO rung). The rung is PARKED: admins
-        # are alerted and staff it with a role holder or a delegation — they do
-        # not sign it themselves; act_on_step still refuses the requester.
+        # are alerted and staff it with a role holder or a delegation, or the
+        # super admin signs it in place; proc_admin gets no bypass, and
+        # act_on_step still refuses the requester.
         _admin = {"username": "admin", "role": "super_admin"}
+        _padmin = {"username": "rq_padmin", "role": "purchasing_manager",
+                   "extra_perms": ["proc_admin"]}
 
         def other_holder(s):
             role = sorted(r for r in svc.step_roles(s) if C.holds_authority(r, s["stage"]))[0]
@@ -170,8 +173,9 @@ def run():
         for s in own:
             chk("%s rung is parked, not re-pointed onto the sole CEO (esc_role=%r)"
                 % (s["stage"], s["esc_role"]), s["esc_role"] == "")
-            chk("...an admin who does not hold the role cannot sign it",
-                not svc.can_act_step(_admin, s))
+            chk("...the super admin can sign it in place", svc.can_act_step(_admin, s))
+            chk("...a proc_admin who does not hold the role cannot sign it",
+                not svc.can_act_step(_padmin, s))
             chk("...another holder of the rung's role can", svc.can_act_step(other_holder(s), s))
 
         # ---- 4. the CFO --------------------------------------------------------
@@ -183,8 +187,9 @@ def run():
         for s in cfo_rung:
             chk("the CFO rung is parked, not re-pointed onto the sole CEO (esc_role=%r)"
                 % s["esc_role"], s["esc_role"] == "")
-            chk("...an admin who does not hold the role cannot sign it",
-                not svc.can_act_step(_admin, s))
+            chk("...the super admin can sign it in place", svc.can_act_step(_admin, s))
+            chk("...a proc_admin who does not hold the role cannot sign it",
+                not svc.can_act_step(_padmin, s))
             chk("...another holder of the rung's role can", svc.can_act_step(other_holder(s), s))
 
         # ---- 5. the top of the chart ----------------------------------------
@@ -221,8 +226,11 @@ def run():
             for i in range(max(int(_C.RFQ_QUOTE_MIN), 3)):
                 svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "RQ Vendor %d" % i, "amount": 3_000_000 + i},
                               buyer)
-            ok_, msg = svc.act_on_step(pr_id, admin, "approve")
-            chk("...a super_admin is refused it (holds no CEO-rung role)",
+            chk("...the super_admin could sign it in place", svc.can_act_step(admin, s))
+            ok_, msg = svc.act_on_step(pr_id, {"username": "rq_padmin",
+                                               "role": "purchasing_manager",
+                                               "extra_perms": ["proc_admin"]}, "approve")
+            chk("...a proc_admin is refused it (holds no CEO-rung role)",
                 (not ok_) and msg == "forbidden", msg)
             ok_, msg = svc.act_on_step(pr_id, md, "approve")
             chk("...and the Managing Director signs it, so it is never stranded", ok_, msg)

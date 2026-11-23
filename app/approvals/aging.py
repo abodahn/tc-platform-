@@ -89,12 +89,13 @@ I18N = {
     "aging.since_submit": ("Since submitted", "منذ الإرسال",
                            "Gönderildiğinden beri"),
     "aging.days": ("days", "يوم", "gün"),
-    "aging.nobody": ("Nobody active can sign this — delegate the authority or "
-                     "add a role holder.",
-                     "لا يوجد شخص نشط يستطيع التوقيع — فوّض الصلاحية أو أضف من "
-                     "يحمل الدور.",
-                     "Bunu imzalayabilecek aktif kimse yok — yetkiyi devredin "
-                     "veya rolü taşıyan birini ekleyin."),
+    "aging.nobody": ("No role holder can sign this — the super admin can sign "
+                     "it in place, or delegate the authority or add a role holder.",
+                     "لا يوجد صاحب دور نشط يستطيع التوقيع — يمكن للمسؤول الأعلى "
+                     "التوقيع نيابةً عنه، أو فوّض الصلاحية أو أضف من يحمل الدور.",
+                     "Bunu imzalayabilecek aktif rol sahibi yok — süper yönetici "
+                     "onun yerine imzalayabilir ya da yetkiyi devredin veya rolü "
+                     "taşıyan birini ekleyin."),
     "aging.none": ("Nothing is waiting on a signature.",
                    "لا يوجد ما ينتظر توقيعاً.",
                    "İmza bekleyen bir şey yok."),

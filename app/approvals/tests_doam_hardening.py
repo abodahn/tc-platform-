@@ -89,11 +89,17 @@ def run():
         # ---- R4: an admin may never sign their own request -------------------
         e, _ = _unpriced(svc, "Self test", "IT", "Laptop")
         price(e, 5000)
-        # A super_admin holds no rung at all, so is refused before SoD is asked.
+        # A super_admin may sign any rung, but never one of their own request.
         admin = {"username": "tech", "role": "super_admin", "id": 9}   # tech RAISED it
         ok, msg = svc.act_on_step(e, admin, "approve")
+        assert not ok and msg == "self_approval", (
+            "a super_admin signed their own request: %s / %s" % (ok, msg))
+        # proc_admin without the rung role gets no bypass at all.
+        admin = {"username": "tech", "role": "purchasing_manager", "id": 9,
+                 "extra_perms": ["proc_admin"]}
+        ok, msg = svc.act_on_step(e, admin, "approve")
         assert not ok and msg == "forbidden", (
-            "a super_admin signed a rung they do not hold: %s / %s" % (ok, msg))
+            "a proc_admin signed a rung they do not hold: %s / %s" % (ok, msg))
         # An admin who DOES hold the rung is still never their own approver.
         admin = {"username": "tech", "role": "storekeeper", "id": 9,
                  "extra_perms": ["proc_admin"]}
