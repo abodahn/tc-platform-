@@ -105,7 +105,7 @@ def run():
         # 1. One RFQ per vendor, each a controlled document
         # ---------------------------------------------------------------
         ok, rows = svc.issue_rfqs(pr_id, [A, B, G, " ", A.lower()], buyer,
-                                  reply_by="2026-09-01")
+                                  reply_by="2026-09-01", payment_terms="30 days")
         assert ok, "issue_rfqs refused: %s" % rows
         assert len(rows) == 3, "one RFQ per distinct vendor, got %r" % rows
         rfqs = q("SELECT * FROM pr_rfqs WHERE pr_id=? ORDER BY id", pr_id)
@@ -115,7 +115,7 @@ def run():
         assert all(re.fullmatch(r"RFQ-\d{4}-\d{6}", n) for n in nums), nums
         assert all(r["status"] == "sent" and r["reply_by"] == "2026-09-01" for r in rfqs), rfqs
 
-        ok, why = svc.issue_rfqs(pr_id, ["", "  "], buyer)
+        ok, why = svc.issue_rfqs(pr_id, ["", "  "], buyer, payment_terms="30 days")
         assert (not ok) and why == "no_vendors", (ok, why)
 
         # ---------------------------------------------------------------
@@ -191,7 +191,7 @@ def run():
         assert all(bw > 40 and bh > 15 for bw, bh in boxes), "the boxes are unusable: %r" % boxes
 
         # a supplier the request never named is asked to quote the WHOLE request
-        ok, extra = svc.issue_rfqs(pr_id, ["Deltaweave"], buyer)
+        ok, extra = svc.issue_rfqs(pr_id, ["Deltaweave"], buyer, payment_terms="30 days")
         assert ok, extra
         b2 = svc.get_pr(pr_id)
         new = [r for r in b2["rfqs"] if r["vendor"] == "Deltaweave"][0]
@@ -206,7 +206,7 @@ def run():
         # 4. The answer comes back against the document that asked for it
         # ---------------------------------------------------------------
         target = rfqs[1]                                   # Betatrim's RFQ
-        ok, msg = svc.add_quote(pr_id, {"vendor": B, "amount": 6800,
+        ok, msg = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": B, "amount": 6800,
                                         "rfq_id": target["id"]}, buyer)
         assert ok, msg
         quote = q("SELECT vendor, amount, rfq_id FROM pr_quotes WHERE pr_id=? "
@@ -218,9 +218,9 @@ def run():
                  rfqs[0]["id"])[0]["status"] == "sent", "an unanswered RFQ must stay 'sent'"
         # a quote that answers nothing is still a quote, and an id from another
         # request can never attach itself here
-        ok, _ = svc.add_quote(pr_id, {"vendor": "Walk-in", "amount": 7100}, buyer)
+        ok, _ = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Walk-in", "amount": 7100}, buyer)
         assert ok
-        ok, _ = svc.add_quote(pr_id, {"vendor": "Ghost", "amount": 1, "rfq_id": 99999}, buyer)
+        ok, _ = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Ghost", "amount": 1, "rfq_id": 99999}, buyer)
         assert ok
         assert q("SELECT rfq_id FROM pr_quotes WHERE pr_id=? AND vendor='Ghost'",
                  pr_id)[0]["rfq_id"] is None, "a stray RFQ id must not link"
@@ -238,7 +238,7 @@ def run():
         legacy = svc.get_pr(pr_id)
         assert legacy and legacy["rfqs"] == [], "the request page must not need the table"
         assert legacy["quotes"], "quotes must still read"
-        ok, msg = svc.add_quote(pr_id, {"vendor": "Old Ways", "amount": 500}, buyer)
+        ok, msg = svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Old Ways", "amount": 500}, buyer)
         assert ok, "quoting must survive a missing RFQ table: %s" % msg
 
         print("PASS: one RFQ per vendor, empty price boxes, no value printed, "

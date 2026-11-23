@@ -92,7 +92,7 @@ def run():
                 ok, msg = svc.act_on_step(pr_id, signer[stage], "approve")
                 if not ok and msg == "needs_quotes":
                     for n, mult in (("A", 1.0), ("B", 1.05)):
-                        svc.add_quote(pr_id, {"vendor": "Quote %s" % n,
+                        svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Quote %s" % n,
                                               "amount": qty * UNIT * mult}, buyer)
                     continue
                 if not ok and msg == "deviation_memo_required":
@@ -110,7 +110,7 @@ def run():
         p_inact, _ = approve("Inactive supplier", vendor="Third Vendor")
         svc.set_vendor_active(q("SELECT id FROM proc_vendors WHERE name='Third Vendor'")["id"], False, buyer)
         assert svc.issue_po(p_inact, buyer, force=True) == (False, "vendor_not_in_master")
-        assert svc.add_quote(p_inact, {"vendor": "third vendor", "amount": 5}, buyer) \
+        assert svc.add_quote(p_inact, {"payment_terms": "30 days", "vendor": "third vendor", "amount": 5}, buyer) \
             == (False, "vendor_inactive")
 
         pr_id, li = approve("Corrections")

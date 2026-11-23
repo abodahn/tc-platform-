@@ -293,7 +293,8 @@ def run():                                          # noqa: C901 — one linear 
         conn.commit()
         conn.close()
         r = cli.post("/procurement/pr/%d/rfq" % cancelled,
-                     data={"_csrf": "tok", "vendors": "Nilehouse"})
+                     data={"_csrf": "tok", "vendors": "Nilehouse",
+                           "payment_terms": "30 days"})
         assert r.status_code in (200, 302), r.status_code
         assert not q("SELECT id FROM pr_rfqs WHERE pr_id=?", cancelled), (
             "a controlled RFQ number was issued against a cancelled request")

@@ -1180,7 +1180,9 @@ def rfq_pdf(bundle, rfq):
         ("Issued on", (rfq.get("sent_at") or "")[:10]),
         ("Issued by", rfq.get("created_by")),
         ("Delivery", pr.get("delivery_condition")),
-        ("Payment terms", pr.get("payment_condition")),
+        # The terms this RFQ asks for; RFQs issued before that field fall back
+        # to the request's own payment condition, as they always printed.
+        ("Payment terms", rfq.get("payment_terms") or pr.get("payment_condition")),
         ("Required delivery date", pr.get("req_del_date")),
         ("Quote in currency", pr.get("currency")),
     ]

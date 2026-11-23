@@ -1603,6 +1603,7 @@
               <th data-i18n="proc.rfq.number">RFQ number</th>
               <th data-i18n="proc.vendor_l">Vendor</th>
               <th data-i18n="proc.rfq.reply_by">Reply by</th>
+              <th data-i18n="proc.rfq.terms">Payment terms</th>
               <th data-i18n="proc.rfq.status">Status</th>
               <th></th>
             </tr></thead>
@@ -1612,6 +1613,7 @@
                 <td style="font-variant-numeric:tabular-nums">{{ r.rfq_no }}</td>
                 <td style="font-weight:600">{{ r.vendor or '—' }}</td>
                 <td class="muted">{{ r.reply_by or '—' }}</td>
+                <td>{{ r.payment_terms or '—' }}</td>
                 <td>{% if r.status == 'answered' %}
                     <span class="badge b-approved" data-i18n="proc.rfq.answered">Answered</span>
                     {% else %}<span class="badge b-pending" data-i18n="proc.rfq.sent">Sent</span>{% endif %}</td>
@@ -1624,8 +1626,8 @@
                   against a specific list of lines, and changing that list
                   afterwards leaves a comparison nobody can reproduce. -#}
               {% if can_purchasing and not rfq_locked and r.status != 'answered' %}
-              <tr><td colspan="5" style="padding-top:0">
-                <details>
+              <tr><td colspan="6" style="padding-top:0">
+                <details style="position:sticky;inset-inline-start:0;max-width:calc(100vw - 72px);white-space:normal">
                   <summary class="btn btn-ghost btn-sm" data-i18n="proc.rfq.edit">Edit this RFQ</summary>
                   <form method="post" style="margin-top:10px"
                         action="{{ url_for('approvals.edit_rfq', pr_id=pr.id, rfq_id=r.id) }}">
@@ -1637,6 +1639,10 @@
                       <label style="flex:0 1 170px">
                         <span data-i18n="proc.rfq.reply_by">Reply by</span>
                         <input name="reply_by" type="date" value="{{ r.reply_by or '' }}"></label>
+                      <label style="flex:1 1 200px">
+                        <span data-i18n="proc.rfq.terms_ask">Payment terms we ask for *</span>
+                        <input name="payment_terms" list="payTerms" required maxlength="120"
+                               autocomplete="off" value="{{ r.payment_terms or '' }}"></label>
                       <label style="flex:2 1 260px">
                         <span data-i18n="proc.notes">Notes</span>
                         <input name="notes" value="{{ r.notes or '' }}"></label>
@@ -1689,6 +1695,9 @@
               <div class="field"><label data-i18n="proc.rfq.reply_by">Reply by</label>
                 <input name="reply_by" type="date"></div>
             </div>
+            <div class="field"><label data-i18n="proc.rfq.terms_ask">Payment terms we ask for *</label>
+              <input name="payment_terms" list="payTerms" required maxlength="120" autocomplete="off"
+                     data-terms-for="rfq"></div>
             <div class="field"><label data-i18n="proc.rfq.notes">Note to the supplier (optional)</label>
               <input name="notes" maxlength="300" autocomplete="off"></div>
             <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.rfq.send">Issue RFQ</button>
@@ -1715,10 +1724,17 @@
       </div>
       <div class="panel-pad">
         {% if b.quotes %}
-        <table class="tbl" style="margin-bottom:12px">
+        {#- Amount is stored BEFORE VAT; quotes are ranked on the after-VAT
+            figure (q.after_vat) so a VAT-free price is compared fairly. Rows
+            older than the VAT question show the bare amount and dashes. -#}
+        <div class="tbl-wrap" style="margin-bottom:12px">
+        <table class="tbl">
           <thead><tr>
             <th data-i18n="proc.vendor_l">Vendor</th>
-            <th data-i18n="proc.amount">Amount</th>
+            <th style="text-align:end" data-i18n="proc.quote.before_vat">Before VAT</th>
+            <th style="text-align:end" data-i18n="proc.quote.vat">VAT</th>
+            <th style="text-align:end" data-i18n="proc.quote.after_vat">After VAT</th>
+            <th data-i18n="proc.quote.terms">Payment terms</th>
             <th data-i18n="proc.lead">Lead</th>
             <th></th>
           </tr></thead>
@@ -1726,12 +1742,15 @@
           {% for q in b.quotes %}
             <tr style="{{ 'background:var(--ok-bg)' if q.is_chosen else '' }}">
               <td><div style="font-weight:600">{{ q.vendor }}
-                  {% if money and q.amount == quote_cmp.lowest %}<span class="tag" style="color:var(--ok)">lowest</span>{% endif %}
+                  {% if money and q.after_vat == quote_cmp.lowest %}<span class="tag" style="color:var(--ok)">lowest</span>{% endif %}
                   {% if q.is_chosen %}<span class="badge b-approved">✓ chosen</span>{% endif %}</div>
                   {% if q.warranty %}<div class="muted" style="font-size:11.5px">{{ q.warranty }}</div>{% endif %}
                   {% if q.rfq_id %}<div class="muted" style="font-size:11.5px">↩ {{ b.rfqs|selectattr('id','equalto',q.rfq_id)|map(attribute='rfq_no')|first }}</div>{% endif %}
                   {% if money and q.filename %}<a class="tag" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename }}</a>{% endif %}</td>
-              <td style="font-variant-numeric:tabular-nums;font-weight:600">{% if money %}{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}{% else %}—{% endif %}</td>
+              <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money %}{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}{% else %}—{% endif %}</td>
+              <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money and q.vat_applies == 1 %}{{ '{:,.0f}'.format(q.after_vat - q.amount) }}{% elif money and q.vat_applies == 0 %}<span class="muted" data-i18n="proc.quote.no_vat">No VAT</span>{% else %}—{% endif %}</td>
+              <td style="font-variant-numeric:tabular-nums;text-align:end;font-weight:600">{% if money and q.vat_applies in (0, 1) %}{{ '{:,.0f}'.format(q.after_vat) }} {{ q.currency }}{% else %}—{% endif %}</td>
+              <td>{{ q.payment_terms or '—' }}</td>
               <td class="muted">{{ (q.lead_time_days ~ 'd') if q.lead_time_days else '—' }}</td>
               <td style="text-align:end">
                 {% if can_purchasing and not q.is_chosen %}
@@ -1752,10 +1771,10 @@
               </td>
             </tr>
             {% if can_purchasing and not q.is_chosen %}
-            <tr><td colspan="4" style="padding-top:0">
-              <details>
+            <tr><td colspan="7" style="padding-top:0">
+              <details style="position:sticky;inset-inline-start:0;max-width:calc(100vw - 72px);white-space:normal">
                 <summary class="btn btn-ghost btn-sm" data-i18n="proc.quote.edit">Edit this quotation</summary>
-                <form method="post" style="margin-top:10px"
+                <form method="post" style="margin-top:10px" data-vat-form
                       action="{{ url_for('approvals.edit_quote', pr_id=pr.id, quote_id=q.id) }}">
                   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
                   <div class="flex gap wrap" style="gap:12px;align-items:flex-end">
@@ -1763,8 +1782,18 @@
                       <span data-i18n="proc.vendor_l">Vendor</span>
                       <input name="vendor" value="{{ q.vendor or '' }}"></label>
                     <label style="flex:0 1 140px">
-                      <span data-i18n="proc.amount">Amount</span>
+                      <span data-i18n="proc.quote.amount_ex">Amount before VAT</span>
                       <input name="amount" type="number" step="any" min="0" value="{{ q.amount or 0 }}"></label>
+                    <label style="flex:0 1 150px">
+                      <span data-i18n="proc.quote.vat_q">Subject to 14% VAT</span>
+                      <select name="vat_applies">
+                        <option value="1" {{ 'selected' if q.vat_applies != 0 }} data-i18n="proc.quote.vat_yes">Yes</option>
+                        <option value="0" {{ 'selected' if q.vat_applies == 0 }} data-i18n="proc.quote.vat_no">No</option>
+                      </select></label>
+                    <label style="flex:1 1 180px">
+                      <span data-i18n="proc.quote.terms_l">Payment terms offered *</span>
+                      <input name="payment_terms" list="payTerms" required maxlength="120"
+                             autocomplete="off" value="{{ q.payment_terms or '' }}"></label>
                     <label style="flex:0 1 100px">
                       <span data-i18n="proc.currency">Currency</span>
                       <input name="currency" value="{{ q.currency or 'EGP' }}"></label>
@@ -1775,6 +1804,8 @@
                       <span data-i18n="proc.warranty">Warranty</span>
                       <input name="warranty" value="{{ q.warranty or '' }}"></label>
                   </div>
+                  <div class="muted" style="margin-top:8px"><span data-i18n="proc.quote.after_vat">After VAT</span>:
+                    <b data-vat-out></b></div>
                   <button class="btn btn-sm" style="margin-top:10px" data-i18n="proc.save">Save</button>
                 </form>
               </details>
@@ -1783,6 +1814,7 @@
           {% endfor %}
           </tbody>
         </table>
+        </div>
         {% else %}
         <div class="muted" style="margin-bottom:12px" data-i18n="proc.no_quotes2">Add competing quotes to compare vendors.</div>
         {% endif %}
@@ -1975,11 +2007,20 @@
         {% if is_owner or can_purchasing %}
         <details>
           <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_quote">+ Add quote</summary>
-          <form method="post" action="{{ url_for('approvals.add_quote', pr_id=pr.id) }}" enctype="multipart/form-data" class="mt-2">
+          <form method="post" action="{{ url_for('approvals.add_quote', pr_id=pr.id) }}" enctype="multipart/form-data" class="mt-2" data-vat-form>
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <div class="grid cols-2">
-              <div class="field"><label data-i18n="proc.vendor_l">Vendor</label><input name="vendor" list="vlist" required autocomplete="off"></div>
-              <div class="field"><label data-i18n="proc.amount">Amount</label><input name="amount" type="number" step="any" min="0" required></div>
+              <div class="field"><label data-i18n="proc.vendor_l">Vendor</label><input name="vendor" list="vlist" required autocomplete="off" data-terms-for="quote"></div>
+              <div class="field"><label data-i18n="proc.quote.amount_ex">Amount before VAT</label><input name="amount" type="number" step="any" min="0" required></div>
+              <div class="field"><label data-i18n="proc.quote.vat_q">Subject to 14% VAT</label>
+                <select name="vat_applies">
+                  <option value="1" selected data-i18n="proc.quote.vat_yes">Yes</option>
+                  <option value="0" data-i18n="proc.quote.vat_no">No</option>
+                </select>
+                <div class="muted" style="margin-top:4px"><span data-i18n="proc.quote.after_vat">After VAT</span>:
+                  <b data-vat-out></b></div></div>
+              <div class="field"><label data-i18n="proc.quote.terms_l">Payment terms offered *</label>
+                <input name="payment_terms" list="payTerms" required maxlength="120" autocomplete="off"></div>
               <div class="field"><label data-i18n="proc.lead">Lead time (days)</label><input name="lead_time_days" type="number" min="0"></div>
               <div class="field"><label data-i18n="proc.warranty">Warranty</label><input name="warranty" autocomplete="off"></div>
               {% if b.rfqs %}
@@ -1993,9 +2034,41 @@
             <div class="field"><label data-i18n="proc.quote_file">Quote file (optional)</label><input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv"></div>
             <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_quote">+ Add quote</button>
           </form>
-          <datalist id="vlist">{% for a in b.attachments %}{% endfor %}</datalist>
+          <datalist id="vlist">{% for v in (vendors or []) %}<option value="{{ v.name }}"></option>{% endfor %}</datalist>
         </details>
         {% endif %}
+        {#- Payment-term suggestions (free text allowed), the vendor master's own
+            terms as a prefill, and the live after-VAT figure on the quote forms. -#}
+        <datalist id="payTerms">{% for t in (quote_terms or []) %}<option value="{{ t }}"></option>{% endfor %}</datalist>
+        <script>
+        (function () {
+          var R = {{ (vat_rate or 0.14)|tojson }}, VT = {{ (vendor_terms or {})|tojson }};
+          function prefill(box, name) {
+            if (box && !box.value) box.value = VT[(name || "").trim().toLowerCase()] || "";
+          }
+          document.querySelectorAll("form[data-vat-form]").forEach(function (f) {
+            var a = f.querySelector("[name=amount]"), v = f.querySelector("[name=vat_applies]"),
+                o = f.querySelector("[data-vat-out]"), vn = f.querySelector("[data-terms-for=quote]");
+            function upd() {
+              var n = parseFloat(a.value);
+              o.textContent = isNaN(n) ? "—" : (v.value === "1" ? n * (1 + R) : n)
+                .toLocaleString(undefined, {maximumFractionDigits: 2});
+            }
+            f.addEventListener("input", upd); f.addEventListener("change", upd); upd();
+            if (vn) vn.addEventListener("change", function () {
+              prefill(f.querySelector("[name=payment_terms]"), vn.value); });
+          });
+          var rt = document.querySelector("[data-terms-for=rfq]");
+          if (rt) {
+            var pick = function () {
+              var c = rt.form.querySelector("[name=vendors]:checked"),
+                  o = rt.form.querySelector("[name=vendor_other]");
+              prefill(rt, c ? c.value : (o && o.value));
+            };
+            rt.form.addEventListener("change", pick); pick();
+          }
+        })();
+        </script>
       </div>
     </div>
 

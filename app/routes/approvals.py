@@ -1324,6 +1324,7 @@ def detail(pr_id):
     # Requesters don't see commercial figures until Purchasing has priced the PR.
     money = svc.money_view(user, pr, bundle["steps"])
     show_commercial = (is_priced or can_purchasing) and bool(money)
+    vendors = svc.list_vendors()
     return render_template("approvals/detail.html", active="proc_list",
                            stock_issues=svc.stock_posting_issues(pr_id),
                            stock_skipped=svc.stock_posting_issues(pr_id, ("skipped",)),
@@ -1332,7 +1333,11 @@ def detail(pr_id):
                            # at the pricing gate. Free text is still allowed —
                            # a select cannot hold a supplier not in its options,
                            # and vendor_approved() is the real control.
-                           vendors=svc.list_vendors(),
+                           vendors=vendors,
+                           # Prefills the payment terms on the RFQ / quote forms.
+                           vendor_terms={(v.get("name") or "").strip().lower(): v["payment_terms"]
+                                         for v in vendors if v.get("payment_terms")},
+                           quote_terms=C.QUOTE_PAYMENT_TERMS, vat_rate=C.QUOTE_VAT_RATE,
                            b=bundle, pr=pr, actionable=actionable, has_sig=has_sig,
                            # The rungs THIS request could go back to. Built from
                            # its own steps, not a generic ladder: a request whose
@@ -1484,11 +1489,13 @@ def add_quote(pr_id):
         "vendor": f.get("vendor", "").strip(), "amount": f.get("amount"),
         "currency": f.get("currency", "EGP"), "lead_time_days": f.get("lead_time_days"),
         "warranty": f.get("warranty", "").strip(), "notes": f.get("notes", "").strip(),
+        "payment_terms": f.get("payment_terms", "").strip(),
+        "vat_applies": f.get("vat_applies", "1"),
         # The RFQ this quotation came back against, when it answers one.
         "rfq_id": f.get("rfq_id", "").strip(),
     }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
     ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
-    flash("Quote added." if ok else ui.get(str(code) + "_flash") or
+    flash("Quote added." if ok else _QUOTE_ERRORS.get(code) or ui.get(str(code) + "_flash") or
           f"Could not add quote ({code}).", "success" if ok else "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
@@ -1514,6 +1521,7 @@ _RFQ_ERRORS = {
     "locked": "Sourcing is locked — this request is already approved, ordered, "
               "closed or cancelled.",
     "all_removed": "An RFQ has to ask for at least one line.",
+    "terms_required": "Enter the payment terms you are asking the supplier for.",
     "not_found": "Request for quotation not found.",
     "unavailable": "Requests for quotation are not available on this database yet.",
 }
@@ -1522,6 +1530,7 @@ _QUOTE_ERRORS = {
               "or remove this.",
     "locked": "This request is already approved, ordered, closed or cancelled.",
     "bad_amount": "Enter the quoted amount as a positive number.",
+    "terms_required": "Enter the payment terms the supplier is offering.",
     "not_found": "Quotation not found.",
     "unavailable": "Could not reach the quotations table.",
 }
@@ -1535,7 +1544,7 @@ def edit_rfq(pr_id, rfq_id):
     ok, msg = svc.update_rfq(
         rfq_id, vendor=f.get("vendor"), reply_by=f.get("reply_by"),
         notes=f.get("notes"), keep_items=f.getlist("keep_items"),
-        user=_u(), ip=_ip())
+        user=_u(), ip=_ip(), payment_terms=f.get("payment_terms"))
     flash(("No change." if msg == "no_change" else "Request for quotation updated.")
           if ok else _RFQ_ERRORS.get(msg, "Could not update the RFQ (%s)." % msg),
           "success" if ok else "error")
@@ -1547,8 +1556,9 @@ def edit_rfq(pr_id, rfq_id):
 @permission_required("proc_purchasing")
 def edit_quote(pr_id, quote_id):
     f = request.form
-    data = {k: f.get(k) for k in ("vendor", "amount", "currency",
-                                  "lead_time_days", "warranty", "notes") if k in f}
+    data = {k: f.get(k) for k in ("vendor", "amount", "currency", "lead_time_days",
+                                  "warranty", "notes", "payment_terms", "vat_applies")
+            if k in f}
     ok, msg = svc.update_quote(quote_id, data, user=_u(), ip=_ip())
     flash(("No change." if msg == "no_change" else "Quotation updated.")
           if ok else _QUOTE_ERRORS.get(msg, "Could not update the quotation (%s)." % msg),
@@ -1679,9 +1689,11 @@ def issue_rfq(pr_id):
     f = request.form
     vendors = f.getlist("vendors") + [f.get("vendor_other", "")]
     ok, res = svc.issue_rfqs(pr_id, vendors, _u(), reply_by=f.get("reply_by", "").strip(),
-                             notes=f.get("notes", "").strip(), ip=_ip())
+                             notes=f.get("notes", "").strip(), ip=_ip(),
+                             payment_terms=f.get("payment_terms", ""))
     flash("%d request(s) for quotation issued." % len(res) if ok
           else {"no_vendors": "Choose at least one vendor to send the RFQ to.",
+                "terms_required": _RFQ_ERRORS["terms_required"],
                 "locked": "Sourcing is locked — this request is already approved, "
                           "ordered, closed or cancelled.",
                 "unavailable": "Requests for quotation are not available on this "

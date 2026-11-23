@@ -130,7 +130,7 @@ def run():
             ok, msg = svc.act_on_step(pid, signer[st], "approve")
             if not ok and msg == "needs_quotes":
                 for n, mult in (("A", 1.0), ("B", 1.06), ("C", 1.11)):
-                    svc.add_quote(pid, {"vendor": "RACI Quote %s" % n,
+                    svc.add_quote(pid, {"payment_terms": "30 days", "vendor": "RACI Quote %s" % n,
                                         "amount": 800000 * mult}, buyer)
                 continue
             if not ok:

@@ -137,7 +137,7 @@ def run():
         # ---- and it is NOT refused: the unbudgeted request signs all the way --
         # §4.3's lowest sourcing band still wants one recorded quote; that gate is
         # not this control's business, so satisfy it and let the ladder run.
-        svc.add_quote(c, {"vendor": "Lamp Co", "amount": 5000}, buyer)
+        svc.add_quote(c, {"payment_terms": "30 days", "vendor": "Lamp Co", "amount": 5000}, buyer)
         for i, admin in enumerate(({"username": "boss%d" % n, "role": "super_admin",
                                     "id": 100 + n} for n in range(1, 9))):
             ok, msg = svc.act_on_step(c, admin, "approve")

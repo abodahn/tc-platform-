@@ -652,6 +652,14 @@ CREATE INDEX IF NOT EXISTS ix_pr_item_issues_line ON pr_item_issues(pr_item_id);
 # (or recorded before this column existed) is still a quote.
 _QUOTE_MIGRATIONS = [
     ("rfq_id", "ALTER TABLE pr_quotes ADD COLUMN rfq_id INTEGER"),
+    # Payment terms the supplier offers, and whether the amount (always stored
+    # BEFORE VAT) is subject to VAT. NULL on old rows = unknown: shown as the
+    # bare amount and ranked on it.
+    ("payment_terms", "ALTER TABLE pr_quotes ADD COLUMN payment_terms TEXT"),
+    ("vat_applies", "ALTER TABLE pr_quotes ADD COLUMN vat_applies INTEGER"),
+    ("vat_rate", "ALTER TABLE pr_quotes ADD COLUMN vat_rate REAL"),
+    # The payment terms the RFQ asks the supplier for (printed on the RFQ PDF).
+    ("payment_terms", "ALTER TABLE pr_rfqs ADD COLUMN payment_terms TEXT"),
 ]
 
 # Columns added to pr_invoices / pr_payments after first release: WHICH purchase

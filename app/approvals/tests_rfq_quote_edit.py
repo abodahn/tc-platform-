@@ -116,7 +116,7 @@ def run():
         print("\n2. an RFQ can be corrected and can ask for some of the lines")
         pr_id, lines = make("Two very different things",
                             [("FABRIC-BLUE", 100), ("NEEDLE-90", 500)])
-        ok, res = svc.issue_rfqs(pr_id, ["Alpha Trading"], buyer, reply_by="2026-12-01")
+        ok, res = svc.issue_rfqs(pr_id, ["Alpha Trading"], buyer, reply_by="2026-12-01", payment_terms="30 days")
         chk("an RFQ is issued", ok, res)
         rfq = one("SELECT * FROM pr_rfqs WHERE pr_id=? ORDER BY id DESC LIMIT 1", pr_id)
 
@@ -152,9 +152,9 @@ def run():
         finally:
             conn.close()
 
-        svc.add_quote(pr_id, {"vendor": "alpha trading llc", "amount": 9000,
+        svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "alpha trading llc", "amount": 9000,
                               "currency": "EGP", "lead_time_days": 20}, buyer)
-        svc.add_quote(pr_id, {"vendor": "Beta Supply", "amount": 9500,
+        svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Beta Supply", "amount": 9500,
                               "currency": "EGP"}, buyer)
         q1 = one("SELECT * FROM pr_quotes WHERE pr_id=? ORDER BY id", pr_id)
 

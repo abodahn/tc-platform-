@@ -119,7 +119,7 @@ def run():
                 quoted[0] = True
                 for n, mult in (("A", 1.0), ("B", 1.06), ("C", 1.11)):
                     q_ok, q_msg = svc.add_quote(
-                        pr_id, {"vendor": "Legacy Alt %s" % n,
+                        pr_id, {"payment_terms": "30 days", "vendor": "Legacy Alt %s" % n,
                                 "amount": total * mult}, buyer)
                     if not q_ok:
                         msg = "add_quote refused: %s" % q_msg
@@ -170,7 +170,7 @@ def run():
              "currency": "EGP", "vendor": "Legacy Vendor"},
             [{"item": "Drive belt A42", "unit": "Pcs", "qty": 4, "unit_price": 0}],
             reqr, priced=False)
-        ok, res = svc.issue_rfqs(pr2, ["Legacy Vendor"], buyer)
+        ok, res = svc.issue_rfqs(pr2, ["Legacy Vendor"], buyer, payment_terms="30 days")
         chk("RFQ issues on a legacy request too", ok, res)
 
     print("\n" + ("RESULT: ALL GREEN — legacy requests unaffected"
