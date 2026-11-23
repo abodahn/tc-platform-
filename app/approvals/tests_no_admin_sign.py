@@ -112,6 +112,15 @@ with app.app_context():
        conn.execute("SELECT approver_user FROM pr_steps WHERE id=?",
                     (step4["id"],)).fetchone()["approver_user"] == "nas_root")
     ok("a 'signed_in_place' audit row records it", signed_in_place(pr4) == 1)
+    stamp = conn.execute("SELECT in_place_of FROM pr_steps WHERE id=?",
+                         (step4["id"],)).fetchone()["in_place_of"] or ""
+    ok("the step names who it stood in for (%s)" % stamp, "nas_whm" in stamp or "Warehouse" in stamp)
+    ok("the audit row is a warning naming that holder", "IN PLACE OF" in (conn.execute(
+        "SELECT detail FROM pr_events WHERE pr_id=? AND action='signed_in_place'",
+        (pr4,)).fetchone()["detail"] or ""))
+    ok("the bypassed Warehouse Manager is notified", conn.execute(
+        "SELECT COUNT(*) FROM notifications WHERE target_user='nas_whm' "
+        "AND title='Signed in your place'").fetchone()[0] >= 1)
 
     pr5, _ = svc.create_pr({"title": "E", "department": "Production", "currency": "EGP"},
                            [{"item": "Spindle E", "qty": 1, "unit_price": 0}],
