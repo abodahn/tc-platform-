@@ -135,7 +135,8 @@ def run():
                 if not ok and msg == "needs_quotes":
                     for v in ("N2 A", "N2 B", "N2 C"):
                         svc.add_quote(pid, {"payment_terms": "30 days", "vendor": v,
-                                            "amount": 1000}, buyer)
+                                            "amount": 1000}, buyer, filename="q.pdf",
+                                      content_type="application/pdf", content_b64="JVBERi0xLjQK")
                     continue
                 if not ok and msg == "deviation_memo_required":
                     assert svc.set_doam_document(pid, "deviation_memo",
