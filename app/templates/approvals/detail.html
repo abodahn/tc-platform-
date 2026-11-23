@@ -1787,7 +1787,9 @@
                     <label style="flex:0 1 150px">
                       <span data-i18n="proc.quote.vat_q">Subject to 14% VAT</span>
                       <select name="vat_applies">
-                        <option value="1" {{ 'selected' if q.vat_applies != 0 }} data-i18n="proc.quote.vat_yes">Yes</option>
+                        {#- An old row was never asked: keep it unknown until someone answers. -#}
+                        {% if q.vat_applies not in (0, 1) %}<option value="" selected data-i18n="proc.quote.vat_unknown">Unknown</option>{% endif %}
+                        <option value="1" {{ 'selected' if q.vat_applies == 1 }} data-i18n="proc.quote.vat_yes">Yes</option>
                         <option value="0" {{ 'selected' if q.vat_applies == 0 }} data-i18n="proc.quote.vat_no">No</option>
                       </select></label>
                     <label style="flex:1 1 180px">
@@ -2038,7 +2040,10 @@
         </details>
         {% endif %}
         {#- Payment-term suggestions (free text allowed), the vendor master's own
-            terms as a prefill, and the live after-VAT figure on the quote forms. -#}
+            terms as a prefill, and the live after-VAT figure on the quote forms.
+            Only for viewers who get one of those forms: vendor terms stay off
+            other viewers' pages. -#}
+        {% if is_owner or can_purchasing %}
         <datalist id="payTerms">{% for t in (quote_terms or []) %}<option value="{{ t }}"></option>{% endfor %}</datalist>
         <script>
         (function () {
@@ -2069,6 +2074,7 @@
           }
         })();
         </script>
+        {% endif %}
       </div>
     </div>
 

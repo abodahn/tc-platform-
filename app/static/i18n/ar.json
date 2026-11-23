@@ -4100,6 +4100,7 @@
   "proc.quote.vat_q": "خاضع لضريبة القيمة المضافة 14%",
   "proc.quote.vat_yes": "نعم",
   "proc.quote.vat_no": "لا",
+  "proc.quote.vat_unknown": "غير معروف",
   "proc.quote.before_vat": "قبل الضريبة",
   "proc.quote.vat": "ضريبة القيمة المضافة",
   "proc.quote.after_vat": "بعد الضريبة",

@@ -6064,6 +6064,8 @@ def update_quote(quote_id, data, user=None, ip=None):
             elif col == "lead_time_days":
                 val = int(raw) if str(raw or "").strip().isdigit() else None
             elif col == "vat_applies":
+                if not str(raw or "").strip():
+                    continue                  # "Unknown" left as is: not an answer
                 val = _vat_flag(raw)
             elif col == "payment_terms" and not str(raw or "").strip():
                 return False, "terms_required"
@@ -6075,7 +6077,7 @@ def update_quote(quote_id, data, user=None, ip=None):
             args.append(val)
             changed.append("%s: %s -> %s" % (col, q[col] if col in q.keys() else "—", val))
 
-        if "vat_applies" in data and not (q["vat_rate"] if "vat_rate" in q.keys() else None):
+        if "vat_applies=?" in sets and not (q["vat_rate"] if "vat_rate" in q.keys() else None):
             sets.append("vat_rate=?")         # an old row gets the rate with its answer
             args.append(C.QUOTE_VAT_RATE)
         if "vendor" in data:

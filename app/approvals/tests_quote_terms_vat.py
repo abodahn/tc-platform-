@@ -13,6 +13,7 @@ Proves:
      still read and render; the migration is idempotent.
 """
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -174,7 +175,10 @@ def run():
         chk("and accepts it with terms, VAT yes",
             g is not None and g["vat_applies"] == 1 and g["payment_terms"] == "30 days")
         html = cli.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
-        chk("the page shows its VAT and after-VAT figures", "5,700" in html and "700" in html)
+        chk("the page shows its before-VAT, VAT and after-VAT cells",
+            re.search(r'text-align:end">5,000 EGP</td>', html)
+            and re.search(r'text-align:end">700</td>', html)
+            and re.search(r'font-weight:600">5,700 EGP</td>', html))
 
         r = cli.post("/procurement/pr/%d/rfq" % pr_id,
                      data={"_csrf": "tok", "vendors": "Delta"})
@@ -188,6 +192,39 @@ def run():
         flashes()
         chk("the edit route refuses blank terms",
             one("SELECT payment_terms t FROM pr_quotes WHERE id=?", g["id"])["t"] == "30 days")
+
+        # Editing an old quote without answering the VAT question keeps it unknown.
+        lg = one("SELECT id FROM pr_quotes WHERE vendor='Legacy'")["id"]
+        chk("an old quote's edit form offers 'Unknown', selected",
+            '<option value="" selected data-i18n="proc.quote.vat_unknown">' in html)
+        cli.post("/procurement/pr/%d/quote/%d/edit" % (pr_id, lg),
+                 data={"_csrf": "tok", "warranty": "1 year", "vat_applies": ""})
+        flashes()
+        row = one("SELECT warranty, vat_applies, vat_rate FROM pr_quotes WHERE id=?", lg)
+        chk("an edit that leaves VAT 'Unknown' records no VAT answer",
+            row["warranty"] == "1 year" and row["vat_applies"] is None
+            and row["vat_rate"] is None, dict(row))
+
+        # A viewer without money visibility sees no quote figures, nor vendor terms.
+        run_sql("INSERT OR IGNORE INTO users (username, password_hash, full_name, role, "
+                "is_active, lang_pref, created_at) VALUES "
+                "('qtv_viewer','x','qtv_viewer','normal_user',1,'en','2026-01-01')")
+        viewer = dict(one("SELECT * FROM users WHERE username='qtv_viewer'"))
+        chk("the viewer has no money view of this request",
+            svc.money_view(viewer, svc.get_pr(pr_id)["pr"]) == "")
+        vcli = app.test_client()
+        with vcli.session_transaction() as s:
+            s["uid"], s["ep"], s["_csrf_token"] = viewer["id"], 0, "tok"
+        flask.g.pop("user", None)
+        r = vcli.get("/procurement/pr/%d" % pr_id)
+        vhtml = r.get_data(as_text=True)
+        chk("the viewer can open the request", r.status_code == 200, r.status_code)
+        chk("and sees no before-VAT, VAT or after-VAT figure",
+            "5,000" not in vhtml and "5,700" not in vhtml
+            and not re.search(r">\s*700\s*<", vhtml))
+        chk("nor the payment-term suggestions / vendor terms",
+            'id="payTerms"' not in vhtml and "VT = " not in vhtml)
+        flask.g.pop("user", None)
 
         # A database whose pr_quotes predates the new columns still reads.
         for col in ("vat_rate", "vat_applies", "payment_terms"):

@@ -4100,6 +4100,7 @@
   "proc.quote.vat_q": "Subject to 14% VAT",
   "proc.quote.vat_yes": "Yes",
   "proc.quote.vat_no": "No",
+  "proc.quote.vat_unknown": "Unknown",
   "proc.quote.before_vat": "Before VAT",
   "proc.quote.vat": "VAT",
   "proc.quote.after_vat": "After VAT",

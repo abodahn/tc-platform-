@@ -4100,6 +4100,7 @@
   "proc.quote.vat_q": "%14 KDV'ye tabi",
   "proc.quote.vat_yes": "Evet",
   "proc.quote.vat_no": "Hayır",
+  "proc.quote.vat_unknown": "Bilinmiyor",
   "proc.quote.before_vat": "KDV hariç",
   "proc.quote.vat": "KDV",
   "proc.quote.after_vat": "KDV dahil",
