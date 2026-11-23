@@ -1121,7 +1121,14 @@ def notifications_feed():
         _kick_notification_sync()
     except Exception:
         pass
-    notifs, unread = _unread_notifications((current_user() or {}).get("username"))
+    user = current_user()
+    notifs, unread = _unread_notifications((user or {}).get("username"))
+    scope = system_scope(user) if user else None
+    if scope is not None:
+        # same rule inject_globals applies to the bell: scope-locked users only
+        # see alerts for their own system(s)
+        notifs = [n for n in notifs if not n["module"] or n["module"] in scope]
+        unread = sum(1 for n in notifs if not n["is_read"])
     items = [{
         "id": n["id"], "severity": n["severity"], "module": n["module"],
         "title": n["title"], "message": n["message"],
