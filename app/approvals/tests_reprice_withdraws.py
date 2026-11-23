@@ -57,7 +57,7 @@ def run():
         ok, msg = svc.price_pr(pid, {line: 600000}, meta, signer["purchasing"])
         assert ok, msg
         for vendor in ("Vendor A", "Vendor B", "Vendor C"):
-            ok, msg = svc.add_quote(pid, {"vendor": vendor, "amount": 600000},
+            ok, msg = svc.add_quote(pid, {"payment_terms": "30 days", "vendor": vendor, "amount": 600000},
                                     signer["purchasing"])
             assert ok, msg
 

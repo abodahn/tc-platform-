@@ -99,7 +99,7 @@ def run():
                 if not ok and msg == "needs_quotes":
                     seq[0] += 1
                     for n, mult in (("A", 1.0), ("B", 1.05)):
-                        svc.add_quote(pr_id, {"vendor": "B7 Vendor %s%d" % (n, seq[0]),
+                        svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "B7 Vendor %s%d" % (n, seq[0]),
                                               "amount": total * mult}, buyer)
                     continue
                 assert ok, "ladder stuck on %s: %s" % (title, msg)

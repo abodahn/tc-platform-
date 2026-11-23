@@ -347,7 +347,7 @@ def run():
         # A QUOTE, not a single-source note: waiving competition appends a
         # factory_manager rung of its own under §4.3, and a rung that would have
         # been there anyway proves nothing about §3.4.
-        ok, msg = svc.add_quote(f, {"vendor": "OEM Spares Ltd", "amount": 1250,
+        ok, msg = svc.add_quote(f, {"payment_terms": "30 days", "vendor": "OEM Spares Ltd", "amount": 1250,
                                     "currency": "EGP"}, buyer)
         assert ok, msg
         sign_until(f, "purchasing")

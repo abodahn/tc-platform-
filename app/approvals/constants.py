@@ -61,6 +61,12 @@ UNITS = ["Pcs", "Each", "Unit", "Set", "Box", "Carton", "Packet", "Roll", "Cone"
          "Day", "Hour", "Month", "Service", "Lot", "Pair", "Dozen", "Pack"]
 PAYMENT_CONDITIONS = ["Advanced Payment", "On Delivery", "Net 15", "Net 30",
                       "Net 60", "Cash", "Cheque", "Installments"]
+# Suggestions for the payment terms on an RFQ and on a supplier's quotation.
+# Free text stays allowed; these only feed a <datalist>.
+QUOTE_PAYMENT_TERMS = ["Cash", "Advance 100%", "30 days", "60 days", "90 days",
+                       "50% advance / 50% on delivery"]
+# Egyptian VAT on a supplier quotation. The quoted amount is stored BEFORE VAT.
+QUOTE_VAT_RATE = 0.14
 DELIVERY_CONDITIONS = ["T&C Warehouse", "On-site / Factory floor", "Vendor premises",
                        "Courier / Shipping", "Ex-Works (EXW)", "FOB", "CIF"]
 # Default department list (admins can add more via the responsibility matrix

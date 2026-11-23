@@ -104,7 +104,7 @@ def run():
         chk("he cannot PRICE it — the price sets his own threshold",
             (not ok) and msg == "self_pricing", msg)
 
-        ok, msg = svc.add_quote(pr, {"vendor": "His Own Vendor", "amount": 500}, buyer)
+        ok, msg = svc.add_quote(pr, {"payment_terms": "30 days", "vendor": "His Own Vendor", "amount": 500}, buyer)
         chk("nor supply the QUOTES the competitive rule counts",
             (not ok) and msg == "self_quote", msg)
 
@@ -119,7 +119,7 @@ def run():
 
         # ---- and the same acts by somebody else -----------------------------
         print("\n2. ...but a different buyer can do every one of them")
-        ok, msg = svc.add_quote(pr, {"vendor": "Alpha", "amount": 500}, other)
+        ok, msg = svc.add_quote(pr, {"payment_terms": "30 days", "vendor": "Alpha", "amount": 500}, other)
         chk("a second buyer may quote", ok, msg)
         ok, msg = svc.set_single_source(pr, "only possible supplier", other)
         chk("a second buyer may waive competition", ok, msg)

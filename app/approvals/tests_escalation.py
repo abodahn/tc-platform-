@@ -209,7 +209,7 @@ with app.app_context():
     # request stuck on rung 2 forever.
     ok("the duplicate escalated rung was absorbed, not left to deadlock",
        "warehouse_manager" not in [x["stage"] for x in steps_of(conn, pr1)])
-    svc.add_quote(pr1, {"vendor": "Owner Case Vendor", "amount": 20000}, pm)
+    svc.add_quote(pr1, {"payment_terms": "30 days", "vendor": "Owner Case Vendor", "amount": 20000}, pm)
     okk, msg = svc.act_on_step(pr1, pm, "approve")
     ok("the buyer signs the purchasing rung (%s)" % msg, okk and msg == "advanced")
     # ...and the rung the escalation used to steal is still signable by its own
@@ -271,7 +271,7 @@ with app.app_context():
        % st1c[0]["esc_role"], st1c[0]["esc_role"] == "factory_manager")
     okk, msg = svc.act_on_step(pr1c, fm, "approve")
     ok("factory manager #1 signs the escalated warehouse rung (%s)" % msg, okk)
-    svc.add_quote(pr1c, {"vendor": "Fan Vendor", "amount": 20000}, pm)
+    svc.add_quote(pr1c, {"payment_terms": "30 days", "vendor": "Fan Vendor", "amount": 20000}, pm)
     svc.act_on_step(pr1c, pm, "approve")            # rung 2: Purchasing (§4.1)
     okk, msg = svc.act_on_step(pr1c, fm, "approve")
     ok("...#1 is refused the factory rung he is eligible for: dual_role (%s)" % msg,

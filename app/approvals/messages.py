@@ -176,6 +176,14 @@ MESSAGES = {
         "ar": "اكتب قيمة عرض السعر كرقم موجب.",
         "tr": "Teklif tutarını pozitif bir sayı olarak girin.",
     },
+    "Enter the payment terms the supplier is offering.": {
+        "ar": "اكتب شروط الدفع التي يعرضها المورّد.",
+        "tr": "Tedarikçinin teklif ettiği ödeme koşullarını girin.",
+    },
+    "Enter the payment terms you are asking the supplier for.": {
+        "ar": "اكتب شروط الدفع التي تطلبها من المورّد.",
+        "tr": "Tedarikçiden talep ettiğiniz ödeme koşullarını girin.",
+    },
     "Quotation not found.": {
         "ar": "عرض السعر غير موجود.",
         "tr": "Teklif bulunamadı.",

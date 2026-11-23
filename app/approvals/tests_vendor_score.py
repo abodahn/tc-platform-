@@ -137,7 +137,7 @@ with app.app_context():
             if not okp and msg == "needs_quotes":
                 seq[0] += 1
                 for n, mult in (("A", 1.0), ("B", 1.05)):
-                    svc.add_quote(pr_id, {"vendor": "VS Quote %s%d" % (n, seq[0]),
+                    svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "VS Quote %s%d" % (n, seq[0]),
                                           "amount": total * mult}, buyer)
                 continue
             assert okp, "ladder stuck on %s: %s" % (title, msg)

@@ -954,18 +954,21 @@ def get_pr(pr_id):
             "FROM pr_attachments WHERE pr_id=? ORDER BY id", (pr_id,)).fetchall()
         _qcols = ("id, pr_id, vendor, amount, currency, lead_time_days, warranty, "
                   "filename, is_chosen, notes, created_at")
-        try:
-            quotes = conn.execute(
-                "SELECT " + _qcols + ", rfq_id FROM pr_quotes WHERE pr_id=? "
-                "ORDER BY amount", (pr_id,)).fetchall()
-        except Exception:
-            # Database predating the RFQ link column. The request page is the
-            # hottest read in the module; it must never depend on a migration
-            # having landed.
-            conn.rollback()
-            quotes = conn.execute(
-                "SELECT " + _qcols + " FROM pr_quotes WHERE pr_id=? ORDER BY amount",
-                (pr_id,)).fetchall()
+        # Newest columns first, falling back for a database predating them. The
+        # request page is the hottest read in the module; it must never depend
+        # on a migration having landed.
+        for _extra in (", rfq_id, payment_terms, vat_applies, vat_rate", ", rfq_id", ""):
+            try:
+                quotes = conn.execute(
+                    "SELECT " + _qcols + _extra + " FROM pr_quotes WHERE pr_id=?",
+                    (pr_id,)).fetchall()
+                break
+            except Exception:
+                conn.rollback()
+        quotes = [dict(r) for r in quotes]
+        for q in quotes:
+            q["after_vat"] = quote_after_vat(q)
+        quotes.sort(key=lambda q: q["after_vat"])     # cheapest real cost first
         rfqs = rfqs_for(conn, pr_id)
         money = {}
         for table, cols in (
@@ -1040,7 +1043,7 @@ def get_pr(pr_id):
             "l2_domain": C.l2_domain(pr_d.get("department"), pr_d.get("source_module"),
                                      any(_pr_field(r, "spare_id") for r in items)),
             "events": [dict(r) for r in events], "attachments": [dict(r) for r in atts],
-            "quotes": [dict(r) for r in quotes], "rfqs": rfqs,
+            "quotes": quotes, "rfqs": rfqs,
             "invoices": [dict(r) for r in invoices], "payments": [dict(r) for r in payments],
             "grns": grns, "quarantine": quarantine, "returns": returns,
             "returns_ok": returns_ok, "pos": pos}
@@ -1065,7 +1068,7 @@ def rfq_lines(conn, rfq_id, items):
 
 
 def update_rfq(rfq_id, vendor=None, reply_by=None, notes=None, keep_items=None,
-               user=None, ip=None):
+               user=None, ip=None, payment_terms=None):
     """Correct an RFQ after it was issued, and choose which lines it asks for.
 
     Locked once the RFQ has been answered: a quotation on file was priced
@@ -1092,14 +1095,18 @@ def update_rfq(rfq_id, vendor=None, reply_by=None, notes=None, keep_items=None,
         uname = (user or {}).get("username") or "system"
         changed = []
         sets, args = [], []
-        for col, val in (("vendor", vendor), ("reply_by", reply_by), ("notes", notes)):
+        if payment_terms is not None and not payment_terms.strip():
+            return False, "terms_required"
+        for col, val in (("vendor", vendor), ("reply_by", reply_by), ("notes", notes),
+                         ("payment_terms", payment_terms)):
             if val is None:
                 continue
             val = val.strip()
-            if (rfq[col] or "") != val:
+            if ((rfq[col] if col in rfq.keys() else None) or "") != val:
                 sets.append("%s=?" % col)
                 args.append(val or None)
-                changed.append("%s: %s -> %s" % (col, rfq[col] or "—", val or "—"))
+                changed.append("%s: %s -> %s" % (
+                    col, (rfq[col] if col in rfq.keys() else None) or "—", val or "—"))
         if sets:
             conn.execute("UPDATE pr_rfqs SET %s WHERE id=?" % ", ".join(sets),
                          args + [rfq_id])
@@ -5879,7 +5886,8 @@ def get_attachment(att_id):
 # --------------------------------------------------------------------------
 # Requests for Quotation — the document that PRODUCES the competitive quotes
 # --------------------------------------------------------------------------
-def issue_rfqs(pr_id, vendors, user, reply_by=None, notes=None, ip=None):
+def issue_rfqs(pr_id, vendors, user, reply_by=None, notes=None, ip=None,
+               payment_terms=None):
     """Issue ONE Request for Quotation per vendor and return the rows written.
 
     A request for INFORMATION, not a commitment: nothing here touches the
@@ -5903,6 +5911,11 @@ def issue_rfqs(pr_id, vendors, user, reply_by=None, notes=None, ip=None):
             names.append(v)
     if not names:
         return False, "no_vendors"
+    # The payment terms we ask for are part of the question; an RFQ without
+    # them gets back prices nobody can compare.
+    terms = (payment_terms or "").strip()
+    if not terms:
+        return False, "terms_required"
     conn = get_db()
     try:
         pr = conn.execute("SELECT pr_no, status FROM pr_requests WHERE id=?",
@@ -5922,8 +5935,8 @@ def issue_rfqs(pr_id, vendors, user, reply_by=None, notes=None, ip=None):
             for vendor in names:
                 cur = conn.execute(
                     """INSERT INTO pr_rfqs (pr_id, vendor, reply_by, status, sent_at,
-                       created_by, notes) VALUES (?,?,?,'sent',?,?,?)""",
-                    (pr_id, vendor, (reply_by or None), now, uname, (notes or None)))
+                       created_by, notes, payment_terms) VALUES (?,?,?,'sent',?,?,?,?)""",
+                    (pr_id, vendor, (reply_by or None), now, uname, (notes or None), terms))
                 rfq_id = cur.lastrowid
                 rfq_no = doc_no("RFQ", rfq_id)
                 conn.execute("UPDATE pr_rfqs SET rfq_no=? WHERE id=?", (rfq_no, rfq_id))
@@ -5972,7 +5985,28 @@ def rfqs_for(conn, pr_id):
 # --------------------------------------------------------------------------
 # multi-quote comparison
 # --------------------------------------------------------------------------
+def _vat_flag(raw):
+    """The form's 'Subject to 14% VAT' answer as 1/0. Absent = Yes (the default)."""
+    return 0 if str(raw if raw is not None else "1").strip().lower() in (
+        "0", "no", "false", "off", "") else 1
+
+
+def quote_after_vat(q):
+    """What a quotation really costs: amount x (1 + VAT) when VAT applies, the
+    bare amount when it does not or is unknown (rows older than the VAT column).
+    Every ranking of quotes goes through this, so a VAT-free price is compared
+    with a VAT-able one fairly."""
+    amt = float(q.get("amount") or 0)
+    if q.get("vat_applies"):
+        return round(amt * (1 + float(q.get("vat_rate") or C.QUOTE_VAT_RATE)), 2)
+    return amt
+
+
 def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=None, ip=None):
+    terms = (data.get("payment_terms") or "").strip()
+    if not terms:
+        return False, "terms_required"
+    vat = _vat_flag(data.get("vat_applies"))
     conn = get_db()
     try:
         if any(C.vendor_key(r["name"]) == C.vendor_key(data.get("vendor") or "")
@@ -6006,14 +6040,16 @@ def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=N
         conn.execute(
             """INSERT INTO pr_quotes
                (pr_id, vendor, amount, currency, lead_time_days, warranty,
-                filename, content_type, content_b64, notes, uploaded_by, created_at"""
-            + (", rfq_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)" if rfq_id
-               else ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"),
+                filename, content_type, content_b64, notes, uploaded_by, created_at,
+                payment_terms, vat_applies, vat_rate"""
+            + (", rfq_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)" if rfq_id
+               else ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"),
             (pr_id, data.get("vendor"), float(data.get("amount") or 0),
              data.get("currency") or "EGP",
              int(data["lead_time_days"]) if str(data.get("lead_time_days") or "").strip() else None,
              data.get("warranty"), filename, content_type, content_b64, data.get("notes"),
-             user.get("username") if user else "system", _now())
+             user.get("username") if user else "system", _now(),
+             terms, vat, C.QUOTE_VAT_RATE)
             + ((rfq_id,) if rfq_id else ()))
         if rfq_id:
             conn.execute("UPDATE pr_rfqs SET status='answered' WHERE id=?", (rfq_id,))
@@ -6063,7 +6099,8 @@ def choose_quote(pr_id, quote_id, user, ip=None):
 
 
 # --- supplier quotation editing (Procurement & Warehouse spec §5) -----------
-_QUOTE_EDITABLE = ("vendor", "amount", "currency", "lead_time_days", "warranty", "notes")
+_QUOTE_EDITABLE = ("vendor", "amount", "currency", "lead_time_days", "warranty", "notes",
+                   "payment_terms", "vat_applies")
 
 
 def _vendor_id_for(conn, name):
@@ -6124,6 +6161,12 @@ def update_quote(quote_id, data, user=None, ip=None):
                     return False, "bad_amount"
             elif col == "lead_time_days":
                 val = int(raw) if str(raw or "").strip().isdigit() else None
+            elif col == "vat_applies":
+                if not str(raw or "").strip():
+                    continue                  # "Unknown" left as is: not an answer
+                val = _vat_flag(raw)
+            elif col == "payment_terms" and not str(raw or "").strip():
+                return False, "terms_required"
             else:
                 val = (str(raw).strip() or None) if raw is not None else None
             if (q[col] if col in q.keys() else None) == val:
@@ -6132,6 +6175,9 @@ def update_quote(quote_id, data, user=None, ip=None):
             args.append(val)
             changed.append("%s: %s -> %s" % (col, q[col] if col in q.keys() else "—", val))
 
+        if "vat_applies=?" in sets and not (q["vat_rate"] if "vat_rate" in q.keys() else None):
+            sets.append("vat_rate=?")         # an old row gets the rate with its answer
+            args.append(C.QUOTE_VAT_RATE)
         if "vendor" in data:
             vid = _vendor_id_for(conn, data.get("vendor"))
             if vid != (q["vendor_id"] if "vendor_id" in q.keys() else None):
@@ -6204,8 +6250,9 @@ def get_quote(quote_id):
 
 
 def quote_comparison(quotes):
-    """Given a PR's quotes, return the min amount and potential saving vs the max."""
-    amts = [q["amount"] for q in quotes if q.get("amount")]
+    """Given a PR's quotes, return the min and the potential saving vs the max —
+    on the AFTER-VAT figure, so a VAT-free quote is compared fairly."""
+    amts = [quote_after_vat(q) for q in quotes if q.get("amount")]
     if len(amts) < 2:
         return {"lowest": min(amts) if amts else None, "saving": 0}
     return {"lowest": min(amts), "highest": max(amts), "saving": round(max(amts) - min(amts), 2)}

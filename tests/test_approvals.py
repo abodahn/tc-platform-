@@ -188,7 +188,8 @@ def test_full_cycle_create_sign_po(app_client):
     # two DISTINCT vendor quotes satisfy the RFQ rule
     for vendor, amt in (("High Trak", "48000"), ("Delta", "52000")):
         c.post(f"/procurement/pr/{pr_id}/quote",
-               data={"_csrf": get_csrf(c), "vendor": vendor, "amount": amt},
+               data={"_csrf": get_csrf(c), "vendor": vendor, "amount": amt,
+                     "payment_terms": "30 days"},
                content_type="multipart/form-data", follow_redirects=True)
 
     # Purchasing and the value-gated rungs now sign. DERIVED from the ladder
@@ -285,7 +286,8 @@ def test_quotes_add_choose_and_compare(app_client):
     pid = _pr_id(a, "Quote me")
     for vendor, amt in (("High Trak", "48000"), ("Delta", "52000")):
         c.post(f"/procurement/pr/{pid}/quote",
-               data={"_csrf": get_csrf(c), "vendor": vendor, "amount": amt},
+               data={"_csrf": get_csrf(c), "vendor": vendor, "amount": amt,
+                     "payment_terms": "30 days", "vat_applies": "0"},
                content_type="multipart/form-data", follow_redirects=True)
     with a.app_context():
         from app.approvals import services as svc

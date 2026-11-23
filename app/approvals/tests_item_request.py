@@ -176,7 +176,7 @@ with app.app_context():
             # DOAM §4.3's lowest band is ONE quotation, not none — the buyer
             # records the price basis even on a spot buy.
             for n in range(int(C.quotes_required(40.0 * 2))):
-                svc.add_quote(pr_id, {"vendor": "Quote Vendor %d" % n,
+                svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "Quote Vendor %d" % n,
                                       "amount": 80.0 + n}, signer["purchasing"])
             continue
         if not a_ok:

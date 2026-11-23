@@ -136,7 +136,7 @@ def run():
                 ok, msg = svc.act_on_step(pr_id, signer[stage], "approve")
                 if not ok and msg == "needs_quotes":
                     for n, mult in (("A", 1.0), ("B", 1.05)):
-                        svc.add_quote(pr_id, {"vendor": "%s %s" % (VENDOR, n),
+                        svc.add_quote(pr_id, {"payment_terms": "30 days", "vendor": "%s %s" % (VENDOR, n),
                                               "amount": ORDER_QTY * UNIT * mult}, buyer)
                     continue
                 if not ok and msg == "deviation_memo_required":
