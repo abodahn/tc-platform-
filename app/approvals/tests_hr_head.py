@@ -131,6 +131,13 @@ with app.app_context():
     ok("an HR request raised by the HR director starts at warehouse",
        "hr_head" not in [s["stage"] for s in steps(pr3)]
        and current(pr3)["stage"] == "warehouse")
+    # An override listing a role with no DOAM level must not let its holders skip
+    # the rung: the skip uses the same authority test as signing.
+    svc.set_stage_meta("hr_head", ["hr_director", "normal_user"], user=root)
+    p = raise_pr(hr_user, "HR", "C2")
+    ok("an unlevelled role added by override still gets the rung",
+       current(p)["stage"] == "hr_head")
+    svc.set_stage_meta("hr_head", user=root, reset_role=True)
 
     print("\n--- department spellings -------------------------------------------")
     for dept in ("hr", "HR ", "H.R", "human  resources"):

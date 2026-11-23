@@ -2140,7 +2140,8 @@ def submit_pr(pr_id, user, ip=None):
             _req_role = conn.execute("SELECT role FROM users WHERE username=?",
                                      (pr["requester"],)).fetchone()
             if not (_req_role and _req_role["role"] in
-                    stage_roles_map(conn).get(C.HR_HEAD_STAGE, ())):
+                    stage_roles_map(conn).get(C.HR_HEAD_STAGE, ())
+                    and C.holds_authority(_req_role["role"], C.HR_HEAD_STAGE)):
                 _stages = [C.HR_HEAD_STAGE] + _stages
         # DOAM §4.3 — a single-source award is signed one level above the value
         # tier. Applied here as well as in set_single_source(), because the

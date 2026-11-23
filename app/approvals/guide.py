@@ -26,7 +26,7 @@ CHIP = re.compile(r"\[\[(btn|ui):([a-z0-9_.]+)\]\]")
 
 # (section id, ladder stage or None). Order = the order a request travels.
 SECTIONS = [
-    ("req", None), ("wh", "warehouse"), ("whm", "warehouse_manager"),
+    ("req", None), ("hrd", "hr_head"), ("wh", "warehouse"), ("whm", "warehouse_manager"),
     ("pur", "purchasing"), ("plant", "factory_manager"), ("ctrl", "control"),
     ("cfo", "cfo"), ("ceo", "ceo"), ("po", None), ("fin", None), ("admin", None),
 ]

@@ -207,7 +207,7 @@ def aging_view(department=None, stage=None, lang="en"):
     rows.sort(key=lambda r: (-r["days_on_rung"], r["pr_no"] or ""))
 
     stage_labels = svc.labels(lang if lang in ("en", "ar", "tr") else "en")["stage"]
-    order = {s: i for i, s in enumerate(C.DOAM_LADDER)}
+    order = {s: i for i, s in enumerate([C.HR_HEAD_STAGE] + list(C.DOAM_LADDER))}
     for r in rows:
         r["stage_label"] = stage_labels.get(r["stage"], svc.stage_label(r["stage"]))
     return {
