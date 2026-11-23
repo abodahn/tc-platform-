@@ -1050,6 +1050,12 @@ def get_pr(pr_id):
         # `finally` below closes the connection. Doing it after the return
         # statement cost a second connection, which on Render is 333ms.
         item_ds = attach_item_history(conn, pr_id, [dict(r) for r in items])
+        # A line raised with the item box blank stores NULL (or, from an old
+        # form, the text "None"): its description IS its name. Fixed once here
+        # so the page, the PDFs and the e-mails never print "None".
+        for _it in item_ds:
+            if not _it.get("item") or str(_it.get("item")).strip() in ("None", "null"):
+                _it["item"] = _it.get("description") or ""
     finally:
         conn.close()
     pr_d = dict(pr)
@@ -6347,6 +6353,46 @@ def choose_quote(pr_id, quote_id, user, ip=None):
 
 
 
+def apply_chosen_quote(pr_id, quote_id, user, ip=None):
+    """Carry the chosen quotation's prices onto the request (owner's request,
+    2026-11-23): per-item quote lines set each line's unit price; a one-line
+    request with no lines takes amount / qty. The quote's VAT answer becomes the
+    request's VAT and its currency the request's currency. Goes through
+    price_pr(), so the total, the value ladder and every pricing guard apply
+    exactly as if the buyer had typed the figures.
+    Returns (ok, msg); msg 'no_lines' = a multi-line quote with no per-item
+    prices, which cannot be split safely."""
+    conn = get_db()
+    try:
+        q = conn.execute("SELECT * FROM pr_quotes WHERE id=? AND pr_id=?",
+                         (quote_id, pr_id)).fetchone()
+        if not q:
+            return False, "not_found"
+        items = conn.execute("SELECT id, qty FROM pr_items WHERE pr_id=? ORDER BY seq, id",
+                             (pr_id,)).fetchall()
+        try:
+            lines = conn.execute("SELECT pr_item_id, unit_price FROM pr_quote_lines "
+                                 "WHERE quote_id=?", (quote_id,)).fetchall()
+        except Exception:
+            lines = []
+    finally:
+        conn.close()
+    ids = {it["id"] for it in items}
+    prices = {l["pr_item_id"]: float(l["unit_price"]) for l in lines
+              if l["pr_item_id"] in ids and l["unit_price"] is not None}
+    if not prices:
+        if len(items) != 1 or not float(items[0]["qty"] or 0):
+            return False, "no_lines"
+        prices = {items[0]["id"]: round(float(q["amount"] or 0) / float(items[0]["qty"]), 4)}
+    keys = q.keys()
+    vat_on = bool(q["vat_applies"]) if "vat_applies" in keys else False
+    rate = (float(q["vat_rate"] or 0.14) if "vat_rate" in keys else 0.14) if vat_on else 0.0
+    if 0 < rate <= 1:          # quotes store VAT as a fraction (0.14); requests as a percent
+        rate = round(rate * 100, 4)
+    meta = {"tax_rate": str(rate), "currency": (q["currency"] or "") if "currency" in keys else ""}
+    return price_pr(pr_id, prices, meta, user, ip=ip)
+
+
 # --- supplier quotation editing (Procurement & Warehouse spec §5) -----------
 _QUOTE_EDITABLE = ("vendor", "amount", "currency", "lead_time_days", "warranty", "notes",
                    "payment_terms", "vat_applies")
@@ -6555,6 +6601,13 @@ def _pr_field(pr, key, default=None):
 
 
 def rfq_gate_check(conn, pr):
+    """RFQ / competitive-quotation gate for the Purchasing sign-off: see
+    rfq_requirement(). Returns (ok, msg)."""
+    r = rfq_requirement(conn, pr)
+    return r["ok"], r["msg"]
+
+
+def rfq_requirement(conn, pr):
     """RFQ / competitive-quotation gate for the Purchasing sign-off (pure check,
     no writes). A PRICED request whose total is at/above the rfq_value_threshold
     setting (override -> C.RFQ_VALUE_THRESHOLD) must carry at least
@@ -6562,9 +6615,15 @@ def rfq_gate_check(conn, pr):
     Purchasing has recorded a single-source justification on the PR.
 
     `pr` is the pr_requests row (dict or Row). Returns (ok, msg):
-    (False, "needs_quotes") when the rule blocks the sign-off, else (True, "")."""
+    (False, "needs_quotes") when the rule blocks the sign-off, else (True, "").
+
+    rfq_requirement() is the same rule reporting its numbers — required, have
+    (distinct suppliers with a file), value (EGP, VAT included) — so the page
+    badge and the refusal can never disagree with the gate again."""
+    out = {"ok": True, "msg": "", "required": 0, "have": 0, "value": 0.0,
+           "single_source": False}
     if (_pr_field(pr, "pricing_status") or "priced") != "priced":
-        return True, ""          # unpriced: the pricing gate rules first
+        return out               # unpriced: the pricing gate rules first
     # Threshold is EGP-based: compare the EGP-EQUIVALENT total (fx-converted),
     # not the raw foreign figure — a 60,000 TRY (~3,000 EGP) order must not
     # trigger the competitive-quote rule meant for 25,000+ EGP purchases.
@@ -6572,6 +6631,7 @@ def rfq_gate_check(conn, pr):
         total = float(egp_commitment(pr))
     except (TypeError, ValueError):
         total = 0.0
+    out["value"] = round(total, 2)
     # DOAM §4.3 bands when the matrix is in force: 1 quote up to 50,000, three to
     # 500,000, three plus negotiation to 2,000,000, formal tender above that. The
     # flat "2 quotes at 25,000" setting was the pre-DOAM rule and stays as the
@@ -6587,7 +6647,7 @@ def rfq_gate_check(conn, pr):
         required_quotes = max(1, required_quotes)
     else:
         if total < num_setting(conn, "rfq_value_threshold"):
-            return True, ""      # below the competitive-quote threshold
+            return out           # below the competitive-quote threshold
         required_quotes = num_setting(conn, "rfq_quote_min")
     # DOAM §4.4 — an off-plan PRICE (anything over the target) requires three
     # competitive quotes whatever the order is worth. deviation_grade() has
@@ -6601,15 +6661,18 @@ def rfq_gate_check(conn, pr):
     except Exception as exc:  # noqa: BLE001
         logging.getLogger(__name__).warning(
             "DOAM 4.4: deviation quote requirement unavailable (%s)", exc)
+    out["required"] = int(required_quotes)
     if str(_pr_field(pr, "single_source_reason") or "").strip():
+        out["single_source"] = True
         # Justified single/sole-source purchase — but a quote on file for it
         # still has to be the supplier's document, not a typed figure.
         row = conn.execute("SELECT COUNT(*) n, SUM(CASE WHEN " + _Q_HAS_FILE
                            + " THEN 1 ELSE 0 END) f FROM pr_quotes WHERE pr_id=?",
                            (_pr_field(pr, "id"),)).fetchone()
+        out["have"] = int(row["f"] or 0)
         if int(row["n"] or 0) and not int(row["f"] or 0):
-            return False, "needs_quote_file"
-        return True, ""
+            out.update(ok=False, msg="needs_quote_file")
+        return out
     # "Competitive" means distinct VENDORS, not just distinct quote rows — two quotes
     # typed against the same supplier must not satisfy the rule. Only quotes
     # with the supplier's file attached count.
@@ -6620,9 +6683,10 @@ def rfq_gate_check(conn, pr):
     except Exception:
         n = conn.execute("SELECT COUNT(*) c FROM pr_quotes WHERE pr_id=? AND " + _Q_HAS_FILE,
                          (_pr_field(pr, "id"),)).fetchone()["c"]
-    if int(n or 0) < required_quotes:
-        return False, "needs_quotes"
-    return True, ""
+    out["have"] = int(n or 0)
+    if out["have"] < required_quotes:
+        out.update(ok=False, msg="needs_quotes")
+    return out
 
 
 def attach_ejr(pr_id, ejr_id, user, ip=None):

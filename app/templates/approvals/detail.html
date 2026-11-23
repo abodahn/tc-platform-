@@ -1824,12 +1824,16 @@
         {#- Only quotations with the supplier's file count toward the rule. -#}
         {% set n_filed = b.quotes|selectattr('has_file')|list|length %}
         {% if rfq_required %}
-        <span class="badge {{ 'b-approved' if (n_filed >= rfq_min or pr.single_source_reason) else 'b-warning' }}">
-          <span data-i18n="proc.rfq.quotes_label">Quotes:</span> {{ n_filed }}
+        <span class="badge {{ 'b-approved' if (rfq_have >= rfq_min or pr.single_source_reason) else 'b-warning' }}">
+          <span data-i18n="proc.rfq.quotes_label">Quotes:</span> {{ rfq_have }}
           <span data-i18n="proc.rfq.of_required">of</span> {{ rfq_min }}
-          <span data-i18n="proc.rfq.required_for">required for orders ≥</span>
-          {{ '{:,.0f}'.format(rfq_threshold) }} EGP
+          <span data-i18n="proc.rfq.for_value">required for this value (VAT incl.)</span>
+          {% if money %}{{ '{:,.0f}'.format(rfq_value) }} EGP{% endif %}
         </span>
+        {% if rfq_have < rfq_min and not pr.single_source_reason %}
+        <div class="muted" style="font-size:12.5px;margin-top:4px;flex-basis:100%"
+             data-i18n="proc.rfq.count_rule">Only quotations from different suppliers, each with its file attached, are counted.</div>
+        {% endif %}
         {% endif %}
       </div>
       <div class="panel-pad">
@@ -2167,7 +2171,7 @@
           <strong data-i18n="proc.rfq.single_source">Single-source justification</strong>: {{ pr.single_source_reason }}
         </div>
         {% endif %}
-        {% if can_purchasing and rfq_required and n_filed < rfq_min and not rfq_locked %}
+        {% if can_purchasing and rfq_required and rfq_have < rfq_min and not rfq_locked %}
         <details style="margin-bottom:12px">
           <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.rfq.waive">Waive competitive quotes (single source)</summary>
           <form method="post" action="{{ url_for('approvals.single_source', pr_id=pr.id) }}" class="mt-2">

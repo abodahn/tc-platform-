@@ -64,6 +64,56 @@ def run():
                                                     "currency": "USD"}, buyer)
         chk("USD pricing with rate saved", ok, msg)
 
+        # ---- choosing a quotation carries its prices + VAT onto the PR ----
+        pdf_b64 = "JVBERi0xLjQK"
+        two, _ = svc.create_pr({"title": "Quote flows", "department": "Maintenance"},
+                               [{"item": "BATTERY", "qty": 2, "unit_price": 0},
+                                {"item": "", "description": "Charger repair", "qty": 1,
+                                 "unit_price": 0}],
+                               {"username": "tech", "id": 9}, priced=False)
+        a, b_ = [it["id"] for it in svc.get_pr(two)["items"]]
+        chk("a blank item name shows its description, never 'None'",
+            svc.get_pr(two)["items"][1]["item"] == "Charger repair")
+        svc.price_pr(two, {a: 65000, b_: 1000}, {"tax_rate": "0"}, buyer)
+        ok, why = svc.add_quote(two, {"vendor": "High Track", "amount": "1",
+                                      "payment_terms": "30 days", "vat_applies": "1",
+                                      "lines": {a: "60000", b_: "900"}}, buyer,
+                                filename="q.pdf", content_type="application/pdf",
+                                content_b64=pdf_b64)
+        chk("per-item quote recorded", ok, why)
+        qid = get_db().execute("SELECT id FROM pr_quotes WHERE pr_id=?", (two,)).fetchone()["id"]
+        ok, why = svc.choose_quote(two, qid, buyer)
+        chk("quote chosen", ok, why)
+        ok, why = svc.apply_chosen_quote(two, qid, buyer)
+        chk("its prices are applied to the request", ok, why)
+        items = {it["id"]: it for it in svc.get_pr(two)["items"]}
+        chk("line 1 unit price now 60,000", items[a]["unit_price"] == 60000, items[a]["unit_price"])
+        chk("line 2 unit price now 900", items[b_]["unit_price"] == 900, items[b_]["unit_price"])
+        prq = dict(get_db().execute("SELECT * FROM pr_requests WHERE id=?", (two,)).fetchone())
+        am = svc.pr_amounts(prq)
+        chk("request total = 120,900 and VAT 14%% from the quote (%s)" % am,
+            am["subtotal"] == 120900 and am["tax_rate"] == 14 and am["grand"] == 137826)
+
+        _c = get_db()
+        rq = svc.rfq_requirement(_c, prq)
+        _c.close()
+        chk("the quote rule reports its numbers: value incl. VAT, required, have (%s)" % rq,
+            rq["value"] == 137826 and rq["have"] == 1 and rq["required"] >= 1
+            and svc.rfq_gate_check(get_db(), prq) == (rq["ok"], rq["msg"]))
+
+        one_line, _ = svc.create_pr({"title": "Single", "department": "Maintenance"},
+                                    [{"item": "PUMP", "qty": 4, "unit_price": 0}],
+                                    {"username": "tech", "id": 9}, priced=False)
+        svc.add_quote(one_line, {"vendor": "Solo", "amount": "2000", "payment_terms": "Cash",
+                                 "vat_applies": "0"}, buyer, filename="q.pdf",
+                      content_type="application/pdf", content_b64=pdf_b64)
+        q1 = get_db().execute("SELECT id FROM pr_quotes WHERE pr_id=?", (one_line,)).fetchone()["id"]
+        svc.choose_quote(one_line, q1, buyer)
+        ok, why = svc.apply_chosen_quote(one_line, q1, buyer)
+        it1 = svc.get_pr(one_line)["items"][0]
+        chk("one-line quote without lines: unit = amount / qty = 500", ok and it1["unit_price"] == 500,
+            (why, it1["unit_price"]))
+
         # ---- the printed PR and PO carry the VAT columns ------------------
         from app.approvals import pdf as P
         bundle = svc.get_pr(pr_id) if hasattr(svc, "get_pr") else None

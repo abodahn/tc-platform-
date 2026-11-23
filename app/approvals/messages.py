@@ -276,9 +276,9 @@ MESSAGES = {
         "ar": "اختر إدارة أو اكتب اسمها.",
         "tr": "Bir departman seçin veya adını yazın.",
     },
-    "Competitive quotes required — attach at least 2 vendor quotes for this order value, or record a single-source justification in the Vendor quotes panel. Only quotations with the supplier's file attached count.": {
-        "ar": "هذه القيمة تحتاج عرضَي سعر تنافسيين على الأقل من مورّدين. أرفقهما، أو سجّل مبرّر التوريد من مصدر واحد في لوحة «عروض أسعار المورّدين». لا يُحتسب إلا عرض السعر المرفق به ملف المورّد.",
-        "tr": "Bu tutar için en az 2 rekabetçi tedarikçi teklifi gerekir. Teklifleri ekleyin ya da «Tedarikçi teklifleri» panelinde tek kaynak gerekçesini kaydedin. Yalnızca tedarikçi dosyası ekli teklifler sayılır.",
+    "Competitive quotes required — this order value needs more quotations than are on file. The Vendor quotes panel shows how many: each must come from a different supplier with its file attached. Or record a single-source justification there.": {
+        "ar": "مطلوب عروض أسعار تنافسية — قيمة الطلب دي محتاجة عروض أكتر من الموجودة. لوحة «عروض أسعار المورّدين» بتوضح العدد المطلوب: كل عرض من مورّد مختلف ومرفق بيه ملفه. أو سجّل مبرّر التوريد من مصدر واحد هناك.",
+        "tr": "Rekabetçi teklif gerekli — bu sipariş tutarı kayıtlı olandan fazla teklif gerektirir. Kaç tane gerektiği «Tedarikçi teklifleri» panelinde yazar: her biri farklı bir tedarikçiden ve dosyası ekli olmalı. Ya da orada tek kaynak gerekçesini kaydedin.",
     },
     "Could not add delegation (": {
         "ar": "تعذّر إضافة التفويض (",
@@ -616,6 +616,21 @@ MESSAGES = {
         "ar": "ملف عرض السعر كبير جدًا (الحد الأقصى 3 ميجابايت).",
         "tr": "Teklif dosyası çok büyük (en fazla 3 MB).",
     },
+    "Quote selected — its prices and VAT are now the request's prices.": {
+        "ar": "تم اختيار العرض — أسعاره والضريبة بقت هي أسعار الطلب.",
+        "tr": "Teklif seçildi — fiyatları ve KDV'si artık talebin fiyatlarıdır."},
+    "Quote selected. It has no per-item prices, so enter each line's price in Pricing.": {
+        "ar": "تم اختيار العرض. مفيهوش سعر لكل صنف، فادخل سعر كل بند في التسعير.",
+        "tr": "Teklif seçildi. Kalem bazında fiyat yok; her satırın fiyatını Fiyatlandırma'da girin."},
+    "Quote selected. It is in a foreign currency: enter the EGP exchange rate in Pricing, then save to apply its prices.": {
+        "ar": "تم اختيار العرض. العرض بعملة أجنبية: ادخل سعر الصرف بالجنيه في التسعير واحفظ عشان أسعاره تتطبق.",
+        "tr": "Teklif seçildi. Döviz cinsinden: Fiyatlandırma'da EGP kurunu girip kaydedin, fiyatlar öyle uygulanır."},
+    "Quote selected. Its prices will apply once the warehouse has checked the request — save Pricing then.": {
+        "ar": "تم اختيار العرض. أسعاره هتتطبق بعد ما المخزن يراجع الطلب — احفظ التسعير وقتها.",
+        "tr": "Teklif seçildi. Depo talebi kontrol ettikten sonra fiyatlar uygulanır — o zaman Fiyatlandırma'yı kaydedin."},
+    "Quote selected, but its prices were not applied. Enter them in Pricing.": {
+        "ar": "تم اختيار العرض، لكن أسعاره متطبقتش. ادخلها في التسعير.",
+        "tr": "Teklif seçildi ama fiyatları uygulanmadı. Fiyatlandırma'da girin."},
     "Quote selected.": {
         "ar": "تم اختيار عرض السعر.",
         "tr": "Teklif seçildi.",

@@ -1327,6 +1327,14 @@ def detail(pr_id):
     money = svc.money_view(user, pr, bundle["steps"])
     show_commercial = (is_priced or can_purchasing) and bool(money)
     vendors = svc.list_vendors()
+    # The competitive-quote rule, with its numbers, from the SAME function the
+    # Purchasing sign-off is gated on — the badge used the pre-DOAM flat rule
+    # on the pre-VAT total and could say "done" while the gate refused.
+    _c = svc.get_db()   # detail() imports get_db locally further down
+    try:
+        rfq = svc.rfq_requirement(_c, pr)
+    finally:
+        _c.close()
     return render_template("approvals/detail.html", active="proc_list",
                            stock_issues=svc.stock_posting_issues(pr_id),
                            stock_skipped=svc.stock_posting_issues(pr_id, ("skipped",)),
@@ -1396,12 +1404,13 @@ def detail(pr_id):
                            wh_review=bool(actionable
                                           and actionable.get("stage") in C.WAREHOUSE_STAGES),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
-                           rfq_min=C.RFQ_QUOTE_MIN, rfq_threshold=C.RFQ_VALUE_THRESHOLD,
+                           rfq_min=rfq["required"], rfq_have=rfq["have"],
+                           rfq_value=rfq["value"], rfq_threshold=C.RFQ_VALUE_THRESHOLD,
                            # Who to ask for a price, defaulted to the vendors the
                            # lines already name (the header vendor covers a line
                            # that names none).
                            rfq_vendors=[v for v in svc.po_groups(bundle["items"], pr) if v],
-                           rfq_required=(is_priced and float(pr.get("total") or 0) >= C.RFQ_VALUE_THRESHOLD),
+                           rfq_required=rfq["required"] > 0,
                            rfq_locked=(pr["status"] in ("approved", "po_issued", "partially_received",
                                                         "received", "closed", "cancelled")),
                            # DOAM §6: whether this request needs an engineering
@@ -1528,8 +1537,22 @@ def add_quote(pr_id):
 @permission_required("proc_purchasing")
 def choose_quote(pr_id, quote_id):
     ok, msg = svc.choose_quote(pr_id, quote_id, _u(), ip=_ip())
-    flash("Quote selected." if ok else _QUOTE_ERRORS.get(msg) or f"Could not select quote ({msg}).",
-          "success" if ok else "error")
+    if not ok:
+        flash(_QUOTE_ERRORS.get(msg) or f"Could not select quote ({msg}).", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
+    # The chosen offer's prices + VAT flow into the request's lines and total.
+    ok2, msg2 = svc.apply_chosen_quote(pr_id, quote_id, _u(), ip=_ip())
+    if ok2:
+        flash("Quote selected — its prices and VAT are now the request's prices.", "success")
+    else:
+        flash({"no_lines": "Quote selected. It has no per-item prices, so enter each "
+                           "line's price in Pricing.",
+               "fx_required": "Quote selected. It is in a foreign currency: enter the "
+                              "EGP exchange rate in Pricing, then save to apply its prices.",
+               "demand_rungs_pending": "Quote selected. Its prices will apply once the "
+                                       "warehouse has checked the request — save Pricing then."}
+              .get(msg2, "Quote selected, but its prices were not applied. Enter "
+                         "them in Pricing."), "warning")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -1932,10 +1955,11 @@ def approve(pr_id):
                "not_pending": "This request is not awaiting approval.",
                "needs_pricing": "Enter the pricing before approving the Purchasing stage — "
                                 "the request has no commercial value yet.",
-               "needs_quotes": "Competitive quotes required — attach at least 2 vendor "
-                               "quotes for this order value, or record a single-source "
-                               "justification in the Vendor quotes panel. Only quotations "
-                               "with the supplier's file attached count.",
+               "needs_quotes": "Competitive quotes required — this order value needs more "
+                               "quotations than are on file. The Vendor quotes panel shows "
+                               "how many: each must come from a different supplier with "
+                               "its file attached. Or record a single-source justification "
+                               "there.",
                "needs_quote_file": "The quotation on file has no supplier document. "
                                    "Attach the supplier's quotation file before "
                                    "approving.",
