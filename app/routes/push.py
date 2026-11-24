@@ -4,7 +4,7 @@ TC Platform — /push: register this device for Web Push (see app/services/push.
 All routes need a signed-in user; the POSTs go through the app-wide CSRF check
 (X-CSRF-Token header, as every other fetch() in the app).
 """
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 
 from app.auth import login_required, current_user
 from app.csrf import get_token
@@ -38,10 +38,12 @@ def subscribe():
     parsed = push.validate_subscription(request.get_json(silent=True))
     if not parsed:
         return jsonify(ok=False, error="invalid"), 400
+    push.note_origin(request.url_root)
     conn = get_db()
     try:
-        push.subscribe(conn, current_user()["username"], *parsed,
-                       user_agent=request.headers.get("User-Agent", ""))
+        # remembered so sign-out can unbind this device (auth.logout)
+        session["push_sid"] = push.subscribe(conn, current_user()["username"], *parsed,
+                                             user_agent=request.headers.get("User-Agent", ""))
     finally:
         conn.close()
     return jsonify(ok=True)

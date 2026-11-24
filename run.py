@@ -10,6 +10,7 @@ from app import create_app
 from config import Config
 
 app = create_app()
+app.config["PUSH_DISPATCHER"] = True   # Web Push dispatcher (app/services/push.py)
 
 if __name__ == "__main__":
     print("=" * 60)

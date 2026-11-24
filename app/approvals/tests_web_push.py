@@ -203,6 +203,19 @@ def run():
     chk("the generated private key signs a VAPID claim", signs is True, signs)
     chk("VAPID sub is an https host, never an email",
         push.vapid_sub().startswith("https://") and "@" not in push.vapid_sub(), push.vapid_sub())
+    saved = (config.Config.PUBLIC_URL, dict(push._ORIGIN), os.environ.pop("RENDER_EXTERNAL_URL", None))
+    config.Config.PUBLIC_URL, push._ORIGIN["url"] = "", "http://tcserver:7000/"
+    chk("a dot-less first host (LAN name, health probe) is not used as sub",
+        push.vapid_sub() == "https://localhost", push.vapid_sub())
+    os.environ["RENDER_EXTERNAL_URL"] = "https://tc-app.onrender.example"
+    chk("Render's public URL is used when TC_PUBLIC_URL is unset",
+        push.vapid_sub() == "https://tc-app.onrender.example", push.vapid_sub())
+    config.Config.PUBLIC_URL = "https://portal.example.test"
+    chk("TC_PUBLIC_URL wins", push.vapid_sub() == "https://portal.example.test")
+    config.Config.PUBLIC_URL, push._ORIGIN["url"] = saved[0], saved[1]["url"]
+    os.environ.pop("RENDER_EXTERNAL_URL", None)
+    if saved[2]:
+        os.environ["RENDER_EXTERNAL_URL"] = saved[2]
 
     print("\n--- 3. dispatcher ------------------------------------------------------")
     hist = notify("alice", "History", "old row")
@@ -312,6 +325,19 @@ def run():
     chk("404 -> subscription deleted", sub_row(EN) is None)
     chk("500 -> kept, fail_count 1", (sub_row(EX) or {}).get("fail_count") == 1, sub_row(EX))
     chk("a good device records last_ok_at", bool((sub_row(EA) or {}).get("last_ok_at")))
+    for i in range(3):
+        notify("gone_user", "Again %d" % i)
+    SENT.clear()
+    push.dispatch_once()
+    chk("a failing device is tried once per cycle, not once per row",
+        len(sent_to(EX)) == 1 and sub_row(EX)["fail_count"] == 2, (SENT, sub_row(EX)))
+    c = get_db()
+    c.execute("UPDATE push_subscriptions SET fail_count=? WHERE endpoint=?", (push.MAX_FAILS - 1, EX))
+    c.commit()
+    c.close()
+    notify("gone_user", "Once more")
+    push.dispatch_once()
+    chk("MAX_FAILS consecutive failures (e.g. 403 after a key change) drop the device", sub_row(EX) is None)
 
     print("\n--- 7. more than 5 new rows -> one summary push ------------------------")
     for i in range(7):
@@ -343,6 +369,33 @@ def run():
     SENT.clear()
     push.dispatch_once()
     chk("...one created after it is", [p["title"] for p in sent_to(E2)] == ["After"], SENT)
+    notify("mm2", "Pending")
+    client_for("mm2").post("/push/subscribe", json=sub_body(E2), headers=H)   # a /profile visit
+    SENT.clear()
+    push.dispatch_once()
+    chk("re-registering by the same user does not skip a pending row",
+        [p["title"] for p in sent_to(E2)] == ["Pending"], SENT)
+
+    print("\n--- 8b. sign-out unbinds this device ----------------------------------")
+    E3 = "https://push.example.test/mm2-shared"
+    m2 = client_for("mm2")
+    m2.post("/push/subscribe", json=sub_body(E3), headers=H)
+    chk("device registered in this session", (sub_row(E3) or {}).get("username") == "mm2")
+    m2.get("/logout")
+    chk("logout deletes this session's device", sub_row(E3) is None)
+    chk("...and leaves the user's other devices", (sub_row(E2) or {}).get("username") == "mm2")
+
+    hidden = notify("alice", "Below every cursor")
+    c = get_db()
+    c.execute("UPDATE push_subscriptions SET since_id=? WHERE since_id<?", (hidden, hidden))
+    c.commit()
+    c.close()
+    SENT.clear()
+    push.dispatch_once()
+    c = get_db()
+    claim = c.execute("SELECT push_claim FROM notifications WHERE id=?", (hidden,)).fetchone()["push_claim"]
+    c.close()
+    chk("rows below every device's cursor are skipped, not claimed", not SENT and claim is None, SENT)
 
     print("\n--- 9. pages + service worker ------------------------------------------")
     r = a.get("/profile")
@@ -355,7 +408,7 @@ def run():
     sw = a.get("/sw.js").get_data(as_text=True)
     chk("sw.js: push + notificationclick + pushsubscriptionchange, cache bumped",
         all(x in sw for x in ('addEventListener("push"', '"notificationclick"',
-                              '"pushsubscriptionchange"', '"tcp-v3"')))
+                              '"pushsubscriptionchange"', '"tcp-v3"', "renotify")))
     root = Path(__file__).resolve().parents[1] / "static" / "i18n"
     keys = ("push.title", "push.enable", "push.disable", "push.test", "push.status.on",
             "push.status.off", "push.status.blocked", "push.status.unsupported",
@@ -366,6 +419,10 @@ def run():
 
     print("\n--- 10. disabled under tests / by env; failures stay contained ---------")
     chk("no dispatcher thread was started by requests under app.testing",
+        push._STATE["pid"] is None and not any(t.name == "tc-push" for t in threading.enumerate()))
+    app3 = create_app()                      # not testing, but no PUSH_DISPATCHER opt-in
+    app3.test_client().get("/login")
+    chk("an app without the server entry-point opt-in starts no dispatcher",
         push._STATE["pid"] is None and not any(t.name == "tc-push" for t in threading.enumerate()))
     os.environ["TC_PUSH_DISABLED"] = "1"
     chk("TC_PUSH_DISABLED=1 -> start_dispatcher refuses", push.start_dispatcher() is False)

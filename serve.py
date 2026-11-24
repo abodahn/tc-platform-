@@ -12,6 +12,7 @@ from config import Config
 from app import create_app
 
 app = create_app()
+app.config["PUSH_DISPATCHER"] = True   # Web Push dispatcher (app/services/push.py)
 
 if __name__ == "__main__":
     try:

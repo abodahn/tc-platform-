@@ -8,3 +8,4 @@ TC Platform — WSGI entry point for Render / gunicorn.
 from app import create_app
 
 app = create_app()
+app.config["PUSH_DISPATCHER"] = True   # Web Push dispatcher (app/services/push.py)

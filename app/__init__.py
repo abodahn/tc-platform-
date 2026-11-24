@@ -266,17 +266,17 @@ def create_app():
     # /push — Web Push device registration. The dispatcher thread starts on the
     # first real request of each worker process, not here: gunicorn --preload runs
     # create_app() in the master, and a thread started before fork() does not
-    # survive into the worker. Never under app.testing; TC_PUSH_DISABLED=1 = off.
+    # survive into the worker. Opt-in: only the server entry points (wsgi/run/serve)
+    # set PUSH_DISPATCHER, so test suites never start it; TC_PUSH_DISABLED=1 = off.
     from app.routes.push import bp as push_bp
     app.register_blueprint(push_bp)
 
     @app.before_request
     def _start_push_dispatcher():
-        if app.testing or request.endpoint == "static":
+        if app.testing or not app.config.get("PUSH_DISPATCHER") or request.endpoint == "static":
             return
         try:
             from app.services import push as _push
-            _push.note_origin(request.url_root)
             _push.start_dispatcher()
         except Exception:  # noqa: BLE001 — push must never break a request
             pass

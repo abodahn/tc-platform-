@@ -111,6 +111,12 @@ def logout():
     user = current_user()
     if user:
         log_audit(user["username"], "logout", "User logged out", request.remote_addr or "")
+        if session.get("push_sid"):
+            try:   # this device stops getting the signed-out user's notifications
+                from app.services import push
+                push.forget_device(session["push_sid"], user["username"])
+            except Exception:  # noqa: BLE001 — never block a sign-out
+                pass
     session.clear()
     g.pop("user", None)
     return redirect(url_for("auth.login"))

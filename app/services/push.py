@@ -36,6 +36,7 @@ PER_USER = 5             # pushes per device per cycle; more -> one summary push
 STALE = timedelta(hours=1)   # a row older than this is never pushed (dispatcher was off)
 MAX_DEVICES = 10         # per user; the oldest registrations are dropped beyond this
 TIMEOUT = 10             # seconds per push-service request
+MAX_FAILS = 20           # consecutive failed cycles (e.g. 403 after a VAPID key change) -> drop the device
 DEFAULT_URL = "/my-work"
 
 SCHEMA = """
@@ -155,10 +156,13 @@ def note_origin(url_root):
 
 
 def vapid_sub():
-    """VAPID 'sub' claim: https://<host> of TC_PUBLIC_URL, else of the host the app
-    is served on. Never an email address. py-vapid accepts https://host only."""
-    host = urlsplit(Config.PUBLIC_URL or _ORIGIN["url"] or "").hostname or "localhost"
-    return "https://" + host
+    """VAPID 'sub' claim: https://<host> of TC_PUBLIC_URL, else Render's own public
+    URL, else the host a device registered through. Never an email address."""
+    for url in (Config.PUBLIC_URL, os.getenv("RENDER_EXTERNAL_URL"), _ORIGIN["url"]):
+        host = urlsplit(url or "").hostname
+        if host and "." in host:   # py-vapid refuses a dot-less host -> every push would fail
+            return "https://" + host
+    return "https://localhost"
 
 
 # --------------------------------------------------------------------------
@@ -212,21 +216,28 @@ def _max_notification_id(conn):
 def subscribe(conn, username, endpoint, p256dh, auth, user_agent=""):
     """Upsert by endpoint and bind it to `username` (a device re-registered by
     another account moves to that account). Only notifications created from now
-    on are pushed to it."""
+    on are pushed to it. Returns the row id."""
     since = _max_notification_id(conn)
     now = utcnow()
     ua = (user_agent or "")[:300]
     conn.execute("INSERT OR IGNORE INTO push_subscriptions "
                  "(username, endpoint, p256dh, auth, user_agent, created_at, fail_count, since_id) "
                  "VALUES (?,?,?,?,?,?,0,?)", (username, endpoint, p256dh, auth, ua, now, since))
-    conn.execute("UPDATE push_subscriptions SET username=?, p256dh=?, auth=?, user_agent=?, "
-                 "fail_count=0, since_id=? WHERE endpoint=?",
-                 (username, p256dh, auth, ua, since, endpoint))
+    # the profile page re-posts on every visit: move the cursor / reset failures only
+    # when the device changes owner, or rows not yet dispatched would be skipped
+    conn.execute("UPDATE push_subscriptions SET "
+                 "since_id = CASE WHEN username<>? THEN ? ELSE since_id END, "
+                 "fail_count = CASE WHEN username<>? THEN 0 ELSE fail_count END, "
+                 "username=?, p256dh=?, auth=?, user_agent=? WHERE endpoint=?",
+                 (username, since, username, username, p256dh, auth, ua, endpoint))
+    sid = conn.execute("SELECT id FROM push_subscriptions WHERE endpoint=?",
+                       (endpoint,)).fetchone()["id"]
     ids = [r["id"] for r in conn.execute(
         "SELECT id FROM push_subscriptions WHERE username=? ORDER BY id DESC", (username,)).fetchall()]
     for old in ids[MAX_DEVICES:]:
         conn.execute("DELETE FROM push_subscriptions WHERE id=?", (old,))
     conn.commit()
+    return sid
 
 
 def unsubscribe(conn, username, endpoint):
@@ -234,6 +245,16 @@ def unsubscribe(conn, username, endpoint):
                        (endpoint, username))
     conn.commit()
     return (cur.rowcount or 0) > 0
+
+
+def forget_device(sub_id, username):
+    """Sign-out: this browser's device stops receiving that user's notifications."""
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM push_subscriptions WHERE id=? AND username=?", (sub_id, username))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def user_subscriptions(conn, username):
@@ -300,6 +321,8 @@ def _record(conn, sub_id, result):
     else:
         conn.execute("UPDATE push_subscriptions SET fail_count=COALESCE(fail_count,0)+1 "
                      "WHERE id=?", (sub_id,))
+        conn.execute("DELETE FROM push_subscriptions WHERE id=? AND fail_count>=?",
+                     (sub_id, MAX_FAILS))
 
 
 def send_test(username, lang="en"):
@@ -352,15 +375,17 @@ def dispatch_once():
         return 0
     conn = get_db()
     try:
-        if not conn.execute("SELECT id FROM push_subscriptions LIMIT 1").fetchone():
+        low = conn.execute("SELECT MIN(since_id) AS m FROM push_subscriptions").fetchone()["m"]
+        if low is None:   # no device registered
             return 0
         if "v" not in _FLOOR:
             # first run: everything already in the table is history and never pushed
             _FLOOR["v"] = int(_kv_get_or_init(conn, "floor",
                                               lambda: str(_max_notification_id(conn))))
+        # rows at or below every device's since_id go to nobody: skip, never claim
         ids = [r["id"] for r in conn.execute(
             "SELECT id FROM notifications WHERE push_claim IS NULL AND id > ? "
-            "ORDER BY id LIMIT %d" % BATCH, (_FLOOR["v"],)).fetchall()]
+            "ORDER BY id LIMIT %d" % BATCH, (max(_FLOOR["v"], int(low or 0)),)).fetchall()]
         if not ids:
             return 0
         token = "%s-%s" % (datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
@@ -391,7 +416,7 @@ def dispatch_once():
             return 0
         keys = vapid_keys(conn)
         from app.security import system_scope
-        sent, results = 0, []
+        sent, results, work = 0, [], []
         for sub in subs:
             user = users.get(sub["username"])
             if not user:
@@ -408,12 +433,17 @@ def dispatch_once():
                              "url": DEFAULT_URL, "tag": "tc-summary"}]
             else:
                 payloads = [payload_for(r) for r in mine]
+            work.append((sub, payloads))
+        conn.commit()   # end the read transaction: no table locks held during network sends
+        for sub, payloads in work:
             for p in payloads:
                 res = deliver(sub, p, keys)
                 sent += 1
-                results.append((sub["id"], res))
-                if res == "gone":
+                if res != "ok":   # gone or unreachable: stop hammering this device this cycle
+                    results.append((sub["id"], res))
                     break
+            else:
+                results.append((sub["id"], "ok"))
         for sid, res in results:
             _record(conn, sid, res)
         conn.commit()

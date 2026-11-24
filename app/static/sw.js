@@ -48,10 +48,9 @@ self.addEventListener("push", (e) => {
   const opts = {
     body: d.body || "",
     icon: "/static/img/icon-192.png",
-    badge: "/static/img/favicon.png",
     data: { url: tcSameOriginPath(d.url) },
   };
-  if (d.tag) opts.tag = d.tag;
+  if (d.tag) { opts.tag = d.tag; opts.renotify = true; }   // a replaced summary/test still alerts
   e.waitUntil(self.registration.showNotification(d.title || "TC Platform", opts));
 });
 

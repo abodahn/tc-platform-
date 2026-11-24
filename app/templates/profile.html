@@ -325,12 +325,21 @@
     if (!supported) { show("unsupported"); return; }
     function refresh() {
       if (Notification.permission === "denied") return Promise.resolve(show("blocked"));
-      return reg().then(function (r) { return r.pushManager.getSubscription(); }).then(function (sub) {
-        if (sub && Notification.permission === "granted") {
-          show("on");
-          return post("/push/subscribe", sub.toJSON());   // keep it bound to whoever is signed in here
-        }
-        show("off");
+      return reg().then(function (r) {
+        return r.pushManager.getSubscription().then(function (sub) {
+          if (!sub || Notification.permission !== "granted") return show("off");
+          return fetch("/push/key", { credentials: "same-origin" }).then(function (x) { return x.json(); }).then(function (k) {
+            var have = new Uint8Array(sub.options.applicationServerKey || []).join(), want = keyBytes(k.key).join();
+            if (!have || have === want) return sub;
+            // the server's VAPID key changed (e.g. set in env): the old subscription can never deliver
+            return sub.unsubscribe().then(function () {
+              return r.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(k.key) });
+            });
+          }).then(function (s) {
+            show("on");
+            return post("/push/subscribe", s.toJSON());   // keep it bound to whoever is signed in here
+          });
+        });
       }).catch(function () { show("off"); });
     }
     bOn.addEventListener("click", function () {

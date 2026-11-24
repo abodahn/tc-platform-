@@ -216,7 +216,7 @@
         {% endif %}
         <a href="#" class="pwa-install" id="pwaInstallMenu" onclick="return false"><span style="width:16px;text-align:center">📲</span><span data-i18n="pwa.install">Install app</span></a>
         <hr>
-        <a href="{{ url_for('auth.logout') }}"><svg class="ico" style="width:16px;height:16px"><use href="#i-logout"></use></svg><span data-i18n="top.logout">Sign out</span></a>
+        <a id="tcLogout" href="{{ url_for('auth.logout') }}"><svg class="ico" style="width:16px;height:16px"><use href="#i-logout"></use></svg><span data-i18n="top.logout">Sign out</span></a>
       </div>
     </header>
 
@@ -252,9 +252,20 @@
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").then((r) => {
       const cta = document.getElementById("pushCta");
-      if (!cta || !("PushManager" in window) || !("Notification" in window) || Notification.permission !== "default") return;
+      if (!cta || !("PushManager" in window) || !("Notification" in window) || Notification.permission === "denied") return;
       return r.pushManager.getSubscription().then((s) => { if (!s) cta.style.display = "block"; });
     }).catch(() => {}));
+    // Sign-out unregisters this device, so the next person holding it never sees
+    // the signed-out user's notifications (the server unbinds it too).
+    const lo = document.getElementById("tcLogout");
+    if (lo && "PushManager" in window) lo.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      let left = false;
+      const go = () => { if (!left) { left = true; location.href = lo.href; } };
+      setTimeout(go, 1500);   // never hold the sign-out on a slow browser
+      navigator.serviceWorker.getRegistration().then((r) => r && r.pushManager.getSubscription())
+        .then((s) => s && s.unsubscribe()).catch(() => {}).then(go);
+    });
   }
 </script>
 {% block scripts %}{% endblock %}
