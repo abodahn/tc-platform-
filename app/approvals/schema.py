@@ -432,6 +432,15 @@ _PR_MIGRATIONS = [
     # forecast, cited instead of a client sales order. Sits beside so_no and
     # travels the same golden thread onto the PO, the GRN and the invoice.
     ("forecast_ref", "ALTER TABLE pr_requests ADD COLUMN forecast_ref TEXT"),
+    # Purchasing's discount on the whole request (owner's request, 2026-11-24):
+    # disc_type 'pct' | 'val', disc_value what was typed (clamped), disc_amount
+    # the money it takes off the subtotal after line discounts. line_disc is the
+    # sum of the lines' own discounts. pr_requests.total stays the NET (after
+    # both) that routing, budget and the PO read. NULL/0 = no discount.
+    ("disc_type", "ALTER TABLE pr_requests ADD COLUMN disc_type TEXT"),
+    ("disc_value", "ALTER TABLE pr_requests ADD COLUMN disc_value REAL"),
+    ("disc_amount", "ALTER TABLE pr_requests ADD COLUMN disc_amount REAL"),
+    ("line_disc", "ALTER TABLE pr_requests ADD COLUMN line_disc REAL"),
 ]
 
 # Verifiable signature events: one immutable row per approve/reject signature.
@@ -679,6 +688,14 @@ _QUOTE_MIGRATIONS = [
     ("vat_rate", "ALTER TABLE pr_quotes ADD COLUMN vat_rate REAL"),
     # The payment terms the RFQ asks the supplier for (printed on the RFQ PDF).
     ("payment_terms", "ALTER TABLE pr_rfqs ADD COLUMN payment_terms TEXT"),
+    # Quotation discounts: on the whole quote and per quoted line. amount and
+    # line_total are stored AFTER them, so every ranking reads them as before.
+    ("disc_type", "ALTER TABLE pr_quotes ADD COLUMN disc_type TEXT"),
+    ("disc_value", "ALTER TABLE pr_quotes ADD COLUMN disc_value REAL"),
+    ("disc_amount", "ALTER TABLE pr_quotes ADD COLUMN disc_amount REAL"),
+    ("disc_type", "ALTER TABLE pr_quote_lines ADD COLUMN disc_type TEXT"),
+    ("disc_value", "ALTER TABLE pr_quote_lines ADD COLUMN disc_value REAL"),
+    ("disc_amount", "ALTER TABLE pr_quote_lines ADD COLUMN disc_amount REAL"),
 ]
 
 # Columns added to pr_invoices / pr_payments after first release: WHICH purchase
@@ -733,6 +750,14 @@ _ITEM_MIGRATIONS = [
     # Catalogue mesh: a PR line may reference a proc_items row. OPTIONAL — a
     # free-text line leaves it NULL and behaves exactly as it always has.
     ("item_id", "ALTER TABLE pr_items ADD COLUMN item_id INTEGER"),
+    # Line discount (pct | val off the LINE total qty x unit_price). unit_price
+    # stays the list price, est_cost becomes the line net. net_price is what one
+    # unit really costs after the line's discount AND its share of the request
+    # discount; NULL = no discount, read as unit_price (every older row).
+    ("disc_type", "ALTER TABLE pr_items ADD COLUMN disc_type TEXT"),
+    ("disc_value", "ALTER TABLE pr_items ADD COLUMN disc_value REAL"),
+    ("disc_amount", "ALTER TABLE pr_items ADD COLUMN disc_amount REAL"),
+    ("net_price", "ALTER TABLE pr_items ADD COLUMN net_price REAL"),
 ]
 
 

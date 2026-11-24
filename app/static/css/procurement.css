@@ -153,10 +153,11 @@
   .content.proc table.pr-items :is(th, td):nth-child(2) { grid-column: 2 / -1; }
   .content.proc table.pr-items :is(th, td):nth-child(n+3) { grid-row: 2; }
   .content.proc table.pr-items :is(th, td):nth-child(n+4) { text-align: end; }
-  /* VAT + After VAT take a third row, under Unit price and Cost */
+  /* Row 2: Qty · Unit price · Discount; row 3: Net cost · VAT · After VAT */
   .content.proc table.pr-items :is(th, td):nth-child(1) { grid-row: 1 / span 3; }
-  .content.proc table.pr-items :is(th, td):nth-child(6) { grid-row: 3; grid-column: 3; }
-  .content.proc table.pr-items :is(th, td):nth-child(7) { grid-row: 3; grid-column: 4; }
+  .content.proc table.pr-items :is(th, td):nth-child(6) { grid-row: 3; grid-column: 2; text-align: start; }
+  .content.proc table.pr-items :is(th, td):nth-child(7) { grid-row: 3; grid-column: 3; }
+  .content.proc table.pr-items :is(th, td):nth-child(8) { grid-row: 3; grid-column: 4; }
   .content.proc table.pr-items tbody tr:last-child { border-bottom: 0; }
 }
 /* Wide screens: the item column keeps a readable width (the VAT columns had

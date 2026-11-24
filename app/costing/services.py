@@ -176,7 +176,8 @@ def _procurement(conn, orders):
         if oid is None:
             continue
         recv = conn.execute(
-            "SELECT COALESCE(SUM(COALESCE(received_qty,0)*COALESCE(unit_price,0)),0) AS v "
+            # net_price: after Purchasing's discounts (NULL = none -> list price)
+            "SELECT COALESCE(SUM(COALESCE(received_qty,0)*COALESCE(net_price,unit_price,0)),0) AS v "
             "FROM pr_items WHERE pr_id=?", (p["id"],)).fetchone()["v"] or 0
         inv = conn.execute(
             "SELECT COALESCE(SUM(COALESCE(amount,0)+COALESCE(tax,0)),0) AS v "

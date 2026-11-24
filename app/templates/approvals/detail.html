@@ -19,6 +19,7 @@
     <th data-i18n="proc.item">Item</th>
     <th style="text-align:end" data-i18n="proc.qty">Qty</th>
     <th data-i18n="proc.unit_price">Unit price</th>
+    {% if can_purchasing %}<th data-i18n="proc.disc.label">Discount</th>{% endif %}
     <th style="text-align:end" data-i18n="proc.quote.line_total">Line total</th>
   </tr></thead>
   <tbody>
@@ -29,17 +30,33 @@
       <td><input type="number" name="uprice_{{ it.id }}" min="0" step="any" inputmode="decimal"
                  style="max-width:120px" data-qty="{{ it.qty or 0 }}" aria-label="{{ it.item }}"
                  value="{{ l.unit_price if l else '' }}"></td>
+      {% if can_purchasing %}<td>{{ disc_inputs('qdisctype_%s'|format(it.id), 'qdisc_%s'|format(it.id),
+                                     l.disc_type if l else None, l.disc_value if l else None, 'q-disc') }}</td>{% endif %}
       <td style="text-align:end;font-variant-numeric:tabular-nums" data-line-out>—</td>
     </tr>
   {% endfor %}
   </tbody>
   <tfoot><tr>
-    <th colspan="3" data-i18n="proc.quote.before_vat">Before VAT</th>
+    <th colspan="{{ 4 if can_purchasing else 3 }}" data-i18n="proc.quote.before_vat">Before VAT</th>
     <th style="text-align:end;font-variant-numeric:tabular-nums" data-lines-out>—</th>
   </tr></tfoot>
 </table>
 </div>
 <div class="muted" style="font-size:12px;margin-bottom:8px" data-i18n="proc.quote.lines_hint">Leave a line blank if the supplier did not quote it. When any line has a price, the amount is the sum of the lines.</div>
+{% endmacro %}
+
+{#- A discount as Purchasing enters it: % of, or a value off, the figure next to
+    it. One pair of boxes, reused by the pricing gate and the quotation forms. -#}
+{% macro disc_inputs(tname, vname, kind=None, value=None, cls='') %}
+<span class="disc-pair" style="display:inline-flex;gap:4px;align-items:center">
+  <select name="{{ tname }}" class="{{ cls }}" title="Discount type" data-i18n-title="proc.disc.type" style="width:auto;min-width:0">
+    <option value="pct" {{ 'selected' if kind != 'val' }}>%</option>
+    <option value="val" {{ 'selected' if kind == 'val' }} data-i18n="proc.disc.value">Value</option>
+  </select>
+  <input type="number" name="{{ vname }}" class="{{ cls }}" min="0" step="any" inputmode="decimal"
+         style="max-width:90px" title="Discount" data-i18n-title="proc.disc.label"
+         value="{{ '%g'|format(value) if value else '' }}">
+</span>
 {% endmacro %}
 
 {% macro item_history(it) %}
@@ -681,6 +698,8 @@
               line on the request's header vendor. -#}
           <th data-i18n="proc.line_vendor">Supplier for this line</th>
           <th data-i18n="proc.unit_price">Unit price</th>
+          {#- Off the LINE total (qty x unit price): a % of it, or a value. -#}
+          <th data-i18n="proc.disc.label">Discount</th>
           <th data-i18n="proc.wh_last_price">Last order price</th>
           <th data-i18n="proc.lead_days">Lead days</th>
         </tr></thead>
@@ -767,6 +786,7 @@
                 {% set qline = chosen_q.lines.get(it.id) if chosen_q and chosen_q.lines else None %}
                 <input type="number" name="price_{{ it.id }}" id="price_{{ it.id }}" min="0" step="any"
                        data-qty="{{ '%g'|format(it.qty or 0) }}" class="pf-price"
+                       data-line="{{ it.id }}"
                        value="{{ it.unit_price or (qline.unit_price if qline else 0) }}" style="max-width:150px">
                 <button type="button" class="btn btn-ghost btn-sm mr-btn" title="Market price research"
                         data-target="price_{{ it.id }}" data-item="{{ it.item }}"
@@ -775,6 +795,11 @@
               </div>
               <div class="mr-out muted" id="mrout_price_{{ it.id }}"
                    style="display:none;font-size:12px;margin-top:6px;max-width:420px"></div>
+            </td>
+            <td data-pf-line="{{ it.id }}">
+              {% if it.disc_value %}{{ disc_inputs('disctype_%s'|format(it.id), 'disc_%s'|format(it.id), it.disc_type, it.disc_value, 'pf-disc') }}
+              {% else %}{{ disc_inputs('disctype_%s'|format(it.id), 'disc_%s'|format(it.id),
+                                       qline.disc_type if qline else None, qline.disc_value if qline else None, 'pf-disc') }}{% endif %}
             </td>
             {#- Spec §2 — Purchasing's own two figures on the line. Pre-filled
                 from order history where the system can work it out; what the
@@ -812,6 +837,11 @@
             <option value="14" {{ 'selected' if cur_vat == 14 }}>VAT 14%</option>
             {% if cur_vat and cur_vat != 14 %}<option value="{{ '%g'|format(cur_vat) }}" selected>VAT {{ '%g'|format(cur_vat) }}%</option>{% endif %}
           </select></div>
+        {#- On the subtotal AFTER the line discounts, before VAT. -#}
+        <div class="field"><label data-i18n="proc.disc.total">Total discount</label>
+          {% set hq = chosen_q if (chosen_q and not pr.disc_value) else None %}
+          {{ disc_inputs('disc_type', 'disc_value', pr.disc_type if pr.disc_value else (hq.disc_type if hq else None),
+                         pr.disc_value or (hq.disc_value if hq else None), 'pf-hdisc') }}</div>
       </div>
       {#- Foreign currency: the rate is asked for right here, next to the
           currency, and the EGP equivalent is worked out as it is typed. The box
@@ -825,7 +855,9 @@
           <output id="pfEgp" class="input" style="display:block;font-weight:700;font-variant-numeric:tabular-nums">—</output></div>
       </div>
       <div class="flex gap wrap mt-3" style="font-size:13px;font-variant-numeric:tabular-nums" id="pfTotals">
-        <span><span class="muted" data-i18n="proc.subtotal">Subtotal</span>: <b id="pfSub">0</b></span>
+        <span><span class="muted" data-i18n="proc.disc.gross">Gross</span>: <b id="pfGross">0</b></span>
+        <span><span class="muted" data-i18n="proc.disc.label">Discount</span>: <b id="pfDisc">0</b></span>
+        <span><span class="muted" data-i18n="proc.disc.net">Net</span>: <b id="pfSub">0</b></span>
         <span><span class="muted" data-i18n="proc.vat_l">VAT</span>: <b id="pfTax">0</b></span>
         <span><span class="muted" data-i18n="proc.after_vat">After VAT</span>: <b id="pfGrand">0</b></span>
       </div>
@@ -841,13 +873,27 @@
         var fx = document.getElementById("pfFx"), vat = document.getElementById("pfVat");
         if (!fx || !cur) return;
         function n(v) { return Number(v || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+        // Same order as services.price_breakdown: line gross - line discount,
+        // summed, - the total discount = net; VAT on the net. Preview only.
+        function off(base, kind, v) {
+          v = parseFloat(v) || 0;
+          if (v <= 0) return 0;
+          return Math.round((kind === "val" ? Math.min(v, base) : base * Math.min(v, 100) / 100) * 100) / 100;
+        }
         function calc() {
-          var sub = 0;
+          var gross = 0, after = 0;
           document.querySelectorAll(".pf-price").forEach(function (el) {
-            sub += (parseFloat(el.value) || 0) * (parseFloat(el.dataset.qty) || 0);
+            var g = Math.round((parseFloat(el.value) || 0) * (parseFloat(el.dataset.qty) || 0) * 100) / 100;
+            var td = document.querySelector('[data-pf-line="' + el.dataset.line + '"]');
+            var d = td ? off(g, td.querySelector("select").value, td.querySelector("input").value) : 0;
+            gross += g; after += g - d;
           });
+          var hd = document.querySelector(".pf-hdisc[name=disc_value]");
+          var sub = after - (hd ? off(after, document.querySelector(".pf-hdisc[name=disc_type]").value, hd.value) : 0);
           var rate = parseFloat(vat.value) || 0, tax = sub * rate / 100, grand = sub + tax;
           var c = cur.value, foreign = c && c !== "EGP";
+          document.getElementById("pfGross").textContent = n(gross) + " " + c;
+          document.getElementById("pfDisc").textContent = n(gross - sub) + " " + c;
           document.getElementById("pfSub").textContent = n(sub) + " " + c;
           document.getElementById("pfTax").textContent = n(tax) + " " + c;
           document.getElementById("pfGrand").textContent = n(grand) + " " + c;
@@ -858,7 +904,12 @@
           document.getElementById("pfEgp").textContent = foreign && r > 0 ? n(grand * r) + " EGP" : "\u2014";
         }
         document.addEventListener("input", function (e) {
-          if (e.target === fx || (e.target.classList && e.target.classList.contains("pf-price"))) calc();
+          var cl = e.target.classList;
+          if (e.target === fx || (cl && (cl.contains("pf-price") || cl.contains("pf-disc") || cl.contains("pf-hdisc")))) calc();
+        });
+        document.addEventListener("change", function (e) {
+          var cl = e.target.classList;
+          if (cl && (cl.contains("pf-disc") || cl.contains("pf-hdisc"))) calc();
         });
         cur.addEventListener("change", calc); vat.addEventListener("change", calc);
         calc();
@@ -1535,7 +1586,8 @@
           <th>#</th><th data-i18n="proc.item">Item</th>
           <th data-i18n="proc.qty">Qty</th>
           {% if show_commercial %}<th data-i18n="proc.unit_price">Unit price</th>
-          <th data-i18n="proc.cost">Est. cost</th>
+          <th data-i18n="proc.disc.label">Discount</th>
+          <th data-i18n="proc.disc.net_cost">Net cost</th>
           <th><span data-i18n="proc.vat_l">VAT</span> {{ '%g'|format(amounts.tax_rate) }}%</th>
           <th data-i18n="proc.after_vat">After VAT</th>{% endif %}
         </tr></thead>
@@ -1597,6 +1649,8 @@
             </td>
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(it.unit_price or 0) }}</td>
+            <td style="font-variant-numeric:tabular-nums">{% if it.disc_amount %}{{ '{:,.2f}'.format(it.disc_amount) }}
+              {%- if it.disc_type == 'pct' %} <span class="muted" style="font-size:11.5px">({{ '%g'|format(it.disc_value) }}%)</span>{% endif %}{% else %}—{% endif %}</td>
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(it.est_cost or 0) }}</td>
             {% set lvat = (it.est_cost or 0) * amounts.tax_rate / 100 %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(lvat) }}</td>
@@ -1608,9 +1662,19 @@
       </table>
       {% if show_commercial %}
       <div class="mt-3" style="max-width:340px;margin-inline-start:auto">
+        {#- subtotal = the gross before discounts; Net is what the request routes on. -#}
         <div class="flex between" style="padding:4px 0;font-size:13px">
           <span class="muted" data-i18n="proc.subtotal">Subtotal</span>
-          <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.subtotal) }} {{ pr.currency }}</span></div>
+          <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.gross) }} {{ pr.currency }}</span></div>
+        {% if amounts.discount_total %}
+        <div class="flex between" style="padding:4px 0;font-size:13px">
+          <span class="muted"><span data-i18n="proc.disc.label">Discount</span>
+            {%- if amounts.header_discount and amounts.disc_type == 'pct' %} <span style="font-size:11.5px">(<span data-i18n="proc.disc.total">Total discount</span> {{ '%g'|format(amounts.disc_value) }}%)</span>{% endif %}</span>
+          <span style="font-variant-numeric:tabular-nums">−{{ '{:,.2f}'.format(amounts.discount_total) }} {{ pr.currency }}</span></div>
+        <div class="flex between" style="padding:4px 0;font-size:13px">
+          <span class="muted" data-i18n="proc.disc.net">Net</span>
+          <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.net) }} {{ pr.currency }}</span></div>
+        {% endif %}
         <div class="flex between" style="padding:4px 0;font-size:13px">
           <span class="muted"><span data-i18n="proc.vat_l">VAT</span> ({{ '%g'|format(amounts.tax_rate) }}%)</span>
           <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.tax) }} {{ pr.currency }}</span></div>
@@ -1863,7 +1927,9 @@
                   {% if q.rfq_id %}<div class="muted" style="font-size:11.5px">↩ {{ b.rfqs|selectattr('id','equalto',q.rfq_id)|map(attribute='rfq_no')|first }}</div>{% endif %}
                   {% if not q.has_file %}<div><span class="badge b-warning" data-i18n="proc.quote.no_file">No attachment</span></div>
                   {% elif money %}<a class="tag" style="overflow-wrap:anywhere" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename or 'quote' }}</a>{% endif %}</td>
-              <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money %}{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}{% else %}—{% endif %}</td>
+              <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money %}{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}
+                {%- if q.disc_total %}<div class="muted" style="font-size:11.5px"><span data-i18n="proc.disc.label">Discount</span> −{{ '{:,.2f}'.format(q.disc_total) }}
+                  {%- if q.disc_type == 'pct' and q.disc_value %} ({{ '%g'|format(q.disc_value) }}%){% endif %}</div>{% endif %}{% else %}—{% endif %}</td>
               <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money and q.vat_applies == 1 %}{{ '{:,.0f}'.format(q.after_vat - q.amount) }}{% elif money and q.vat_applies == 0 %}<span class="muted" data-i18n="proc.quote.no_vat">No VAT</span>{% else %}—{% endif %}</td>
               <td style="font-variant-numeric:tabular-nums;text-align:end;font-weight:600">{% if money and q.vat_applies in (0, 1) %}{{ '{:,.0f}'.format(q.after_vat) }} {{ q.currency }}{% else %}—{% endif %}</td>
               <td>{{ q.payment_terms or '—' }}</td>
@@ -1900,7 +1966,10 @@
                       <input name="vendor" value="{{ q.vendor or '' }}"></label>
                     <label style="flex:0 1 140px">
                       <span data-i18n="proc.quote.amount_ex">Amount before VAT</span>
-                      <input name="amount" type="number" step="any" min="0" value="{{ q.amount or 0 }}"></label>
+                      <input name="amount" type="number" step="any" min="0" value="{{ q.gross_amount or q.amount or 0 }}"></label>
+                    <label style="flex:0 1 190px">
+                      <span data-i18n="proc.disc.quote">Quotation discount</span>
+                      {{ disc_inputs('disc_type', 'disc_value', q.disc_type, q.disc_value, 'q-hdisc') }}</label>
                     <label style="flex:0 1 150px">
                       <span data-i18n="proc.quote.vat_q">Subject to 14% VAT</span>
                       <select name="vat_applies">
@@ -1979,6 +2048,7 @@
               <td style="text-align:end;font-variant-numeric:tabular-nums{{ ';background:var(--ok-bg)' if c and c.best }}">
                 {% if c %}
                 <div style="{{ 'font-weight:700;color:var(--ok)' if c.best }}">{% if c.best %}<span data-i18n-title="proc.quote.lowest_item" title="Lowest unit price">▼</span> {% endif %}{{ '{:,.2f}'.format(c.unit_price) }}</div>
+                {% if c.disc_amount %}<div class="muted" style="font-size:11.5px"><span data-i18n="proc.disc.label">Discount</span> −{{ '{:,.2f}'.format(c.disc_amount) }} · <span data-i18n="proc.disc.net">Net</span> {{ '{:,.2f}'.format(c.net_unit) }}</div>{% endif %}
                 <div class="muted" style="font-size:11.5px">{{ '{:,.2f}'.format(c.line_total) }}</div>
                 {% else %}<span class="muted" data-i18n-title="proc.quote.not_quoted" title="Not quoted">—</span>{% endif %}
               </td>
@@ -2192,6 +2262,10 @@
             <div class="grid cols-2">
               <div class="field"><label data-i18n="proc.vendor_l">Vendor</label><input name="vendor" list="vlist" required autocomplete="off" data-terms-for="quote"></div>
               <div class="field"><label data-i18n="proc.quote.amount_ex">Amount before VAT</label><input name="amount" type="number" step="any" min="0"></div>
+              {% if can_purchasing %}
+              <div class="field"><label data-i18n="proc.disc.quote">Quotation discount</label>
+                {{ disc_inputs('disc_type', 'disc_value', None, None, 'q-hdisc') }}</div>
+              {% endif %}
               <div class="field"><label data-i18n="proc.quote.vat_q">Subject to 14% VAT</label>
                 <select name="vat_applies">
                   <option value="1" selected data-i18n="proc.quote.vat_yes">Yes</option>
@@ -2235,12 +2309,19 @@
             var a = f.querySelector("[name=amount]"), v = f.querySelector("[name=vat_applies]"),
                 o = f.querySelector("[data-vat-out]"), vn = f.querySelector("[data-terms-for=quote]");
             var ql = f.querySelectorAll("[data-qlines] input[data-qty]");
+            // Discount off a base, as services.disc_off: % (max 100) or a value (max the base).
+            function off(base, sel, box) {
+              var x = box ? parseFloat(box.value) || 0 : 0;
+              if (x <= 0) return 0;
+              return Math.round((sel && sel.value === "val" ? Math.min(x, base) : base * Math.min(x, 100) / 100) * 100) / 100;
+            }
             function lines() {
               var sum = 0, any = false;
               ql.forEach(function (i) {
-                var u = parseFloat(i.value), out = i.closest("tr").querySelector("[data-line-out]");
+                var tr = i.closest("tr"), u = parseFloat(i.value), out = tr.querySelector("[data-line-out]");
                 if (isNaN(u)) { out.textContent = "—"; return; }
                 var t = Math.round(u * parseFloat(i.dataset.qty) * 100) / 100;
+                t = Math.round((t - off(t, tr.querySelector("select.q-disc"), tr.querySelector("input.q-disc"))) * 100) / 100;
                 any = true; sum += t;
                 out.textContent = t.toLocaleString(undefined, {maximumFractionDigits: 2});
               });
@@ -2252,6 +2333,7 @@
             function upd() {
               if (ql.length) lines();
               var n = parseFloat(a.value);
+              if (!isNaN(n)) n -= off(n, f.querySelector("select.q-hdisc"), f.querySelector("input.q-hdisc"));
               o.textContent = isNaN(n) ? "—" : (v.value === "1" ? n * (1 + R) : n)
                 .toLocaleString(undefined, {maximumFractionDigits: 2});
             }

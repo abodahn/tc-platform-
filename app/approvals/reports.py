@@ -337,7 +337,7 @@ _INV = ("LEFT JOIN (SELECT pr_id, "
         "FROM pr_invoices GROUP BY pr_id) i ON i.pr_id = p.id")
 _ITM = ("LEFT JOIN (SELECT pr_id, SUM(COALESCE(qty,0)) AS ord_qty, "
         "SUM(COALESCE(received_qty,0)) AS rcv_qty, "
-        "SUM(COALESCE(received_qty,0)*COALESCE(unit_price,0)) AS rcv_val "
+        "SUM(COALESCE(received_qty,0)*COALESCE(net_price,unit_price,0)) AS rcv_val "
         "FROM pr_items GROUP BY pr_id) t ON t.pr_id = p.id")
 
 _OVER_BILLED = (f"CASE WHEN COALESCE(i.inv_gross,0) > {_GRAND} + {_TOL} "

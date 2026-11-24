@@ -765,7 +765,7 @@ def _user_sig(username):
 def _amount(item):
     """Line total: prefer est_cost, else qty * unit_price."""
     est = item.get("est_cost")
-    if est not in (None, "", 0, "0"):
+    if est not in (None, "", 0, "0") or item.get("disc_amount"):   # a 100% discount nets to 0
         try:
             return float(est)
         except (TypeError, ValueError):
@@ -774,6 +774,110 @@ def _amount(item):
         return float(item.get("qty") or 0) * float(item.get("unit_price") or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+# --- discounts (owner's request, 2026-11-24) --------------------------------
+# ONE calculation, used by the pricing gate, quotations and every reader:
+#   line gross = qty x unit price -> minus the line discount = line net (est_cost)
+#   -> their sum -> minus the request discount = NET (pr_requests.total)
+#   -> VAT on the NET -> grand.
+DISC_TYPES = ("pct", "val")
+
+
+def disc_off(base, kind, value):
+    """(money off `base`, the value as it applies). 'pct' is clamped to 0..100,
+    'val' (an amount off the whole base, not per unit) to 0..base. Anything else,
+    blank or non-positive is no discount."""
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    base = max(float(base or 0), 0.0)
+    if kind not in DISC_TYPES or not math.isfinite(v) or v <= 0:
+        return 0.0, 0.0
+    if kind == "pct":
+        v = min(v, 100.0)
+        return round(base * v / 100.0, 2), v
+    v = min(v, base)
+    return round(v, 2), v
+
+
+def price_breakdown(lines, hdr_type=None, hdr_value=None, tax_rate=0):
+    """The whole money ladder of a request (or a quotation) from its lines.
+
+    `lines` = dicts with qty, unit_price, disc_type, disc_value. Returns
+    {"lines": [{gross, disc, net, disc_value}], gross, line_discount, after_lines,
+     header_discount, header_value, discount_total, net, tax_rate, tax, grand}."""
+    out, gross, ldisc = [], 0.0, 0.0
+    for ln in lines:
+        g = round(float(ln.get("qty") or 0) * float(ln.get("unit_price") or 0), 2)
+        d, v = disc_off(g, ln.get("disc_type"), ln.get("disc_value"))
+        out.append({"gross": g, "disc": d, "net": round(g - d, 2), "disc_value": v})
+        gross += g
+        ldisc += d
+    after = round(sum(x["net"] for x in out), 2)
+    hd, hv = disc_off(after, hdr_type, hdr_value)
+    net = round(after - hd, 2)
+    rate = float(tax_rate or 0)
+    tax = round(net * rate / 100.0, 2)
+    return {"lines": out, "gross": round(gross, 2), "line_discount": round(ldisc, 2),
+            "after_lines": after, "header_discount": hd, "header_value": hv,
+            "discount_total": round(ldisc + hd, 2), "net": net, "tax_rate": rate,
+            "tax": tax, "grand": round(net + tax, 2)}
+
+
+def net_unit_price(row):
+    """What one unit of a request line really costs: pr_items.net_price (after
+    its own and its share of the request discount), else the list unit price."""
+    try:
+        v = row["net_price"]
+    except (KeyError, IndexError, TypeError):
+        v = None
+    if v is None:
+        try:
+            v = row["unit_price"]
+        except (KeyError, IndexError, TypeError):
+            v = 0
+    return float(v or 0)
+
+
+def _reprice(conn, pr_id):
+    """Apply the stored discounts to a request's lines and total.
+
+    Returns the new NET total when any discount is set; None when none is, after
+    clearing any stale figures, so the caller's own (pre-discount) arithmetic
+    stands byte-for-byte as it always did."""
+    pr = conn.execute("SELECT disc_type, disc_value, disc_amount, line_disc, tax_rate "
+                      "FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+    items = conn.execute("SELECT id, qty, unit_price, disc_type, disc_value, disc_amount, "
+                         "net_price FROM pr_items WHERE pr_id=? ORDER BY seq, id",
+                         (pr_id,)).fetchall()
+    if not pr:
+        return None
+    lines = [dict(i) for i in items]
+    b = price_breakdown(lines, pr["disc_type"], pr["disc_value"], pr["tax_rate"])
+    if not b["discount_total"]:
+        if float(pr["disc_amount"] or 0) or float(pr["line_disc"] or 0):
+            conn.execute("UPDATE pr_requests SET disc_amount=NULL, line_disc=NULL "
+                         "WHERE id=?", (pr_id,))
+        for it in items:
+            if float(it["disc_amount"] or 0) or it["net_price"] is not None:
+                conn.execute("UPDATE pr_items SET disc_amount=NULL, net_price=NULL "
+                             "WHERE id=?", (it["id"],))
+        return None
+    # The request discount reaches every line in proportion to its net, so a
+    # received unit, a split PO and a debit note are all valued at what it costs.
+    factor = b["net"] / b["after_lines"] if b["after_lines"] else 1.0
+    for it, x in zip(items, b["lines"]):
+        qty = float(it["qty"] or 0)
+        np_ = (x["net"] * factor / qty) if qty else None
+        conn.execute("UPDATE pr_items SET est_cost=?, disc_amount=?, disc_value=?, "
+                     "net_price=? WHERE id=?",
+                     (x["net"], x["disc"] or None, x["disc_value"] or None, np_, it["id"]))
+    conn.execute("UPDATE pr_requests SET total=?, disc_amount=?, disc_value=?, line_disc=? "
+                 "WHERE id=?", (b["net"], b["header_discount"] or None,
+                                b["header_value"] or None, b["line_discount"] or None, pr_id))
+    return b["net"]
 
 
 
@@ -857,7 +961,7 @@ def attach_item_history(conn, pr_id, items):
 
     rows = conn.execute(
         "SELECT i.item_id, LOWER(COALESCE(i.item,'')) item, i.qty, i.received_qty, "
-        "       i.unit_price, r.status, r.po_sent_at, "
+        "       COALESCE(i.net_price, i.unit_price) AS unit_price, r.status, r.po_sent_at, "
         "       COALESCE(r.request_date, r.created_at) ordered_on "
         "FROM pr_items i JOIN pr_requests r ON r.id = i.pr_id "
         "WHERE r.is_active=1 AND i.pr_id <> ? AND " + scope +
@@ -996,7 +1100,9 @@ def get_pr(pr_id):
         # Newest columns first, falling back for a database predating them. The
         # request page is the hottest read in the module; it must never depend
         # on a migration having landed.
-        for _extra in (", rfq_id, payment_terms, vat_applies, vat_rate", ", rfq_id", ""):
+        for _extra in (", rfq_id, payment_terms, vat_applies, vat_rate, disc_type, "
+                       "disc_value, disc_amount",
+                       ", rfq_id, payment_terms, vat_applies, vat_rate", ", rfq_id", ""):
             try:
                 quotes = conn.execute(
                     "SELECT " + _qcols + _extra + " FROM pr_quotes WHERE pr_id=?",
@@ -1884,6 +1990,10 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
                     """INSERT INTO pr_items (pr_id, seq, item, description, unit, qty,
                        current_stock, vendor, unit_price, est_cost, notes, spare_id, item_id)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (pr_id,) + values)
+        # Purchasing's discounts stay on the request, like its VAT rate does,
+        # and are re-applied to the edited lines (a no-op when there are none).
+        _net = _reprice(conn, pr_id)
+        total = total if _net is None else _net
         audit(conn, pr_id, user.get("username") if user else "system", "edited",
               f"Draft updated (total {total})", ip)
         conn.commit()
@@ -1922,12 +2032,21 @@ def _record_in_place(conn, pr_id, step, roles, signer, ip=None):
 
 
 def pr_amounts(pr):
-    """Return {subtotal, tax_rate, tax, grand} for a PR dict/row."""
+    """Return {subtotal, tax_rate, tax, grand} for a PR dict/row — plus the
+    discount breakdown {gross, line_discount, header_discount, discount_total,
+    net}. `subtotal` keeps its meaning: the pre-VAT figure the request routes on,
+    which is the NET after every discount (= `net`)."""
     subtotal = float(pr.get("total") or 0) if isinstance(pr, dict) else float(pr["total"] or 0)
     rate = float((pr.get("tax_rate") if isinstance(pr, dict) else pr["tax_rate"]) or 0)
     tax = round(subtotal * rate / 100.0, 2)
+    ld = float(_pr_field(pr, "line_disc") or 0)
+    hd = float(_pr_field(pr, "disc_amount") or 0)
     return {"subtotal": round(subtotal, 2), "tax_rate": rate, "tax": tax,
-            "grand": round(subtotal + tax, 2)}
+            "grand": round(subtotal + tax, 2), "net": round(subtotal, 2),
+            "gross": round(subtotal + ld + hd, 2), "line_discount": round(ld, 2),
+            "header_discount": round(hd, 2), "discount_total": round(ld + hd, 2),
+            "disc_type": _pr_field(pr, "disc_type"),
+            "disc_value": float(_pr_field(pr, "disc_value") or 0)}
 
 
 def egp_commitment(pr):
@@ -2658,7 +2777,8 @@ def _refuse_self_commercial(pr, user, what):
     log.info("refused self-%s on PR %s by %s", what, pr["id"] if "id" in pr.keys() else "?", uname)
     return "self_%s" % what
 
-def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None):
+def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None,
+             discounts=None):
     """Purchasing enters commercial pricing for a request — the pricing gate.
 
     `vendors` maps pr_items.id -> the supplier for THAT line. It is set here
@@ -2669,7 +2789,10 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None)
     which is how every request raised before per-line vendors still behaves.
 
     `prices` maps pr_items.id -> unit_price; `meta` may carry tax_rate,
-    payment_condition, vendor and currency (all Purchasing-owned). The line
+    payment_condition, vendor and currency (all Purchasing-owned) and the
+    request discount as disc_type ('pct' | 'val') + disc_value; `discounts` maps
+    pr_items.id -> (disc_type, disc_value) for a line's own discount. A key not
+    given leaves that discount as it is. The line
     costs and PR total are recomputed, the PR is marked 'priced', and — if it is
     already circulating — the value-based approval rungs the new total requires
     are added to the ladder. Returns (ok, msg)."""
@@ -2768,7 +2891,22 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None)
                 conn.execute("UPDATE pr_items SET %s=? WHERE id=?" % col,
                              (val, it["id"]))
             total += est
+            # The line's own discount, when Purchasing posted one (blank = none).
+            if discounts:
+                dd = discounts.get(it["id"], discounts.get(str(it["id"])))
+                if dd is not None:
+                    kind = dd[0] if dd[0] in DISC_TYPES else None
+                    _amt, val = disc_off(est, kind, dd[1])
+                    conn.execute("UPDATE pr_items SET disc_type=?, disc_value=? WHERE id=?",
+                                 (kind if val else None, val or None, it["id"]))
         total = round(total, 2)
+        if "disc_type" in meta or "disc_value" in meta:
+            kind = meta.get("disc_type") if meta.get("disc_type") in DISC_TYPES else None
+            _v = disc_off(10 ** 15, kind, meta.get("disc_value"))[1]   # clamped to the subtotal below
+            conn.execute("UPDATE pr_requests SET disc_type=?, disc_value=? WHERE id=?",
+                         (kind if _v else None, _v or None, pr_id))
+        _net = _reprice(conn, pr_id)
+        total = total if _net is None else _net
 
         sets = ["total=?", "pricing_status='priced'", "priced_at=?", "priced_by=?"]
         params = [total, _now(), (user or {}).get("username")]
@@ -3483,6 +3621,13 @@ def _issue_po_rows(conn, pr_id, pr, base_no, user):
     # what it prints today; only a split re-adds the lines per supplier.
     subs = [head_sub if len(rows) == 1 else round(sum(_amount(l) for l in lines), 2)
             for _v, lines in rows]
+    # A request discount is shared across the suppliers' orders in proportion
+    # to each order's net line value; the rounding residue goes to the PRIMARY
+    # order so the orders still sum exactly to the request.
+    if len(subs) > 1 and float(_pr_field(pr, "disc_amount") or 0) and sum(subs):
+        f = head_sub / sum(subs)
+        subs = [round(s * f, 2) for s in subs]
+        subs[0] = round(head_sub - sum(subs[1:]), 2)
     taxes = [round(s * rate / 100.0, 2) for s in subs]
     # The orders must sum to the request they came from: three lines of 100.05 at
     # 14% round to 342.18 across three documents where pr_amounts() reports
@@ -3583,9 +3728,9 @@ def po_exposure(conn, pr, po):
     except (TypeError, ValueError):
         rate = 0.0
     items = conn.execute(
-        "SELECT vendor, received_qty, unit_price FROM pr_items WHERE pr_id=?",
+        "SELECT vendor, received_qty, unit_price, net_price FROM pr_items WHERE pr_id=?",
         (pr_id,)).fetchall()
-    received = round(sum(float(i["received_qty"] or 0) * float(i["unit_price"] or 0)
+    received = round(sum(float(i["received_qty"] or 0) * net_unit_price(i)
                          for i in items
                          if C.vendor_key(i["vendor"] or head) == vkey), 2)
     received_grand = round(received * (1 + rate / 100.0), 2)
@@ -3755,11 +3900,12 @@ def revise_po(pr_id, reason, user, ip=None):
         if pr["status"] not in ("po_issued", "in_transit", "partially_received"):
             return False, "not_revisable"
         items = conn.execute(
-            "SELECT id, item, qty, unit_price, est_cost FROM pr_items "
-            "WHERE pr_id=? ORDER BY seq, id", (pr_id,)).fetchall()
+            "SELECT id, item, qty, unit_price, est_cost, disc_type, disc_value, disc_amount "
+            "FROM pr_items WHERE pr_id=? ORDER BY seq, id", (pr_id,)).fetchall()
         snapshot = _json_dumps({
             "items": [dict(r) for r in items],
             "total": float(pr["total"] or 0),
+            "discount": float(pr["disc_amount"] or 0),
             "po_no": pr["po_no"],
         })
         new_rev = int(pr["po_rev"] or 0) + 1
@@ -4206,7 +4352,7 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
                               "rejected_surplus": surplus})
             if within > 0:
                 reject_lines.append({"item_id": it["id"], "item": it["item"], "qty": within,
-                                     "unit": it["unit"], "unit_price": float(it["unit_price"] or 0)})
+                                     "unit": it["unit"], "unit_price": net_unit_price(it)})
             any_recv = True
         if not any_recv:
             return False, "nothing_received"
@@ -4321,7 +4467,8 @@ def post_stock_postings(pr_id, user=None, manual=False):
         conn = get_db()
         try:
             rows = [dict(r) for r in conn.execute(
-                "SELECT p.*, i.unit_price, i.item, r.pr_no, r.source_ref, r.currency, r.fx_rate "
+                "SELECT p.*, COALESCE(i.net_price, i.unit_price) AS unit_price, i.item, "
+                "r.pr_no, r.source_ref, r.currency, r.fx_rate "
                 "FROM pr_stock_postings p LEFT JOIN pr_items i ON i.id=p.item_id "
                 "JOIN pr_requests r ON r.id=p.pr_id WHERE p.pr_id=? "
                 "AND " + selected + cap + " ORDER BY p.id",
@@ -4594,7 +4741,7 @@ def three_way_match(pr_id):
     ordered_grand = amt["grand"]
     ordered_qty = sum(float(i["qty"] or 0) for i in items)
     received_qty = sum(float(i["received_qty"] or 0) for i in items)
-    received_value = round(sum(float(i["received_qty"] or 0) * float(i["unit_price"] or 0)
+    received_value = round(sum(float(i["received_qty"] or 0) * net_unit_price(i)
                                for i in items), 2)
     invoiced = round(sum(float(iv["amount"] or 0) + float(iv["tax"] or 0)
                          for iv in bundle["invoices"]), 2)          # gross (with tax)
@@ -5032,7 +5179,8 @@ def deviation_findings(conn, pr_id):
         fully covered. Assuming zero stock would rubber-stamp every free-text
         line; assuming coverage would block them all."""
     rows = conn.execute(
-        "SELECT i.id, i.item, i.description, i.qty, i.unit_price, i.item_id, "
+        "SELECT i.id, i.item, i.description, i.qty, "
+        "COALESCE(i.net_price, i.unit_price) AS unit_price, i.item_id, "
         "i.spare_id FROM pr_items i WHERE i.pr_id=? ORDER BY i.seq",
         (pr_id,)).fetchall()
     if not rows:
@@ -5587,8 +5735,8 @@ def close_pr(pr_id, user, ip=None, reason=None):
             return False, "not_found"
         if pr["status"] not in ("received", "po_issued", "in_transit", "partially_received"):
             return False, "not_closable"
-        items = conn.execute("SELECT qty, received_qty, unit_price FROM pr_items WHERE pr_id=?",
-                             (pr_id,)).fetchall()
+        items = conn.execute("SELECT qty, received_qty, unit_price, net_price FROM pr_items "
+                             "WHERE pr_id=?", (pr_id,)).fetchall()
         short = any(float(it["qty"] or 0) > 0 and
                     round(float(it["received_qty"] or 0), 6) < round(float(it["qty"] or 0), 6)
                     for it in items)
@@ -5596,7 +5744,7 @@ def close_pr(pr_id, user, ip=None, reason=None):
         if short and not reason:
             return False, "reason_required"
         released = sum(max(0.0, float(it["qty"] or 0) - float(it["received_qty"] or 0))
-                       * float(it["unit_price"] or 0) for it in items)
+                       * net_unit_price(it) for it in items)
         conn.execute("UPDATE pr_requests SET status='closed', closed_at=?, budget_released=? WHERE id=?",
                      (_now(), released, pr_id))
         audit(conn, pr_id, user.get("username") if user else "system", "closed",
@@ -6230,14 +6378,17 @@ def _attach_quote_lines(conn, quotes, items):
     by_q = {}
     ids = [q["id"] for q in quotes]
     if ids:
-        try:
-            for r in conn.execute(
-                    "SELECT quote_id, pr_item_id, unit_price, qty, line_total "
-                    "FROM pr_quote_lines WHERE quote_id IN (%s)" % ",".join("?" for _ in ids),
-                    ids).fetchall():
-                by_q.setdefault(r["quote_id"], {})[r["pr_item_id"]] = dict(r)
-        except Exception:
-            conn.rollback()      # database predating the table: all quotes total-only
+        for cols in (", disc_type, disc_value, disc_amount", ""):
+            try:
+                for r in conn.execute(
+                        "SELECT quote_id, pr_item_id, unit_price, qty, line_total" + cols +
+                        " FROM pr_quote_lines WHERE quote_id IN (%s)" % ",".join("?" for _ in ids),
+                        ids).fetchall():
+                    by_q.setdefault(r["quote_id"], {})[r["pr_item_id"]] = dict(r)
+                break
+            except Exception:
+                conn.rollback()  # database predating the table/columns
+                by_q = {}
     for q in quotes:
         stored = by_q.get(q["id"], {})
         lines = {}
@@ -6245,21 +6396,35 @@ def _attach_quote_lines(conn, quotes, items):
             if item_id not in qty_of:
                 continue
             qty = qty_of[item_id]
-            lines[item_id] = dict(ln, qty=qty, line_total=round(float(ln["unit_price"] or 0) * qty, 2))
+            gross = round(float(ln["unit_price"] or 0) * qty, 2)
+            d, _v = disc_off(gross, ln.get("disc_type"), ln.get("disc_value"))
+            lines[item_id] = dict(ln, qty=qty, line_total=round(gross - d, 2), disc_amount=d,
+                                  net_unit=(round((gross - d) / qty, 4) if d and qty
+                                            else float(ln["unit_price"] or 0)))
         q["lines"] = lines
         q["partial"] = bool(lines) and bool(set(qty_of) - set(lines))
         q["stale"] = len(lines) != len(stored) or any(
             abs(float(stored[i]["qty"] or 0) - lines[i]["qty"]) > 1e-9 for i in lines)
         if q["stale"]:
-            q["amount"] = round(sum(ln["line_total"] for ln in lines.values()), 2)
+            base = round(sum(ln["line_total"] for ln in lines.values()), 2)
+            q["disc_amount"] = disc_off(base, q.get("disc_type"), q.get("disc_value"))[0]
+            q["amount"] = round(base - q["disc_amount"], 2)
+        # What the supplier's figure was before the quote-level discount (the
+        # edit form's "amount" box): the sum of the lines, or the typed total.
+        q["gross_amount"] = round(float(q.get("amount") or 0) + float(q.get("disc_amount") or 0), 2)
+        q["disc_total"] = round(float(q.get("disc_amount") or 0)
+                                + sum(float(ln.get("disc_amount") or 0) for ln in lines.values()), 2)
 
 
-def _quote_lines_from(conn, pr_id, posted):
+def _quote_lines_from(conn, pr_id, posted, discs=None):
     """Validate posted unit prices {pr_item_id: raw} against THIS request's lines.
 
-    Returns (lines, error) with lines = [(pr_item_id, unit, qty, line_total)].
-    A blank = the supplier did not quote that line. The line total uses the
-    request's own quantity, never a posted figure."""
+    Returns (lines, error) with lines = [(pr_item_id, unit, qty, line_total,
+    disc_type, disc_value, disc_amount)]; `discs` maps pr_item_id -> (type,
+    value) for the supplier's discount on that line. A blank = the supplier did
+    not quote that line. The line total (after its discount) uses the request's
+    own quantity, never a posted figure."""
+    discs = discs or {}
     lines = []
     for it in conn.execute("SELECT id, qty FROM pr_items WHERE pr_id=? ORDER BY seq, id",
                            (pr_id,)).fetchall():
@@ -6273,17 +6438,28 @@ def _quote_lines_from(conn, pr_id, posted):
         if not math.isfinite(unit) or unit < 0:
             return None, "bad_amount"
         qty = float(it["qty"] or 0)
-        lines.append((it["id"], unit, qty, round(unit * qty, 2)))
+        gross = round(unit * qty, 2)
+        kind, raw_d = discs.get(it["id"], discs.get(str(it["id"]))) or (None, None)
+        kind = kind if kind in DISC_TYPES else None
+        d, v = disc_off(gross, kind, raw_d)
+        lines.append((it["id"], unit, qty, round(gross - d, 2),
+                      kind if v else None, v or None, d or None))
     return lines, ""
 
 
 def _save_quote_lines(conn, quote_id, lines):
     conn.execute("DELETE FROM pr_quote_lines WHERE quote_id=?", (quote_id,))
     now = _now()
-    for item_id, unit, qty, total in lines:
-        conn.execute("INSERT INTO pr_quote_lines (quote_id, pr_item_id, unit_price, qty, "
-                     "line_total, created_at) VALUES (?,?,?,?,?,?)",
-                     (quote_id, item_id, unit, qty, total, now))
+    for item_id, unit, qty, total, dk, dv, da in lines:
+        if dk:
+            conn.execute("INSERT INTO pr_quote_lines (quote_id, pr_item_id, unit_price, qty, "
+                         "line_total, created_at, disc_type, disc_value, disc_amount) "
+                         "VALUES (?,?,?,?,?,?,?,?,?)",
+                         (quote_id, item_id, unit, qty, total, now, dk, dv, da))
+        else:   # byte-for-byte the insert that always ran
+            conn.execute("INSERT INTO pr_quote_lines (quote_id, pr_item_id, unit_price, qty, "
+                         "line_total, created_at) VALUES (?,?,?,?,?,?)",
+                         (quote_id, item_id, unit, qty, total, now))
 
 
 def quote_matrix(items, quotes):
@@ -6297,10 +6473,12 @@ def quote_matrix(items, quotes):
     rows = []
     for it in items:
         cells = [q["lines"].get(it["id"]) for q in cols]
-        prices = [c["unit_price"] for c in cells if c]
+        # Compared AFTER each supplier's line discount: the unit that is paid for.
+        prices = [c.get("net_unit", c["unit_price"]) for c in cells if c]
         best = min(prices) if len(prices) > 1 else None
         rows.append({"item": it, "cells": [
-            dict(c, best=(c["unit_price"] == best)) if c else None for c in cells]})
+            dict(c, best=(c.get("net_unit", c["unit_price"]) == best)) if c else None
+            for c in cells]})
     return {"quotes": cols, "rows": rows}
 
 
@@ -6335,11 +6513,18 @@ def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=N
             return False, _bad
         # Priced lines make the amount: their sum, computed here. A posted
         # total is ignored then; with no priced line it is a total-only quote.
-        lines, err = _quote_lines_from(conn, pr_id, data.get("lines") or {})
+        lines, err = _quote_lines_from(conn, pr_id, data.get("lines") or {},
+                                       data.get("line_discs"))
         if err:
             return False, err
         amount = (round(sum(ln[3] for ln in lines), 2) if lines
                   else float(data.get("amount") or 0))
+        # The supplier's discount on the whole quotation: amount is stored
+        # AFTER it, so ranking, the lowest badge and the RFQ gate compare what
+        # would really be paid.
+        qkind = data.get("disc_type") if data.get("disc_type") in DISC_TYPES else None
+        qdisc, qval = disc_off(amount, qkind, data.get("disc_value"))
+        amount = round(amount - qdisc, 2)
 
         # THIS request, so a stray id cannot attach a quote to another PR's RFQ.
         # Unresolvable (bad id, or a database predating the table) -> no link,
@@ -6369,6 +6554,9 @@ def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=N
             + ((rfq_id,) if rfq_id else ()))
         if lines:
             _save_quote_lines(conn, cur.lastrowid, lines)
+        if qval:
+            conn.execute("UPDATE pr_quotes SET disc_type=?, disc_value=?, disc_amount=? "
+                         "WHERE id=?", (qkind, qval, qdisc, cur.lastrowid))
         if rfq_id:
             conn.execute("UPDATE pr_rfqs SET status='answered' WHERE id=?", (rfq_id,))
         audit(conn, pr_id, user.get("username") if user else "system", "quote_added",
@@ -6457,29 +6645,47 @@ def apply_chosen_quote(pr_id, quote_id, user, ip=None):
             return False, "not_found"
         items = conn.execute("SELECT id, qty FROM pr_items WHERE pr_id=? ORDER BY seq, id",
                              (pr_id,)).fetchall()
-        try:
-            lines = conn.execute("SELECT pr_item_id, unit_price FROM pr_quote_lines "
-                                 "WHERE quote_id=?", (quote_id,)).fetchall()
-        except Exception:
-            lines = []
+        lines = []
+        for cols in (", disc_type, disc_value", ""):
+            try:
+                lines = conn.execute("SELECT pr_item_id, unit_price" + cols + " FROM "
+                                     "pr_quote_lines WHERE quote_id=?", (quote_id,)).fetchall()
+                break
+            except Exception:
+                conn.rollback()
+                lines = []
     finally:
         conn.close()
     ids = {it["id"] for it in items}
+    keys = q.keys()
     prices = {l["pr_item_id"]: float(l["unit_price"]) for l in lines
               if l["pr_item_id"] in ids and l["unit_price"] is not None}
+    # The supplier's discounts travel with its prices: each quoted line's own,
+    # and the quote-level one as the request discount. Every line the quote
+    # prices is posted, so a discount left over from an earlier price is cleared.
+    discounts = {}
+    for l in lines:
+        if l["pr_item_id"] in prices and "disc_type" in l.keys():
+            discounts[l["pr_item_id"]] = (l["disc_type"], l["disc_value"])
+    q_disc = float(q["disc_amount"] or 0) if "disc_amount" in keys else 0.0
     if not prices:
         if len(items) != 1 or not float(items[0]["qty"] or 0):
             return False, "no_lines"
-        prices = {items[0]["id"]: round(float(q["amount"] or 0) / float(items[0]["qty"]), 4)}
-    keys = q.keys()
+        # amount is after the quote discount; the unit price is the list price
+        # before it, and the discount is carried as the request discount below.
+        prices = {items[0]["id"]: round((float(q["amount"] or 0) + q_disc)
+                                        / float(items[0]["qty"]), 4)}
     vat_on = bool(q["vat_applies"]) if "vat_applies" in keys else False
     rate = (float(q["vat_rate"] or 0.14) if "vat_rate" in keys else 0.14) if vat_on else 0.0
     if 0 < rate <= 1:          # quotes store VAT as a fraction (0.14); requests as a percent
         rate = round(rate * 100, 4)
     meta = {"tax_rate": str(rate), "currency": (q["currency"] or "") if "currency" in keys else "",
-            "vendor": q["vendor"] or ""}
+            "vendor": q["vendor"] or "",
+            "disc_type": q["disc_type"] if "disc_type" in keys else None,
+            "disc_value": q["disc_value"] if "disc_value" in keys else None}
     return price_pr(pr_id, prices, meta, user, ip=ip,
-                    vendors={i: (q["vendor"] or "") for i in prices})
+                    vendors={i: (q["vendor"] or "") for i in prices},
+                    discounts={i: discounts.get(i, (None, None)) for i in prices})
 
 
 # --- supplier quotation editing (Procurement & Warehouse spec §5) -----------
@@ -6538,11 +6744,30 @@ def update_quote(quote_id, data, user=None, ip=None, filename=None, content_type
         # and, when any is priced, their sum replaces the posted amount.
         lines = None
         if "lines" in data:
-            lines, err = _quote_lines_from(conn, q["pr_id"], data.get("lines") or {})
+            lines, err = _quote_lines_from(conn, q["pr_id"], data.get("lines") or {},
+                                           data.get("line_discs"))
             if err:
                 return False, err
             if lines:
                 data = dict(data, amount=round(sum(ln[3] for ln in lines), 2))
+        # The quote-level discount: posted, or the one already on file. The
+        # posted amount (or the lines' sum) is BEFORE it; the stored amount after.
+        qk = lambda c: q[c] if c in q.keys() else None             # noqa: E731
+        disc_posted = "disc_type" in data or "disc_value" in data
+        dkind = data.get("disc_type") if disc_posted else qk("disc_type")
+        dkind = dkind if dkind in DISC_TYPES else None
+        dval_in = data.get("disc_value") if disc_posted else qk("disc_value")
+        qdisc, qval = 0.0, 0.0
+        if dkind or qk("disc_amount"):
+            if "amount" in data:
+                try:
+                    base = float(data.get("amount") or 0)
+                except (TypeError, ValueError):
+                    return False, "bad_amount"
+            else:
+                base = float(q["amount"] or 0) + float(qk("disc_amount") or 0)
+            qdisc, qval = disc_off(base, dkind, dval_in)
+            data = dict(data, amount=round(base - qdisc, 2))
 
         sets, args, changed = [], [], []
         for col in _QUOTE_EDITABLE:
@@ -6572,6 +6797,12 @@ def update_quote(quote_id, data, user=None, ip=None, filename=None, content_type
             args.append(val)
             changed.append("%s: %s -> %s" % (col, q[col] if col in q.keys() else "—", val))
 
+        if (dkind if qval else None, qval or None, qdisc or None) != (
+                qk("disc_type"), qk("disc_value"), qk("disc_amount")) and (
+                qval or qk("disc_amount") or qk("disc_type")):
+            sets += ["disc_type=?", "disc_value=?", "disc_amount=?"]
+            args += [dkind if qval else None, qval or None, qdisc or None]
+            changed.append("discount: %s -> %s" % (qk("disc_amount") or 0, qdisc))
         if "vat_applies=?" in sets and not (q["vat_rate"] if "vat_rate" in q.keys() else None):
             sets.append("vat_rate=?")         # an old row gets the rate with its answer
             args.append(C.QUOTE_VAT_RATE)
@@ -6584,13 +6815,16 @@ def update_quote(quote_id, data, user=None, ip=None, filename=None, content_type
         if lines is not None:
             # Unit price AND qty: a re-save after the request's qty changed must
             # refresh the frozen line totals. Tolerance, not ==, on floats.
-            old = {r["pr_item_id"]: (r["unit_price"], r["qty"]) for r in conn.execute(
-                "SELECT pr_item_id, unit_price, qty FROM pr_quote_lines WHERE quote_id=?",
-                (quote_id,)).fetchall()}
-            new = {ln[0]: (ln[1], ln[2]) for ln in lines}
+            old = {r["pr_item_id"]: (r["unit_price"], r["qty"], r["line_total"])
+                   for r in conn.execute(
+                       "SELECT pr_item_id, unit_price, qty, line_total FROM pr_quote_lines "
+                       "WHERE quote_id=?", (quote_id,)).fetchall()}
+            new = {ln[0]: (ln[1], ln[2], ln[3]) for ln in lines}
+            # line_total is after the line discount, so a discount change shows here.
             lines_changed = old.keys() != new.keys() or any(
                 abs(float(old[k][0] or 0) - new[k][0]) > 1e-9
-                or abs(float(old[k][1] or 0) - new[k][1]) > 1e-9 for k in new)
+                or abs(float(old[k][1] or 0) - new[k][1]) > 1e-9
+                or abs(float(old[k][2] or 0) - new[k][2]) > 1e-9 for k in new)
             if lines_changed:
                 changed.append("line prices: %d line(s)" % len(lines))
         if content_b64:
@@ -8290,6 +8524,9 @@ def warehouse_revise(pr_id, qtys, stocks, user, ip=None, fields=None):
                          "COALESCE(unit_price,0), 2) WHERE pr_id=?", (pr_id,))
             conn.execute("UPDATE pr_requests SET total=? WHERE id=?",
                          (round(float(new_total or 0), 2), pr_id))
+            # A discounted request is re-netted on the new quantities.
+            _net = _reprice(conn, pr_id)
+            new_total = new_total if _net is None else _net
             above = conn.execute(
                 "SELECT id, seq, stage, approver_user FROM pr_steps "
                 "WHERE pr_id=? AND seq > ? AND status <> 'pending' ORDER BY seq",
@@ -8780,7 +9017,7 @@ def _correct_receipt(pr_id, item_id, qty, reason, user, ip, returned):
             return False, result
         if returned:
             _record_return(conn, pr_id, pr, [{"item_id": item["id"], "item": item["item"],
-                "qty": qty, "unit": item["unit"], "unit_price": item["unit_price"]}], reason, user, grn_id=None)
+                "qty": qty, "unit": item["unit"], "unit_price": net_unit_price(item)}], reason, user, grn_id=None)
         note = f"; only {result:g} had reached stock" if result < qty else ""
         audit(conn, pr_id, (user or {}).get("username"),
               "returned_after_receipt" if returned else "receipt_reversed",

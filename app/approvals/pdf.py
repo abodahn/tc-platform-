@@ -488,8 +488,26 @@ def _table_borders(c, x0, y_bottom, y_top, total_w, widths):
         c.line(xx, y_bottom, xx, y_top)
 
 
-def _totals_block(c, w, cm, y, pr, cur, words_beside=False):
-    """Right-aligned Subtotal / VAT / Grand Total box + amount-in-words line."""
+def _discount_of(pr, items):
+    """The discount behind the net pr["total"] for these lines: their own line
+    discounts plus their share of the request discount (what their net lines
+    exceed the total by). 0.0 when the request carries no discount."""
+    line = sum(float(it.get("disc_amount") or 0) for it in items)
+    hdr = 0.0
+    if float(pr.get("disc_amount") or 0):
+        hdr = sum(float(it.get("est_cost") or 0) for it in items) - float(pr.get("total") or 0)
+    return round(line + max(hdr, 0.0), 2)
+
+
+def _disc_cell(it):
+    """The DISC. column: the money off the line, blank when there is none."""
+    return _fmt(it.get("disc_amount")) if float(it.get("disc_amount") or 0) else ""
+
+
+def _totals_block(c, w, cm, y, pr, cur, words_beside=False, discount=0.0):
+    """Right-aligned Subtotal / Discount / VAT / Grand Total box + amount-in-words
+    line. pr["total"] is the NET; with a discount the Subtotal printed is the
+    gross before it, so the box reads Subtotal - Discount + VAT = Grand Total."""
     subtotal = 0.0
     try:
         subtotal = float(pr.get("total") or 0)
@@ -503,6 +521,8 @@ def _totals_block(c, w, cm, y, pr, cur, words_beside=False):
     grand = round(subtotal + tax, 2)
 
     lines = [("Subtotal", subtotal)]
+    if discount:
+        lines = [("Subtotal", round(subtotal + discount, 2)), ("Discount", -discount)]
     if rate:
         lines.append((f"VAT ({rate:g}%)", tax))
     bx_w = 7.0 * cm
@@ -587,14 +607,14 @@ def _cost_object_pairs(pr):
 # rendered pages back; keep it printing "0 problems".
 _PR_COLS = [
     (8.0, "S", "l"), (22.0, "ITEM", "l"), (25.0, "Description", "l"),
-    (9.0, "UNIT", "l"), (17.0, "QTY", "r"), (16.5, "On Hand", "r"),
+    (9.0, "UNIT", "l"), (15.0, "QTY", "r"), (15.0, "On Hand", "r"),
     (10.5, "Stock days", "r"), (13.0, "Pending qty", "r"),
-    (15.0, "LAST ORDER QTY.", "r"), (14.0, "LAST ORDER DATE", "l"),
-    (18.8, "VENDOR", "l"), (15.0, "UNIT PRICE", "r"), (19.0, "EST. COST", "r"),
-    (15.0, "VAT", "r"), (19.0, "AFTER VAT", "r"),
-    (8.8, "CUR.", "l"), (16.0, "LAST ORDER PRICE", "r"), (16.0, "P.O#", "l"),
-    (11.0, "Last Stock", "r"), (16.6, "PAY. COND.", "l"), (16.0, "DEL. COND.", "l"),
-    (14.0, "ETA", "l"), (12.0, "LEAD Time", "l"),
+    (13.5, "LAST ORDER QTY.", "r"), (14.0, "LAST ORDER DATE", "l"),
+    (18.8, "VENDOR", "l"), (15.0, "UNIT PRICE", "r"), (13.0, "DISC.", "r"),
+    (19.0, "EST. COST", "r"), (13.5, "VAT", "r"), (19.0, "AFTER VAT", "r"),
+    (8.8, "CUR.", "l"), (14.5, "LAST ORDER PRICE", "r"), (14.0, "P.O#", "l"),
+    (9.5, "Last Stock", "r"), (16.6, "PAY. COND.", "l"), (16.0, "DEL. COND.", "l"),
+    (12.5, "ETA", "l"), (12.0, "LEAD Time", "l"),
 ]
 
 
@@ -702,6 +722,7 @@ def _pr_body(c, w, h, cm, bundle, money=True):
              _fmt(it.get("pending_qty"), 0) if it.get("pending_qty") else "",
              _fmt(it.get("last_order_qty"), 0), it.get("last_order_date") or "",
              it.get("vendor") or pr.get("vendor") or "", (_fmt(it.get("unit_price")) if money else ""),
+             (_disc_cell(it) if money else ""),
              (_fmt(it.get("est_cost")) if money else ""),
              (_vat(it) if money else ""), (_vat(it, True) if money else ""),
              cur, (_fmt(it.get("last_order_price")) if money else ""),
@@ -721,7 +742,7 @@ def _pr_body(c, w, h, cm, bundle, money=True):
     # contract terms appear, and an Incoterm without its named place ("DDP C…")
     # is not a delivery condition.
     y = _table(c, w, cm, y, _PR_COLS, rows, h, pn, title=None,
-               wrap_col=[1, 2, 10, 19, 20], max_lines=4, font_size=6, pad=0.07 * cm,
+               wrap_col=[1, 2, 10, 20, 21], max_lines=4, font_size=6, pad=0.07 * cm,
                # a one-line row at 6 pt needs 0.42 cm, not the 0.6 cm sized for
                # 8.5 pt tables; every row saved is a line printed at full size
                row_h=0.42 * cm,
@@ -729,7 +750,8 @@ def _pr_body(c, w, h, cm, bundle, money=True):
                wrap_ink=(0.13, 0.13, 0.16))
 
     if money:
-        y = _totals_block(c, w, cm, y, pr, cur, words_beside=True)
+        y = _totals_block(c, w, cm, y, pr, cur, words_beside=True,
+                          discount=_discount_of(pr, items))
 
     # signatures (the paper form's A20:U25 notes/signature block)
     return _signature_grid(c, w, h, cm, y, pr, steps, pn)
@@ -1098,15 +1120,15 @@ def po_pdf(bundle, po=None):
         est = float(it.get("est_cost") or 0)
         v = round(est * vat_rate / 100.0, 2)
         rows.append([str(i), (it.get("item") or "", _line_desc(it)),
-                     _fmt(it.get("qty")), _fmt(it.get("unit_price")), _fmt(est),
-                     _fmt(v), _fmt(est + v)])
+                     _fmt(it.get("qty")), _fmt(it.get("unit_price")), _disc_cell(it),
+                     _fmt(est), _fmt(v), _fmt(est + v)])
     y = _table(c, w, cm, y, [
-        (0.6, "#", "l"), (6.0, "ITEM / DESCRIPTION", "l"),
-        (1.4, "QTY", "r"), (2.2, "UNIT PRICE", "r"), (2.4, "TOTAL", "r"),
-        (2.0, "VAT %g%%" % vat_rate, "r"), (2.6, "AFTER VAT", "r")],
+        (0.6, "#", "l"), (5.0, "ITEM / DESCRIPTION", "l"),
+        (1.3, "QTY", "r"), (2.0, "UNIT PRICE", "r"), (1.8, "DISC.", "r"), (2.3, "TOTAL", "r"),
+        (1.9, "VAT %g%%" % vat_rate, "r"), (2.5, "AFTER VAT", "r")],
         rows, h, pn, title="Order lines", wrap_col=1)
 
-    y = _totals_block(c, w, cm, y, pr, cur)
+    y = _totals_block(c, w, cm, y, pr, cur, discount=_discount_of(pr, items))
 
     # EGP-equivalent line for foreign-currency orders (thresholds routed on it).
     # Same rule as services.egp_total, computed inline: total * fx when the

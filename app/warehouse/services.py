@@ -1471,7 +1471,9 @@ def post_receipt_to_material(pr_id, receipts, user=None, free=False):
             mat = _resolve_material(conn, _col(it, "item"))
             if not mat:
                 continue                      # not a warehouse material — silently skip
-            price = 0.0 if free else _f(_col(it, "unit_price"))
+            # net_price = after Purchasing's discounts; NULL (no discount) -> list price
+            price = 0.0 if free else _f(_col(it, "net_price") if _col(it, "net_price") is not None
+                                        else _col(it, "unit_price"))
             ok, msg = post_line_to_material(mat["id"], add, price, pr_no, user)
             if ok:
                 posted += add

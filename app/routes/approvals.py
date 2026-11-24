@@ -1492,6 +1492,23 @@ def _posted_line_prices(f, items):
             if ("uprice_%s" % it["id"]) in f}
 
 
+def _posted_discounts(f, items, prefix):
+    """{pr_item_id: (type, raw value)} for the <prefix>type_<id> / <prefix>_<id>
+    discount boxes the form sent. Discounts are Purchasing's alone: anybody else
+    gets an empty map, so a hand-crafted post cannot set one."""
+    if not user_can("proc_purchasing"):
+        return {}
+    return {it["id"]: (f.get("%stype_%s" % (prefix, it["id"])), f.get("%s_%s" % (prefix, it["id"])))
+            for it in items if ("%s_%s" % (prefix, it["id"])) in f}
+
+
+def _posted_quote_discount(f):
+    """The quotation-level discount fields, Purchasing only (see above)."""
+    if not user_can("proc_purchasing") or "disc_value" not in f:
+        return {}
+    return {"disc_type": f.get("disc_type"), "disc_value": f.get("disc_value")}
+
+
 def _quote_upload():
     """(filename, content_type, base64, error) for the posted quotation file.
     All None when no file was sent; error is the flash text when it is refused."""
@@ -1536,6 +1553,8 @@ def add_quote(pr_id):
         "rfq_id": f.get("rfq_id", "").strip(),
         # Unit price per request line; the amount is then their sum (service).
         "lines": lines,
+        "line_discs": _posted_discounts(f, bundle["items"], "qdisc"),
+        **_posted_quote_discount(f),
     }, _u(), filename=fn, content_type=ct, content_b64=b64, ip=_ip())
     ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
     flash("Quote added." if ok else _QUOTE_ERRORS.get(code) or ui.get(str(code) + "_flash") or
@@ -1623,6 +1642,8 @@ def edit_quote(pr_id, quote_id):
     lines = _posted_line_prices(f, bundle["items"]) if bundle else {}
     if lines:
         data["lines"] = lines
+        data["line_discs"] = _posted_discounts(f, bundle["items"], "qdisc")
+    data.update(_posted_quote_discount(f))
     fn, ct, b64, bad = _quote_upload()
     if bad:
         flash(bad, "error")
@@ -2082,8 +2103,11 @@ def price(pr_id):
             "vendor": f.get("vendor", "").strip(),
             "currency": f.get("currency", "").strip(),
             "fx_rate": f.get("fx_rate", "").strip()}   # EGP-equivalent rate for non-EGP PRs
+    # Discounts: per line (% or value off the line) and on the whole request.
+    meta.update(_posted_quote_discount(f))
     ok, msg = svc.price_pr(pr_id, prices, meta, _u(), ip=_ip(), vendors=vendors,
-                        line_fields=line_fields)
+                        line_fields=line_fields,
+                        discounts=_posted_discounts(f, bundle["items"], "disc"))
     flash("Pricing saved — the request now carries its commercial value and any "
           "value-based approvals have joined the ladder." if ok
           else {"locked": "This request can no longer be priced.",
