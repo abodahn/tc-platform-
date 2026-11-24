@@ -102,7 +102,7 @@
     <div class="field" data-qfx-row><label><span data-i18n="proc.fx.rate_input">FX rate to EGP</span>
         <bdi dir="ltr" style="white-space:nowrap">(1 <span data-qcur>{{ qcur }}</span> = ? EGP)</bdi></label>
       <input type="number" name="fx_rate" min="0" step="any" inputmode="decimal"
-             value="{{ '%g'|format(q.fx_rate) if q and q.fx_rate else '' }}"></div>
+             value="{{ '%.15g'|format(q.fx_rate) if q and q.fx_rate else '' }}"></div>
     <div class="field"><label data-i18n="proc.quote.amount_ex">Amount before VAT</label>
       <input name="amount" type="number" step="any" min="0" inputmode="decimal"
              {%- if q %} value="{{ q.gross_amount or q.amount or 0 }}"{% endif %}></div>
@@ -2109,7 +2109,7 @@
         {#- Edit: any quotation, and the CHOSEN one too while the request is open
             (saving it re-applies it to the request). Opened by itself when the
             chosen one still needs its FX rate. -#}
-        {% if can_purchasing and (not q.is_chosen or not rfq_locked) %}
+        {% if can_purchasing and (not q.is_chosen or (not rfq_locked and (not is_owner or can_dispose))) %}
         <tr class="qt-edit{{ ' is-chosen' if q.is_chosen }}"><td colspan="{{ ncol }}">
           <details{{ ' open' if q.is_chosen and q.rate_needed }}>
             <summary class="btn btn-ghost btn-sm" data-i18n="proc.quote.edit">Edit this quotation</summary>

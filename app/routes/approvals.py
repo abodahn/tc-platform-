@@ -1445,7 +1445,8 @@ def detail(pr_id):
                            # that names none).
                            rfq_vendors=[v for v in svc.po_groups(bundle["items"], pr) if v],
                            rfq_required=rfq["required"] > 0,
-                           rfq_locked=(pr["status"] in ("approved", "po_issued", "partially_received",
+                           rfq_locked=(pr["status"] in ("approved", "po_issued", "in_transit",
+                                                        "partially_received",
                                                         "received", "closed", "cancelled")),
                            # DOAM §6: whether this request needs an engineering
                            # justification, which one it cites, and the approved
@@ -1620,10 +1621,15 @@ def _flash_not_applied(msg):
                           "sign the request off until then.",
            "bad_currency": "Its prices were NOT applied: the quotation's currency is "
                            "not recognised. Edit the quotation and choose its currency.",
+           "partial_other_currency": "Its prices were NOT applied: it prices only some "
+                                     "lines, in another currency than the request. Add "
+                                     "the other lines' prices to the quotation, or price "
+                                     "the request in Pricing.",
            "demand_rungs_pending": "Its prices will apply once the warehouse has "
                                    "checked the request — save the quotation again then."}
           .get(msg, "Its prices were not applied. Enter them in Pricing."),
-          "error" if msg in ("quote_fx_required", "fx_required", "bad_currency") else "warning")
+          "error" if msg in ("quote_fx_required", "fx_required", "bad_currency",
+                             "partial_other_currency") else "warning")
 
 
 # --- editing an RFQ and the quotations against it (spec §4 and §5) ----------
@@ -1646,6 +1652,8 @@ _QUOTE_ERRORS = {
               "remove this.",
     "bad_currency": "Choose the quotation's currency from the list.",
     "quote_fx_required": "Enter the FX rate to EGP for a quotation in a foreign currency.",
+    "self_quote_choice": "You raised this request, so you cannot choose or change its "
+                         "chosen quotation. Another buyer — or a procurement admin — does it.",
     "locked": "This request is already approved, ordered, closed or cancelled.",
     "bad_amount": "Enter the quoted amount as a positive number.",
     "terms_required": "Enter the payment terms the supplier is offering.",
@@ -1691,7 +1699,7 @@ def edit_quote(pr_id, quote_id):
         flash(bad, "error")
         return redirect(url_for("approvals.detail", pr_id=pr_id))
     ok, msg = svc.update_quote(quote_id, data, user=_u(), ip=_ip(),
-                               filename=fn, content_type=ct, content_b64=b64)
+                               filename=fn, content_type=ct, content_b64=b64, pr_id=pr_id)
     flash(("No change." if msg == "no_change" else "Quotation updated.")
           if ok else _QUOTE_ERRORS.get(msg, "Could not update the quotation (%s)." % msg),
           "success" if ok else "error")

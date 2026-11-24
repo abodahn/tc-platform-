@@ -272,9 +272,16 @@ def run():
             [x["vendor"] for x in bm["quotes"]] == ["UsdCo", "EgpCo", "EurCo"],
             [x["vendor"] for x in bm["quotes"]])
         cmp_ = svc.quote_comparison(bm["quotes"])
-        chk("lowest = 50,000 EGP (USD 1,000 @ 50), saving 10,000 EGP (%s)" % cmp_,
-            cmp_["basis"] == "egp" and cmp_["lowest"] == 50000 and cmp_["saving"] == 10000
+        chk("while EurCo has no rate nothing is 'lowest' and no saving is claimed (%s)" % cmp_,
+            cmp_["basis"] == "egp" and cmp_["lowest"] is None and cmp_["saving"] == 0
             and cmp_["currency"] == "EGP")
+        cmp2 = svc.quote_comparison([dict(x, fx_rate=55) if x["vendor"] == "EurCo" else x
+                                     for x in bm["quotes"]])
+        chk("with its rate (55): lowest 550 EGP, saving 59,450 EGP (%s)" % cmp2,
+            cmp2["lowest"] == 550 and cmp2["saving"] == 59450)
+        chk("EGP 60,000 vs 10 EUR with no rate: neither is 'lowest'",
+            svc.quote_comparison([{"amount": 60000, "currency": "EGP"},
+                                  {"amount": 10, "currency": "EUR"}])["lowest"] is None)
         mx = svc.quote_matrix(bm["items"], bm["quotes"])
         cells = dict(zip([x["vendor"] for x in mx["quotes"]], mx["rows"][0]["cells"]))
         chk("per-item best is the USD cell, never the 10 EUR with no rate",
@@ -288,9 +295,8 @@ def run():
         tbl = html[html.index('class="tbl qt-tbl"'):html.index('data-i18n="proc.quote.matrix"')]
         rows = {re.search(r'qt-name">(\w+)', r).group(1): r
                 for r in tbl.split('<tr class="qt-row')[1:]}
-        chk("the page marks UsdCo alone as lowest",
-            'proc.quote.lowest' in rows["UsdCo"] and 'proc.quote.lowest' not in rows["EgpCo"]
-            and 'proc.quote.lowest' not in rows["EurCo"])
+        chk("the page marks no quote lowest while a rate is missing",
+            not any('proc.quote.lowest' in r for r in rows.values()))
         chk("it shows the EGP-equivalent column and the rate",
             'data-i18n="proc.fx.egp_equiv">EGP equivalent</th>' in tbl
             and "<bdi>50,000 EGP</bdi>" in rows["UsdCo"] and "1 USD = 50 EGP" in rows["UsdCo"])
@@ -324,6 +330,64 @@ def run():
         chk("and its figures as before (5,000 EGP / 700 / 5,700 EGP)",
             "<bdi>5,000 EGP</bdi>" in html and "<bdi>700</bdi>" in html
             and "<bdi>5,700 EGP</bdi>" in html)
+
+        # ------------------------------------------------------------- 8 ----
+        print("\n8. review fixes")
+        usd_id = [x for x in bm["quotes"] if x["vendor"] == "UsdCo"][0]["id"]
+        conn = get_db()
+        try:
+            ch = svc._chosen_quote(conn, m)
+        finally:
+            conn.close()
+        chk("the chosen-quote read never pulls the supplier file",
+            ch and ch["id"] == usd_id and "content_b64" not in ch)
+        chk("a quotation cannot be edited through another request's URL (service)",
+            svc.update_quote(usd_id, {"amount": "400000"}, user=buyer, pr_id=e)
+            == (False, "not_found"))
+        f = post("/procurement/pr/%d/quote/%d/edit" % (e, usd_id), amount="400000",
+                 currency="USD", fx_rate="50", payment_terms="Cash")
+        chk("...nor through the route", ("error", "Quotation not found.") in f
+            and one("SELECT amount a FROM pr_quotes WHERE id=?", usd_id)["a"] == 1000, f)
+        from app.routes import approvals as RA
+        from app.approvals.messages import MESSAGES
+        chk("a requester editing their chosen quote reads a sentence, not a code",
+            RA._QUOTE_ERRORS.get("self_quote_choice") in MESSAGES)
+        run_sql("UPDATE pr_quotes SET fx_rate=52.34567 WHERE id=?", usd_id)
+        code, html = page(m)
+        chk("the edit form keeps every digit of the rate",
+            code == 200 and 'value="52.34567"' in html)
+        run_sql("UPDATE pr_requests SET status='in_transit' WHERE id=?", m)
+        code, html = page(m)
+        chk("an in-transit request offers no edit form for its chosen quote",
+            code == 200 and "/quote/%d/edit" % usd_id not in html)
+
+        # Same currency: the request value Purchasing priced rules, not the quote's.
+        lq = svc.get_pr(e)["quotes"][0]["id"]
+        svc.choose_quote(e, lq, buyer)
+        svc.apply_chosen_quote(e, lq, buyer)
+        svc.price_pr(e, {el: 4000}, {"tax_rate": "14"}, buyer)
+        chk("an applied EGP quote does not raise the rule's value (4,560, not 5,700)",
+            rfq(e)["value"] == 4560, rfq(e))
+
+        # A PARTIAL quote in another currency must not re-label the other lines.
+        t_, (ta, tb) = new_pr("Partial", [("PART-A", 1), ("PART-B", 1)])
+        svc.price_pr(t_, {ta: 1000, tb: 1000},
+                     {"tax_rate": "14", "currency": "EUR", "fx_rate": "50"}, buyer)
+        before = svc.egp_commitment(req(t_))
+        ok, why = svc.add_quote(t_, {"vendor": "TlCo", "currency": "tl", "fx_rate": "1.5",
+                                     "payment_terms": "Cash", "vat_applies": "0",
+                                     "lines": {ta: "3000"}}, buyer, **QF)
+        tq = one("SELECT id FROM pr_quotes WHERE pr_id=?", t_)["id"]
+        walk_to_purchasing(t_)
+        svc.choose_quote(t_, tq, buyer)
+        chk("a partial TRY quote on an EUR request is refused with its reason",
+            svc.apply_chosen_quote(t_, tq, buyer) == (False, "partial_other_currency"))
+        rt = req(t_)
+        chk("the request keeps EUR @ 50 and its %s EGP value" % before,
+            rt["currency"] == "EUR" and rt["fx_rate"] == 50
+            and svc.egp_commitment(rt) == before == 114000, (rt["currency"], rt["fx_rate"]))
+        chk("and Purchasing cannot sign it off",
+            svc.act_on_step(t_, buyer, "approve")[0] is False)
 
     print("\nALL PASS" if OK[0] else "\nSOME FAILED")
     return OK[0]

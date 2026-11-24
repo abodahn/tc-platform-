@@ -180,6 +180,10 @@ MESSAGES = {
         "ar": "ادخل سعر الصرف مقابل الجنيه لعرض السعر اللي بعملة أجنبية.",
         "tr": "Döviz cinsinden bir teklif için EGP kurunu girin.",
     },
+    "You raised this request, so you cannot choose or change its chosen quotation. Another buyer — or a procurement admin — does it.": {
+        "ar": "أنت من أنشأ هذا الطلب، لذلك لا يمكنك اختيار عرض السعر أو تعديل العرض المختار. يقوم بذلك مشترٍ آخر — أو مسؤول المشتريات.",
+        "tr": "Bu talebi siz oluşturdunuz; bu yüzden teklifini seçemez veya seçilen teklifi değiştiremezsiniz. Bunu başka bir satın almacı — ya da bir satın alma yöneticisi — yapar.",
+    },
     "Enter the quoted amount as a positive number.": {
         "ar": "اكتب قيمة عرض السعر كرقم موجب.",
         "tr": "Teklif tutarını pozitif bir sayı olarak girin.",
@@ -653,6 +657,9 @@ MESSAGES = {
     "Its prices were NOT applied: the quotation's currency is not recognised. Edit the quotation and choose its currency.": {
         "ar": "أسعاره لم تُطبَّق: عملة عرض السعر غير معروفة. عدّل عرض السعر واختر عملته.",
         "tr": "Fiyatları UYGULANMADI: teklifin para birimi tanınmıyor. Teklifi düzenleyip para birimini seçin."},
+    "Its prices were NOT applied: it prices only some lines, in another currency than the request. Add the other lines' prices to the quotation, or price the request in Pricing.": {
+        "ar": "أسعاره لم تُطبَّق: يسعّر بعض البنود فقط وبعملة غير عملة الطلب. أضف أسعار البنود الأخرى إلى عرض السعر، أو سعّر الطلب من شاشة التسعير.",
+        "tr": "Fiyatları UYGULANMADI: yalnızca bazı kalemleri, talepten farklı bir para biriminde fiyatlıyor. Diğer kalemlerin fiyatlarını teklife ekleyin ya da talebi Fiyatlandırma'da fiyatlayın."},
     "Its prices will apply once the warehouse has checked the request — save the quotation again then.": {
         "ar": "أسعاره هتتطبق بعد ما المخزن يراجع الطلب — احفظ عرض السعر تاني وقتها.",
         "tr": "Depo talebi kontrol ettikten sonra fiyatları uygulanır — o zaman teklifi yeniden kaydedin."},

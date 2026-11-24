@@ -6714,7 +6714,8 @@ def apply_chosen_quote(pr_id, quote_id, user, ip=None):
     with no EGP rate (on it, or on a request already in that currency) — nothing
     is applied, and the Purchasing sign-off refuses while the currencies differ
     (act_on_step), so the stale value cannot be signed; 'bad_currency' = a
-    stored currency that is no known code."""
+    stored currency that is no known code; 'partial_other_currency' = a quote
+    pricing only some lines, in another currency than the request's priced lines."""
     conn = get_db()
     try:
         q = conn.execute("SELECT * FROM pr_quotes WHERE id=? AND pr_id=?",
@@ -6723,8 +6724,8 @@ def apply_chosen_quote(pr_id, quote_id, user, ip=None):
             return False, "not_found"
         pr = conn.execute("SELECT currency, fx_rate FROM pr_requests WHERE id=?",
                           (pr_id,)).fetchone()
-        items = conn.execute("SELECT id, qty FROM pr_items WHERE pr_id=? ORDER BY seq, id",
-                             (pr_id,)).fetchall()
+        items = conn.execute("SELECT id, qty, unit_price FROM pr_items WHERE pr_id=? "
+                             "ORDER BY seq, id", (pr_id,)).fetchall()
         lines = []
         for cols in (", disc_type, disc_value", ""):
             try:
@@ -6750,6 +6751,13 @@ def apply_chosen_quote(pr_id, quote_id, user, ip=None):
             return False, "quote_fx_required"
     prices = {l["pr_item_id"]: float(l["unit_price"]) for l in lines
               if l["pr_item_id"] in ids and l["unit_price"] is not None}
+    # A partial quote in another currency would move the whole request to that
+    # currency while the lines it does not price keep figures in the old one.
+    # Refuse (the sign-off gate then holds) unless those lines are still unpriced.
+    if prices and set(prices) != ids and qcur != (
+            C.currency_code((pr["currency"] if pr else None) or "EGP") or "") and any(
+            float(it["unit_price"] or 0) for it in items if it["id"] not in prices):
+        return False, "partial_other_currency"
     # The supplier's discounts travel with its prices: each quoted line's own,
     # and the quote-level one as the request discount. Every line the quote
     # prices is posted, so a discount left over from an earlier price is cleared.
@@ -6811,7 +6819,7 @@ def _vendor_id_for(conn, name):
 
 
 def update_quote(quote_id, data, user=None, ip=None, filename=None, content_type=None,
-                 content_b64=None):
+                 content_b64=None, pr_id=None):
     """Correct a supplier quotation already on file.
 
     The CHOSEN quotation may be corrected too (owner, 2026-11-24: with one
@@ -6830,7 +6838,7 @@ def update_quote(quote_id, data, user=None, ip=None, filename=None, content_type
     conn = get_db()
     try:
         q = conn.execute("SELECT * FROM pr_quotes WHERE id=?", (quote_id,)).fetchone()
-        if not q:
+        if not q or (pr_id is not None and q["pr_id"] != pr_id):
             return False, "not_found"
         pr = conn.execute("SELECT id, requester, status FROM pr_requests WHERE id=?",
                           (q["pr_id"],)).fetchone()
@@ -7043,6 +7051,9 @@ def quote_comparison(quotes):
         amts = [v for v in (_quote_fx_fields(dict(q, after_vat=quote_after_vat(q)))["after_vat_egp"]
                             for q in quotes) if v is not None]
     out = {"basis": basis, "currency": cur}
+    if basis == "egp" and (len(amts) < len(quotes) or len(amts) < 2):
+        # a foreign quote's EGP cost is unknown: nothing can be called lowest
+        return dict(out, lowest=None, saving=0)
     if len(amts) < 2:
         return dict(out, lowest=min(amts) if amts else None, saving=0)
     return dict(out, lowest=min(amts), highest=max(amts), saving=round(max(amts) - min(amts), 2))
@@ -7064,12 +7075,19 @@ def _pr_field(pr, key, default=None):
 def _chosen_quote(conn, pr_id):
     """The request's chosen quotation as a dict with the _quote_fx_fields
     figures, or None. Fails soft (None) on a database without the columns."""
-    try:
-        r = conn.execute("SELECT * FROM pr_quotes WHERE pr_id=? AND is_chosen=1 "
-                         "ORDER BY id LIMIT 1", (pr_id,)).fetchone()
-    except Exception:
-        conn.rollback()
-        return None
+    # Never SELECT *: content_b64 is the supplier's file (MBs), read on every
+    # request page and sign-off. Newest columns first, as in get_pr.
+    r = None
+    for extra in (", vat_applies, vat_rate, disc_type, disc_value, disc_amount, fx_rate",
+                  ", vat_applies, vat_rate, disc_type, disc_value, disc_amount",
+                  ", vat_applies, vat_rate", ""):
+        try:
+            r = conn.execute("SELECT id, pr_id, vendor, amount, currency, is_chosen" + extra
+                             + " FROM pr_quotes WHERE pr_id=? AND is_chosen=1 "
+                             "ORDER BY id LIMIT 1", (pr_id,)).fetchone()
+            break
+        except Exception:
+            conn.rollback()
     if not r:
         return None
     q = dict(r)
@@ -7114,8 +7132,10 @@ def rfq_requirement(conn, pr):
     # The chosen quotation is what will really be ordered: when its EGP cost is
     # known and above the request's (its prices did not reach the request), the
     # rule counts IT, never the stale lower figure. Only ever raises the value.
+    # Same currency = it was applied (or priced by hand): the request value rules.
     ch = _chosen_quote(conn, _pr_field(pr, "id"))
-    if ch and ch["after_vat_egp"]:
+    _pcur = _pr_field(pr, "currency") or "EGP"
+    if ch and ch["after_vat_egp"] and ch["currency"] != (C.currency_code(_pcur) or _pcur):
         total = max(total, ch["after_vat_egp"])
     out["value"] = round(total, 2)
     # DOAM §4.3 bands when the matrix is in force: 1 quote up to 50,000, three to
