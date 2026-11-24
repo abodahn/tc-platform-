@@ -286,6 +286,69 @@ def run():
         chk("a quote discount added by edit: 1,450 - 100 = 1,350 (%s)" % xq["amount"],
             okx2 and xq["amount"] == 1350 and xq["disc_amount"] == 100)
 
+        # a partial quote's % discount covers only the lines it priced
+        pq, _ = svc.create_pr({"title": "Partial", "department": "Maintenance"},
+                              [{"item": "PA", "qty": 10, "unit_price": 0},
+                               {"item": "PB", "qty": 1, "unit_price": 0}],
+                              users["req"], submit=False, priced=False)
+        it = items_of(pq)
+        PA, PB = it["PA"]["id"], it["PB"]["id"]
+        svc.price_pr(pq, {PA: 0, PB: 500}, {"tax_rate": "0"}, buyer)
+        okp, wp = svc.add_quote(pq, {"vendor": "Part Co", "payment_terms": "30 days",
+                                     "vat_applies": "0", "lines": {PA: "100"},
+                                     "disc_type": "pct", "disc_value": "10"},
+                                buyer, filename="p.pdf", content_type="application/pdf",
+                                content_b64=b64)
+        pqid = svc.get_pr(pq)["quotes"][0]["id"]
+        svc.choose_quote(pq, pqid, buyer)
+        svc.apply_chosen_quote(pq, pqid, buyer)
+        prq = q1("SELECT * FROM pr_requests WHERE id=?", pq)
+        chk("a partial quote's 10%% stays on its lines: 900 + 500 = 1,400 (%s)" % prq["total"],
+            okp and prq["total"] == 1400, wp)
+
+        # the per-item matrix counts the quote-level discount too
+        mq, _ = svc.create_pr({"title": "Matrix", "department": "Maintenance"},
+                              [{"item": "M1", "qty": 2, "unit_price": 0}],
+                              users["req"], submit=False, priced=False)
+        M1 = items_of(mq)["M1"]["id"]
+        for vend, price, extra in (("X Co", "100", {"disc_type": "pct", "disc_value": "10"}),
+                                   ("Y Co", "95", {})):
+            svc.add_quote(mq, dict({"vendor": vend, "payment_terms": "30 days",
+                                    "vat_applies": "0", "lines": {M1: price}}, **extra),
+                          buyer, filename="m.pdf", content_type="application/pdf",
+                          content_b64=b64)
+        mquotes = svc.get_pr(mq)["quotes"]
+        mx = svc.quote_matrix(svc.get_pr(mq)["items"], mquotes)
+        best = [q["vendor"] for q, cell in zip(mx["quotes"], mx["rows"][0]["cells"]) if cell["best"]]
+        chk("matrix: 100 less a 10%% quote discount (90) beats 95 (%s)" % best,
+            best == ["X Co"] and mquotes[0]["vendor"] == "X Co")
+
+        # a value discount clamped by a shrunk quantity comes back with it
+        rq, _ = svc.create_pr({"title": "Ratchet", "department": "Maintenance"},
+                              [{"item": "R1", "qty": 10, "unit_price": 0},
+                               {"item": "R2", "qty": 1, "unit_price": 0}],
+                              users["req"], submit=False, priced=False)
+        it = items_of(rq)
+        R1, R2 = it["R1"]["id"], it["R2"]["id"]
+        svc.price_pr(rq, {R1: 100, R2: 1000}, {"tax_rate": "0", "disc_type": "val",
+                                               "disc_value": "500"}, buyer,
+                     discounts={R1: ("val", "300")})
+        t0 = q1("SELECT total FROM pr_requests WHERE id=?", rq)["total"]
+        for q_r1, q_r2 in ((2, 0), (10, 1)):
+            exe("UPDATE pr_items SET qty=? WHERE id=?", q_r1, R1)
+            exe("UPDATE pr_items SET qty=? WHERE id=?", q_r2, R2)
+            c = get_db()
+            try:
+                svc._reprice(c, rq)
+                c.commit()
+            finally:
+                c.close()
+        rr = q1("SELECT total, disc_value FROM pr_requests WHERE id=?", rq)
+        chk("qty cut and restored: total back to 1,200 (%s -> %s), discounts as entered"
+            % (t0, rr["total"]), t0 == 1200 and rr["total"] == 1200 and rr["disc_value"] == 500
+            and items_of(rq)["R1"]["disc_value"] == 300)
+
+
         # ---- 7. PDFs -------------------------------------------------------
         from pypdf import PdfReader
 
@@ -302,7 +365,12 @@ def run():
         chk("PO PDF: DISC. column, Discount row and grand 1,898.10",
             "DISC." in t_po and "-435.00" in t_po and "1,898.10" in t_po
             and "Subtotal" in t_po and "2,100.00" in t_po)
+        chk("PO PDF: line VAT/After VAT carry the 10% total discount (113.40 / 923.40)",
+            "113.40" in t_po and "923.40" in t_po and "126.00" not in t_po)
+        t_plain = text(P.po_pdf(svc.get_pr(plain))) + text(P.pr_pdf(svc.get_pr(plain)))
+        chk("no discount: no DISC. column on the PR or PO PDF", "DISC." not in t_plain)
         t_hidden = text(P.pr_pdf(bundle, money=False))
+
         chk("PR PDF without money prints no discount", "435.00" not in t_hidden
             and "150.00" not in t_hidden)
 

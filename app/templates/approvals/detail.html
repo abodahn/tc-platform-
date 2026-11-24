@@ -55,7 +55,8 @@
   </select>
   <input type="number" name="{{ vname }}" class="{{ cls }}" min="0" step="any" inputmode="decimal"
          style="max-width:90px" title="Discount" data-i18n-title="proc.disc.label"
-         value="{{ '%g'|format(value) if value else '' }}">
+         value="{{ '%.15g'|format(value) if value else '' }}">
+
 </span>
 {% endmacro %}
 
@@ -1652,9 +1653,11 @@
             <td style="font-variant-numeric:tabular-nums">{% if it.disc_amount %}{{ '{:,.2f}'.format(it.disc_amount) }}
               {%- if it.disc_type == 'pct' %} <span class="muted" style="font-size:11.5px">({{ '%g'|format(it.disc_value) }}%)</span>{% endif %}{% else %}—{% endif %}</td>
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(it.est_cost or 0) }}</td>
-            {% set lvat = (it.est_cost or 0) * amounts.tax_rate / 100 %}
+            {#- VAT on the line's real share: after its part of the total discount too -#}
+            {% set lnet = ((it.qty or 0) * it.net_price) if (it.net_price is defined and it.net_price is not none) else (it.est_cost or 0) %}
+            {% set lvat = lnet * amounts.tax_rate / 100 %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(lvat) }}</td>
-            <td style="font-variant-numeric:tabular-nums;font-weight:600">{{ '{:,.2f}'.format((it.est_cost or 0) + lvat) }}</td>
+            <td style="font-variant-numeric:tabular-nums;font-weight:600">{{ '{:,.2f}'.format(lnet + lvat) }}</td>
             {% endif %}
           </tr>
         {% endfor %}
@@ -1667,10 +1670,19 @@
           <span class="muted" data-i18n="proc.subtotal">Subtotal</span>
           <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.gross) }} {{ pr.currency }}</span></div>
         {% if amounts.discount_total %}
+        {#- Line discounts and the total discount apart, so an x% sits beside what it is x% of -#}
+        {% if amounts.line_discount %}
         <div class="flex between" style="padding:4px 0;font-size:13px">
-          <span class="muted"><span data-i18n="proc.disc.label">Discount</span>
-            {%- if amounts.header_discount and amounts.disc_type == 'pct' %} <span style="font-size:11.5px">(<span data-i18n="proc.disc.total">Total discount</span> {{ '%g'|format(amounts.disc_value) }}%)</span>{% endif %}</span>
-          <span style="font-variant-numeric:tabular-nums">−{{ '{:,.2f}'.format(amounts.discount_total) }} {{ pr.currency }}</span></div>
+          <span class="muted" data-i18n="proc.disc.label">Discount</span>
+          <span style="font-variant-numeric:tabular-nums">−{{ '{:,.2f}'.format(amounts.line_discount) }} {{ pr.currency }}</span></div>
+        {% endif %}
+        {% if amounts.header_discount %}
+        <div class="flex between" style="padding:4px 0;font-size:13px">
+          <span class="muted"><span data-i18n="proc.disc.total">Total discount</span>
+            {%- if amounts.disc_type == 'pct' %} <span style="font-size:11.5px">({{ '%g'|format(amounts.disc_value) }}%)</span>{% endif %}</span>
+          <span style="font-variant-numeric:tabular-nums">−{{ '{:,.2f}'.format(amounts.header_discount) }} {{ pr.currency }}</span></div>
+        {% endif %}
+
         <div class="flex between" style="padding:4px 0;font-size:13px">
           <span class="muted" data-i18n="proc.disc.net">Net</span>
           <span style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(amounts.net) }} {{ pr.currency }}</span></div>
@@ -1929,7 +1941,8 @@
                   {% elif money %}<a class="tag" style="overflow-wrap:anywhere" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename or 'quote' }}</a>{% endif %}</td>
               <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money %}{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}
                 {%- if q.disc_total %}<div class="muted" style="font-size:11.5px"><span data-i18n="proc.disc.label">Discount</span> −{{ '{:,.2f}'.format(q.disc_total) }}
-                  {%- if q.disc_type == 'pct' and q.disc_value %} ({{ '%g'|format(q.disc_value) }}%){% endif %}</div>{% endif %}{% else %}—{% endif %}</td>
+                  {%- if q.disc_type == 'pct' and q.disc_value and q.disc_total == q.disc_amount %} ({{ '%g'|format(q.disc_value) }}%){% endif %}</div>{% endif %}{% else %}—{% endif %}</td>
+
               <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money and q.vat_applies == 1 %}{{ '{:,.0f}'.format(q.after_vat - q.amount) }}{% elif money and q.vat_applies == 0 %}<span class="muted" data-i18n="proc.quote.no_vat">No VAT</span>{% else %}—{% endif %}</td>
               <td style="font-variant-numeric:tabular-nums;text-align:end;font-weight:600">{% if money and q.vat_applies in (0, 1) %}{{ '{:,.0f}'.format(q.after_vat) }} {{ q.currency }}{% else %}—{% endif %}</td>
               <td>{{ q.payment_terms or '—' }}</td>
@@ -2047,8 +2060,9 @@
               {% for c in r.cells %}
               <td style="text-align:end;font-variant-numeric:tabular-nums{{ ';background:var(--ok-bg)' if c and c.best }}">
                 {% if c %}
-                <div style="{{ 'font-weight:700;color:var(--ok)' if c.best }}">{% if c.best %}<span data-i18n-title="proc.quote.lowest_item" title="Lowest unit price">▼</span> {% endif %}{{ '{:,.2f}'.format(c.unit_price) }}</div>
-                {% if c.disc_amount %}<div class="muted" style="font-size:11.5px"><span data-i18n="proc.disc.label">Discount</span> −{{ '{:,.2f}'.format(c.disc_amount) }} · <span data-i18n="proc.disc.net">Net</span> {{ '{:,.2f}'.format(c.net_unit) }}</div>{% endif %}
+                <div style="{{ 'font-weight:700;color:var(--ok)' if c.best }}">{% if c.best %}<span data-i18n-title="proc.quote.lowest_item" title="Lowest unit price">▼</span> {% endif %}{{ '{:,.2f}'.format(c.net_unit if c.net_unit is defined else c.unit_price) }}</div>
+                {% if c.net_unit is defined and c.net_unit != c.unit_price %}<div class="muted" style="font-size:11.5px"><span data-i18n="proc.unit_price">Unit price</span> {{ '{:,.2f}'.format(c.unit_price) }}{% if c.disc_amount %} · <span data-i18n="proc.disc.label">Discount</span> −{{ '{:,.2f}'.format(c.disc_amount) }}{% endif %}</div>{% endif %}
+
                 <div class="muted" style="font-size:11.5px">{{ '{:,.2f}'.format(c.line_total) }}</div>
                 {% else %}<span class="muted" data-i18n-title="proc.quote.not_quoted" title="Not quoted">—</span>{% endif %}
               </td>

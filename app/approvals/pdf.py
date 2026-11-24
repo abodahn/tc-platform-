@@ -499,6 +499,21 @@ def _discount_of(pr, items):
     return round(line + max(hdr, 0.0), 2)
 
 
+def _has_disc(pr, items):
+    """Whether this document carries any discount (so it prints a DISC. column)."""
+    return bool(float(pr.get("disc_amount") or 0)
+                or any(float(it.get("disc_amount") or 0) for it in items))
+
+
+def _line_net(it):
+    """What the line really costs before VAT: est_cost less its share of the
+    request discount (qty x net_price), so the per-line VAT and AFTER VAT add
+    up to the totals box."""
+    if it.get("net_price") is not None:
+        return round(float(it.get("qty") or 0) * float(it["net_price"]), 2)
+    return float(it.get("est_cost") or 0)
+
+
 def _disc_cell(it):
     """The DISC. column: the money off the line, blank when there is none."""
     return _fmt(it.get("disc_amount")) if float(it.get("disc_amount") or 0) else ""
@@ -607,6 +622,19 @@ def _cost_object_pairs(pr):
 # rendered pages back; keep it printing "0 problems".
 _PR_COLS = [
     (8.0, "S", "l"), (22.0, "ITEM", "l"), (25.0, "Description", "l"),
+    (9.0, "UNIT", "l"), (17.0, "QTY", "r"), (16.5, "On Hand", "r"),
+    (10.5, "Stock days", "r"), (13.0, "Pending qty", "r"),
+    (15.0, "LAST ORDER QTY.", "r"), (14.0, "LAST ORDER DATE", "l"),
+    (18.8, "VENDOR", "l"), (15.0, "UNIT PRICE", "r"), (19.0, "EST. COST", "r"),
+    (15.0, "VAT", "r"), (19.0, "AFTER VAT", "r"),
+    (8.8, "CUR.", "l"), (16.0, "LAST ORDER PRICE", "r"), (16.0, "P.O#", "l"),
+    (11.0, "Last Stock", "r"), (16.6, "PAY. COND.", "l"), (16.0, "DEL. COND.", "l"),
+    (14.0, "ETA", "l"), (12.0, "LEAD Time", "l"),
+]
+# A discounted request adds DISC. after UNIT PRICE; the width comes off the
+# figure columns, so a request with no discount prints exactly as before.
+_PR_COLS_DISC = [
+    (8.0, "S", "l"), (22.0, "ITEM", "l"), (25.0, "Description", "l"),
     (9.0, "UNIT", "l"), (15.0, "QTY", "r"), (15.0, "On Hand", "r"),
     (10.5, "Stock days", "r"), (13.0, "Pending qty", "r"),
     (13.5, "LAST ORDER QTY.", "r"), (14.0, "LAST ORDER DATE", "l"),
@@ -711,9 +739,11 @@ def _pr_body(c, w, h, cm, bundle, money=True):
         vat_rate = 0.0
 
     def _vat(it, after=False):
-        est = float(it.get("est_cost") or 0)
+        est = _line_net(it)
         v = round(est * vat_rate / 100.0, 2)
         return _fmt(est + v if after else v)
+
+    disc = money and _has_disc(pr, items)
 
     rows = [[str(i), it.get("item") or "", _line_desc(it),
              it.get("unit") or "", _qty_cell(it),
@@ -722,7 +752,7 @@ def _pr_body(c, w, h, cm, bundle, money=True):
              _fmt(it.get("pending_qty"), 0) if it.get("pending_qty") else "",
              _fmt(it.get("last_order_qty"), 0), it.get("last_order_date") or "",
              it.get("vendor") or pr.get("vendor") or "", (_fmt(it.get("unit_price")) if money else ""),
-             (_disc_cell(it) if money else ""),
+             ] + ([_disc_cell(it)] if disc else []) + [
              (_fmt(it.get("est_cost")) if money else ""),
              (_vat(it) if money else ""), (_vat(it, True) if money else ""),
              cur, (_fmt(it.get("last_order_price")) if money else ""),
@@ -741,8 +771,9 @@ def _pr_body(c, w, h, cm, bundle, money=True):
     # VENDOR / PAY. COND. / DEL. COND. wrap: they are the only place those three
     # contract terms appear, and an Incoterm without its named place ("DDP C…")
     # is not a delivery condition.
-    y = _table(c, w, cm, y, _PR_COLS, rows, h, pn, title=None,
-               wrap_col=[1, 2, 10, 20, 21], max_lines=4, font_size=6, pad=0.07 * cm,
+    y = _table(c, w, cm, y, _PR_COLS_DISC if disc else _PR_COLS, rows, h, pn, title=None,
+               wrap_col=[1, 2, 10, 20, 21] if disc else [1, 2, 10, 19, 20],
+               max_lines=4, font_size=6, pad=0.07 * cm,
                # a one-line row at 6 pt needs 0.42 cm, not the 0.6 cm sized for
                # 8.5 pt tables; every row saved is a line printed at full size
                row_h=0.42 * cm,
@@ -1116,17 +1147,25 @@ def po_pdf(bundle, po=None):
     except (TypeError, ValueError):
         vat_rate = 0.0
     rows = []
+    disc = _has_disc(pr, items)
     for i, it in enumerate(items, 1):
         est = float(it.get("est_cost") or 0)
-        v = round(est * vat_rate / 100.0, 2)
+        net = _line_net(it)
+        v = round(net * vat_rate / 100.0, 2)
         rows.append([str(i), (it.get("item") or "", _line_desc(it)),
-                     _fmt(it.get("qty")), _fmt(it.get("unit_price")), _disc_cell(it),
-                     _fmt(est), _fmt(v), _fmt(est + v)])
-    y = _table(c, w, cm, y, [
-        (0.6, "#", "l"), (5.0, "ITEM / DESCRIPTION", "l"),
-        (1.3, "QTY", "r"), (2.0, "UNIT PRICE", "r"), (1.8, "DISC.", "r"), (2.3, "TOTAL", "r"),
-        (1.9, "VAT %g%%" % vat_rate, "r"), (2.5, "AFTER VAT", "r")],
-        rows, h, pn, title="Order lines", wrap_col=1)
+                     _fmt(it.get("qty")), _fmt(it.get("unit_price"))]
+                    + ([_disc_cell(it)] if disc else [])
+                    + [_fmt(est), _fmt(v), _fmt(net + v)])
+    if disc:
+        cols = [(0.6, "#", "l"), (5.0, "ITEM / DESCRIPTION", "l"),
+                (1.3, "QTY", "r"), (2.0, "UNIT PRICE", "r"), (1.8, "DISC.", "r"),
+                (2.3, "TOTAL", "r"), (1.9, "VAT %g%%" % vat_rate, "r"), (2.5, "AFTER VAT", "r")]
+    else:
+        cols = [(0.6, "#", "l"), (6.0, "ITEM / DESCRIPTION", "l"),
+                (1.4, "QTY", "r"), (2.2, "UNIT PRICE", "r"), (2.4, "TOTAL", "r"),
+                (2.0, "VAT %g%%" % vat_rate, "r"), (2.6, "AFTER VAT", "r")]
+    y = _table(c, w, cm, y, cols, rows, h, pn, title="Order lines", wrap_col=1)
+
 
     y = _totals_block(c, w, cm, y, pr, cur, discount=_discount_of(pr, items))
 

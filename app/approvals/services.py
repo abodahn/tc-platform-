@@ -871,12 +871,14 @@ def _reprice(conn, pr_id):
     for it, x in zip(items, b["lines"]):
         qty = float(it["qty"] or 0)
         np_ = (x["net"] * factor / qty) if qty else None
-        conn.execute("UPDATE pr_items SET est_cost=?, disc_amount=?, disc_value=?, "
-                     "net_price=? WHERE id=?",
-                     (x["net"], x["disc"] or None, x["disc_value"] or None, np_, it["id"]))
-    conn.execute("UPDATE pr_requests SET total=?, disc_amount=?, disc_value=?, line_disc=? "
+        # disc_value stays as entered: a value clamped to a shrunk base today
+        # must come back whole when the quantity does.
+        conn.execute("UPDATE pr_items SET est_cost=?, disc_amount=?, net_price=? WHERE id=?",
+                     (x["net"], x["disc"] or None, np_, it["id"]))
+    conn.execute("UPDATE pr_requests SET total=?, disc_amount=?, line_disc=? "
                  "WHERE id=?", (b["net"], b["header_discount"] or None,
-                                b["header_value"] or None, b["line_discount"] or None, pr_id))
+                                b["line_discount"] or None, pr_id))
+
     return b["net"]
 
 
@@ -2906,6 +2908,11 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None,
             conn.execute("UPDATE pr_requests SET disc_type=?, disc_value=? WHERE id=?",
                          (kind if _v else None, _v or None, pr_id))
         _net = _reprice(conn, pr_id)
+        if meta.get("disc_type") == "val":
+            # Clamped once, as typed; _reprice keeps it as entered afterwards.
+            conn.execute("UPDATE pr_requests SET disc_value=disc_amount WHERE id=? AND "
+                         "disc_amount IS NOT NULL AND disc_value > disc_amount", (pr_id,))
+
         total = total if _net is None else _net
 
         sets = ["total=?", "pricing_status='priced'", "priced_at=?", "priced_by=?"]
@@ -6412,6 +6419,13 @@ def _attach_quote_lines(conn, quotes, items):
         # What the supplier's figure was before the quote-level discount (the
         # edit form's "amount" box): the sum of the lines, or the typed total.
         q["gross_amount"] = round(float(q.get("amount") or 0) + float(q.get("disc_amount") or 0), 2)
+        if float(q.get("disc_amount") or 0) and q["gross_amount"]:
+            # The quote-level discount reaches each unit too, so the per-item
+            # matrix compares what the ranking does.
+            f = float(q.get("amount") or 0) / q["gross_amount"]
+            for ln in lines.values():
+                ln["net_unit"] = round(ln["net_unit"] * f, 4)
+
         q["disc_total"] = round(float(q.get("disc_amount") or 0)
                                 + sum(float(ln.get("disc_amount") or 0) for ln in lines.values()), 2)
 
@@ -6683,7 +6697,12 @@ def apply_chosen_quote(pr_id, quote_id, user, ip=None):
             "vendor": q["vendor"] or "",
             "disc_type": q["disc_type"] if "disc_type" in keys else None,
             "disc_value": q["disc_value"] if "disc_value" in keys else None}
+    if q_disc and set(prices) != ids:
+        # A partial quote's discount is the supplier's money off ITS lines only;
+        # as a request percent it would also cut lines it never priced.
+        meta.update(disc_type="val", disc_value=q_disc)
     return price_pr(pr_id, prices, meta, user, ip=ip,
+
                     vendors={i: (q["vendor"] or "") for i in prices},
                     discounts={i: discounts.get(i, (None, None)) for i in prices})
 
