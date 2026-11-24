@@ -189,6 +189,23 @@ def run():
         chk("...and the line's supplier becomes the chosen one (%s)" % it["vendor"],
             it["vendor"] == "Old Vendor" and prl["vendor"] == "Old Vendor")
 
+    # ---- PDF: long item codes stay in their column; order type follows the request
+    from app.approvals import pdf as P
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    ls = P._wrap_lines(None, "00-ACC-Other-Trims-0019", "Helvetica", 6, 40, 4, break_words=True)
+    chk("a long item code is broken inside its column (%s)" % ls,
+        len(ls) > 1 and all(stringWidth(l, "Helvetica", 6) <= 40 for l in ls)
+        and "".join(ls) == "00-ACC-Other-Trims-0019")
+    with app.app_context():
+        exp, _ = svc.create_pr({"title": "Import", "department": "Production",
+                                "order_type": "export"},
+                               [{"item": "X", "qty": 1, "unit_price": 0}],
+                               {"username": "tech", "id": 9}, priced=False)
+        import io
+        from pypdf import PdfReader
+        txt = PdfReader(io.BytesIO(P.pr_pdf(svc.get_pr(exp), money=True))).pages[0].extract_text()
+        chk("an outside-Egypt request prints Order Type: Foreign", "Foreign" in txt)
+
     print("\nALL PASS" if OK[0] else "\nSOME FAILED")
     return OK[0]
 

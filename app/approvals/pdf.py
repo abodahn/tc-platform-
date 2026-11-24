@@ -129,7 +129,7 @@ def _fit(text, font, size, max_w, floor):
     return size, _clip(None, text, font, size, max_w)
 
 
-def _wrap_lines(c, text, font, size, max_w, max_lines=2):
+def _wrap_lines(c, text, font, size, max_w, max_lines=2, break_words=False):
     """Word-wrap text to at most max_lines that each fit max_w points; the last
     line is ellipsised if content is dropped."""
     from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -142,8 +142,21 @@ def _wrap_lines(c, text, font, size, max_w, max_lines=2):
         elif cur:
             lines.append(cur)
             cur = ""
-        else:  # a single word longer than the column
+        elif not break_words:  # a single word longer than the column (headers shrink instead)
             cur, i = words[i], i + 1
+        else:  # a single word longer than the column: break it inside the
+            # column (after a '-' when one fits) instead of drawing it over the
+            # next column — item codes like 00-ACC-Other-Trims-0019 have no spaces
+            w = words[i]
+            cut = len(w) - 1
+            while cut > 1 and stringWidth(w[:cut], font, size) > max_w:
+                cut -= 1
+            dash = w.rfind("-", 0, cut)
+            if dash >= cut // 2:
+                cut = dash + 1
+            cur, words[i] = w[:cut], w[cut:]
+            lines.append(cur)
+            cur = ""
     if cur and len(lines) < max_lines:
         lines.append(cur)
     if i < len(words) and lines:  # more text remained -> ellipsise last line
@@ -388,7 +401,8 @@ def _table(c, w, cm, y, cols, rows, h, page_notes, title=None, wrap_col=None,
         out = []
         if head:
             out.append((True, _clip(c, head, "Helvetica-Bold", font_size + 0.1, wd - 2 * pad)))
-        for ln in _wrap_lines(c, body, "Helvetica", font_size - 0.3, wd - 2 * pad, max_lines):
+        for ln in _wrap_lines(c, body, "Helvetica", font_size - 0.3, wd - 2 * pad, max_lines,
+                              break_words=True):
             if ln:
                 out.append((False, ln))
         return out or [(False, "")]
@@ -572,14 +586,14 @@ def _cost_object_pairs(pr):
 # scratchpad/fit.py walks each column's magnitudes UP until it breaks, then reads
 # rendered pages back; keep it printing "0 problems".
 _PR_COLS = [
-    (8.0, "S", "l"), (22.0, "ITEM", "l"), (32.0, "Description", "l"),
+    (8.0, "S", "l"), (22.0, "ITEM", "l"), (25.0, "Description", "l"),
     (9.0, "UNIT", "l"), (17.0, "QTY", "r"), (16.5, "On Hand", "r"),
-    (8.0, "Stock days", "r"), (10.5, "Pending qty", "r"),
+    (10.5, "Stock days", "r"), (13.0, "Pending qty", "r"),
     (15.0, "LAST ORDER QTY.", "r"), (14.0, "LAST ORDER DATE", "l"),
     (18.8, "VENDOR", "l"), (15.0, "UNIT PRICE", "r"), (19.0, "EST. COST", "r"),
     (15.0, "VAT", "r"), (19.0, "AFTER VAT", "r"),
-    (8.8, "CUR.", "l"), (16.0, "LAST ORDER PRICE", "r"), (19.0, "P.O#", "l"),
-    (8.0, "Last Stock", "r"), (16.6, "PAY. COND.", "l"), (14.0, "DEL. COND.", "l"),
+    (8.8, "CUR.", "l"), (16.0, "LAST ORDER PRICE", "r"), (16.0, "P.O#", "l"),
+    (11.0, "Last Stock", "r"), (16.6, "PAY. COND.", "l"), (16.0, "DEL. COND.", "l"),
     (14.0, "ETA", "l"), (12.0, "LEAD Time", "l"),
 ]
 
@@ -649,8 +663,11 @@ def _pr_body(c, w, h, cm, bundle, money=True):
     cur = pr.get("currency") or ""
     y = _meta_grid(c, w, cm, y, [
         ("Date", pr.get("request_date")),
-        ("Order Type (Foreign - Local)", "Local" if (cur or "EGP").upper() == "EGP"
-         else "Foreign"),
+        # The buyer's own answer (Local / outside Egypt) wins; a foreign
+        # currency alone also makes it Foreign.
+        ("Order Type (Foreign - Local)", "Foreign"
+         if (pr.get("order_type") == "export" or (cur or "EGP").upper() != "EGP")
+         else "Local"),
         ("PR S.N", pr.get("pr_no")),
         ("Name of Requestor", pr.get("requester_name") or pr.get("requester")),
         ("Department Name", pr.get("department")),
