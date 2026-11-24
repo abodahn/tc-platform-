@@ -23,6 +23,10 @@ python-bidi==0.4.2       # ...and puts them right-to-left. Both pure-python. Wit
                          # them app/approvals/arabic_pdf.py still draws, but every
                          # Arabic word comes out as separate letters in reverse order.
 
+pywebpush==2.5.0         # Web Push (VAPID) to installed-app devices: app/services/push.py.
+                         # Pulls cryptography/py-vapid/http-ece (all wheels). If it is
+                         # missing the app still runs; only push is reported unavailable.
+
 # --- Production WSGI servers ---
 waitress==3.0.0          # local Windows production (serve.py)
 gunicorn==23.0.0         # Render / Linux (wsgi:app)

@@ -263,6 +263,24 @@ def create_app():
     # /api/lookup — type-ahead sources behind the searchable dropdowns.
     app.register_blueprint(lookup_bp)
 
+    # /push — Web Push device registration. The dispatcher thread starts on the
+    # first real request of each worker process, not here: gunicorn --preload runs
+    # create_app() in the master, and a thread started before fork() does not
+    # survive into the worker. Never under app.testing; TC_PUSH_DISABLED=1 = off.
+    from app.routes.push import bp as push_bp
+    app.register_blueprint(push_bp)
+
+    @app.before_request
+    def _start_push_dispatcher():
+        if app.testing or request.endpoint == "static":
+            return
+        try:
+            from app.services import push as _push
+            _push.note_origin(request.url_root)
+            _push.start_dispatcher()
+        except Exception:  # noqa: BLE001 — push must never break a request
+            pass
+
     # Cross-cutting surfaces: the shared reporting hub (every module's reports are
     # served by these six generic routes) and the governance matrix. Both import
     # cleanly with no database work, so they add nothing to boot time — which

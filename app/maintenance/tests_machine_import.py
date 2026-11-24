@@ -31,7 +31,7 @@ from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp(prefix="wf_mimp_"))
 os.chdir(TMP)
-REPO = r"D:\TC platform\tc-platform-render"
+REPO = str(Path(__file__).resolve().parents[2])   # this checkout, not a hard-coded other one
 sys.path.insert(0, REPO)
 os.environ["TC_ENV"] = "development"
 os.environ.pop("DATABASE_URL", None)

@@ -175,6 +175,9 @@
             <a class="tag" id="markRead" style="cursor:pointer" data-i18n="top.mark_read">Mark all read</a>
           </span>
         </header>
+        {# shown by the script below only when Web Push is supported and not yet on; never prompts by itself #}
+        <a class="tag" id="pushCta" href="{{ url_for('main.profile') }}#push" style="display:none;margin:8px 12px 0;text-align:center">
+          <span data-i18n="push.cta">Get notifications on this device</span></a>
         <div style="max-height:380px;overflow-y:auto">
           {% set _known = ['itsm', 'assets', 'monitoring', 'commandtrack', 'production'] %}
           {% for n in notifications %}
@@ -247,7 +250,11 @@
 <script src="{{ url_for('static', filename='js/autocorrect.js') }}"></script>{% endif %}
 <script>
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").then((r) => {
+      const cta = document.getElementById("pushCta");
+      if (!cta || !("PushManager" in window) || !("Notification" in window) || Notification.permission !== "default") return;
+      return r.pushManager.getSubscription().then((s) => { if (!s) cta.style.display = "block"; });
+    }).catch(() => {}));
   }
 </script>
 {% block scripts %}{% endblock %}

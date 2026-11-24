@@ -1352,6 +1352,12 @@ def init_db():
             _acc_create_and_seed(conn)
         except Exception:
             conn.rollback()
+        # Web Push — push_subscriptions, push_kv, notifications.push_claim
+        try:
+            from app.services.push import ensure_schema as _push_schema
+            _push_schema(conn)
+        except Exception:
+            conn.rollback()
         # Compliance & social-audit — cmp_* tables + demo audits/CAPs/certificates
         try:
             from app.compliance.schema import create_and_seed as _cmp_create_and_seed

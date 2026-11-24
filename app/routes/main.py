@@ -104,7 +104,7 @@ def _brand_logo_file():
 # goes through main/sso (self-gated). Feature blueprints are bounced. `api` and
 # `garamento` stay open so the global header polling / assistant widget keep
 # working on the pages they CAN see.
-_SCOPE_OK_BLUEPRINTS = {None, "main", "auth", "sso", "accounts", "api", "garamento"}
+_SCOPE_OK_BLUEPRINTS = {None, "main", "auth", "sso", "accounts", "api", "garamento", "push"}
 
 
 @bp.before_app_request

@@ -156,6 +156,26 @@
   </div>
 </div>
 
+{# Web Push: this device gets a system notification for what lands in my bell,
+   even with the app closed. Permission is asked only when Enable is clicked. #}
+<div class="panel mt-4" id="push">
+  <div class="panel-head flex between center wrap gap">
+    <h3 class="flex gap center"><svg class="ico" style="width:18px;height:18px;color:var(--tc-red)"><use href="#i-bell"></use></svg>
+      <span data-i18n="push.title">Notifications on this device</span></h3>
+    <span class="badge b-unknown" id="pushState" aria-live="polite"><span class="dot"></span><span id="pushStateText" data-i18n="push.status.off">Off</span></span>
+  </div>
+  <div class="panel-pad">
+    <p class="muted" style="font-size:13px;margin:0 0 12px" data-i18n="push.hint">Get a notification on this phone or computer when something is addressed to you, even when the app is closed.</p>
+    <p class="muted" id="pushIos" style="display:none;font-size:13px;margin:0 0 12px" data-i18n="push.ios_hint">On iPhone or iPad: tap Share, choose "Add to Home Screen", open the app from your Home Screen, then enable notifications here.</p>
+    <div class="flex gap center wrap">
+      <button class="btn btn-primary" type="button" id="pushOn" style="display:none"><svg class="ico"><use href="#i-bell"></use></svg><span data-i18n="push.enable">Enable</span></button>
+      <button class="btn btn-ghost" type="button" id="pushTest" style="display:none"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="push.test">Send test</span></button>
+      <button class="btn btn-ghost" type="button" id="pushOff" style="display:none"><span data-i18n="push.disable">Disable</span></button>
+    </div>
+    <div class="muted" id="pushMsg" role="status" style="font-size:12.5px;margin-top:8px"></div>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script>
@@ -268,6 +288,87 @@
         }
       }).catch(function () {});
   });
+
+  // ---- Web Push on this device ----
+  (function () {
+    var T = function (k, fb) { var v = window.tcT ? window.tcT(k) : k; return v === k ? fb : v; };
+    var stEl = document.getElementById("pushState"), stTx = document.getElementById("pushStateText");
+    var bOn = document.getElementById("pushOn"), bOff = document.getElementById("pushOff"), bTest = document.getElementById("pushTest");
+    var msgEl = document.getElementById("pushMsg");
+    if (!stEl) return;
+    var ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    var standalone = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+    var supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    function say(k, fb, bad) { msgEl.textContent = k ? T(k, fb) : ""; msgEl.style.color = bad ? "var(--crit)" : ""; }
+    function show(state) {
+      var map = { on: ["b-online", "push.status.on", "On"], off: ["b-unknown", "push.status.off", "Off"],
+                  blocked: ["b-offline", "push.status.blocked", "Blocked by the browser"],
+                  unsupported: ["b-idle", "push.status.unsupported", "Not supported here"] };
+      var m = map[state];
+      stEl.className = "badge " + m[0];
+      stTx.setAttribute("data-i18n", m[1]); stTx.textContent = T(m[1], m[2]);
+      bOn.style.display = state === "off" ? "" : "none";
+      bOff.style.display = bTest.style.display = state === "on" ? "" : "none";
+      if (state === "blocked") say("push.blocked_help", "Allow notifications for this site in the browser settings, then reload.");
+    }
+    function post(url, body) {
+      return fetch(url, { method: "POST", credentials: "same-origin",
+        headers: { "X-CSRF-Token": CSRF, "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { j._status = r.status; return j; }); });
+    }
+    function keyBytes(b64) {
+      var s = (b64 + "===".slice((b64.length + 3) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+      return Uint8Array.from(atob(s), function (c) { return c.charCodeAt(0); });
+    }
+    function reg() { return navigator.serviceWorker.register("/sw.js").then(function () { return navigator.serviceWorker.ready; }); }
+    if (ios && !standalone) document.getElementById("pushIos").style.display = "";
+    if (!supported) { show("unsupported"); return; }
+    function refresh() {
+      if (Notification.permission === "denied") return Promise.resolve(show("blocked"));
+      return reg().then(function (r) { return r.pushManager.getSubscription(); }).then(function (sub) {
+        if (sub && Notification.permission === "granted") {
+          show("on");
+          return post("/push/subscribe", sub.toJSON());   // keep it bound to whoever is signed in here
+        }
+        show("off");
+      }).catch(function () { show("off"); });
+    }
+    bOn.addEventListener("click", function () {
+      bOn.disabled = true; say("");
+      Notification.requestPermission().then(function (perm) {
+        if (perm !== "granted") { show(perm === "denied" ? "blocked" : "off"); return; }
+        return fetch("/push/key", { credentials: "same-origin" }).then(function (r) {
+          if (!r.ok) throw new Error("key"); return r.json();
+        }).then(function (k) {
+          return reg().then(function (r) {
+            return r.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(k.key) });
+          });
+        }).then(function (sub) { return post("/push/subscribe", sub.toJSON()); }).then(function (j) {
+          if (!j.ok) throw new Error("sub");
+          show("on"); say("push.enabled", "Notifications are on for this device.");
+        });
+      }).catch(function () { say("push.failed", "Could not change notifications on this device. Please retry.", true); refresh(); })
+        .then(function () { bOn.disabled = false; });
+    });
+    bOff.addEventListener("click", function () {
+      bOff.disabled = true; say("");
+      reg().then(function (r) { return r.pushManager.getSubscription(); }).then(function (sub) {
+        if (!sub) return;
+        var ep = sub.endpoint;
+        return sub.unsubscribe().then(function () { return post("/push/unsubscribe", { endpoint: ep }); });
+      }).then(function () { show("off"); }).catch(function () { say("push.failed", "Could not change notifications on this device. Please retry.", true); })
+        .then(function () { bOff.disabled = false; });
+    });
+    bTest.addEventListener("click", function () {
+      bTest.disabled = true;
+      post("/push/test").then(function (j) {
+        if (j.ok) say("push.test_sent", "Test sent. It should arrive in a few seconds.");
+        else say("push.no_devices", "This device is not registered yet. Disable, then enable again.", true);
+      }).catch(function () { say("push.failed", "Could not change notifications on this device. Please retry.", true); })
+        .then(function () { bTest.disabled = false; });
+    });
+    refresh();
+  })();
 
   // notification email preference
   var emailPref = document.getElementById("emailPref");
