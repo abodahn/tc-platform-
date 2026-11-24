@@ -166,3 +166,117 @@
   .content.proc table.pr-items td:nth-child(2) { min-width: 260px; }
   .content.proc table.pr-items :is(th, td):nth-child(n+3) { white-space: nowrap; }
 }
+
+/* ===== Pricing gate (Purchasing) ==========================================
+   One control vocabulary for every box on the line: same height, radius and
+   border, figures in tabular digits. The discount's type and amount read as
+   ONE control. Live read-outs under the price (qty x price) and the discount
+   (what it takes off -> the line net) so the buyer never has to do sums. */
+.content.proc .pf-scroll { overflow-x: auto; }
+.content.proc table.pf-tbl th { padding: 10px; }
+.content.proc table.pf-tbl td { vertical-align: top; padding: 12px 10px; }
+.content.proc table.pf-tbl tr:hover td { background: none; }
+.pf-tbl .pf-lbl { display: none; }
+.pf-tbl .pf-no { width: 28px; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 20px !important; }
+.pf-tbl .pf-item { min-width: 210px; max-width: 300px; }
+.pf-tbl .pf-code { font-weight: 600; overflow-wrap: anywhere; }
+.pf-tbl .pf-qty { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; padding-top: 20px !important; }
+.pf-tbl .pf-vendor { min-width: 180px; max-width: 260px; }
+.pf-tbl .pf-price-cell { min-width: 160px; }
+.pf-tbl .pf-disc-cell { min-width: 150px; }
+.pf-tbl .pf-last { min-width: 100px; }
+.pf-tbl .pf-lead { min-width: 76px; }
+
+.pf-tbl input[type="number"], .disc-pair .dp-type, .disc-pair .dp-val {
+  height: 38px; width: 100%; min-width: 0; padding: 0 10px; margin: 0;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--panel); color: var(--ink);
+  font: inherit; font-size: 14px; font-variant-numeric: tabular-nums;
+  transition: border-color .15s ease-out, box-shadow .15s ease-out;
+}
+.pf-tbl input[type="number"]:focus, .disc-pair .dp-type:focus, .disc-pair .dp-val:focus {
+  outline: none; border-color: var(--tc-red); box-shadow: 0 0 0 3px rgba(237, 28, 36, .12);
+}
+.pf-price-row { display: flex; gap: 6px; align-items: center; }
+.pf-price-row input { flex: 1 1 auto; }
+.pf-price-row .pf-mr { flex: 0 0 38px; width: 38px; height: 38px; padding: 0; justify-content: center; }
+.pf-read { display: block; margin-top: 5px; font-size: 12px; line-height: 1.3; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pf-read:empty { display: none; }
+.pf-read.pf-off { color: var(--ok); font-weight: 600; }
+
+/* Discount: type + amount joined into one control (pricing gate and quotes). */
+.disc-pair { display: inline-flex; align-items: stretch; width: 100%; max-width: 230px; vertical-align: middle; }
+.disc-pair .dp-type { flex: 0 0 78px; width: 78px; padding-inline: 10px 4px; background: var(--panel-2);
+  border-start-end-radius: 0; border-end-end-radius: 0; }
+.disc-pair .dp-val { flex: 1 1 auto; margin-inline-start: -1px; border-start-start-radius: 0; border-end-start-radius: 0; }
+.disc-pair .dp-type:focus, .disc-pair .dp-val:focus { position: relative; z-index: 1; }
+.field .disc-pair { max-width: none; }
+.field .disc-pair .dp-type, .field .disc-pair .dp-val { height: 44px; border-radius: var(--r-md); }
+.field .disc-pair .dp-type { border-start-end-radius: 0; border-end-end-radius: 0; }
+.field .disc-pair .dp-val { border-start-start-radius: 0; border-end-start-radius: 0; }
+
+/* Request-level fields: currency + VAT narrow, vendor + payment wide; the
+   total discount and (foreign currency only) the FX rate on the next row. */
+/* Fields on the left, the totals beside them: one glance, no empty band. */
+.pf-foot { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 20px 28px;
+  align-items: start; margin-top: 18px; }
+.pf-head { display: grid; gap: 12px 16px;
+  grid-template-columns: minmax(0, .8fr) minmax(0, .8fr) minmax(0, 1.3fr) minmax(0, 1.3fr); }
+.pf-head .field { margin: 0; }
+.pf-head .pf-hd { grid-column: span 2; }
+.pf-head > [hidden] { display: none !important; }
+
+/* Totals: a compact read-out, figures right-aligned, the grand total last. */
+.pf-sum { margin: 0; padding: 12px 16px;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel-2);
+  font-variant-numeric: tabular-nums; }
+.pf-sum > div { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 3px 0; font-size: 13px; }
+.pf-sum > div[hidden] { display: none; }
+.pf-sum dt { color: var(--muted); }
+.pf-sum dd { margin: 0; font-weight: 600; color: var(--ink); text-align: end; }
+.pf-sum .pf-sum-off dd { color: var(--ok); }
+.pf-sum .pf-sum-grand { margin-top: 6px; padding-top: 9px; border-top: 1px solid var(--line); font-size: 15px; }
+.pf-sum .pf-sum-grand dt { color: var(--ink); font-weight: 700; }
+.pf-sum .pf-sum-grand dd { font-weight: 800; }
+.pf-sum .pf-sum-egp dd { color: var(--ink-2); }
+.pf-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+
+@media (max-width: 1180px) {
+  .pf-foot { grid-template-columns: minmax(0, 1fr); }
+  .pf-sum { max-width: 400px; margin-inline-start: auto; }
+}
+@media (max-width: 900px) {
+  .pf-head { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  /* Phones: each line becomes a block. Item and supplier take the full width,
+     price + discount and last price + lead days share a row, every box keeps
+     its translated name. */
+  .content.proc .pf-scroll { overflow: visible; }
+  .content.proc table.pf-tbl, .content.proc table.pf-tbl > tbody { display: block; width: 100%; }
+  .content.proc table.pf-tbl > thead { display: none; }
+  .content.proc table.pf-tbl tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line-2); }
+  .content.proc table.pf-tbl tbody tr:last-child { border-bottom: 0; }
+  .content.proc table.pf-tbl td { display: block; padding: 0 !important; border: 0; min-width: 0; max-width: none; background: none; }
+  .pf-tbl .pf-no { display: none !important; }
+  .pf-tbl .pf-item, .pf-tbl .pf-vendor { grid-column: 1 / -1; }
+  .pf-tbl .pf-code { white-space: normal; overflow-wrap: anywhere; font-size: 15px; }
+  .content.proc table.pf-tbl td.pf-qty { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; white-space: normal; }
+  .pf-tbl .pf-qty .pf-lbl { margin: 0; }
+  .pf-tbl .pf-qty .pf-lbl::after { content: ":"; }
+  .pf-tbl .pf-lbl { display: block; margin-bottom: 5px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+  .pf-tbl input[type="number"], .disc-pair .dp-type, .disc-pair .dp-val { height: 44px; }
+  .pf-price-row .pf-mr { flex-basis: 44px; width: 44px; height: 44px; }
+  .pf-read { white-space: normal; }
+  .disc-pair { max-width: none; }
+  .disc-pair .dp-type { flex-basis: 70px; width: 70px; }
+  .pf-head { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pf-head :is(.pf-wide, .pf-hd, .pf-fx) { grid-column: 1 / -1; }
+  .pf-sum { max-width: none; margin-inline-start: 0; }
+  .pf-actions .btn { flex: 1 1 100%; justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-tbl input[type="number"], .disc-pair .dp-type, .disc-pair .dp-val { transition: none; }
+}

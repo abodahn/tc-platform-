@@ -48,15 +48,14 @@
 {#- A discount as Purchasing enters it: % of, or a value off, the figure next to
     it. One pair of boxes, reused by the pricing gate and the quotation forms. -#}
 {% macro disc_inputs(tname, vname, kind=None, value=None, cls='') %}
-<span class="disc-pair" style="display:inline-flex;gap:4px;align-items:center">
-  <select name="{{ tname }}" class="{{ cls }}" title="Discount type" data-i18n-title="proc.disc.type" style="width:auto;min-width:0">
+<span class="disc-pair">
+  <select name="{{ tname }}" class="dp-type {{ cls }}" title="Discount type" data-i18n-title="proc.disc.type">
     <option value="pct" {{ 'selected' if kind != 'val' }}>%</option>
     <option value="val" {{ 'selected' if kind == 'val' }} data-i18n="proc.disc.value">Value</option>
   </select>
-  <input type="number" name="{{ vname }}" class="{{ cls }}" min="0" step="any" inputmode="decimal"
-         style="max-width:90px" title="Discount" data-i18n-title="proc.disc.label"
+  <input type="number" name="{{ vname }}" class="dp-val {{ cls }}" min="0" step="any" inputmode="decimal"
+         placeholder="0" title="Discount" data-i18n-title="proc.disc.label"
          value="{{ '%.15g'|format(value) if value else '' }}">
-
 </span>
 {% endmacro %}
 
@@ -688,8 +687,8 @@
     {% endif %}
     <form method="post" action="{{ url_for('approvals.price', pr_id=pr.id) }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <div style="overflow-x:auto">
-      <table class="tbl">
+      <div class="pf-scroll">
+      <table class="tbl pf-tbl">
         <thead><tr>
           <th>#</th><th data-i18n="proc.item">Item</th>
           <th data-i18n="proc.qty">Qty</th>
@@ -707,8 +706,8 @@
         <tbody>
         {% for it in b['items'] %}
           <tr>
-            <td>{{ loop.index }}</td>
-            <td><div style="font-weight:600">{{ it.item }}</div>
+            <td class="pf-no">{{ loop.index }}</td>
+            <td class="pf-item"><div class="pf-code"><bdi>{{ it.item }}</bdi></div>
                 {#- A request line's identity IS its description now that the
                     item box is off the form, so the two are usually the same
                     string. Printing it twice reads as a bug on the one screen an
@@ -731,7 +730,8 @@
                 {% endif %}
                 {{ item_history(it) }}
             </td>
-            <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}
+            <td class="pf-qty"><span class="pf-lbl" data-i18n="proc.qty">Qty</span>
+              <bdi class="pf-num">{{ '%g'|format(it.qty or 0) }} {{ it.unit or '' }}</bdi>
               {#- What the store handed over off the shelf. Without this the line
                   just reads a smaller number than was asked for, and the only
                   explanation sits in the audit trail — which reads as though the
@@ -766,9 +766,9 @@
                 as an option, marked. Dropping it would silently reassign a
                 supplier on an existing request, which is a worse bug than the
                 one this change fixes. -#}
-            <td>
+            <td class="pf-vendor"><span class="pf-lbl" data-i18n="proc.line_vendor">Supplier for this line</span>
               {% set known = vendors|map(attribute='name')|list %}
-              <select name="linevendor_{{ it.id }}" data-search style="min-width:170px">
+              <select name="linevendor_{{ it.id }}" data-search>
                 <option value="" {{ 'selected' if not it.vendor }}
                         data-hint="{{ pr.vendor or '' }}"
                         data-i18n="proc.line_vendor_ph">Leave blank to use the request's vendor</option>
@@ -782,38 +782,41 @@
                 {% endif %}
               </select>
             </td>
-            <td>
-              <div style="display:flex;gap:6px;align-items:center">
+            <td class="pf-price-cell"><span class="pf-lbl" data-i18n="proc.unit_price">Unit price</span>
+              <div class="pf-price-row">
                 {% set qline = chosen_q.lines.get(it.id) if chosen_q and chosen_q.lines else None %}
                 <input type="number" name="price_{{ it.id }}" id="price_{{ it.id }}" min="0" step="any"
                        data-qty="{{ '%g'|format(it.qty or 0) }}" class="pf-price"
                        data-line="{{ it.id }}"
-                       value="{{ it.unit_price or (qline.unit_price if qline else 0) }}" style="max-width:150px">
-                <button type="button" class="btn btn-ghost btn-sm mr-btn" title="Market price research"
+                       inputmode="decimal"
+                       value="{{ it.unit_price or (qline.unit_price if qline else 0) }}">
+                <button type="button" class="btn btn-ghost btn-sm mr-btn pf-mr" title="Market price research"
                         data-target="price_{{ it.id }}" data-item="{{ it.item }}"
                         data-desc="{{ it.description or '' }}" data-unit="{{ it.unit or '' }}"
                         data-qty="{{ '%g'|format(it.qty or 1) }}">🔎</button>
               </div>
+              <output class="pf-read" data-gross-for="{{ it.id }}"></output>
               <div class="mr-out muted" id="mrout_price_{{ it.id }}"
                    style="display:none;font-size:12px;margin-top:6px;max-width:420px"></div>
             </td>
-            <td data-pf-line="{{ it.id }}">
+            <td class="pf-disc-cell" data-pf-line="{{ it.id }}"><span class="pf-lbl" data-i18n="proc.disc.label">Discount</span>
               {% if it.disc_value %}{{ disc_inputs('disctype_%s'|format(it.id), 'disc_%s'|format(it.id), it.disc_type, it.disc_value, 'pf-disc') }}
               {% else %}{{ disc_inputs('disctype_%s'|format(it.id), 'disc_%s'|format(it.id),
                                        qline.disc_type if qline else None, qline.disc_value if qline else None, 'pf-disc') }}{% endif %}
+              <output class="pf-read pf-off" data-off-for="{{ it.id }}"></output>
             </td>
             {#- Spec §2 — Purchasing's own two figures on the line. Pre-filled
                 from order history where the system can work it out; what the
                 buyer types wins. A blank box is not a zero: clearing it hands
                 the figure back to the computed one. -#}
-            <td>
+            <td class="pf-last"><span class="pf-lbl" data-i18n="proc.wh_last_price">Last order price</span>
               <input type="number" name="last_order_price_{{ it.id }}" min="0" step="any"
-                     style="max-width:130px" inputmode="decimal"
+                     inputmode="decimal"
                      value="{{ '' if it.last_order_price is none else '%g'|format(it.last_order_price) }}">
             </td>
-            <td>
+            <td class="pf-lead"><span class="pf-lbl" data-i18n="proc.lead_days">Lead days</span>
               <input type="number" name="lead_time_days_{{ it.id }}" min="0" step="any"
-                     style="max-width:95px" inputmode="numeric"
+                     inputmode="numeric"
                      value="{{ '' if it.lead_time_days is none else '%g'|format(it.lead_time_days) }}">
             </td>
           </tr>
@@ -821,13 +824,10 @@
         </tbody>
       </table>
       </div>
-      <div class="grid cols-4 mt-3">
+      <div class="pf-foot">
+      <div class="pf-head">
         <div class="field"><label data-i18n="proc.currency_l">Currency</label>
           <select name="currency">{% for c in currencies %}<option value="{{ c }}" {{ 'selected' if pr.currency==c }}>{{ c }}</option>{% endfor %}</select></div>
-        <div class="field"><label data-i18n="proc.vendor_l">Vendor</label>
-          <input name="vendor" autocomplete="off" value="{{ pr.vendor or '' }}"></div>
-        <div class="field"><label data-i18n="proc.payment_l">Payment condition</label>
-          <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}" {{ 'selected' if pr.payment_condition==p }}>{{ p }}</option>{% endfor %}</select></div>
         {#- VAT is back by owner's request (2026-11-23): Yes = the company 14%.
             An unpriced request starts at Yes; a priced one keeps what it has.
             The rate feeds egp_commitment(), which is tax-inclusive on purpose. -#}
@@ -838,33 +838,33 @@
             <option value="14" {{ 'selected' if cur_vat == 14 }}>VAT 14%</option>
             {% if cur_vat and cur_vat != 14 %}<option value="{{ '%g'|format(cur_vat) }}" selected>VAT {{ '%g'|format(cur_vat) }}%</option>{% endif %}
           </select></div>
+        <div class="field pf-wide"><label data-i18n="proc.vendor_l">Vendor</label>
+          <input name="vendor" autocomplete="off" value="{{ pr.vendor or '' }}"></div>
+        <div class="field pf-wide"><label data-i18n="proc.payment_l">Payment condition</label>
+          <select name="payment_condition"><option value=""></option>{% for p in payments %}<option value="{{ p }}" {{ 'selected' if pr.payment_condition==p }}>{{ p }}</option>{% endfor %}</select></div>
         {#- On the subtotal AFTER the line discounts, before VAT. -#}
-        <div class="field"><label data-i18n="proc.disc.total">Total discount</label>
+        <div class="field pf-hd"><label data-i18n="proc.disc.total">Total discount</label>
           {% set hq = chosen_q if (chosen_q and not pr.disc_value) else None %}
           {{ disc_inputs('disc_type', 'disc_value', pr.disc_type if pr.disc_value else (hq.disc_type if hq else None),
                          pr.disc_value or (hq.disc_value if hq else None), 'pf-hdisc') }}</div>
-      </div>
-      {#- Foreign currency: the rate is asked for right here, next to the
-          currency, and the EGP equivalent is worked out as it is typed. The box
-          is disabled (so not posted) while the currency is EGP. -#}
-      <div class="grid cols-4 mt-3" id="pfFxRow">
-        <div class="field"><label><span data-i18n="proc.fx.rate_input">FX rate to EGP</span>
+        {#- Foreign currency: the rate is asked for right here, next to the
+            currency, and the EGP equivalent is worked out as it is typed. The box
+            is disabled (so not posted) while the currency is EGP. -#}
+        <div class="field pf-fx" id="pfFxRow"><label><span data-i18n="proc.fx.rate_input">FX rate to EGP</span>
           (1 <span id="pfCur">{{ pr.currency }}</span> = ? EGP)</label>
           <input type="number" name="fx_rate" id="pfFx" min="0" step="any" inputmode="decimal"
                  value="{{ '%g'|format(pr.fx_rate) if pr.fx_rate and pr.fx_rate != 1 else '' }}"></div>
-        <div class="field"><label data-i18n="proc.fx.egp_equiv">EGP equivalent</label>
-          <output id="pfEgp" class="input" style="display:block;font-weight:700;font-variant-numeric:tabular-nums">—</output></div>
       </div>
-      <div class="flex gap wrap mt-3" style="font-size:13px;font-variant-numeric:tabular-nums" id="pfTotals">
-        <span><span class="muted" data-i18n="proc.disc.gross">Gross</span>: <b id="pfGross">0</b></span>
-        <span><span class="muted" data-i18n="proc.disc.label">Discount</span>: <b id="pfDisc">0</b></span>
-        <span><span class="muted" data-i18n="proc.disc.net">Net</span>: <b id="pfSub">0</b></span>
-        <span><span class="muted" data-i18n="proc.vat_l">VAT</span>: <b id="pfTax">0</b></span>
-        <span><span class="muted" data-i18n="proc.after_vat">After VAT</span>: <b id="pfGrand">0</b></span>
+      <dl class="pf-sum" id="pfTotals" aria-live="polite">
+        <div><dt data-i18n="proc.disc.gross">Gross</dt><dd id="pfGross">0</dd></div>
+        <div class="pf-sum-off" id="pfDiscRow"><dt data-i18n="proc.disc.label">Discount</dt><dd id="pfDisc">0</dd></div>
+        <div><dt data-i18n="proc.disc.net">Net</dt><dd id="pfSub">0</dd></div>
+        <div><dt data-i18n="proc.vat_l">VAT</dt><dd id="pfTax">0</dd></div>
+        <div class="pf-sum-grand"><dt data-i18n="proc.after_vat">After VAT</dt><dd id="pfGrand">0</dd></div>
+        <div class="pf-sum-egp" id="pfEgpRow"><dt data-i18n="proc.fx.egp_equiv">EGP equivalent</dt><dd id="pfEgp">—</dd></div>
+      </dl>
       </div>
-      <div>
-      </div>
-      <div class="flex gap wrap mt-3">
+      <div class="pf-actions">
         <button class="btn btn-primary" type="submit">
           <svg class="ico"><use href="#i-check"></use></svg>
           <span data-i18n="proc.save_pricing">Save pricing</span></button>
@@ -888,18 +888,24 @@
             var td = document.querySelector('[data-pf-line="' + el.dataset.line + '"]');
             var d = td ? off(g, td.querySelector("select").value, td.querySelector("input").value) : 0;
             gross += g; after += g - d;
+            var go = document.querySelector('[data-gross-for="' + el.dataset.line + '"]');
+            if (go) go.textContent = g ? "\u2066\u00d7 " + el.dataset.qty + " = " + n(g) + "\u2069" : "";
+            var oo = document.querySelector('[data-off-for="' + el.dataset.line + '"]');
+            if (oo) oo.textContent = d ? "\u2066\u2212" + n(d) + " \u2192 " + n(g - d) + "\u2069" : "";
           });
           var hd = document.querySelector(".pf-hdisc[name=disc_value]");
           var sub = after - (hd ? off(after, document.querySelector(".pf-hdisc[name=disc_type]").value, hd.value) : 0);
           var rate = parseFloat(vat.value) || 0, tax = sub * rate / 100, grand = sub + tax;
           var c = cur.value, foreign = c && c !== "EGP";
           document.getElementById("pfGross").textContent = n(gross) + " " + c;
-          document.getElementById("pfDisc").textContent = n(gross - sub) + " " + c;
+          document.getElementById("pfDisc").textContent = "\u2066\u2212" + n(gross - sub) + " " + c + "\u2069";
+          document.getElementById("pfDiscRow").hidden = !(gross - sub > 0.004);
           document.getElementById("pfSub").textContent = n(sub) + " " + c;
           document.getElementById("pfTax").textContent = n(tax) + " " + c;
           document.getElementById("pfGrand").textContent = n(grand) + " " + c;
           document.getElementById("pfCur").textContent = c;
           document.getElementById("pfFxRow").hidden = !foreign;
+          document.getElementById("pfEgpRow").hidden = !foreign;
           fx.disabled = !foreign; fx.required = foreign;
           var r = parseFloat(fx.value) || 0;
           document.getElementById("pfEgp").textContent = foreign && r > 0 ? n(grand * r) + " EGP" : "\u2014";
