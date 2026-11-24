@@ -238,7 +238,7 @@ def run():
             pre1 and pre1.group(1))
 
         print("\n6c. a chosen quote in another currency is not pre-filled")
-        ok, why = svc.add_quote(pr_id, {"vendor": "FxCo", "currency": "USD",
+        ok, why = svc.add_quote(pr_id, {"vendor": "FxCo", "currency": "USD", "fx_rate": "50",
                                         "payment_terms": "Cash", "lines": {i1: "2"}}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK")
         fx = one("SELECT * FROM pr_quotes WHERE pr_id=? AND vendor='FxCo'", pr_id)
         svc.choose_quote(pr_id, fx["id"], buyer)

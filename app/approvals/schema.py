@@ -696,6 +696,9 @@ _QUOTE_MIGRATIONS = [
     ("disc_type", "ALTER TABLE pr_quote_lines ADD COLUMN disc_type TEXT"),
     ("disc_value", "ALTER TABLE pr_quote_lines ADD COLUMN disc_value REAL"),
     ("disc_amount", "ALTER TABLE pr_quote_lines ADD COLUMN disc_amount REAL"),
+    # EGP per 1 unit of a foreign quotation's currency (NULL for EGP and for
+    # rows recorded before it): ranks mixed currencies and travels to the request.
+    ("fx_rate", "ALTER TABLE pr_quotes ADD COLUMN fx_rate REAL"),
 ]
 
 # Columns added to pr_invoices / pr_payments after first release: WHICH purchase

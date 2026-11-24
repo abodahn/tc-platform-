@@ -1568,7 +1568,8 @@ def add_quote(pr_id):
         return redirect(url_for("approvals.detail", pr_id=pr_id))
     ok, code = svc.add_quote(pr_id, {
         "vendor": f.get("vendor", "").strip(), "amount": f.get("amount"),
-        "currency": f.get("currency", "EGP"), "lead_time_days": f.get("lead_time_days"),
+        "currency": f.get("currency", "EGP"), "fx_rate": f.get("fx_rate"),
+        "lead_time_days": f.get("lead_time_days"),
         "warranty": f.get("warranty", "").strip(), "notes": f.get("notes", "").strip(),
         "payment_terms": f.get("payment_terms", "").strip(),
         "vat_applies": f.get("vat_applies", "1"),
@@ -1598,15 +1599,31 @@ def choose_quote(pr_id, quote_id):
     if ok2:
         flash("Quote selected — its prices and VAT are now the request's prices.", "success")
     else:
-        flash({"no_lines": "Quote selected. It has no per-item prices, so enter each "
-                           "line's price in Pricing.",
-               "fx_required": "Quote selected. It is in a foreign currency: enter the "
-                              "EGP exchange rate in Pricing, then save to apply its prices.",
-               "demand_rungs_pending": "Quote selected. Its prices will apply once the "
-                                       "warehouse has checked the request — save Pricing then."}
-              .get(msg2, "Quote selected, but its prices were not applied. Enter "
-                         "them in Pricing."), "warning")
+        flash("Quote selected.", "success")
+        _flash_not_applied(msg2)
     return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+def _flash_not_applied(msg):
+    """Why the chosen quotation's prices did not reach the request. A foreign
+    quote with no rate is an ERROR, not a hint: the request keeps a value that
+    is not the order, and Purchasing cannot sign it off until this is fixed."""
+    flash({"no_lines": "Its prices were not applied: it has no per-item prices, so "
+                       "enter each line's price in Pricing.",
+           "quote_fx_required": "Its prices were NOT applied: the quotation is in a "
+                                "foreign currency and has no FX rate to EGP. Edit the "
+                                "quotation and enter its FX rate — Purchasing cannot "
+                                "sign the request off until then.",
+           "fx_required": "Its prices were NOT applied: the quotation is in a "
+                          "foreign currency and has no FX rate to EGP. Edit the "
+                          "quotation and enter its FX rate — Purchasing cannot "
+                          "sign the request off until then.",
+           "bad_currency": "Its prices were NOT applied: the quotation's currency is "
+                           "not recognised. Edit the quotation and choose its currency.",
+           "demand_rungs_pending": "Its prices will apply once the warehouse has "
+                                   "checked the request — save the quotation again then."}
+          .get(msg, "Its prices were not applied. Enter them in Pricing."),
+          "error" if msg in ("quote_fx_required", "fx_required", "bad_currency") else "warning")
 
 
 # --- editing an RFQ and the quotations against it (spec §4 and §5) ----------
@@ -1625,8 +1642,10 @@ _RFQ_ERRORS = {
     "unavailable": "Requests for quotation are not available on this database yet.",
 }
 _QUOTE_ERRORS = {
-    "chosen": "This is the chosen quotation. Choose another one first, then edit "
-              "or remove this.",
+    "chosen": "This is the chosen quotation. Choose another one first, then "
+              "remove this.",
+    "bad_currency": "Choose the quotation's currency from the list.",
+    "quote_fx_required": "Enter the FX rate to EGP for a quotation in a foreign currency.",
     "locked": "This request is already approved, ordered, closed or cancelled.",
     "bad_amount": "Enter the quoted amount as a positive number.",
     "terms_required": "Enter the payment terms the supplier is offering.",
@@ -1658,7 +1677,7 @@ def edit_rfq(pr_id, rfq_id):
 @permission_required("proc_purchasing")
 def edit_quote(pr_id, quote_id):
     f = request.form
-    data = {k: f.get(k) for k in ("vendor", "amount", "currency", "lead_time_days",
+    data = {k: f.get(k) for k in ("vendor", "amount", "currency", "fx_rate", "lead_time_days",
                                   "warranty", "notes", "payment_terms", "vat_applies")
             if k in f}
     bundle = svc.get_pr(pr_id)
@@ -1676,13 +1695,16 @@ def edit_quote(pr_id, quote_id):
     flash(("No change." if msg == "no_change" else "Quotation updated.")
           if ok else _QUOTE_ERRORS.get(msg, "Could not update the quotation (%s)." % msg),
           "success" if ok else "error")
-    # Filing the document of the CHOSEN quote (chosen before files were
-    # required, or before its prices flowed onto the request): bring the
-    # request's prices and VAT in line with it now.
-    chosen = ok and b64 and bundle and any(
+    # Any save of the CHOSEN quotation (a correction, its FX rate, or its file
+    # filed late) is re-applied: the request carries its prices, VAT and currency.
+    chosen = ok and bundle and any(
         q.get("id") == quote_id and q.get("is_chosen") for q in bundle.get("quotes") or [])
-    if chosen and svc.apply_chosen_quote(pr_id, quote_id, _u(), ip=_ip())[0]:
-        flash("Quote selected — its prices and VAT are now the request's prices.", "success")
+    if chosen:
+        ok2, msg2 = svc.apply_chosen_quote(pr_id, quote_id, _u(), ip=_ip())
+        if ok2:
+            flash("Quote selected — its prices and VAT are now the request's prices.", "success")
+        else:
+            _flash_not_applied(msg2)
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
@@ -2049,6 +2071,10 @@ def approve(pr_id):
                "chosen_quote_no_file": "The chosen quotation has no supplier file. "
                                        "Attach it in the Vendor quotes panel before "
                                        "approving.",
+               "chosen_quote_not_applied": "The chosen quotation's prices are not on the "
+                                           "request: it is in another currency. Edit the "
+                                           "chosen quotation, check its currency and FX "
+                                           "rate to EGP, and save it — then approve.",
                "self_approval": "You cannot approve your own request — raising it is "
                                 "your signature.",
                "dual_role": "You already signed another stage of this request — a "

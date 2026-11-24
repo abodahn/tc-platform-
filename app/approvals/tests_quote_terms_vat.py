@@ -177,9 +177,10 @@ def run():
             g is not None and g["vat_applies"] == 1 and g["payment_terms"] == "30 days")
         html = cli.get("/procurement/pr/%d" % pr_id).get_data(as_text=True)
         chk("the page shows its before-VAT, VAT and after-VAT cells",
-            re.search(r'text-align:end">5,000 EGP</td>', html)
-            and re.search(r'text-align:end">700</td>', html)
-            and re.search(r'font-weight:600">5,700 EGP</td>', html))
+            re.search(r'proc.quote.before_vat">Before VAT</span><bdi>5,000 EGP</bdi>', html)
+            and re.search(r'proc.quote.vat">VAT</span><bdi>700</bdi>', html)
+            and re.search(r'qt-strong"><span class="qt-lbl" data-i18n="proc.quote.after_vat">'
+                          r'After VAT</span><bdi>5,700 EGP</bdi>', html))
 
         r = cli.post("/procurement/pr/%d/rfq" % pr_id,
                      data={"_csrf": "tok", "vendors": "Delta"})

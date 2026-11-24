@@ -59,6 +59,86 @@
 </span>
 {% endmacro %}
 
+{#- The add / edit quotation form body, in four groups: supplier & terms, price,
+    per-item prices, file. Labels above controls. `q` = the quotation being
+    edited, None on the add form. The currency is a list (CURRENCIES); a foreign
+    one asks for its rate to EGP, and the after-VAT / EGP read-outs are a live
+    preview only: the server recomputes and validates everything. -#}
+{% macro quote_fields(q=None) %}
+{% set qcur = q.currency if q else 'EGP' %}
+<fieldset class="qf-grp">
+  <legend data-i18n="proc.quote.grp_supplier">Supplier &amp; terms</legend>
+  <div class="qf-grid">
+    <div class="field qf-wide"><label data-i18n="proc.vendor_l">Vendor</label>
+      <input name="vendor" list="vlist" autocomplete="off" dir="auto"
+             {%- if q %} value="{{ q.vendor or '' }}"{% else %} required data-terms-for="quote"{% endif %}></div>
+    <div class="field qf-wide"><label data-i18n="proc.quote.terms_l">Payment terms offered *</label>
+      <input name="payment_terms" list="payTerms" required maxlength="120" autocomplete="off" dir="auto"
+             value="{{ (q.payment_terms or '') if q else '' }}"></div>
+    <div class="field"><label data-i18n="proc.lead_days">Lead days</label>
+      <input name="lead_time_days" type="number" min="0" inputmode="numeric"
+             value="{{ (q.lead_time_days or '') if q else '' }}"></div>
+    <div class="field"><label data-i18n="proc.warranty">Warranty</label>
+      <input name="warranty" autocomplete="off" dir="auto" value="{{ (q.warranty or '') if q else '' }}"></div>
+    {% if not q and b.rfqs %}
+    <div class="field qf-wide"><label data-i18n="proc.rfq.answers">Answers RFQ</label>
+      <select name="rfq_id">
+        <option value="" data-i18n="proc.rfq.no_rfq">— not against an RFQ —</option>
+        {% for r in b.rfqs %}<option value="{{ r.id }}">{{ r.rfq_no }} · {{ r.vendor }}</option>{% endfor %}
+      </select></div>
+    {% endif %}
+  </div>
+</fieldset>
+<fieldset class="qf-grp">
+  <legend data-i18n="proc.quote.grp_price">Price</legend>
+  <div class="qf-grid">
+    <div class="field"><label data-i18n="proc.currency">Currency</label>
+      <select name="currency">
+        {#- A legacy code nobody recognises stays visible (and is refused on
+            save) rather than silently becoming EGP. -#}
+        {% if qcur not in currencies %}<option value="{{ qcur }}" selected>{{ qcur }}</option>{% endif %}
+        {% for c in currencies %}<option value="{{ c }}" {{ 'selected' if c == qcur }}>{{ c }}</option>{% endfor %}
+      </select></div>
+    <div class="field" data-qfx-row><label><span data-i18n="proc.fx.rate_input">FX rate to EGP</span>
+        <bdi dir="ltr" style="white-space:nowrap">(1 <span data-qcur>{{ qcur }}</span> = ? EGP)</bdi></label>
+      <input type="number" name="fx_rate" min="0" step="any" inputmode="decimal"
+             value="{{ '%g'|format(q.fx_rate) if q and q.fx_rate else '' }}"></div>
+    <div class="field"><label data-i18n="proc.quote.amount_ex">Amount before VAT</label>
+      <input name="amount" type="number" step="any" min="0" inputmode="decimal"
+             {%- if q %} value="{{ q.gross_amount or q.amount or 0 }}"{% endif %}></div>
+    {% if can_purchasing %}
+    <div class="field"><label data-i18n="proc.disc.quote">Quotation discount</label>
+      {{ disc_inputs('disc_type', 'disc_value', q.disc_type if q else None, q.disc_value if q else None, 'q-hdisc') }}</div>
+    {% endif %}
+    <div class="field"><label data-i18n="proc.quote.vat_q">Subject to 14% VAT</label>
+      <select name="vat_applies">
+        {#- An old row was never asked: keep it unknown until someone answers. -#}
+        {% if q and q.vat_applies not in (0, 1) %}<option value="" selected data-i18n="proc.quote.vat_unknown">Unknown</option>{% endif %}
+        <option value="1" {{ 'selected' if not q or q.vat_applies == 1 }} data-i18n="proc.quote.vat_yes">Yes</option>
+        <option value="0" {{ 'selected' if q and q.vat_applies == 0 }} data-i18n="proc.quote.vat_no">No</option>
+      </select></div>
+    <dl class="pf-sum qf-sum" aria-live="polite">
+      <div class="pf-sum-grand"><dt data-i18n="proc.quote.after_vat">After VAT</dt><dd data-vat-out>—</dd></div>
+      <div class="pf-sum-egp" data-egp-row><dt data-i18n="proc.fx.egp_equiv">EGP equivalent</dt><dd data-egp-out>—</dd></div>
+    </dl>
+  </div>
+</fieldset>
+<fieldset class="qf-grp">
+  <legend data-i18n="proc.quote.grp_lines">Per-item prices</legend>
+  {{ quote_line_inputs(b['items'], q) }}
+</fieldset>
+<fieldset class="qf-grp">
+  <legend data-i18n="proc.quote.grp_file">File</legend>
+  <div class="field qf-file">
+    {% if q %}<label data-i18n="{{ 'proc.quote.replace_file' if q.has_file else 'proc.quote.attach_file' }}">{{ 'Replace file' if q.has_file else 'Attach file' }}</label>
+    <input type="file" name="file" style="max-width:100%" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv">
+    {% else %}<label data-i18n="proc.quote_file">Supplier's quotation file *</label>
+    <input type="file" name="file" required style="max-width:100%" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv">{% endif %}
+    <div class="muted qf-hint" data-i18n="proc.quote.file_hint">PDF, PNG, JPG, WEBP, XLSX or CSV, max 3 MB. Required: a quotation without the supplier's file cannot be chosen or counted.</div>
+  </div>
+</fieldset>
+{% endmacro %}
+
 {% macro item_history(it) %}
 <div class="muted" style="font-size:12px;display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
   {% if it.stock_days is not none %}
@@ -1907,485 +1987,6 @@
       </div>
     </div>
 
-    <!-- Vendor quote comparison -->
-    <div class="panel mt-4">
-      <div class="panel-head"><h3 data-i18n="proc.quotes">Vendor quotes</h3>
-        {% if money and quote_cmp and quote_cmp.saving %}
-        <span class="badge b-approved" data-i18n-title="proc.saving">▼ {{ '{:,.0f}'.format(quote_cmp.saving) }} {{ pr.currency }}</span>
-        {% endif %}
-        {#- Only quotations with the supplier's file count toward the rule. -#}
-        {% set n_filed = b.quotes|selectattr('has_file')|list|length %}
-        {% if rfq_required %}
-        <span class="badge {{ 'b-approved' if (rfq_have >= rfq_min or pr.single_source_reason) else 'b-warning' }}">
-          <span data-i18n="proc.rfq.quotes_label">Quotes:</span> {{ rfq_have }}
-          <span data-i18n="proc.rfq.of_required">of</span> {{ rfq_min }}
-          <span data-i18n="proc.rfq.for_value">required for this value (VAT incl.)</span>
-          {% if money %}{{ '{:,.0f}'.format(rfq_value) }} EGP{% endif %}
-        </span>
-        {% if rfq_have < rfq_min and not pr.single_source_reason %}
-        <div class="muted" style="font-size:12.5px;margin-top:4px;flex-basis:100%"
-             data-i18n="proc.rfq.count_rule">Only quotations from different suppliers, each with its file attached, are counted.</div>
-        {% endif %}
-        {% endif %}
-      </div>
-      <div class="panel-pad">
-        {% if b.quotes %}
-        {#- Amount is stored BEFORE VAT; quotes are ranked on the after-VAT
-            figure (q.after_vat) so a VAT-free price is compared fairly. Rows
-            older than the VAT question show the bare amount and dashes. -#}
-        <div class="tbl-wrap" style="margin-bottom:12px;container-type:inline-size">
-        <table class="tbl">
-          <thead><tr>
-            <th data-i18n="proc.vendor_l">Vendor</th>
-            <th style="text-align:end" data-i18n="proc.quote.before_vat">Before VAT</th>
-            <th style="text-align:end" data-i18n="proc.quote.vat">VAT</th>
-            <th style="text-align:end" data-i18n="proc.quote.after_vat">After VAT</th>
-            <th data-i18n="proc.quote.terms">Payment terms</th>
-            <th data-i18n="proc.lead">Lead</th>
-            <th></th>
-          </tr></thead>
-          <tbody>
-          {% for q in b.quotes %}
-            <tr style="{{ 'background:var(--ok-bg)' if q.is_chosen else '' }}">
-              <td><div style="font-weight:600">{{ q.vendor }}
-                  {% if money and q.after_vat == quote_cmp.lowest %}<span class="tag" style="color:var(--ok)">lowest</span>{% endif %}
-                  {% if q.is_chosen %}<span class="badge b-approved">✓ chosen</span>{% endif %}
-                  {% if q.partial %}<span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span>{% endif %}</div>
-                  {% if q.warranty %}<div class="muted" style="font-size:11.5px">{{ q.warranty }}</div>{% endif %}
-                  {% if q.rfq_id %}<div class="muted" style="font-size:11.5px">↩ {{ b.rfqs|selectattr('id','equalto',q.rfq_id)|map(attribute='rfq_no')|first }}</div>{% endif %}
-                  {% if not q.has_file %}<div><span class="badge b-warning" data-i18n="proc.quote.no_file">No attachment</span></div>
-                  {% elif money %}<a class="tag" style="overflow-wrap:anywhere" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename or 'quote' }}</a>{% endif %}</td>
-              <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money %}{{ '{:,.0f}'.format(q.amount) }} {{ q.currency }}
-                {%- if q.disc_total %}<div class="muted" style="font-size:11.5px"><span data-i18n="proc.disc.label">Discount</span> −{{ '{:,.2f}'.format(q.disc_total) }}
-                  {%- if q.disc_type == 'pct' and q.disc_value and q.disc_total == q.disc_amount %} ({{ '%g'|format(q.disc_value) }}%){% endif %}</div>{% endif %}{% else %}—{% endif %}</td>
-
-              <td style="font-variant-numeric:tabular-nums;text-align:end">{% if money and q.vat_applies == 1 %}{{ '{:,.0f}'.format(q.after_vat - q.amount) }}{% elif money and q.vat_applies == 0 %}<span class="muted" data-i18n="proc.quote.no_vat">No VAT</span>{% else %}—{% endif %}</td>
-              <td style="font-variant-numeric:tabular-nums;text-align:end;font-weight:600">{% if money and q.vat_applies in (0, 1) %}{{ '{:,.0f}'.format(q.after_vat) }} {{ q.currency }}{% else %}—{% endif %}</td>
-              <td>{{ q.payment_terms or '—' }}</td>
-              <td class="muted">{{ (q.lead_time_days ~ 'd') if q.lead_time_days else '—' }}</td>
-              <td style="text-align:end">
-                {% if can_purchasing and not q.is_chosen %}
-                {% if q.has_file %}
-                <form method="post" action="{{ url_for('approvals.choose_quote', pr_id=pr.id, quote_id=q.id) }}" style="display:inline">
-                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-                  <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.choose">Choose</button>
-                </form>{% endif %}
-                {#- Removing a price that is no longer on the table. The CHOSEN
-                    quotation has neither control: it is what the ladder routed
-                    on and what the PO was raised from. Choose another first. -#}
-                <form method="post" style="display:inline"
-                      action="{{ url_for('approvals.delete_quote', pr_id=pr.id, quote_id=q.id) }}"
-                      onsubmit="return confirm((window.tcT &amp;&amp; window.tcT('proc.quote.remove_q')) || 'Remove this quotation?')">
-                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-                  <button class="btn btn-ghost btn-sm" type="submit"
-                          data-i18n="proc.quote.remove">Remove</button>
-                </form>{% endif %}
-              </td>
-            </tr>
-            {% if can_purchasing and not q.is_chosen %}
-            <tr><td colspan="7" style="padding-top:0">
-              <details style="position:sticky;inset-inline-start:0;max-width:calc(100vw - 72px);max-width:min(calc(100vw - 72px), calc(100cqw - 16px));white-space:normal">
-                <summary class="btn btn-ghost btn-sm" data-i18n="proc.quote.edit">Edit this quotation</summary>
-                <form method="post" style="margin-top:10px" data-vat-form enctype="multipart/form-data"
-                      action="{{ url_for('approvals.edit_quote', pr_id=pr.id, quote_id=q.id) }}">
-                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-                  <div class="flex gap wrap" style="gap:12px;align-items:flex-end">
-                    <label style="flex:1 1 180px">
-                      <span data-i18n="proc.vendor_l">Vendor</span>
-                      <input name="vendor" value="{{ q.vendor or '' }}"></label>
-                    <label style="flex:0 1 140px">
-                      <span data-i18n="proc.quote.amount_ex">Amount before VAT</span>
-                      <input name="amount" type="number" step="any" min="0" value="{{ q.gross_amount or q.amount or 0 }}"></label>
-                    <label style="flex:0 1 190px">
-                      <span data-i18n="proc.disc.quote">Quotation discount</span>
-                      {{ disc_inputs('disc_type', 'disc_value', q.disc_type, q.disc_value, 'q-hdisc') }}</label>
-                    <label style="flex:0 1 150px">
-                      <span data-i18n="proc.quote.vat_q">Subject to 14% VAT</span>
-                      <select name="vat_applies">
-                        {#- An old row was never asked: keep it unknown until someone answers. -#}
-                        {% if q.vat_applies not in (0, 1) %}<option value="" selected data-i18n="proc.quote.vat_unknown">Unknown</option>{% endif %}
-                        <option value="1" {{ 'selected' if q.vat_applies == 1 }} data-i18n="proc.quote.vat_yes">Yes</option>
-                        <option value="0" {{ 'selected' if q.vat_applies == 0 }} data-i18n="proc.quote.vat_no">No</option>
-                      </select></label>
-                    <label style="flex:1 1 180px">
-                      <span data-i18n="proc.quote.terms_l">Payment terms offered *</span>
-                      <input name="payment_terms" list="payTerms" required maxlength="120"
-                             autocomplete="off" value="{{ q.payment_terms or '' }}"></label>
-                    <label style="flex:0 1 100px">
-                      <span data-i18n="proc.currency">Currency</span>
-                      <input name="currency" value="{{ q.currency or 'EGP' }}"></label>
-                    <label style="flex:0 1 120px">
-                      <span data-i18n="proc.lead_days">Lead days</span>
-                      <input name="lead_time_days" type="number" min="0" value="{{ q.lead_time_days or '' }}"></label>
-                    <label style="flex:1 1 160px">
-                      <span data-i18n="proc.warranty">Warranty</span>
-                      <input name="warranty" value="{{ q.warranty or '' }}"></label>
-                    <label style="flex:1 1 200px;min-width:0">
-                      <span data-i18n="{{ 'proc.quote.replace_file' if q.has_file else 'proc.quote.attach_file' }}">{{ 'Replace file' if q.has_file else 'Attach file' }}</span>
-                      <input type="file" name="file" style="max-width:100%"
-                             accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv"></label>
-                  </div>
-                  <div class="muted" style="font-size:12px;margin-top:4px" data-i18n="proc.quote.file_hint">PDF, PNG, JPG, WEBP, XLSX or CSV, max 3 MB. Required: a quotation without the supplier's file cannot be chosen or counted.</div>
-                  <div style="margin-top:10px">{{ quote_line_inputs(b['items'], q) }}</div>
-                  <div class="muted" style="margin-top:8px"><span data-i18n="proc.quote.after_vat">After VAT</span>:
-                    <b data-vat-out></b></div>
-                  <button class="btn btn-sm" style="margin-top:10px" data-i18n="proc.save">Save</button>
-                </form>
-              </details>
-            </td></tr>
-            {% elif can_purchasing and not q.has_file and not rfq_locked %}
-            {#- A chosen quotation from before files were required: attach only. -#}
-            <tr><td colspan="7" style="padding-top:0">
-              <form method="post" enctype="multipart/form-data" class="flex gap wrap" style="gap:8px;align-items:center"
-                    action="{{ url_for('approvals.edit_quote', pr_id=pr.id, quote_id=q.id) }}">
-                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-                <input type="file" name="file" required style="max-width:100%" title="Attach file" data-i18n-title="proc.quote.attach_file"
-                       accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv">
-                <button class="btn btn-sm" data-i18n="proc.quote.attach_file">Attach file</button>
-              </form>
-            </td></tr>
-            {% endif %}
-          {% endfor %}
-          </tbody>
-        </table>
-        </div>
-        {#- Price per item: rows = request lines, columns = the quotes that carry
-            line prices. The lowest unit price on a line is highlighted (ties
-            too). Deliberately show_commercial, not the `money` flag the quote
-            totals use: money_view is true for the requester/warehouse on an
-            unpriced request, and unit prices must stay hidden from them until
-            Purchasing has priced it (same rule as the request's unit prices). -#}
-        {% if show_commercial and quote_matrix %}
-        <h4 style="margin:4px 0 6px" data-i18n="proc.quote.matrix">Price per item</h4>
-        <div class="tbl-wrap" style="margin-bottom:12px">
-        <table class="tbl">
-          <thead><tr>
-            <th data-i18n="proc.item">Item</th>
-            {% for q in quote_matrix.quotes %}
-            <th style="text-align:end">{{ q.vendor }}
-              {% if q.partial %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span></div>{% endif %}
-              {% if not q.has_file %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.no_file">No attachment</span></div>{% endif %}
-              {% if q.stale %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.stale">Request lines changed, totals recalculated</span></div>{% endif %}</th>
-            {% endfor %}
-          </tr></thead>
-          <tbody>
-          {% for r in quote_matrix.rows %}
-            <tr>
-              <td><div style="font-weight:600">{{ r.item.item }}</div>
-                <div class="muted" style="font-size:11.5px">{{ '%g'|format(r.item.qty or 0) }} {{ r.item.unit or '' }}</div></td>
-              {% for c in r.cells %}
-              <td style="text-align:end;font-variant-numeric:tabular-nums{{ ';background:var(--ok-bg)' if c and c.best }}">
-                {% if c %}
-                <div style="{{ 'font-weight:700;color:var(--ok)' if c.best }}">{% if c.best %}<span data-i18n-title="proc.quote.lowest_item" title="Lowest unit price">▼</span> {% endif %}{{ '{:,.2f}'.format(c.net_unit if c.net_unit is defined else c.unit_price) }}</div>
-                {% if c.net_unit is defined and c.net_unit != c.unit_price %}<div class="muted" style="font-size:11.5px"><span data-i18n="proc.unit_price">Unit price</span> {{ '{:,.2f}'.format(c.unit_price) }}{% if c.disc_amount %} · <span data-i18n="proc.disc.label">Discount</span> −{{ '{:,.2f}'.format(c.disc_amount) }}{% endif %}</div>{% endif %}
-
-                <div class="muted" style="font-size:11.5px">{{ '{:,.2f}'.format(c.line_total) }}</div>
-                {% else %}<span class="muted" data-i18n-title="proc.quote.not_quoted" title="Not quoted">—</span>{% endif %}
-              </td>
-              {% endfor %}
-            </tr>
-          {% endfor %}
-          </tbody>
-          <tfoot>
-            <tr><th data-i18n="proc.quote.before_vat">Before VAT</th>
-              {% for q in quote_matrix.quotes %}<th style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(q.amount or 0) }} {{ q.currency }}</th>{% endfor %}</tr>
-            <tr><th data-i18n="proc.quote.after_vat">After VAT</th>
-              {% for q in quote_matrix.quotes %}<th style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(q.after_vat) }} {{ q.currency }}</th>{% endfor %}</tr>
-          </tfoot>
-        </table>
-        </div>
-        {% endif %}
-        {% else %}
-        <div class="muted" style="margin-bottom:12px" data-i18n="proc.no_quotes2">Add competing quotes to compare vendors.</div>
-        {% endif %}
-        {# DOAM §4.4 — how far this order departs from plan. Only rendered when
-           something actually deviates, or when a line could not be graded. #}
-        {% if deviation %}
-        <div class="mt-2" style="margin-bottom:12px">
-          {# DOAM §3.4 / Table 11 — T&C-PUF-10 Coverage Check. What is already on
-             the shelf and already on order, netted off what was asked for. #}
-          {% if deviation.coverage or deviation.coverage_blind %}
-          <b data-i18n="proc.cov_title">Coverage check</b>
-          <div class="muted" style="font-size:12.5px" data-i18n="proc.cov_why">
-            Procurement quantity is capped at the net requirement after inventory netting (§3.4).</div>
-          {% if deviation.coverage %}
-          <table class="tbl mt-2">
-            <thead><tr>
-              <th data-i18n="proc.item">Item</th>
-              <th style="text-align:end" data-i18n="proc.cov_req">Requested</th>
-              <th style="text-align:end" data-i18n="proc.cov_hand">On hand</th>
-              <th style="text-align:end" data-i18n="proc.cov_order">On order</th>
-              <th style="text-align:end" data-i18n="proc.cov_need">Net need</th>
-              <th style="text-align:end" data-i18n="proc.cov_excess">Excess</th>
-            </tr></thead>
-            <tbody>
-            {% for l in deviation.coverage %}
-              <tr>
-                <td>{{ l.item }}{% if l.coverage.by_name %}
-                  <span class="muted" style="font-size:12px" data-i18n="proc.cov_byname">matched by name</span>{% endif %}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.qty) }}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.on_hand) }}{% if l.coverage.reserved %}
-                  <span class="muted" data-i18n="proc.cov_reserved">reserved</span> {{ '{:,.6g}'.format(l.coverage.reserved) }}{% endif %}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.on_order) }}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.net_need) }}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums;color:{{ 'var(--crit)' if l.over_plan else 'inherit' }}">
-                  {{ '{:,.6g}'.format(l.coverage.excess) if l.over_plan else '—' }}</td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-          {% endif %}
-          {% if deviation.coverage_blind %}
-          <div class="muted mt-2" style="font-size:12.5px" data-i18n="proc.cov_blind">
-            Some lines carry no stock record, so their requirement could not be netted — they are reported, not assumed covered.</div>
-          {% endif %}
-          {% endif %}
-          {% if deviation.off_plan %}
-          <b class="{{ 'mt-3' if (deviation.coverage or deviation.coverage_blind) else '' }}"
-             style="display:inline-block" data-i18n="proc.dev_title">Deviation from plan</b>
-          <table class="tbl mt-2">
-            <thead><tr>
-              <th data-i18n="proc.item">Item</th>
-              <th style="text-align:end" data-i18n="proc.dev_price">Price</th>
-              <th style="text-align:end" data-i18n="proc.dev_target">Target</th>
-              <th style="text-align:end" data-i18n="proc.dev_over">Over</th>
-              <th data-i18n="proc.dev_grade">Grade</th>
-            </tr></thead>
-            <tbody>
-            {% for l in deviation.off_plan %}
-              <tr>
-                <td>{{ l.item }}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums">{% if show_commercial %}{{ '{:,.2f}'.format(l.unit_price) }}{% else %}—{% endif %}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums">{% if show_commercial %}{{ '{:,.2f}'.format(l.target) if l.target else '—' }}{% else %}—{% endif %}</td>
-                <td style="text-align:end;font-variant-numeric:tabular-nums;color:{{ 'var(--crit)' if (l.pct_over or 0) > 15 else 'var(--warn)' }}">
-                  {% if show_commercial %}{{ '+{:.1f}%'.format(l.pct_over) if l.pct_over else '—' }}{% else %}—{% endif %}</td>
-                <td><span class="tag" data-i18n="proc.dev_{{ l.grade }}">{{ l.grade|replace('_',' ') }}</span></td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-          {% endif %}
-          {% if deviation.stages %}
-          <div class="muted mt-2" style="font-size:12.5px">
-            <span data-i18n="proc.dev_extra">Extra approvals required by §4.4</span>:
-            <b>{{ deviation.stages|map('replace','_',' ')|join(', ')|title }}</b>
-          </div>
-          {% endif %}
-          {% if deviation.unassessable %}
-          <div class="muted mt-2" style="font-size:12.5px" data-i18n="proc.dev_blind">
-            {{ deviation.unassessable }} line(s) have no target price or stock ceiling on file, so they could not be graded.
-          </div>
-          {% endif %}
-          {# DOAM §4.4 / T&C-PUF-12 — the memo the extra approvers are meant to
-             read. Purchasing cannot sign the request off without it. #}
-          {% if deviation.memo %}
-          <div class="mt-3">
-            {% if pr.deviation_memo %}
-              <span class="badge b-live" data-i18n="proc.memo_ok">Justification memo recorded</span>
-              <div class="mt-1" style="white-space:pre-wrap">{{ pr.deviation_memo }}</div>
-            {% else %}
-              <span class="badge b-critical" data-i18n="proc.memo_req">Justification memo required (§4.4)</span>
-            {% endif %}
-            {% if can_purchasing and not rfq_locked %}
-            <form method="post" action="{{ url_for('approvals.doam_doc', pr_id=pr.id) }}" class="mt-2">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <input type="hidden" name="field" value="deviation_memo">
-              <textarea name="text" rows="3" style="width:100%"
-                        placeholder="Why this order departs from plan, and why it should still be placed."
-                        data-i18n-ph="proc.memo_ph">{{ pr.deviation_memo or '' }}</textarea>
-              <button class="btn btn-ghost btn-sm mt-2" type="submit" data-i18n="proc.memo_save">Save memo</button>
-            </form>
-            {% endif %}
-          </div>
-          {% endif %}
-        </div>
-        {% endif %}
-
-        {# DOAM §4.1 tier 7 / §4.2 tier 4 — above 10,000,000 EGP a written business
-           case is required (the Board rung is retired; the CEO signs last). Only rendered once the request is that
-           big, which is almost never. #}
-        {% if business_case_required %}
-        <div class="mt-2" style="margin-bottom:12px">
-          {% if pr.business_case %}
-            <span class="badge b-live" data-i18n="proc.bcase_ok">Business case recorded</span>
-            <div class="mt-1" style="white-space:pre-wrap">{{ pr.business_case }}</div>
-          {% else %}
-            <span class="badge b-critical" data-i18n="proc.bcase_req">Business case required above 10,000,000 EGP</span>
-          {% endif %}
-          {% if can_purchasing and not rfq_locked %}
-          <form method="post" action="{{ url_for('approvals.doam_doc', pr_id=pr.id) }}" class="mt-2">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <input type="hidden" name="field" value="business_case">
-            <textarea name="text" rows="4" style="width:100%"
-                      placeholder="The need, the options considered, the return, and the consequence of not proceeding."
-                      data-i18n-ph="proc.bcase_ph">{{ pr.business_case or '' }}</textarea>
-            <button class="btn btn-ghost btn-sm mt-2" type="submit" data-i18n="proc.bcase_save">Save business case</button>
-          </form>
-          {% endif %}
-        </div>
-        {% endif %}
-
-        {# DOAM §6 — the engineering justification. Only rendered when the request
-           actually needs one; a picker on an IT stationery order is noise. #}
-        {% if ejr_required %}
-        <div class="mt-2" style="margin-bottom:12px">
-          {% if ejr_row and ejr_row.status == 'approved' %}
-            <span class="badge b-live" data-i18n="proc.ejr.ok">Engineering justification</span>
-            <a href="/maintenance/justifications/{{ ejr_row.id }}"><b>{{ ejr_row.ejr_no }}</b></a>
-            <span class="muted">· {{ (ejr_row.request_type or '')|replace('_',' ') }}
-              · <span data-i18n="m.ejr_decided_by">Signed by</span> {{ ejr_row.decided_by }}</span>
-          {% else %}
-            <span class="badge {{ 'b-critical' if ejr_gate_on else 'b-warning' }}"
-                  data-i18n="proc.ejr.missing">Engineering justification required</span>
-            <div class="muted mt-1" data-i18n="proc.ejr.why">
-              Spares, maintenance and workshop requests need an Engineering Head signature
-              before Procurement accepts them, at any value.</div>
-            {% if can_purchasing and not rfq_locked %}
-              {% if ejr_choices %}
-              <form method="post" action="{{ url_for('approvals.attach_ejr', pr_id=pr.id) }}"
-                    class="flex gap center mt-2 wrap">
-                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-                <select name="ejr_id" required style="min-width:260px">
-                  <option value="" data-i18n="m.ejr_pick">Choose an approved report…</option>
-                  {% for j in ejr_choices %}
-                  <option value="{{ j.id }}">{{ j.ejr_no }} — {{ j.mcode or '—' }}
-                    ({{ (j.request_type or '')|replace('_',' ') }})</option>
-                  {% endfor %}
-                </select>
-                <button class="btn btn-primary btn-sm" type="submit"
-                        data-i18n="proc.ejr.attach">Cite this report</button>
-              </form>
-              {% else %}
-              <div class="mt-2">
-                <a class="btn btn-ghost btn-sm" href="/maintenance/justifications/new"
-                   data-i18n="proc.ejr.none">No approved report exists yet — raise one</a>
-              </div>
-              {% endif %}
-            {% endif %}
-          {% endif %}
-        </div>
-        {% endif %}
-
-        {% if pr.single_source_reason %}
-        <div class="muted" style="margin-bottom:12px">
-          <strong data-i18n="proc.rfq.single_source">Single-source justification</strong>: {{ pr.single_source_reason }}
-        </div>
-        {% endif %}
-        {% if can_purchasing and rfq_required and rfq_have < rfq_min and not rfq_locked %}
-        <details style="margin-bottom:12px">
-          <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.rfq.waive">Waive competitive quotes (single source)</summary>
-          <form method="post" action="{{ url_for('approvals.single_source', pr_id=pr.id) }}" class="mt-2">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <div class="field">
-              <label data-i18n="proc.rfq.reason_l">Justification (why only one vendor can supply this)</label>
-              <textarea name="reason" rows="2" required maxlength="1000">{{ pr.single_source_reason or '' }}</textarea>
-            </div>
-            <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.rfq.save">Save justification</button>
-          </form>
-        </details>
-        {% endif %}
-        {% if is_owner or can_purchasing %}
-        <details>
-          <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_quote">+ Add quote</summary>
-          <form method="post" action="{{ url_for('approvals.add_quote', pr_id=pr.id) }}" enctype="multipart/form-data" class="mt-2" data-vat-form>
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <div class="grid cols-2">
-              <div class="field"><label data-i18n="proc.vendor_l">Vendor</label><input name="vendor" list="vlist" required autocomplete="off" data-terms-for="quote"></div>
-              <div class="field"><label data-i18n="proc.quote.amount_ex">Amount before VAT</label><input name="amount" type="number" step="any" min="0"></div>
-              {% if can_purchasing %}
-              <div class="field"><label data-i18n="proc.disc.quote">Quotation discount</label>
-                {{ disc_inputs('disc_type', 'disc_value', None, None, 'q-hdisc') }}</div>
-              {% endif %}
-              <div class="field"><label data-i18n="proc.quote.vat_q">Subject to 14% VAT</label>
-                <select name="vat_applies">
-                  <option value="1" selected data-i18n="proc.quote.vat_yes">Yes</option>
-                  <option value="0" data-i18n="proc.quote.vat_no">No</option>
-                </select>
-                <div class="muted" style="margin-top:4px"><span data-i18n="proc.quote.after_vat">After VAT</span>:
-                  <b data-vat-out></b></div></div>
-              <div class="field"><label data-i18n="proc.quote.terms_l">Payment terms offered *</label>
-                <input name="payment_terms" list="payTerms" required maxlength="120" autocomplete="off"></div>
-              <div class="field"><label data-i18n="proc.lead">Lead time (days)</label><input name="lead_time_days" type="number" min="0"></div>
-              <div class="field"><label data-i18n="proc.warranty">Warranty</label><input name="warranty" autocomplete="off"></div>
-              {% if b.rfqs %}
-              <div class="field"><label data-i18n="proc.rfq.answers">Answers RFQ</label>
-                <select name="rfq_id">
-                  <option value="" data-i18n="proc.rfq.no_rfq">— not against an RFQ —</option>
-                  {% for r in b.rfqs %}<option value="{{ r.id }}">{{ r.rfq_no }} · {{ r.vendor }}</option>{% endfor %}
-                </select></div>
-              {% endif %}
-            </div>
-            {{ quote_line_inputs(b['items']) }}
-            <div class="field"><label data-i18n="proc.quote_file">Supplier's quotation file *</label><input type="file" name="file" required style="max-width:100%" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv">
-              <div class="muted" style="font-size:12px;margin-top:4px" data-i18n="proc.quote.file_hint">PDF, PNG, JPG, WEBP, XLSX or CSV, max 3 MB. Required: a quotation without the supplier's file cannot be chosen or counted.</div></div>
-            <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.add_quote">+ Add quote</button>
-          </form>
-          <datalist id="vlist">{% for v in (vendors or []) %}<option value="{{ v.name }}"></option>{% endfor %}</datalist>
-        </details>
-        {% endif %}
-        {#- Payment-term suggestions (free text allowed), the vendor master's own
-            terms as a prefill, and the live after-VAT figure on the quote forms.
-            Only for viewers who get one of those forms: vendor terms stay off
-            other viewers' pages. -#}
-        {% if is_owner or can_purchasing %}
-        <datalist id="payTerms">{% for t in (quote_terms or []) %}<option value="{{ t }}"></option>{% endfor %}</datalist>
-        <script>
-        (function () {
-          var R = {{ (vat_rate or 0.14)|tojson }}, VT = {{ (vendor_terms or {})|tojson }};
-          function prefill(box, name) {
-            if (box && !box.value) box.value = VT[(name || "").trim().toLowerCase()] || "";
-          }
-          document.querySelectorAll("form[data-vat-form]").forEach(function (f) {
-            var a = f.querySelector("[name=amount]"), v = f.querySelector("[name=vat_applies]"),
-                o = f.querySelector("[data-vat-out]"), vn = f.querySelector("[data-terms-for=quote]");
-            var ql = f.querySelectorAll("[data-qlines] input[data-qty]");
-            // Discount off a base, as services.disc_off: % (max 100) or a value (max the base).
-            function off(base, sel, box) {
-              var x = box ? parseFloat(box.value) || 0 : 0;
-              if (x <= 0) return 0;
-              return Math.round((sel && sel.value === "val" ? Math.min(x, base) : base * Math.min(x, 100) / 100) * 100) / 100;
-            }
-            function lines() {
-              var sum = 0, any = false;
-              ql.forEach(function (i) {
-                var tr = i.closest("tr"), u = parseFloat(i.value), out = tr.querySelector("[data-line-out]");
-                if (isNaN(u)) { out.textContent = "—"; return; }
-                var t = Math.round(u * parseFloat(i.dataset.qty) * 100) / 100;
-                t = Math.round((t - off(t, tr.querySelector("select.q-disc"), tr.querySelector("input.q-disc"))) * 100) / 100;
-                any = true; sum += t;
-                out.textContent = t.toLocaleString(undefined, {maximumFractionDigits: 2});
-              });
-              var so = f.querySelector("[data-lines-out]");
-              if (so) so.textContent = any ? sum.toLocaleString(undefined, {maximumFractionDigits: 2}) : "—";
-              a.readOnly = any;
-              if (any) a.value = Math.round(sum * 100) / 100;
-            }
-            function upd() {
-              if (ql.length) lines();
-              var n = parseFloat(a.value);
-              if (!isNaN(n)) n -= off(n, f.querySelector("select.q-hdisc"), f.querySelector("input.q-hdisc"));
-              o.textContent = isNaN(n) ? "—" : (v.value === "1" ? n * (1 + R) : n)
-                .toLocaleString(undefined, {maximumFractionDigits: 2});
-            }
-            f.addEventListener("input", upd); f.addEventListener("change", upd); upd();
-            if (vn) vn.addEventListener("change", function () {
-              prefill(f.querySelector("[name=payment_terms]"), vn.value); });
-          });
-          var rt = document.querySelector("[data-terms-for=rfq]");
-          if (rt) {
-            var pick = function () {
-              var c = rt.form.querySelector("[name=vendors]:checked"),
-                  o = rt.form.querySelector("[name=vendor_other]");
-              prefill(rt, c ? c.value : (o && o.value));
-            };
-            rt.form.addEventListener("change", pick); pick();
-          }
-        })();
-        </script>
-        {% endif %}
-      </div>
-    </div>
-
     <!-- Attachments -->
     <div class="panel mt-4">
       <div class="panel-head"><h3 data-i18n="proc.documents">Documents</h3></div>
@@ -2408,6 +2009,452 @@
         {% endif %}
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Vendor quote comparison: full width below the two columns, so the
+     quotes table and its edit forms never scroll sideways on a desktop -->
+<div class="panel mt-4 qt-panel" id="prQuotes">
+  <div class="panel-head"><h3 data-i18n="proc.quotes">Vendor quotes</h3>
+    {% if money and quote_cmp and quote_cmp.saving %}
+    <span class="badge b-approved" data-i18n-title="proc.saving">▼ <bdi>{{ '{:,.0f}'.format(quote_cmp.saving) }} {{ quote_cmp.currency }}</bdi></span>
+    {% endif %}
+    {#- Only quotations with the supplier's file count toward the rule. -#}
+    {% set n_filed = b.quotes|selectattr('has_file')|list|length %}
+    {% if rfq_required %}
+    <span class="badge {{ 'b-approved' if (rfq_have >= rfq_min or pr.single_source_reason) else 'b-warning' }}">
+      <span data-i18n="proc.rfq.quotes_label">Quotes:</span> {{ rfq_have }}
+      <span data-i18n="proc.rfq.of_required">of</span> {{ rfq_min }}
+      <span data-i18n="proc.rfq.for_value">required for this value (VAT incl.)</span>
+      {% if money %}<bdi>{{ '{:,.0f}'.format(rfq_value) }} EGP</bdi>{% endif %}
+    </span>
+    {% if rfq_have < rfq_min and not pr.single_source_reason %}
+    <div class="muted" style="font-size:12.5px;margin-top:4px;flex-basis:100%"
+         data-i18n="proc.rfq.count_rule">Only quotations from different suppliers, each with its file attached, are counted.</div>
+    {% endif %}
+    {% endif %}
+  </div>
+  <div class="panel-pad">
+    {% if b.quotes %}
+    {#- Amount is stored BEFORE VAT; quotes are ranked on the after-VAT figure
+        (q.after_vat) so a VAT-free price is compared fairly — on its EGP
+        equivalent when the quotes mix currencies (quote_comparison). A foreign
+        quote with no rate is never called the lowest. Rows older than the VAT
+        question show the bare amount and dashes. On phones (<=720px) each quote
+        is a stacked block and every figure carries its label (.qt-lbl). -#}
+    {% set any_foreign = b.quotes|rejectattr('currency', 'equalto', 'EGP')|list|length > 0 %}
+    {% set ncol = 8 if any_foreign else 7 %}
+    <div class="qt-wrap">
+    <table class="tbl qt-tbl">
+      <thead><tr>
+        <th data-i18n="proc.vendor_l">Vendor</th>
+        <th class="qt-num" data-i18n="proc.quote.before_vat">Before VAT</th>
+        <th class="qt-num" data-i18n="proc.quote.vat">VAT</th>
+        <th class="qt-num" data-i18n="proc.quote.after_vat">After VAT</th>
+        {% if any_foreign %}<th class="qt-num" data-i18n="proc.fx.egp_equiv">EGP equivalent</th>{% endif %}
+        <th data-i18n="proc.quote.terms">Payment terms</th>
+        <th data-i18n="proc.lead">Lead</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+      {% for q in b.quotes %}
+        {% set rv = q.after_vat if quote_cmp.basis == 'same' else q.after_vat_egp %}
+        {% set fmt = '{:,.0f}' if q.currency == 'EGP' else '{:,.2f}' %}
+        <tr class="qt-row{{ ' is-chosen' if q.is_chosen }}">
+          <td class="qt-vendor"><div class="qt-name">{{ q.vendor }}
+              {% if money and rv is not none and rv == quote_cmp.lowest %}<span class="tag" style="color:var(--ok)" data-i18n="proc.quote.lowest">lowest</span>{% endif %}
+              {% if q.is_chosen %}<span class="badge b-approved">✓ <span data-i18n="proc.quote.chosen">chosen</span></span>{% endif %}
+              {% if q.partial %}<span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span>{% endif %}
+              {% if q.rate_needed %}<span class="tag" style="color:var(--warn)" data-i18n="proc.quote.rate_needed">FX rate needed</span>{% endif %}</div>
+              {% if q.warranty %}<div class="qt-sub">{{ q.warranty }}</div>{% endif %}
+              {% if q.rfq_id %}<div class="qt-sub">↩ {{ b.rfqs|selectattr('id','equalto',q.rfq_id)|map(attribute='rfq_no')|first }}</div>{% endif %}
+              {% if not q.has_file %}<div><span class="badge b-warning" data-i18n="proc.quote.no_file">No attachment</span></div>
+              {% elif money %}<a class="tag" style="overflow-wrap:anywhere" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename or 'quote' }}</a>{% endif %}</td>
+          <td class="qt-num"><span class="qt-lbl" data-i18n="proc.quote.before_vat">Before VAT</span>
+            {%- if money %}<bdi>{{ fmt.format(q.amount) }} {{ q.currency }}</bdi>
+            {%- if q.disc_total %}<div class="qt-sub"><span data-i18n="proc.disc.label">Discount</span> <bdi dir="ltr">−{{ '{:,.2f}'.format(q.disc_total) }}
+              {%- if q.disc_type == 'pct' and q.disc_value and q.disc_total == q.disc_amount %} ({{ '%g'|format(q.disc_value) }}%){% endif %}</bdi></div>{% endif %}{% else %}—{% endif %}</td>
+          <td class="qt-num"><span class="qt-lbl" data-i18n="proc.quote.vat">VAT</span>
+            {%- if money and q.vat_applies == 1 %}<bdi>{{ fmt.format(q.after_vat - q.amount) }}</bdi>{% elif money and q.vat_applies == 0 %}<span class="muted" data-i18n="proc.quote.no_vat">No VAT</span>{% else %}—{% endif %}</td>
+          <td class="qt-num qt-strong"><span class="qt-lbl" data-i18n="proc.quote.after_vat">After VAT</span>
+            {%- if money and q.vat_applies in (0, 1) %}<bdi>{{ fmt.format(q.after_vat) }} {{ q.currency }}</bdi>{% else %}—{% endif %}</td>
+          {% if any_foreign %}
+          <td class="qt-num"><span class="qt-lbl" data-i18n="proc.fx.egp_equiv">EGP equivalent</span>
+            {%- if not money or q.currency == 'EGP' %}—
+            {%- elif q.after_vat_egp is not none %}<bdi>{{ '{:,.0f}'.format(q.after_vat_egp) }} EGP</bdi>
+              <div class="qt-sub"><bdi>1 {{ q.currency }} = {{ '%g'|format(q.egp_rate) }} EGP</bdi></div>
+            {%- else %}<span class="tag" style="color:var(--warn)" data-i18n="proc.quote.rate_needed">FX rate needed</span>{% endif %}</td>
+          {% endif %}
+          <td><span class="qt-lbl" data-i18n="proc.quote.terms">Payment terms</span>{{ q.payment_terms or '—' }}</td>
+          <td><span class="qt-lbl" data-i18n="proc.lead">Lead</span><span class="muted">{{ (q.lead_time_days ~ 'd') if q.lead_time_days else '—' }}</span></td>
+          <td class="qt-act">
+            {% if can_purchasing and not q.is_chosen %}
+            {% if q.has_file %}
+            <form method="post" action="{{ url_for('approvals.choose_quote', pr_id=pr.id, quote_id=q.id) }}" style="display:inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.choose">Choose</button>
+            </form>{% endif %}
+            {#- Removing a price that is no longer on the table. The CHOSEN
+                quotation cannot be removed — the request's price rests on
+                it — but it can be corrected below while the request is open. -#}
+            <form method="post" style="display:inline"
+                  action="{{ url_for('approvals.delete_quote', pr_id=pr.id, quote_id=q.id) }}"
+                  onsubmit="return confirm((window.tcT &amp;&amp; window.tcT('proc.quote.remove_q')) || 'Remove this quotation?')">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button class="btn btn-ghost btn-sm" type="submit"
+                      data-i18n="proc.quote.remove">Remove</button>
+            </form>{% endif %}
+          </td>
+        </tr>
+        {#- Edit: any quotation, and the CHOSEN one too while the request is open
+            (saving it re-applies it to the request). Opened by itself when the
+            chosen one still needs its FX rate. -#}
+        {% if can_purchasing and (not q.is_chosen or not rfq_locked) %}
+        <tr class="qt-edit{{ ' is-chosen' if q.is_chosen }}"><td colspan="{{ ncol }}">
+          <details{{ ' open' if q.is_chosen and q.rate_needed }}>
+            <summary class="btn btn-ghost btn-sm" data-i18n="proc.quote.edit">Edit this quotation</summary>
+            <form method="post" class="qf" data-vat-form enctype="multipart/form-data"
+                  action="{{ url_for('approvals.edit_quote', pr_id=pr.id, quote_id=q.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              {% if q.is_chosen %}<p class="qf-note" data-i18n="proc.quote.chosen_edit">This is the chosen quotation: saving it applies its prices, VAT and currency to the request.</p>{% endif %}
+              {{ quote_fields(q) }}
+              <div class="pf-actions"><button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.save">Save</button></div>
+            </form>
+          </details>
+        </td></tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {#- Price per item: rows = request lines, columns = the quotes that carry
+        line prices. The lowest unit price on a line is highlighted (ties
+        too). Deliberately show_commercial, not the `money` flag the quote
+        totals use: money_view is true for the requester/warehouse on an
+        unpriced request, and unit prices must stay hidden from them until
+        Purchasing has priced it (same rule as the request's unit prices).
+        The bold figure is the NET unit (after the line and quote discounts);
+        the line under it says how it was reached. -#}
+    {% if show_commercial and quote_matrix %}
+    {% set mx_foreign = quote_matrix.quotes|rejectattr('currency', 'equalto', 'EGP')|list|length > 0 %}
+    <h4 style="margin:4px 0 6px" data-i18n="proc.quote.matrix">Price per item</h4>
+    <div class="tbl-wrap" style="margin-bottom:12px">
+    <table class="tbl qt-mx">
+      <thead><tr>
+        <th data-i18n="proc.item">Item</th>
+        {% for q in quote_matrix.quotes %}
+        <th class="qt-num">{{ q.vendor }} <bdi class="muted">{{ q.currency }}</bdi>
+          {% if q.partial %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.partial">Partial</span></div>{% endif %}
+          {% if not q.has_file %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.no_file">No attachment</span></div>{% endif %}
+          {% if q.stale %}<div><span class="tag" style="color:var(--warn)" data-i18n="proc.quote.stale">Request lines changed, totals recalculated</span></div>{% endif %}</th>
+        {% endfor %}
+      </tr></thead>
+      <tbody>
+      {% for r in quote_matrix.rows %}
+        <tr>
+          <td><div style="font-weight:600">{{ r.item.item }}</div>
+            <div class="qt-sub">{{ '%g'|format(r.item.qty or 0) }} {{ r.item.unit or '' }}</div></td>
+          {% for c in r.cells %}{% set mq = quote_matrix.quotes[loop.index0] %}
+          <td class="qt-num{{ ' qt-best' if c and c.best }}">
+            {% if c %}
+            <div class="qt-net">{% if c.best %}<span data-i18n-title="proc.quote.lowest_item" title="Lowest unit price">▼</span> {% endif %}<bdi>{{ '{:,.2f}'.format(c.net_unit if c.net_unit is defined else c.unit_price) }}</bdi></div>
+            {% if c.disc_pct or mq.disc_pct %}<div class="qt-sub"><bdi>{{ '{:,.2f}'.format(c.unit_price) }}</bdi>
+              {%- if c.disc_pct %} − <span data-i18n="proc.quote.m_line">line</span> <bdi>{{ '%g'|format(c.disc_pct) }}%</bdi>{% endif %}
+              {%- if mq.disc_pct %} − <span data-i18n="proc.quote.m_quote">quote</span> <bdi>{{ '%g'|format(mq.disc_pct) }}%</bdi>{% endif %}</div>{% endif %}
+            <div class="qt-sub"><span data-i18n="proc.quote.line_total">Line total</span> <bdi>{{ '{:,.2f}'.format(c.net_total if c.net_total is defined else c.line_total) }}</bdi></div>
+            {% else %}<span class="muted" data-i18n-title="proc.quote.not_quoted" title="Not quoted">—</span>{% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr><th data-i18n="proc.quote.before_vat">Before VAT</th>
+          {% for q in quote_matrix.quotes %}<th class="qt-num"><bdi>{{ '{:,.2f}'.format(q.amount or 0) }} {{ q.currency }}</bdi></th>{% endfor %}</tr>
+        <tr><th data-i18n="proc.quote.after_vat">After VAT</th>
+          {% for q in quote_matrix.quotes %}<th class="qt-num"><bdi>{{ '{:,.2f}'.format(q.after_vat) }} {{ q.currency }}</bdi></th>{% endfor %}</tr>
+        {% if mx_foreign %}
+        <tr><th data-i18n="proc.fx.egp_equiv">EGP equivalent</th>
+          {% for q in quote_matrix.quotes %}<th class="qt-num">{% if q.after_vat_egp is not none %}<bdi>{{ '{:,.2f}'.format(q.after_vat_egp) }} EGP</bdi>{% else %}<span class="tag" style="color:var(--warn)" data-i18n="proc.quote.rate_needed">FX rate needed</span>{% endif %}</th>{% endfor %}</tr>
+        {% endif %}
+      </tfoot>
+    </table>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="muted" style="margin-bottom:12px" data-i18n="proc.no_quotes2">Add competing quotes to compare vendors.</div>
+    {% endif %}
+    {# DOAM §4.4 — how far this order departs from plan. Only rendered when
+       something actually deviates, or when a line could not be graded. #}
+    {% if deviation %}
+    <div class="mt-2" style="margin-bottom:12px">
+      {# DOAM §3.4 / Table 11 — T&C-PUF-10 Coverage Check. What is already on
+         the shelf and already on order, netted off what was asked for. #}
+      {% if deviation.coverage or deviation.coverage_blind %}
+      <b data-i18n="proc.cov_title">Coverage check</b>
+      <div class="muted" style="font-size:12.5px" data-i18n="proc.cov_why">
+        Procurement quantity is capped at the net requirement after inventory netting (§3.4).</div>
+      {% if deviation.coverage %}
+      <table class="tbl mt-2">
+        <thead><tr>
+          <th data-i18n="proc.item">Item</th>
+          <th style="text-align:end" data-i18n="proc.cov_req">Requested</th>
+          <th style="text-align:end" data-i18n="proc.cov_hand">On hand</th>
+          <th style="text-align:end" data-i18n="proc.cov_order">On order</th>
+          <th style="text-align:end" data-i18n="proc.cov_need">Net need</th>
+          <th style="text-align:end" data-i18n="proc.cov_excess">Excess</th>
+        </tr></thead>
+        <tbody>
+        {% for l in deviation.coverage %}
+          <tr>
+            <td>{{ l.item }}{% if l.coverage.by_name %}
+              <span class="muted" style="font-size:12px" data-i18n="proc.cov_byname">matched by name</span>{% endif %}</td>
+            <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.qty) }}</td>
+            <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.on_hand) }}{% if l.coverage.reserved %}
+              <span class="muted" data-i18n="proc.cov_reserved">reserved</span> {{ '{:,.6g}'.format(l.coverage.reserved) }}{% endif %}</td>
+            <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.on_order) }}</td>
+            <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.6g}'.format(l.coverage.net_need) }}</td>
+            <td style="text-align:end;font-variant-numeric:tabular-nums;color:{{ 'var(--crit)' if l.over_plan else 'inherit' }}">
+              {{ '{:,.6g}'.format(l.coverage.excess) if l.over_plan else '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if deviation.coverage_blind %}
+      <div class="muted mt-2" style="font-size:12.5px" data-i18n="proc.cov_blind">
+        Some lines carry no stock record, so their requirement could not be netted — they are reported, not assumed covered.</div>
+      {% endif %}
+      {% endif %}
+      {% if deviation.off_plan %}
+      <b class="{{ 'mt-3' if (deviation.coverage or deviation.coverage_blind) else '' }}"
+         style="display:inline-block" data-i18n="proc.dev_title">Deviation from plan</b>
+      <table class="tbl mt-2">
+        <thead><tr>
+          <th data-i18n="proc.item">Item</th>
+          <th style="text-align:end" data-i18n="proc.dev_price">Price</th>
+          <th style="text-align:end" data-i18n="proc.dev_target">Target</th>
+          <th style="text-align:end" data-i18n="proc.dev_over">Over</th>
+          <th data-i18n="proc.dev_grade">Grade</th>
+        </tr></thead>
+        <tbody>
+        {% for l in deviation.off_plan %}
+          <tr>
+            <td>{{ l.item }}</td>
+            <td style="text-align:end;font-variant-numeric:tabular-nums">{% if show_commercial %}{{ '{:,.2f}'.format(l.unit_price) }}{% else %}—{% endif %}</td>
+            <td style="text-align:end;font-variant-numeric:tabular-nums">{% if show_commercial %}{{ '{:,.2f}'.format(l.target) if l.target else '—' }}{% else %}—{% endif %}</td>
+            <td style="text-align:end;font-variant-numeric:tabular-nums;color:{{ 'var(--crit)' if (l.pct_over or 0) > 15 else 'var(--warn)' }}">
+              {% if show_commercial %}{{ '+{:.1f}%'.format(l.pct_over) if l.pct_over else '—' }}{% else %}—{% endif %}</td>
+            <td><span class="tag" data-i18n="proc.dev_{{ l.grade }}">{{ l.grade|replace('_',' ') }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if deviation.stages %}
+      <div class="muted mt-2" style="font-size:12.5px">
+        <span data-i18n="proc.dev_extra">Extra approvals required by §4.4</span>:
+        <b>{{ deviation.stages|map('replace','_',' ')|join(', ')|title }}</b>
+      </div>
+      {% endif %}
+      {% if deviation.unassessable %}
+      <div class="muted mt-2" style="font-size:12.5px" data-i18n="proc.dev_blind">
+        {{ deviation.unassessable }} line(s) have no target price or stock ceiling on file, so they could not be graded.
+      </div>
+      {% endif %}
+      {# DOAM §4.4 / T&C-PUF-12 — the memo the extra approvers are meant to
+         read. Purchasing cannot sign the request off without it. #}
+      {% if deviation.memo %}
+      <div class="mt-3">
+        {% if pr.deviation_memo %}
+          <span class="badge b-live" data-i18n="proc.memo_ok">Justification memo recorded</span>
+          <div class="mt-1" style="white-space:pre-wrap">{{ pr.deviation_memo }}</div>
+        {% else %}
+          <span class="badge b-critical" data-i18n="proc.memo_req">Justification memo required (§4.4)</span>
+        {% endif %}
+        {% if can_purchasing and not rfq_locked %}
+        <form method="post" action="{{ url_for('approvals.doam_doc', pr_id=pr.id) }}" class="mt-2">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="field" value="deviation_memo">
+          <textarea name="text" rows="3" style="width:100%"
+                    placeholder="Why this order departs from plan, and why it should still be placed."
+                    data-i18n-ph="proc.memo_ph">{{ pr.deviation_memo or '' }}</textarea>
+          <button class="btn btn-ghost btn-sm mt-2" type="submit" data-i18n="proc.memo_save">Save memo</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# DOAM §4.1 tier 7 / §4.2 tier 4 — above 10,000,000 EGP a written business
+       case is required (the Board rung is retired; the CEO signs last). Only rendered once the request is that
+       big, which is almost never. #}
+    {% if business_case_required %}
+    <div class="mt-2" style="margin-bottom:12px">
+      {% if pr.business_case %}
+        <span class="badge b-live" data-i18n="proc.bcase_ok">Business case recorded</span>
+        <div class="mt-1" style="white-space:pre-wrap">{{ pr.business_case }}</div>
+      {% else %}
+        <span class="badge b-critical" data-i18n="proc.bcase_req">Business case required above 10,000,000 EGP</span>
+      {% endif %}
+      {% if can_purchasing and not rfq_locked %}
+      <form method="post" action="{{ url_for('approvals.doam_doc', pr_id=pr.id) }}" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="field" value="business_case">
+        <textarea name="text" rows="4" style="width:100%"
+                  placeholder="The need, the options considered, the return, and the consequence of not proceeding."
+                  data-i18n-ph="proc.bcase_ph">{{ pr.business_case or '' }}</textarea>
+        <button class="btn btn-ghost btn-sm mt-2" type="submit" data-i18n="proc.bcase_save">Save business case</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# DOAM §6 — the engineering justification. Only rendered when the request
+       actually needs one; a picker on an IT stationery order is noise. #}
+    {% if ejr_required %}
+    <div class="mt-2" style="margin-bottom:12px">
+      {% if ejr_row and ejr_row.status == 'approved' %}
+        <span class="badge b-live" data-i18n="proc.ejr.ok">Engineering justification</span>
+        <a href="/maintenance/justifications/{{ ejr_row.id }}"><b>{{ ejr_row.ejr_no }}</b></a>
+        <span class="muted">· {{ (ejr_row.request_type or '')|replace('_',' ') }}
+          · <span data-i18n="m.ejr_decided_by">Signed by</span> {{ ejr_row.decided_by }}</span>
+      {% else %}
+        <span class="badge {{ 'b-critical' if ejr_gate_on else 'b-warning' }}"
+              data-i18n="proc.ejr.missing">Engineering justification required</span>
+        <div class="muted mt-1" data-i18n="proc.ejr.why">
+          Spares, maintenance and workshop requests need an Engineering Head signature
+          before Procurement accepts them, at any value.</div>
+        {% if can_purchasing and not rfq_locked %}
+          {% if ejr_choices %}
+          <form method="post" action="{{ url_for('approvals.attach_ejr', pr_id=pr.id) }}"
+                class="flex gap center mt-2 wrap">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <select name="ejr_id" required style="min-width:260px">
+              <option value="" data-i18n="m.ejr_pick">Choose an approved report…</option>
+              {% for j in ejr_choices %}
+              <option value="{{ j.id }}">{{ j.ejr_no }} — {{ j.mcode or '—' }}
+                ({{ (j.request_type or '')|replace('_',' ') }})</option>
+              {% endfor %}
+            </select>
+            <button class="btn btn-primary btn-sm" type="submit"
+                    data-i18n="proc.ejr.attach">Cite this report</button>
+          </form>
+          {% else %}
+          <div class="mt-2">
+            <a class="btn btn-ghost btn-sm" href="/maintenance/justifications/new"
+               data-i18n="proc.ejr.none">No approved report exists yet — raise one</a>
+          </div>
+          {% endif %}
+        {% endif %}
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if pr.single_source_reason %}
+    <div class="muted" style="margin-bottom:12px">
+      <strong data-i18n="proc.rfq.single_source">Single-source justification</strong>: {{ pr.single_source_reason }}
+    </div>
+    {% endif %}
+    {% if can_purchasing and rfq_required and rfq_have < rfq_min and not rfq_locked %}
+    <details style="margin-bottom:12px">
+      <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.rfq.waive">Waive competitive quotes (single source)</summary>
+      <form method="post" action="{{ url_for('approvals.single_source', pr_id=pr.id) }}" class="mt-2">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field">
+          <label data-i18n="proc.rfq.reason_l">Justification (why only one vendor can supply this)</label>
+          <textarea name="reason" rows="2" required maxlength="1000">{{ pr.single_source_reason or '' }}</textarea>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.rfq.save">Save justification</button>
+      </form>
+    </details>
+    {% endif %}
+    {% if is_owner or can_purchasing %}
+    <details>
+      <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_quote">+ Add quote</summary>
+      <form method="post" action="{{ url_for('approvals.add_quote', pr_id=pr.id) }}" enctype="multipart/form-data" class="qf mt-2" data-vat-form>
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        {{ quote_fields() }}
+        <div class="pf-actions"><button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.add_quote">+ Add quote</button></div>
+      </form>
+      <datalist id="vlist">{% for v in (vendors or []) %}<option value="{{ v.name }}"></option>{% endfor %}</datalist>
+    </details>
+    {% endif %}
+    {#- Payment-term suggestions (free text allowed), the vendor master's own
+        terms as a prefill, and the live after-VAT figure on the quote forms.
+        Only for viewers who get one of those forms: vendor terms stay off
+        other viewers' pages. -#}
+    {% if is_owner or can_purchasing %}
+    <datalist id="payTerms">{% for t in (quote_terms or []) %}<option value="{{ t }}"></option>{% endfor %}</datalist>
+    <script>
+    (function () {
+      var R = {{ (vat_rate or 0.14)|tojson }}, VT = {{ (vendor_terms or {})|tojson }};
+      function prefill(box, name) {
+        if (box && !box.value) box.value = VT[(name || "").trim().toLowerCase()] || "";
+      }
+      document.querySelectorAll("form[data-vat-form]").forEach(function (f) {
+        var a = f.querySelector("[name=amount]"), v = f.querySelector("[name=vat_applies]"),
+            o = f.querySelector("[data-vat-out]"), vn = f.querySelector("[data-terms-for=quote]");
+        var ql = f.querySelectorAll("[data-qlines] input[data-qty]");
+        // Discount off a base, as services.disc_off: % (max 100) or a value (max the base).
+        function off(base, sel, box) {
+          var x = box ? parseFloat(box.value) || 0 : 0;
+          if (x <= 0) return 0;
+          return Math.round((sel && sel.value === "val" ? Math.min(x, base) : base * Math.min(x, 100) / 100) * 100) / 100;
+        }
+        function lines() {
+          var sum = 0, any = false;
+          ql.forEach(function (i) {
+            var tr = i.closest("tr"), u = parseFloat(i.value), out = tr.querySelector("[data-line-out]");
+            if (isNaN(u)) { out.textContent = "—"; return; }
+            var t = Math.round(u * parseFloat(i.dataset.qty) * 100) / 100;
+            t = Math.round((t - off(t, tr.querySelector("select.q-disc"), tr.querySelector("input.q-disc"))) * 100) / 100;
+            any = true; sum += t;
+            out.textContent = t.toLocaleString(undefined, {maximumFractionDigits: 2});
+          });
+          var so = f.querySelector("[data-lines-out]");
+          if (so) so.textContent = any ? sum.toLocaleString(undefined, {maximumFractionDigits: 2}) : "—";
+          a.readOnly = any;
+          if (any) a.value = Math.round(sum * 100) / 100;
+        }
+        // Currency: a foreign one needs its rate (required, posted); EGP hides
+        // and disables the box, exactly like the pricing gate's #pfFxRow.
+        var cs = f.querySelector("[name=currency]"), fr = f.querySelector("[data-qfx-row]"),
+            fi = fr && fr.querySelector("input"), er = f.querySelector("[data-egp-row]"),
+            eo = f.querySelector("[data-egp-out]");
+        function fmt(x) { return "\u2066" + x.toLocaleString(undefined, {maximumFractionDigits: 2}); }
+        function upd() {
+          if (ql.length) lines();
+          var c = cs ? cs.value : "EGP", foreign = c !== "EGP";
+          var n = parseFloat(a.value);
+          if (!isNaN(n)) n -= off(n, f.querySelector("select.q-hdisc"), f.querySelector("input.q-hdisc"));
+          var g = isNaN(n) ? NaN : (v.value === "1" ? n * (1 + R) : n);
+          o.textContent = isNaN(g) ? "—" : fmt(g) + " " + c + "\u2069";
+          f.querySelectorAll("[data-qcur]").forEach(function (el) { el.textContent = c; });
+          if (fr) { fr.hidden = !foreign; fi.disabled = !foreign; fi.required = foreign; }
+          if (er) {
+            var r = fi ? parseFloat(fi.value) || 0 : 0;
+            er.hidden = !foreign;
+            eo.textContent = foreign && r > 0 && !isNaN(g) ? fmt(g * r) + " EGP\u2069" : "—";
+          }
+        }
+        f.addEventListener("input", upd); f.addEventListener("change", upd); upd();
+        if (vn) vn.addEventListener("change", function () {
+          prefill(f.querySelector("[name=payment_terms]"), vn.value); });
+      });
+      var rt = document.querySelector("[data-terms-for=rfq]");
+      if (rt) {
+        var pick = function () {
+          var c = rt.form.querySelector("[name=vendors]:checked"),
+              o = rt.form.querySelector("[name=vendor_other]");
+          prefill(rt, c ? c.value : (o && o.value));
+        };
+        rt.form.addEventListener("change", pick); pick();
+      }
+    })();
+    </script>
+    {% endif %}
   </div>
 </div>
 

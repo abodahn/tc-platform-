@@ -169,9 +169,10 @@ def run():
             svc.update_quote(q1["id"], {"amount": -5}, user=buyer)[1] == "bad_amount")
 
         svc.choose_quote(pr_id, q1["id"], buyer)
-        ok, msg = svc.update_quote(q1["id"], {"amount": 1}, user=buyer)
-        chk("the CHOSEN quotation cannot be edited — the ladder routed on it",
-            (not ok) and msg == "chosen", msg)
+        # Owner 2026-11-24: the chosen quotation can be corrected while the
+        # request is open (the route re-applies it); it still cannot be removed.
+        ok, msg = svc.update_quote(q1["id"], {"amount": 8700}, user=buyer)
+        chk("the CHOSEN quotation can be corrected while the request is open", ok, msg)
         ok, msg = svc.delete_quote(q1["id"], user=buyer)
         chk("nor withdrawn", (not ok) and msg == "chosen", msg)
 

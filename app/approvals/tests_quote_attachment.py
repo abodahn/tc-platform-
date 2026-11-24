@@ -209,8 +209,10 @@ def run():
             one("SELECT filename f FROM pr_quotes WHERE id=?", lg)["f"] == "legacy.pdf", f)
         ok, why = svc.choose_quote(p1, lg, buyer)
         chk("and now it can be chosen", ok, why)
-        chk("a chosen quote's file cannot be replaced",
-            svc.update_quote(lg, {}, user=buyer, **QF) == (False, "chosen"))
+        # Owner 2026-11-24: the chosen quotation can be corrected (file too)
+        # while the request is open; the route then re-applies it.
+        chk("a chosen quote's file can be replaced while the request is open",
+            svc.update_quote(lg, {}, user=buyer, **QF) == (True, ""))
 
         # ------------------------------------------------------------- 3 ----
         print("\n3. Purchasing cannot approve on a chosen quote with no file")

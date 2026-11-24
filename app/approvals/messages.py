@@ -168,9 +168,17 @@ MESSAGES = {
         "ar": "طلب عرض السعر غير موجود.",
         "tr": "Teklif talebi bulunamadı.",
     },
-    "This is the chosen quotation. Choose another one first, then edit or remove this.": {
-        "ar": "هذا هو عرض السعر المعتمد. اختر عرضًا آخر أولًا، ثم عدّل هذا أو احذفه.",
-        "tr": "Bu, seçilmiş tekliftir. Önce başka bir teklif seçin, sonra bunu düzenleyin veya kaldırın.",
+    "This is the chosen quotation. Choose another one first, then remove this.": {
+        "ar": "هذا هو عرض السعر المعتمد. اختر عرضًا آخر أولًا، ثم احذف هذا.",
+        "tr": "Bu, seçilmiş tekliftir. Önce başka bir teklif seçin, sonra bunu kaldırın.",
+    },
+    "Choose the quotation's currency from the list.": {
+        "ar": "اختر عملة عرض السعر من القائمة.",
+        "tr": "Teklifin para birimini listeden seçin.",
+    },
+    "Enter the FX rate to EGP for a quotation in a foreign currency.": {
+        "ar": "ادخل سعر الصرف مقابل الجنيه لعرض السعر اللي بعملة أجنبية.",
+        "tr": "Döviz cinsinden bir teklif için EGP kurunu girin.",
     },
     "Enter the quoted amount as a positive number.": {
         "ar": "اكتب قيمة عرض السعر كرقم موجب.",
@@ -635,6 +643,25 @@ MESSAGES = {
         "ar": "تم اختيار عرض السعر.",
         "tr": "Teklif seçildi.",
     },
+    # --- the chosen quotation's prices did not reach the request -------------
+    "Its prices were not applied: it has no per-item prices, so enter each line's price in Pricing.": {
+        "ar": "أسعاره متطبقتش: مفيهوش سعر لكل صنف، فادخل سعر كل بند في التسعير.",
+        "tr": "Fiyatları uygulanmadı: kalem bazında fiyat yok; her satırın fiyatını Fiyatlandırma'da girin."},
+    "Its prices were NOT applied: the quotation is in a foreign currency and has no FX rate to EGP. Edit the quotation and enter its FX rate — Purchasing cannot sign the request off until then.": {
+        "ar": "أسعاره لم تُطبَّق: عرض السعر بعملة أجنبية ومن غير سعر صرف مقابل الجنيه. عدّل عرض السعر وادخل سعر الصرف — المشتريات مش هتقدر توقّع الطلب لحد ما ده يتعمل.",
+        "tr": "Fiyatları UYGULANMADI: teklif döviz cinsinden ve EGP kuru yok. Teklifi düzenleyip kurunu girin — o zamana kadar Satın Alma talebi onaylayamaz."},
+    "Its prices were NOT applied: the quotation's currency is not recognised. Edit the quotation and choose its currency.": {
+        "ar": "أسعاره لم تُطبَّق: عملة عرض السعر غير معروفة. عدّل عرض السعر واختر عملته.",
+        "tr": "Fiyatları UYGULANMADI: teklifin para birimi tanınmıyor. Teklifi düzenleyip para birimini seçin."},
+    "Its prices will apply once the warehouse has checked the request — save the quotation again then.": {
+        "ar": "أسعاره هتتطبق بعد ما المخزن يراجع الطلب — احفظ عرض السعر تاني وقتها.",
+        "tr": "Depo talebi kontrol ettikten sonra fiyatları uygulanır — o zaman teklifi yeniden kaydedin."},
+    "Its prices were not applied. Enter them in Pricing.": {
+        "ar": "أسعاره متطبقتش. ادخلها في التسعير.",
+        "tr": "Fiyatları uygulanmadı. Fiyatlandırma'da girin."},
+    "The chosen quotation's prices are not on the request: it is in another currency. Edit the chosen quotation, check its currency and FX rate to EGP, and save it — then approve.": {
+        "ar": "أسعار عرض السعر المعتمد مش على الطلب: هو بعملة تانية. عدّل عرض السعر المعتمد وراجع عملته وسعر الصرف مقابل الجنيه واحفظه — وبعدين وقّع.",
+        "tr": "Seçilen teklifin fiyatları talepte değil: başka bir para biriminde. Seçilen teklifi düzenleyin, para birimini ve EGP kurunu kontrol edip kaydedin — sonra onaylayın."},
     # --- a quotation needs the supplier's own file ---------------------------
     "Attach the supplier's quotation file.": {
         "ar": "أرفق ملف عرض السعر الصادر من المورد.",

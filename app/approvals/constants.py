@@ -48,6 +48,22 @@ PAYMENT_STATUSES = ["unpaid", "partial", "paid"]
 STEP_STATUSES = ["pending", "approved", "rejected", "skipped"]
 
 CURRENCIES = ["EGP", "USD", "EUR", "TRY"]
+# What people actually type for those codes on a quotation ("euro", "$", "L.E.",
+# "جنيه"). currency_code() maps them; anything else is refused on write, so a
+# stored currency is always one the FX gate and the PO understand.
+_CURRENCY_ALIASES = {
+    "le": "EGP", "l.e": "EGP", "جنيه": "EGP", "ج.م": "EGP", "جم": "EGP",
+    "dollar": "USD", "dollars": "USD", "$": "USD", "us$": "USD", "دولار": "USD",
+    "euro": "EUR", "euros": "EUR", "€": "EUR", "يورو": "EUR",
+    "tl": "TRY", "lira": "TRY", "ليرة": "TRY", "₺": "TRY",
+}
+
+
+def currency_code(raw):
+    """The CURRENCIES code for a typed currency (any case, common aliases), or None."""
+    k = " ".join(str(raw or "").split()).lower().rstrip(".")
+    return k.upper() if k.upper() in CURRENCIES else _CURRENCY_ALIASES.get(k)
+
 # APPENDED, never reordered: 'Pcs' stays the first entry and the default, so
 # every existing PR line is untouched. The tail comes from the ERP item master
 # (Cone for 2,205 thread items, Yard, Packet, Sheet, Carton, Drum, Barrel) —

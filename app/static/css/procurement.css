@@ -284,3 +284,73 @@
 /* Pack-size read-out under a request line ("2 x 12 = 24 Pcs"). */
 .content.proc .li-row .li-pack{grid-column:1/-1;font-size:12.5px;font-weight:600;color:var(--ok,#1f7a4a);font-variant-numeric:tabular-nums;margin-top:-2px}
 .content.proc .li-row .li-pack[hidden]{display:none}
+
+/* ===== Vendor quotes (full width, below the two columns) ===================
+   The quotes table reads without sideways scroll on a desktop; on phones each
+   quote becomes a stacked block whose figures carry their own labels. The add /
+   edit quotation forms are labelled groups on a grid, in the pricing gate's
+   control vocabulary (.field, .disc-pair, .pf-sum, .pf-actions). */
+.qt-wrap { margin-bottom: 12px; }
+.content.proc table.qt-tbl td { vertical-align: top; }
+.content.proc table.qt-tbl tbody tr > td { background: none; }
+.content.proc table.qt-tbl tbody tr.is-chosen > td { background: var(--ok-bg); }
+.content.proc table.qt-tbl tr.qt-edit > td { padding-top: 0; }
+/* Tighter cells and wrapping headers keep all eight columns inside a 1280px
+   screen with the sidebar open (about 880px of panel). */
+.content.proc table.qt-tbl :is(th, td) { padding-inline: 10px; }
+.content.proc table.qt-tbl th { white-space: normal; }
+.qt-tbl .qt-num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.qt-tbl .qt-strong { font-weight: 600; }
+.qt-tbl .qt-lbl { display: none; }
+.qt-tbl .qt-vendor { min-width: 170px; }
+.qt-tbl .qt-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-weight: 600; }
+.qt-tbl .qt-act { text-align: end; }
+.qt-sub { margin-top: 2px; font-size: 12px; font-weight: 400; line-height: 1.35; color: var(--muted); }
+.qt-edit details[open] > summary { margin-bottom: 12px; }
+
+.qt-mx .qt-num { text-align: end; font-variant-numeric: tabular-nums; }
+.qt-mx .qt-net { font-weight: 600; color: var(--ink); }
+.content.proc table.qt-mx td.qt-best { background: var(--ok-bg); }
+.qt-mx td.qt-best .qt-net { font-weight: 700; color: var(--ok); }
+
+.qf-grp { min-width: 0; margin: 0 0 12px; padding: 12px 16px 2px;
+  border: 1px solid var(--line); border-radius: var(--r-md); }
+.qf-grp > legend { padding: 0 6px; font-size: 13px; font-weight: 700; color: var(--ink); }
+.qf-grid { display: grid; gap: 0 16px; align-items: start;
+  grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.qf-grid .qf-wide { grid-column: span 2; }
+.qf-grid > [hidden] { display: none !important; }
+.qf-sum { grid-column: span 2; align-self: end; margin-bottom: 14px; }
+.qf-sum .pf-sum-grand { margin-top: 0; padding-top: 3px; border-top: 0; }
+.qf-note { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--r-sm);
+  background: var(--ok-bg); color: var(--ink); font-size: 13px; }
+.qf-hint { margin-top: 4px; font-size: 12px; }
+.qf .field input[type="file"] { height: auto; padding: 9px 12px; }
+/* The per-item price boxes match the discount pair beside them (pricing gate). */
+.qf [data-qlines] input[type="number"] { height: 38px; width: 100%; max-width: 140px !important; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); color: var(--ink);
+  font: inherit; font-size: 14px; font-variant-numeric: tabular-nums; }
+.qf [data-qlines] input[type="number"]:focus { outline: none; border-color: var(--tc-red);
+  box-shadow: 0 0 0 3px rgba(237, 28, 36, .12); }
+
+@media (max-width: 1100px) {
+  .qf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .content.proc table.qt-tbl, .content.proc table.qt-tbl > tbody { display: block; width: 100%; }
+  .content.proc table.qt-tbl > thead { display: none; }
+  .content.proc table.qt-tbl tr.qt-row { display: grid; gap: 10px 12px; padding: 14px 12px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid var(--line-2); }
+  .content.proc table.qt-tbl tr.qt-row > td { display: block; min-width: 0; padding: 0; border: 0;
+    text-align: start; white-space: normal; background: none; }
+  .content.proc table.qt-tbl tr.qt-edit, .content.proc table.qt-tbl tr.qt-edit > td { display: block; }
+  .content.proc table.qt-tbl tr.qt-edit > td { padding: 0 12px 14px; border: 0; background: none; }
+  .content.proc table.qt-tbl tr.is-chosen { background: var(--ok-bg); }
+  .qt-tbl .qt-vendor, .qt-tbl .qt-act { grid-column: 1 / -1; }
+  .qt-tbl .qt-lbl { display: block; margin-bottom: 2px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+  .qf-grp { padding: 10px 12px 2px; }
+  .qf-grid .qf-wide, .qf-sum { grid-column: 1 / -1; }
+}
+@media (max-width: 420px) {
+  .qf-grid { grid-template-columns: minmax(0, 1fr); }
+}
