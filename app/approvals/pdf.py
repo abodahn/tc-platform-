@@ -519,19 +519,22 @@ def _disc_cell(it):
     return _fmt(it.get("disc_amount")) if float(it.get("disc_amount") or 0) else ""
 
 
-def _totals_block(c, w, cm, y, pr, cur, words_beside=False, discount=0.0):
-    """Right-aligned Subtotal / Discount / VAT / Grand Total box + amount-in-words
-    line. pr["total"] is the NET; with a discount the Subtotal printed is the
-    gross before it, so the box reads Subtotal - Discount + VAT = Grand Total."""
+def _vat_rate(pr):
+    try:
+        return float(pr.get("tax_rate") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _totals_lines(pr, discount=0.0):
+    """([(label, amount)...], grand) for the totals box — shared with xlsx.py so
+    the spreadsheet and the PDF state the same figures."""
     subtotal = 0.0
     try:
         subtotal = float(pr.get("total") or 0)
     except (TypeError, ValueError):
         pass
-    try:
-        rate = float(pr.get("tax_rate") or 0)
-    except (TypeError, ValueError):
-        rate = 0.0
+    rate = _vat_rate(pr)
     tax = round(subtotal * rate / 100.0, 2)
     grand = round(subtotal + tax, 2)
 
@@ -540,6 +543,14 @@ def _totals_block(c, w, cm, y, pr, cur, words_beside=False, discount=0.0):
         lines = [("Subtotal", round(subtotal + discount, 2)), ("Discount", -discount)]
     if rate:
         lines.append((f"VAT ({rate:g}%)", tax))
+    return lines, grand
+
+
+def _totals_block(c, w, cm, y, pr, cur, words_beside=False, discount=0.0):
+    """Right-aligned Subtotal / Discount / VAT / Grand Total box + amount-in-words
+    line. pr["total"] is the NET; with a discount the Subtotal printed is the
+    gross before it, so the box reads Subtotal - Discount + VAT = Grand Total."""
+    lines, grand = _totals_lines(pr, discount)
     bx_w = 7.0 * cm
     bx = w - 1.5 * cm - bx_w
     row_h = 0.5 * cm
@@ -697,19 +708,10 @@ def pr_pdf(bundle, money=True):
     return buf.read()
 
 
-def _pr_body(c, w, h, cm, bundle, money=True):
-    """Everything on the PR except the footer. Returns the lowest y drawn."""
-    pr, items, steps = bundle["pr"], bundle["items"], bundle["steps"]
-    pn = {"page": 1, "notes": _PR_NOTES}
-
-    y = _draw_header(c, w, h, cm, "PURCHASE REQUEST", pr.get("pr_no") or "PR",
-                     "", form_code=C.FORM_CODES["capex"]
-                     if (pr.get("expenditure_kind") == "capex")
-                     else C.FORM_CODES["pr"], compact=True,
-                     status=pr.get("status") or "")
-
+def pr_meta_pairs(pr):
+    """The PR's header fields, in print order (the last two are the wide tail)."""
     cur = pr.get("currency") or ""
-    y = _meta_grid(c, w, cm, y, [
+    return [
         ("Date", pr.get("request_date")),
         # The buyer's own answer (Local / outside Egypt) wins; a foreign
         # currency alone also makes it Foreign.
@@ -722,7 +724,22 @@ def _pr_body(c, w, h, cm, bundle, money=True):
     ] + _cost_object_pairs(pr) + [
         ("REQUEST FOR", pr.get("request_for")),
         ("Reason", pr.get("title")),
-    ], cols=5, upper=False, row_h=0.7, tail=2)
+    ]
+
+
+def _pr_body(c, w, h, cm, bundle, money=True):
+    """Everything on the PR except the footer. Returns the lowest y drawn."""
+    pr, items, steps = bundle["pr"], bundle["items"], bundle["steps"]
+    pn = {"page": 1, "notes": _PR_NOTES}
+
+    y = _draw_header(c, w, h, cm, "PURCHASE REQUEST", pr.get("pr_no") or "PR",
+                     "", form_code=C.FORM_CODES["capex"]
+                     if (pr.get("expenditure_kind") == "capex")
+                     else C.FORM_CODES["pr"], compact=True,
+                     status=pr.get("status") or "")
+
+    cur = pr.get("currency") or ""
+    y = _meta_grid(c, w, cm, y, pr_meta_pairs(pr), cols=5, upper=False, row_h=0.7, tail=2)
 
     # Stock days / Pending qty / ETA used to stay blank here, with the note that
     # nothing in the system knew them. services.attach_item_history() now does:
@@ -1088,64 +1105,20 @@ def po_pdf(bundle, po=None):
     from reportlab.lib.units import cm
     from reportlab.pdfgen import canvas
 
-    pr, items = bundle["pr"], bundle["items"]
-    pos = bundle.get("pos") or []
-    po = po or (pos[0] if pos else None)
-    if po:
-        if len(pos) > 1:
-            # C.vendor_key on BOTH sides — the same identity po_groups() grouped
-            # on. A raw comparison dropped every line whose vendor differed only
-            # by surrounding whitespace or case: the line was grouped onto this
-            # order, priced into its subtotal, and then printed on no document at
-            # all. Only the two web forms trim the field; the maintenance
-            # auto-reorder bridge and the ERP item-master import do not.
-            head_vendor = pr.get("vendor")
-            want = C.vendor_key(po.get("vendor"))
-            items = [it for it in items
-                     if C.vendor_key(it.get("vendor") or head_vendor) == want]
-            pr = dict(pr, total=po.get("subtotal"))
-        # The legacy synthesised row from _pos_for() carries the request's own
-        # vendor and po_no, so this is a no-op for every pre-split request.
-        pr = dict(pr, vendor=po.get("vendor") or pr.get("vendor"),
-                  po_no=po.get("po_no") or pr.get("po_no"),
-                  po_rev=po.get("rev") or pr.get("po_rev"))
+    pr, items = po_view(bundle, po)
     buf = io.BytesIO()
     c = _ar.wrap(canvas.Canvas(buf, pagesize=A4))
     w, h = A4
     pn = {"page": 1, "notes": None}
 
-    # Revision-aware document number: "PO-... · Rev N" once the order has been
-    # revised, so a reprinted PDF is never mistaken for the original issue.
-    po_no = pr.get("po_no") or "PO"
-    try:
-        po_rev = int(pr.get("po_rev") or 0)
-    except (TypeError, ValueError):
-        po_rev = 0
-    y = _draw_header(c, w, h, cm, "PURCHASE ORDER",
-                     f"{po_no} · Rev {po_rev}" if po_rev > 0 else po_no,
+    y = _draw_header(c, w, h, cm, "PURCHASE ORDER", po_doc_no(pr),
                      "Ref " + (pr.get("pr_no") or ""), form_code=C.FORM_CODES["po"])
 
-    try:
-        fx = float(pr.get("fx_rate") or 0)
-    except (TypeError, ValueError):
-        fx = 0.0
-    meta_pairs = [
-        ("Vendor", pr.get("vendor")), ("Department", pr.get("department")),
-        ("Payment terms", pr.get("payment_condition")),
-        ("Delivery", pr.get("delivery_condition")),
-        ("Approved on", (pr.get("approved_at") or "")[:10]),
-        ("Currency", pr.get("currency")),
-    ]
-    if fx not in (0.0, 1.0):
-        meta_pairs.append(("FX rate", f"1 {pr.get('currency') or ''} = {fx:g} EGP"))
-    meta_pairs += _cost_object_pairs(pr)
-    y = _meta_grid(c, w, cm, y, meta_pairs)
+    fx = _fx_rate(pr)
+    y = _meta_grid(c, w, cm, y, po_meta_pairs(pr))
 
     cur = pr.get("currency") or ""
-    try:
-        vat_rate = float(pr.get("tax_rate") or 0)
-    except (TypeError, ValueError):
-        vat_rate = 0.0
+    vat_rate = _vat_rate(pr)
     rows = []
     disc = _has_disc(pr, items)
     for i, it in enumerate(items, 1):
@@ -1170,19 +1143,11 @@ def po_pdf(bundle, po=None):
     y = _totals_block(c, w, cm, y, pr, cur, discount=_discount_of(pr, items))
 
     # EGP-equivalent line for foreign-currency orders (thresholds routed on it).
-    # Same rule as services.egp_total, computed inline: total * fx when the
-    # order currency is not EGP.
     if fx not in (0.0, 1.0):
-        try:
-            _tot = float(pr.get("total") or 0)
-        except (TypeError, ValueError):
-            _tot = 0.0
-        _tot = _tot * (1 + (vat_rate or 0) / 100.0)
-        egp_eq = _tot * fx if (str(pr.get("currency") or "EGP").upper() != "EGP") else _tot
         c.setFont("Helvetica-Oblique", 8.5)
         c.setFillColorRGB(0.3, 0.3, 0.3)
         c.drawString(1.5 * cm, y,
-                     f"EGP equivalent: {_fmt(egp_eq)} EGP (@ {fx:g} EGP / {cur or 'unit'})")
+                     f"EGP equivalent: {_fmt(egp_equivalent(pr))} EGP (@ {fx:g} EGP / {cur or 'unit'})")
         c.setFillColorRGB(0, 0, 0)
         y -= 0.45 * cm
 
@@ -1209,11 +1174,10 @@ def po_pdf(bundle, po=None):
     # the supplier's copy and the screen name the same authority.
     c.setFont("Helvetica", 8.5)
     c.setFillColorRGB(0.4, 0.4, 0.4)
-    for line in (_authority_lines(bundle.get("steps")) or
-                 ["Authorised by Purchasing — TC Garments."]):
+    for line in po_authority_lines(bundle):
         c.drawString(1.5 * cm, y, _clip(c, line, "Helvetica", 8.5, w - 3 * cm))
         y -= 0.34 * cm
-    c.drawString(1.5 * cm, y, "This order references the approved purchase request above.")
+    c.drawString(1.5 * cm, y, PO_REF_LINE)
     c.setFillColorRGB(0, 0, 0)
 
     _footer(c, w, cm, pn["page"], None)
@@ -1221,6 +1185,85 @@ def po_pdf(bundle, po=None):
     c.save()
     buf.seek(0)
     return buf.read()
+
+
+PO_REF_LINE = "This order references the approved purchase request above."
+
+
+def po_authority_lines(bundle):
+    return (_authority_lines(bundle.get("steps")) or
+            ["Authorised by Purchasing — TC Garments."])
+
+
+def _fx_rate(pr):
+    try:
+        return float(pr.get("fx_rate") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def egp_equivalent(pr):
+    """Same rule as services.egp_total, computed inline: total incl. VAT * fx
+    when the order currency is not EGP."""
+    try:
+        tot = float(pr.get("total") or 0)
+    except (TypeError, ValueError):
+        tot = 0.0
+    tot = tot * (1 + (_vat_rate(pr) or 0) / 100.0)
+    return tot * _fx_rate(pr) if (str(pr.get("currency") or "EGP").upper() != "EGP") else tot
+
+
+def po_doc_no(pr):
+    """Revision-aware document number: "PO-... · Rev N" once the order has been
+    revised, so a reprinted PDF is never mistaken for the original issue."""
+    po_no = pr.get("po_no") or "PO"
+    try:
+        po_rev = int(pr.get("po_rev") or 0)
+    except (TypeError, ValueError):
+        po_rev = 0
+    return f"{po_no} · Rev {po_rev}" if po_rev > 0 else po_no
+
+
+def po_meta_pairs(pr):
+    fx = _fx_rate(pr)
+    meta_pairs = [
+        ("Vendor", pr.get("vendor")), ("Department", pr.get("department")),
+        ("Payment terms", pr.get("payment_condition")),
+        ("Delivery", pr.get("delivery_condition")),
+        ("Approved on", (pr.get("approved_at") or "")[:10]),
+        ("Currency", pr.get("currency")),
+    ]
+    if fx not in (0.0, 1.0):
+        meta_pairs.append(("FX rate", f"1 {pr.get('currency') or ''} = {fx:g} EGP"))
+    return meta_pairs + _cost_object_pairs(pr)
+
+
+def po_view(bundle, po=None):
+    """(pr, items) exactly as ONE vendor's Purchase Order prints them — see
+    po_pdf. Shared with xlsx.py so the spreadsheet can never show a supplier
+    another supplier's lines."""
+    pr, items = bundle["pr"], bundle["items"]
+    pos = bundle.get("pos") or []
+    po = po or (pos[0] if pos else None)
+    if po:
+        if len(pos) > 1:
+            # C.vendor_key on BOTH sides — the same identity po_groups() grouped
+            # on. A raw comparison dropped every line whose vendor differed only
+            # by surrounding whitespace or case: the line was grouped onto this
+            # order, priced into its subtotal, and then printed on no document at
+            # all. Only the two web forms trim the field; the maintenance
+            # auto-reorder bridge and the ERP item-master import do not.
+            head_vendor = pr.get("vendor")
+            want = C.vendor_key(po.get("vendor"))
+            items = [it for it in items
+                     if C.vendor_key(it.get("vendor") or head_vendor) == want]
+            pr = dict(pr, total=po.get("subtotal"))
+        # The legacy synthesised row from _pos_for() carries the request's own
+        # vendor and po_no, so this is a no-op for every pre-split request.
+        pr = dict(pr, vendor=po.get("vendor") or pr.get("vendor"),
+                  po_no=po.get("po_no") or pr.get("po_no"),
+                  po_rev=po.get("rev") or pr.get("po_rev"))
+    return pr, items
 
 
 # --------------------------------------------------------------------------
@@ -1253,6 +1296,63 @@ def rfq_pdf(bundle, rfq):
     from reportlab.lib.units import cm
     from reportlab.pdfgen import canvas
 
+    pr = bundle["pr"]
+    rfq, vendor, items = rfq_view(bundle, rfq)
+
+    buf = io.BytesIO()
+    c = _ar.wrap(canvas.Canvas(buf, pagesize=A4))
+    w, h = A4
+    pn = {"page": 1, "notes": _RFQ_NOTES}
+
+    y = _draw_header(c, w, h, cm, "REQUEST FOR QUOTATION", rfq.get("rfq_no") or "RFQ",
+                     "Ref " + (pr.get("pr_no") or ""), form_code=C.FORM_CODES["rfq"])
+    y = _meta_grid(c, w, cm, y, rfq_meta_pairs(pr, rfq, vendor))
+
+    # The quantities are real; the two money columns are empty boxes.
+    rows = [[str(i), (it.get("item") or "", _line_desc(it)),
+             it.get("unit") or "", _qty_cell(it), FILL_IN, FILL_IN]
+            for i, it in enumerate(items, 1)]
+    y = _table(c, w, cm, y, [
+        (0.6, "#", "l"), (9.0, "ITEM / DESCRIPTION", "l"), (1.4, "UNIT", "l"),
+        (1.6, "QTY", "r"), (2.9, "UNIT PRICE", "r"), (3.0, "TOTAL", "r")],
+        rows, h, pn, title="Items to be quoted", wrap_col=1, row_h=1.0 * cm)
+
+    c.setFont("Helvetica-Oblique", 8.5)
+    c.setFillColorRGB(0.3, 0.3, 0.3)
+    c.drawString(1.5 * cm, y, rfq_prices_line(pr))
+    c.setFillColorRGB(0, 0, 0)
+    y -= 0.75 * cm
+
+    if y - 3.2 * cm < 2.2 * cm:                     # keep the sign-off whole
+        _footer(c, w, cm, pn["page"], _RFQ_NOTES)
+        c.showPage()
+        pn["page"] += 1
+        y = h - 2.5 * cm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(1.5 * cm, y, "Supplier's quotation — signature and stamp")
+    y -= 0.35 * cm
+    _grn_sign_strip(c, w, cm, y, [(b, None, None) for b in RFQ_SIGN_BOXES])
+
+    _footer(c, w, cm, pn["page"], _RFQ_NOTES)
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+# The supplier's sign-off boxes at the foot of the RFQ.
+RFQ_SIGN_BOXES = ("Quoted by (supplier)", "Signature & company stamp",
+                  "Quotation valid until")
+
+
+def rfq_prices_line(pr):
+    return ("Prices to be entered by the supplier in %s. No value is "
+            "stated by TC Garments on this form." % (pr.get("currency") or "the order currency"))
+
+
+def rfq_view(bundle, rfq):
+    """(rfq, vendor, items) exactly as that supplier's RFQ prints them — shared
+    with xlsx.py."""
     pr, items = bundle["pr"], bundle["items"]
     rfq = dict(rfq or {})
     vendor = (rfq.get("vendor") or "").strip()
@@ -1266,15 +1366,10 @@ def rfq_pdf(bundle, rfq):
     gone = rfq.get("excluded") or set()
     if gone:
         items = [it for it in items if it.get("id") not in gone] or items
+    return rfq, vendor, items
 
-    buf = io.BytesIO()
-    c = _ar.wrap(canvas.Canvas(buf, pagesize=A4))
-    w, h = A4
-    pn = {"page": 1, "notes": _RFQ_NOTES}
 
-    y = _draw_header(c, w, h, cm, "REQUEST FOR QUOTATION", rfq.get("rfq_no") or "RFQ",
-                     "Ref " + (pr.get("pr_no") or ""), form_code=C.FORM_CODES["rfq"])
-
+def rfq_meta_pairs(pr, rfq, vendor):
     pairs = [
         ("To (supplier)", vendor or "—"),
         ("Reply by", rfq.get("reply_by") or "—"),
@@ -1289,43 +1384,7 @@ def rfq_pdf(bundle, rfq):
     ]
     if rfq.get("notes"):
         pairs.append(("Notes", rfq.get("notes")))
-    y = _meta_grid(c, w, cm, y, pairs)
-
-    # The quantities are real; the two money columns are empty boxes.
-    rows = [[str(i), (it.get("item") or "", _line_desc(it)),
-             it.get("unit") or "", _qty_cell(it), FILL_IN, FILL_IN]
-            for i, it in enumerate(items, 1)]
-    y = _table(c, w, cm, y, [
-        (0.6, "#", "l"), (9.0, "ITEM / DESCRIPTION", "l"), (1.4, "UNIT", "l"),
-        (1.6, "QTY", "r"), (2.9, "UNIT PRICE", "r"), (3.0, "TOTAL", "r")],
-        rows, h, pn, title="Items to be quoted", wrap_col=1, row_h=1.0 * cm)
-
-    c.setFont("Helvetica-Oblique", 8.5)
-    c.setFillColorRGB(0.3, 0.3, 0.3)
-    c.drawString(1.5 * cm, y, "Prices to be entered by the supplier in %s. No value is "
-                 "stated by TC Garments on this form." % (pr.get("currency") or "the order currency"))
-    c.setFillColorRGB(0, 0, 0)
-    y -= 0.75 * cm
-
-    if y - 3.2 * cm < 2.2 * cm:                     # keep the sign-off whole
-        _footer(c, w, cm, pn["page"], _RFQ_NOTES)
-        c.showPage()
-        pn["page"] += 1
-        y = h - 2.5 * cm
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(1.5 * cm, y, "Supplier's quotation — signature and stamp")
-    y -= 0.35 * cm
-    _grn_sign_strip(c, w, cm, y, [
-        ("Quoted by (supplier)", None, None),
-        ("Signature & company stamp", None, None),
-        ("Quotation valid until", None, None),
-    ])
-
-    _footer(c, w, cm, pn["page"], _RFQ_NOTES)
-    c.showPage()
-    c.save()
-    buf.seek(0)
-    return buf.read()
+    return pairs
 
 
 # --------------------------------------------------------------------------

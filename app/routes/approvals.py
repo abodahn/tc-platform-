@@ -52,6 +52,7 @@ def flash(message, category="message"):
 
 from app.approvals import services as svc
 from app.approvals import pdf as pdfgen
+from app.approvals import xlsx as xlsxgen
 from app.approvals import constants as C
 
 bp = Blueprint("approvals", __name__, url_prefix="/procurement")
@@ -1800,13 +1801,9 @@ def issue_rfq(pr_id):
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
-@bp.route("/pr/<int:pr_id>/rfq.pdf")
-@login_required
-@permission_required("proc_view")
-def rfq_pdf(pr_id):
-    """?rfq=<id> prints THAT supplier's request for quotation; without it, the
-    first one. One document per supplier, each carrying its own lines and no
-    prices at all."""
+def _rfq_doc(pr_id):
+    """(bundle, rfq) for the RFQ documents — PDF and Excel share this, so
+    their access rules cannot drift apart."""
     bundle = svc.get_pr(pr_id)
     if not bundle:
         abort(404)
@@ -1815,6 +1812,31 @@ def rfq_pdf(pr_id):
     rfq = next((r for r in rfqs if r["id"] == want), None) if want else (rfqs[0] if rfqs else None)
     if not rfq:
         abort(404)
+    return bundle, rfq
+
+
+def _xlsx(data, name):
+    return send_file(io.BytesIO(data), mimetype=xlsxgen.MIME, as_attachment=True,
+                     download_name=name)
+
+
+@bp.route("/pr/<int:pr_id>/rfq.xlsx")
+@login_required
+@permission_required("proc_view")
+def rfq_xlsx(pr_id):
+    """The RFQ PDF's twin as a spreadsheet: same ?rfq=, same lines, no prices."""
+    bundle, rfq = _rfq_doc(pr_id)
+    return _xlsx(xlsxgen.rfq_xlsx(bundle, rfq), f"{rfq.get('rfq_no') or 'RFQ'}.xlsx")
+
+
+@bp.route("/pr/<int:pr_id>/rfq.pdf")
+@login_required
+@permission_required("proc_view")
+def rfq_pdf(pr_id):
+    """?rfq=<id> prints THAT supplier's request for quotation; without it, the
+    first one. One document per supplier, each carrying its own lines and no
+    prices at all."""
+    bundle, rfq = _rfq_doc(pr_id)
     try:
         data = pdfgen.rfq_pdf(bundle, rfq)
     except Exception:
@@ -2450,16 +2472,62 @@ def dispose(pr_id):
 # --------------------------------------------------------------------------
 # PDFs
 # --------------------------------------------------------------------------
+def _pr_doc(pr_id):
+    """(bundle, money) for the PR documents. `money` False = the PDF and the
+    Excel both leave out every price, discount, VAT and total."""
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    return bundle, bool(svc.money_view(_u(), bundle["pr"], bundle["steps"]))
+
+
+def _po_doc(pr_id):
+    """(bundle, po) for the PO documents, after the commercial and status
+    gates — shared by po.pdf and po.xlsx."""
+    bundle = svc.get_pr(pr_id)
+    if not bundle:
+        abort(404)
+    if not svc.money_view(_u(), bundle["pr"], bundle["steps"]):
+        abort(403)
+    if bundle["pr"]["status"] not in ("approved", "po_issued", "partially_received",
+                                      "received", "closed"):
+        abort(400, "The Purchase Order is available only after full approval.")
+    pos = bundle.get("pos") or []
+    want = request.args.get("po", type=int)
+    po = next((p for p in pos if p["id"] == want), None) if want else (pos[0] if pos else None)
+    if want and not po:
+        abort(404)
+    return bundle, po
+
+
+def _po_name(bundle, po, ext):
+    return f"{(po or {}).get('po_no') or bundle['pr'].get('po_no', 'PO')}.{ext}"
+
+
+@bp.route("/pr/<int:pr_id>/pr.xlsx")
+@login_required
+@permission_required("proc_view")
+def pr_xlsx(pr_id):
+    bundle, money = _pr_doc(pr_id)
+    return _xlsx(xlsxgen.pr_xlsx(bundle, money=money),
+                 f"{bundle['pr'].get('pr_no', 'PR')}.xlsx")
+
+
+@bp.route("/pr/<int:pr_id>/po.xlsx")
+@login_required
+@permission_required("proc_view")
+def po_xlsx(pr_id):
+    bundle, po = _po_doc(pr_id)
+    return _xlsx(xlsxgen.po_xlsx(bundle, po), _po_name(bundle, po, "xlsx"))
+
+
 @bp.route("/pr/<int:pr_id>/pdf")
 @login_required
 @permission_required("proc_view")
 def pr_pdf(pr_id):
-    bundle = svc.get_pr(pr_id)
-    if not bundle:
-        abort(404)
+    bundle, money = _pr_doc(pr_id)
     try:
-        data = pdfgen.pr_pdf(bundle, money=bool(
-            svc.money_view(_u(), bundle["pr"], bundle["steps"])))
+        data = pdfgen.pr_pdf(bundle, money=money)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
     return send_file(io.BytesIO(data), mimetype="application/pdf",
@@ -2480,26 +2548,13 @@ def po_pdf(pr_id):
     per-vendor table is the ONLY route to the second and third suppliers'
     documents, and the narrower gate made them unreachable the moment the first
     supplier delivered."""
-    bundle = svc.get_pr(pr_id)
-    if not bundle:
-        abort(404)
-    if not svc.money_view(_u(), bundle["pr"], bundle["steps"]):
-        abort(403)
-    if bundle["pr"]["status"] not in ("approved", "po_issued", "partially_received",
-                                      "received", "closed"):
-        abort(400, "The Purchase Order is available only after full approval.")
-    pos = bundle.get("pos") or []
-    want = request.args.get("po", type=int)
-    po = next((p for p in pos if p["id"] == want), None) if want else (pos[0] if pos else None)
-    if want and not po:
-        abort(404)
+    bundle, po = _po_doc(pr_id)
     try:
         data = pdfgen.po_pdf(bundle, po)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
     return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False,
-                     download_name=f"{(po or {}).get('po_no') or bundle['pr'].get('po_no', 'PO')}.pdf")
+                     as_attachment=False, download_name=_po_name(bundle, po, "pdf"))
 
 
 @bp.route("/pr/<int:pr_id>/grn.pdf")

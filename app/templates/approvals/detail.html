@@ -102,9 +102,13 @@
   <div class="flex gap center wrap">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
       <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.pdf">PR PDF</span></a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_xlsx', pr_id=pr.id) }}" download>
+      <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.pr_xlsx">PR Excel</span></a>
     {% if money and pr.status in ('approved','po_issued','closed') %}
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
       <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_xlsx', pr_id=pr.id) }}" download>
+      <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.po_xlsx">PO Excel</span></a>
     {% endif %}
   </div>
 </div>
@@ -1536,9 +1540,12 @@
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.grand or 0) }} {{ p.currency or pr.currency }}</td>
             {% endif %}
-            <td>{% if money %}<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+            <td>{% if money %}<div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                    href="{{ url_for('approvals.po_pdf', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_pdf', pr_id=pr.id) }}">
-              <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>{% endif %}</td>
+              <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
+              <a class="btn btn-ghost btn-sm" download
+                 href="{{ url_for('approvals.po_xlsx', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_xlsx', pr_id=pr.id) }}">
+              <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.po_xlsx">PO Excel</span></a></div>{% endif %}</td>
           </tr>
         {% endfor %}
         </tbody>
@@ -1807,9 +1814,12 @@
                 <td>{% if r.status == 'answered' %}
                     <span class="badge b-approved" data-i18n="proc.rfq.answered">Answered</span>
                     {% else %}<span class="badge b-pending" data-i18n="proc.rfq.sent">Sent</span>{% endif %}</td>
-                <td><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+                <td><div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                        href="{{ url_for('approvals.rfq_pdf', pr_id=pr.id, rfq=r.id) }}">
-                  <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rfq.pdf">RFQ PDF</span></a></td>
+                  <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rfq.pdf">RFQ PDF</span></a>
+                  <a class="btn btn-ghost btn-sm" download
+                     href="{{ url_for('approvals.rfq_xlsx', pr_id=pr.id, rfq=r.id) }}">
+                  <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.rfq.xlsx">RFQ Excel</span></a></div></td>
               </tr>
               {#- Correcting an RFQ, and choosing which lines it asks for. Offered
                   only while it is unanswered: a quotation on file was priced
