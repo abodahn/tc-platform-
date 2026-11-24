@@ -280,3 +280,7 @@
 @media (prefers-reduced-motion: reduce) {
   .pf-tbl input[type="number"], .disc-pair .dp-type, .disc-pair .dp-val { transition: none; }
 }
+
+/* Pack-size read-out under a request line ("2 x 12 = 24 Pcs"). */
+.content.proc .li-row .li-pack{grid-column:1/-1;font-size:12.5px;font-weight:600;color:var(--ok,#1f7a4a);font-variant-numeric:tabular-nums;margin-top:-2px}
+.content.proc .li-row .li-pack[hidden]{display:none}

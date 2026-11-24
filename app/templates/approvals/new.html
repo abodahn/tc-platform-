@@ -362,6 +362,7 @@
       + '<select name="unit[]" class="li-uom">' + UNIT_OPTS + '</select>'
       + '<input name="qty[]" type="number" min="0" step="any" value="1" class="js-calc">'
       + '<button type="button" class="li-del" title="Remove">✕</button>'
+      + '<output class="li-pack" hidden></output>'
       + '</div>';
   }
   // tcApplyI18n: a cloned row carries data-i18n-ph attributes that were never
@@ -369,11 +370,25 @@
   function addRow(){ rows.insertAdjacentHTML('beforeend', rowHtml()); recalc();
     if (window.tcApplyI18n) window.tcApplyI18n(); }
 
+  // Mirrors constants.PACK_UNITS: the server stores pieces, so the form shows them.
+  var PACKS = {{ pack_units|tojson }};
+  function packQty(r){
+    var q = parseFloat(r.querySelector('[name="qty[]"]').value)||0;
+    var u = (r.querySelector('[name="unit[]"]')||{}).value;
+    var size = PACKS[u], out = r.querySelector('.li-pack');
+    if (out) {
+      out.hidden = !size;
+      out.textContent = size ? '⁦' + q + ' × ' + size + ' = ' + (q * size) + ' Pcs⁩' : '';
+    }
+    return size ? q * size : q;
+  }
+
   function recalc(){
     var total = 0;
+    rows.querySelectorAll('.li-row').forEach(packQty);
     if (CAN_PRICE) {
       rows.querySelectorAll('.li-row').forEach(function(r){
-        var q = parseFloat(r.querySelector('[name="qty[]"]').value)||0;
+        var q = packQty(r);
         var p = parseFloat(r.querySelector('[name="unit_price[]"]').value)||0;
         var c = q*p;
         r.querySelector('.js-cost').textContent = c.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -418,6 +433,7 @@
   }
 
   rows.addEventListener('input', function(e){ if(e.target.classList.contains('js-calc')) recalc(); });
+  rows.addEventListener('change', function(e){ if(e.target.name==='unit[]') recalc(); });
   rows.addEventListener('click', function(e){
     if (e.target.classList.contains('li-del')) {
       if (rows.querySelectorAll('.li-row').length > 1) e.target.closest('.li-row').remove();

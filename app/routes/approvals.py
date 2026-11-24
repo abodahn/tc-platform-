@@ -329,7 +329,7 @@ def new():
                            desc_ph=_DESC_PH.get(_lang(), _DESC_PH["en"]),
                            can_buy=user_can("proc_purchasing") or user_can("proc_admin"),
                            fields=svc.visible_fields(),
-                           vendors=svc.list_vendors(), units=C.UNITS,
+                           vendors=svc.list_vendors(), units=C.PR_UNITS, pack_units=C.PACK_UNITS,
                            sales_orders=svc.list_sales_orders(),
                            forecasts=svc.list_forecasts(active_only=True),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
@@ -500,6 +500,23 @@ def _kind_refusal(header):
         shown or I18N["proc.kind_blank"][i])
 
 
+def _unpack(unit, qty):
+    """A pack unit ("Box (12)") becomes pieces: 2 boxes -> (Pcs, 24, "2 x Box (12)").
+
+    Any other unit passes through untouched. A qty that is not a number is left
+    for create_pr to reject as it always has.
+    """
+    unit = unit or ""
+    size = C.PACK_UNITS.get(unit)
+    if not size:
+        return unit, qty, ""
+    try:
+        n = float(qty or 0)
+    except (TypeError, ValueError):
+        return "Pcs", qty, ""
+    return "Pcs", n * size, f"{n:g} x {unit} = {n * size:g} Pcs"
+
+
 def _parse_items(f, can_price=False, can_buy=False):
     items = []
     names = f.getlist("item[]"); descs = f.getlist("description[]")
@@ -517,6 +534,11 @@ def _parse_items(f, can_price=False, can_buy=False):
         desc = (descs[i].strip() if i < len(descs) else "")
         if not name and not desc:
             continue
+        unit, qty, pack = _unpack(units[i] if i < len(units) else "",
+                                  qtys[i] if i < len(qtys) else 0)
+        note = notes[i] if i < len(notes) else ""
+        if pack:
+            note = pack + (" | " + note if note else "")
         items.append({
             # The description IS the line when nothing else names it: pr_items.item
             # is what the PDFs print, what the off-catalogue queue groups by, and
@@ -547,8 +569,8 @@ def _parse_items(f, can_price=False, can_buy=False):
             # hold — which is the case it was missing.
             #
             # Still locked for everyone: price, supplier and stock figures.
-            "unit": (units[i] if i < len(units) else "") or "",
-            "qty": qtys[i] if i < len(qtys) else 0,
+            "unit": unit,
+            "qty": qty,
             "current_stock": (stocks[i] if i < len(stocks) else 0) if can_buy else 0,
             # One requisition, several suppliers: each line may name its own.
             # Left blank it stays blank here and services.py falls back to the
@@ -557,7 +579,7 @@ def _parse_items(f, can_price=False, can_buy=False):
             # Commercial lockout: unit price is forced to 0 for requesters, no
             # matter what the form (or a hand-crafted request) sends.
             "unit_price": (prices[i] if i < len(prices) else 0) if can_price else 0,
-            "notes": notes[i] if i < len(notes) else "",
+            "notes": note,
             # cross-module mesh: the picked spare part (mnt_spare_parts.id) —
             # its goods receipt will post straight back into that spare's stock
             "spare_id": spares[i] if i < len(spares) else "",
@@ -1173,7 +1195,7 @@ def edit(pr_id):
                            desc_ph=_DESC_PH.get(_lang(), _DESC_PH["en"]),
                            can_buy=user_can("proc_purchasing") or user_can("proc_admin"),
                            fields=svc.visible_fields(),
-                           vendors=svc.list_vendors(), units=C.UNITS,
+                           vendors=svc.list_vendors(), units=C.PR_UNITS, pack_units=C.PACK_UNITS,
                            sales_orders=svc.list_sales_orders(),
                            forecasts=svc.list_forecasts(active_only=True),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,

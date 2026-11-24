@@ -59,6 +59,11 @@ CURRENCIES = ["EGP", "USD", "EUR", "TRY"]
 UNITS = ["Pcs", "Each", "Unit", "Set", "Box", "Carton", "Packet", "Roll", "Cone",
          "Meter", "Yard", "Sheet", "Kg", "Gram", "Ton", "Liter", "Drum", "Barrel",
          "Day", "Hour", "Month", "Service", "Lot", "Pair", "Dozen", "Pack"]
+# Pack sizes offered on the REQUEST form only. Never stored: _parse_items turns
+# "2 x Box (12)" into 24 Pcs, so receiving, the PO and the three-way match keep
+# counting pieces. Not in UNITS, so the catalogue can't adopt them as master data.
+PACK_UNITS = {"Box (12)": 12, "Box (24)": 24}
+PR_UNITS = UNITS[:UNITS.index("Box") + 1] + list(PACK_UNITS) + UNITS[UNITS.index("Box") + 1:]
 PAYMENT_CONDITIONS = ["Advanced Payment", "On Delivery", "Net 15", "Net 30",
                       "Net 60", "Cash", "Cheque", "Installments"]
 # Suggestions for the payment terms on an RFQ and on a supplier's quotation.
