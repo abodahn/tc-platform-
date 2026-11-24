@@ -2848,7 +2848,7 @@
   "proc.vat_no": "بدون ضريبة",
   "proc.after_vat": "بعد الضريبة",
   "proc.in_place_tag": "وقّع السوبر أدمن بدلاً من",
-  "proc.rfq.for_value": "مطلوبة لقيمة الطلب (شامل الضريبة)",
+  "proc.rfq.for_value": "مطلوبة لقيمة الطلب (قبل الضريبة)",
   "proc.rfq.count_rule": "يُحسب فقط العروض من مورّدين مختلفين، وكل عرض مرفق بيه ملفه.",
   "proc.waiting_for": "بانتظار",
   "proc.waiting_hold": "معلّق",

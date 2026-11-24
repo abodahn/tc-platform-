@@ -169,8 +169,8 @@ def run():
         _c.close()
         chk("egp_commitment = discounted grand 2,034.90 (%s)" % svc.egp_commitment(pr),
             svc.egp_commitment(pr) == 2034.9)
-        chk("rfq_requirement routes on the discounted value (%s)" % rq["value"],
-            rq["value"] == 2034.9)
+        chk("rfq_requirement judges the discounted value BEFORE VAT (%s)" % rq["value"],
+            rq["value"] == 1785.0)
 
         # ---- 2. clamps -----------------------------------------------------
         cl_id, _ = svc.create_pr({"title": "Clamp", "department": "Maintenance"},

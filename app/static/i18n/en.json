@@ -2848,7 +2848,7 @@
   "proc.vat_no": "No VAT",
   "proc.after_vat": "After VAT",
   "proc.in_place_tag": "Super admin signed in place of",
-  "proc.rfq.for_value": "required for this value (VAT incl.)",
+  "proc.rfq.for_value": "required for this value (before VAT)",
   "proc.rfq.count_rule": "Only quotations from different suppliers, each with its file attached, are counted.",
   "proc.waiting_for": "Waiting for",
   "proc.waiting_hold": "On hold",

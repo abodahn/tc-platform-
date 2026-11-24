@@ -214,15 +214,15 @@ def run():
             svc.update_quote(q["id"], {"warranty": "1y"}, user=store)
             == (False, "self_quote_choice"))
         f = post("/procurement/pr/%d/quote/%d/edit" % (p, q["id"]), currency="EUR",
-                 fx_rate="50", payment_terms="30 days", vat_applies="1")
+                 fx_rate="55", payment_terms="30 days", vat_applies="1")
         chk("saved and applied", ("success", "Quotation updated.") in f and (
             "success", "Quote selected — its prices and VAT are now the request's prices.") in f, f)
         q2 = dict(one("SELECT * FROM pr_quotes WHERE id=?", q["id"]))
-        chk("the row now holds EUR @ 50", q2["currency"] == "EUR" and q2["fx_rate"] == 50)
+        chk("the row now holds EUR @ 55", q2["currency"] == "EUR" and q2["fx_rate"] == 55)
         r = req(p)
         items = {it["id"]: it for it in svc.get_pr(p)["items"]}
         am = svc.pr_amounts(r)
-        chk("request currency EUR at 50", r["currency"] == "EUR" and r["fx_rate"] == 50,
+        chk("request currency EUR at 55", r["currency"] == "EUR" and r["fx_rate"] == 55,
             (r["currency"], r["fx_rate"]))
         chk("line prices 744.50 / 501.38, line 1 discount 4%",
             items[a]["unit_price"] == 744.5 and items[b]["unit_price"] == 501.38
@@ -234,8 +234,8 @@ def run():
         chk("every line carries the chosen supplier",
             all(it["vendor"] == "EuroCo" for it in items.values()))
         rq = rfq(p)
-        chk("the quote rule now judges 55,454 EGP and needs 3 quotes (%s)" % rq,
-            rq["value"] == 55454.0 and rq["required"] == 3 and not rq["ok"]
+        chk("the quote rule judges 53,508.40 EGP BEFORE VAT and needs 3 quotes (%s)" % rq,
+            rq["value"] == 53508.4 and rq["required"] == 3 and not rq["ok"]
             and rq["msg"] == "needs_quotes")
         chk("so the sign-off is refused for competitive quotes, not a stale value",
             svc.act_on_step(p, buyer, "approve") == (False, "needs_quotes"))
@@ -366,8 +366,8 @@ def run():
         svc.choose_quote(e, lq, buyer)
         svc.apply_chosen_quote(e, lq, buyer)
         svc.price_pr(e, {el: 4000}, {"tax_rate": "14"}, buyer)
-        chk("an applied EGP quote does not raise the rule's value (4,560, not 5,700)",
-            rfq(e)["value"] == 4560, rfq(e))
+        chk("an applied EGP quote does not raise the rule's value (4,000 before VAT, not 5,000)",
+            rfq(e)["value"] == 4000, rfq(e))
 
         # A PARTIAL quote in another currency must not re-label the other lines.
         t_, (ta, tb) = new_pr("Partial", [("PART-A", 1), ("PART-B", 1)])

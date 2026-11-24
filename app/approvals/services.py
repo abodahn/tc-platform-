@@ -7116,7 +7116,7 @@ def rfq_requirement(conn, pr):
     (False, "needs_quotes") when the rule blocks the sign-off, else (True, "").
 
     rfq_requirement() is the same rule reporting its numbers — required, have
-    (distinct suppliers with a file), value (EGP, VAT included) — so the page
+    (distinct suppliers with a file), value (EGP, BEFORE VAT) — so the page
     badge and the refusal can never disagree with the gate again."""
     out = {"ok": True, "msg": "", "required": 0, "have": 0, "value": 0.0,
            "single_source": False}
@@ -7125,8 +7125,10 @@ def rfq_requirement(conn, pr):
     # Threshold is EGP-based: compare the EGP-EQUIVALENT total (fx-converted),
     # not the raw foreign figure — a 60,000 TRY (~3,000 EGP) order must not
     # trigger the competitive-quote rule meant for 25,000+ EGP purchases.
+    # The quote COUNT is judged BEFORE VAT (owner's decision, 2026-11-24);
+    # approval ROUTING still uses the VAT-inclusive egp_commitment().
     try:
-        total = float(egp_commitment(pr))
+        total = float(egp_total(pr))
     except (TypeError, ValueError):
         total = 0.0
     # The chosen quotation is what will really be ordered: when its EGP cost is
@@ -7135,8 +7137,8 @@ def rfq_requirement(conn, pr):
     # Same currency = it was applied (or priced by hand): the request value rules.
     ch = _chosen_quote(conn, _pr_field(pr, "id"))
     _pcur = _pr_field(pr, "currency") or "EGP"
-    if ch and ch["after_vat_egp"] and ch["currency"] != (C.currency_code(_pcur) or _pcur):
-        total = max(total, ch["after_vat_egp"])
+    if ch and ch["egp_rate"] and ch["currency"] != (C.currency_code(_pcur) or _pcur):
+        total = max(total, round(float(ch.get("amount") or 0) * ch["egp_rate"], 2))
     out["value"] = round(total, 2)
     # DOAM §4.3 bands when the matrix is in force: 1 quote up to 50,000, three to
     # 500,000, three plus negotiation to 2,000,000, formal tender above that. The

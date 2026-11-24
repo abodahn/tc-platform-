@@ -2848,7 +2848,7 @@
   "proc.vat_no": "KDV yok",
   "proc.after_vat": "KDV dahil",
   "proc.in_place_tag": "Süper yönetici şunun yerine imzaladı",
-  "proc.rfq.for_value": "bu tutar için gerekli (KDV dahil)",
+  "proc.rfq.for_value": "bu tutar için gerekli (KDV hariç)",
   "proc.rfq.count_rule": "Yalnızca farklı tedarikçilerden, dosyası ekli teklifler sayılır.",
   "proc.waiting_for": "Bekleyen",
   "proc.waiting_hold": "Beklemede",

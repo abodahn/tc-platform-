@@ -100,8 +100,8 @@ def run():
         _c = get_db()
         rq = svc.rfq_requirement(_c, prq)
         _c.close()
-        chk("the quote rule reports its numbers: value incl. VAT, required, have (%s)" % rq,
-            rq["value"] == 137826 and rq["have"] == 1 and rq["required"] >= 1
+        chk("the quote rule reports its numbers: value before VAT, required, have (%s)" % rq,
+            rq["value"] == 120900 and rq["have"] == 1 and rq["required"] >= 1
             and svc.rfq_gate_check(get_db(), prq) == (rq["ok"], rq["msg"]))
 
         one_line, _ = svc.create_pr({"title": "Single", "department": "Maintenance"},
