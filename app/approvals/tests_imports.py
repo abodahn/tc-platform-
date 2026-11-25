@@ -310,6 +310,166 @@ def run():
         assert "الاتفاقية دي مقفولة خلاص" in r.get_data(as_text=True)
         assert client("t.buy").get("/procurement/agreements").status_code == 200
 
+        # ================= review fixes =================
+        def pr_row(conn, p):
+            return conn.execute("SELECT * FROM pr_requests WHERE id=?", (p,)).fetchone()
+
+        def waiver(p):
+            conn = get_db()
+            try:
+                return imp.rfq_waiver(conn, pr_row(conn, p))["lines"]
+            finally:
+                conn.close()
+
+        def rfq(p):
+            conn = get_db()
+            try:
+                return svc.rfq_requirement(conn, pr_row(conn, p))
+            finally:
+                conn.close()
+
+        def offer(p):
+            conn = get_db()
+            try:
+                return imp.drawable(conn, pr_row(conn, p), [dict(i) for i in conn.execute(
+                    "SELECT * FROM pr_items WHERE pr_id=? AND agreement_line_id IS NULL", (p,)).fetchall()])
+            finally:
+                conn.close()
+
+        def agreement(lines_, ceiling="1000", **kw):
+            ok_, x = imp.create_agreement(dict(good, ceiling_value=ceiling, **kw), lines_, buy)
+            assert ok_, x
+            assert imp.approve_agreement(x, fin) == (True, "approved")
+            return x, imp.get_agreement(x)["lines"]
+
+        def mk(title, lines_, priced=True):
+            p, _ = svc.create_pr({"title": title, "department": "IT"}, lines_, staff,
+                                 submit=False, priced=priced)
+            return p, [r["id"] for r in conn_rows("SELECT id FROM pr_items WHERE pr_id=? ORDER BY seq, id", (p,))]
+
+        def conn_rows(q, a=()):
+            conn = get_db()
+            try:
+                return conn.execute(q, a).fetchall()
+            finally:
+                conn.close()
+
+        b1, b1l = agreement([{"item": "Fake Rivet", "unit_price": "10"}])
+        pa, (la,) = mk("Rivets A", [{"item": "Fake Rivet", "qty": 60, "unit_price": 10}])
+        pb, (lb,) = mk("Rivets B", [{"item": "Fake Rivet", "qty": 40, "unit_price": 10}])
+        pc, (lc,) = mk("Rivets C", [{"item": "Fake Rivet", "qty": 5, "unit_price": 10}])
+        assert lc in offer(pc)
+        assert imp.draw_line(pa, la, b1l[0]["id"], buy) == (True, "drawn")
+        assert imp.draw_line(pb, lb, b1l[0]["id"], buy) == (True, "drawn")
+        assert one("SELECT agreement_drawn_at FROM pr_items WHERE id=?", (la,))["agreement_drawn_at"]
+        assert waiver(pa) == [la] and waiver(pb) == [lb]
+        assert offer(pc) == {}                         # ceiling used up: not offered
+        # A grows after its draw (e.g. a warehouse revise): only the overflow, B, loses it
+        sql("UPDATE pr_items SET qty=70 WHERE id=?", (la,))
+        assert waiver(pa) == [la] and waiver(pb) == [], (waiver(pa), waiver(pb))
+        sql("UPDATE pr_items SET qty=60 WHERE id=?", (la,))
+        # drawn inside validity, agreement expired since: the waiver stands
+        sql("UPDATE pr_items SET agreement_drawn_at='2026-02-01 09:00:00' WHERE id IN (?,?)", (la, lb))
+        sql("UPDATE proc_agreements SET valid_to='2026-03-01' WHERE id=?", (b1,))
+        assert waiver(pa) == [la] and waiver(pb) == [lb]
+        sql("UPDATE pr_items SET agreement_drawn_at='2026-04-01 09:00:00' WHERE id=?", (lb,))
+        assert waiver(pb) == []                        # drawn after the end date
+        # a request (re)submitted after the end date is judged on that date
+        sql("UPDATE pr_requests SET submitted_at='2026-05-01 09:00:00' WHERE id=?", (pa,))
+        assert waiver(pa) == []
+        sql("UPDATE pr_requests SET submitted_at=NULL WHERE id=?", (pa,))
+        sql("UPDATE proc_agreements SET valid_to='2099-12-31' WHERE id=?", (b1,))
+        # an abandoned draft stops holding the ceiling
+        sql("UPDATE pr_requests SET created_at='2025-01-01 00:00:00' WHERE id=?", (pa,))
+        assert imp.get_agreement(b1)["used_value"] == 400.0
+        assert lc in offer(pc)
+        sql("UPDATE pr_requests SET created_at=? WHERE id=?", (svc._now(), pa))
+        # supplier off the approved list: no waiver, nothing offered
+        assert imp.release_line(pb, lb, buy) == (True, "released")
+        assert one("SELECT agreement_drawn_at FROM pr_items WHERE id=?", (lb,))["agreement_drawn_at"] is None
+        assert lc in offer(pc)
+        sql("UPDATE proc_vendors SET is_active=0 WHERE name='Fake Vendor A'")
+        assert waiver(pa) == [] and offer(pc) == {}
+        sql("UPDATE proc_vendors SET is_active=1 WHERE name='Fake Vendor A'")
+        assert waiver(pa) == [la]
+
+        # header discount: the waived part is taken off at its NET value
+        b2, b2l = agreement([{"item": "Fake Zipper", "unit_price": "600"}], ceiling="1000000")
+        pd, (zd, lamp) = mk("Zips", [{"item": "Fake Zipper", "qty": 100, "unit_price": 600},
+                                     {"item": "Fake Lamp", "qty": 1, "unit_price": 40000}])
+        assert svc.price_pr(pd, {}, {"disc_type": "pct", "disc_value": "20"}, buy)[0]
+        assert imp.draw_line(pd, zd, b2l[0]["id"], buy) == (True, "drawn")
+        assert one("SELECT total FROM pr_requests WHERE id=?", (pd,))["total"] == 80000.0
+        r_ = rfq(pd)
+        assert r_["value"] == 32000.0 and not r_.get("agreement"), r_       # 40,000 x 0.8, not 80k - 60k
+        # unpriced request: the draw reprices the line and the request total, pricing stays open
+        pu, (zu,) = mk("Zips unpriced", [{"item": "Fake Zipper", "qty": 2}], priced=False)
+        assert "proc.imports.agr_exists" in client("t.staff").get("/procurement/pr/%d" % pu).get_data(as_text=True)
+        assert imp.draw_line(pu, zu, b2l[0]["id"], buy) == (True, "drawn")
+        row = one("SELECT total, pricing_status FROM pr_requests WHERE id=?", (pu,))
+        assert (row["total"], row["pricing_status"]) == (1200.0, "unpriced"), dict(row)
+        # an all-agreement request: value reported, and DOAM 4.4 still applies
+        b3, b3l = agreement([{"code": "FAKE-001", "unit_price": "4.5"}])
+        pe, (ce,) = mk("Cat", [{"item": "Fake Catalogue Item", "item_id": cat_id, "qty": 10, "unit_price": 4.5}])
+        assert imp.draw_line(pe, ce, b3l[0]["id"], buy) == (True, "drawn")
+        r_ = rfq(pe)
+        assert r_["ok"] and r_.get("agreement") and r_["value"] == 0.0 and r_["required"] == 0, r_
+        sql("UPDATE proc_items SET cost_price=4, has_cost=1 WHERE id=?", (cat_id,))
+        r_ = rfq(pe)
+        assert not r_["ok"] and r_["required"] == 3, r_                     # 12.5% over target
+        sql("UPDATE proc_items SET cost_price=0, has_cost=0 WHERE id=?", (cat_id,))
+
+        # register filter: same key as the order grouping (case, non-ASCII)
+        sql("INSERT INTO proc_vendors (name, is_active, created_at) VALUES ('Fake Çukurova Tekstil', 1, '2026-01-01')")
+        b4, _ = agreement([{"item": "Fake Hook", "unit_price": "1"}], vendor="Fake Çukurova Tekstil")
+        assert [x["id"] for x in imp.list_agreements(vendor=" FAKE ÇUKUROVA TEKSTIL ")] == [b4]
+        page = client("t.buy").get("/procurement/agreements/%d" % b1).get_data(as_text=True)
+        assert "proc.imports.rs_draft" in page and "→" not in page
+
+        # landed cost: computed once per receipt, and an error rolls the connection back
+        assert svc.set_setting("landed_cost_to_stock", "1", buy)[0]
+        cache = {}
+        unit = imp.stock_unit_cost(pid, item1, 100.0, cache=cache)
+        assert unit > 100.0 and pid in cache
+        real_lv = imp.landed_view
+        imp.landed_view = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            assert imp.stock_unit_cost(pid, item1, 100.0, cache=cache) == unit    # cached
+            real_get = imp.get_db
+            seen = []
+
+            class _Conn:
+                def __init__(self):
+                    self.c = real_get()
+
+                def execute(self, *a):
+                    return self.c.execute(*a)
+
+                def rollback(self):
+                    seen.append("rollback")
+                    self.c.rollback()
+
+                def close(self):
+                    self.c.close()
+            imp.get_db = _Conn
+            try:
+                assert imp.stock_unit_cost(pid, item1, 100.0) == 100.0
+            finally:
+                imp.get_db = real_get
+            assert seen == ["rollback"], seen
+        finally:
+            imp.landed_view = real_lv
+        assert svc.set_setting("landed_cost_to_stock", "0", buy)[0]
+
+        # shipments and charges only while the order is live
+        sql("UPDATE pr_requests SET status='cancelled' WHERE id=?", (pid,))
+        live = one("SELECT id FROM pr_landed_charges WHERE pr_id=? AND status='active'", (pid,))["id"]
+        assert imp.save_shipment(pid, "PO-T-1", ship, buy) == (False, "ship_locked")
+        assert imp.add_charge(pid, "PO-T-1", {"kind": "duty", "amount": "5"}, buy) == (False, "ship_locked")
+        assert imp.correct_charge(live, {"amount": "5"}, fin) == (False, "ship_locked", pid)
+        assert imp.void_charge(live, "x", fin) == (False, "ship_locked", pid)
+        sql("UPDATE pr_requests SET status='po_issued' WHERE id=?", (pid,))
+
         # every message these routes flash has its Arabic and Turkish
         from app.approvals.messages import MESSAGES
         from app.approvals.tests_messages_i18n import user_facing_strings

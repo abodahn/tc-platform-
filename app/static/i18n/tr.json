@@ -4792,6 +4792,16 @@
   "proc.imports.value": "Değer",
   "proc.imports.void": "Masrafı iptal et",
   "proc.imports.void_reason": "Neden iptal ediliyor?",
+  "proc.imports.agr_exists": "Bu kalem için geçerli bir çerçeve anlaşma var. Satın alma fiyatı anlaşmadan girecek.",
+  "proc.imports.rs_draft": "Taslak",
+  "proc.imports.rs_pending": "Onay bekliyor",
+  "proc.imports.rs_approved": "Onaylandı",
+  "proc.imports.rs_po_issued": "Sipariş verildi",
+  "proc.imports.rs_in_transit": "Yolda",
+  "proc.imports.rs_partially_received": "Kısmen teslim alındı",
+  "proc.imports.rs_received": "Teslim alındı",
+  "proc.imports.rs_closed": "Kapatıldı",
+  "proc.imports.rs_rejected": "Reddedildi",
   "proc.imports.voided": "İptal edildi",
   "proc.imports.waived": "Teklif muafiyeti"
 }

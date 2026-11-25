@@ -20,12 +20,19 @@ were booked in do not revalue stock already received.
 Procurement admin drafts one; a Procurement admin or Finance (proc_pay) who is
 NOT the creator activates it. A request line drawn against an active agreement
 takes the agreed price and supplier, and the competitive-quotation rule is
-waived for THAT line only while the agreement is in date and inside its
-ceiling (rfq_waiver, read by services.rfq_requirement). The approval ladder is
-never touched.
+waived for THAT line only (rfq_waiver, read by services.rfq_requirement) while
+the agreement is active, its supplier still approved, the line was drawn (or
+its request submitted) inside the validity window, and the line fits the
+ceiling in draw order: the earliest draws keep their waiver, only the overflow
+loses it. DOAM 4.4 (an off-target price needs three quotes) still applies to an
+agreement price. The approval ladder is never touched.
+
+Drawing is Purchasing's act (it is pricing). A requester sees a read-only note
+on the request page that an agreement exists for a line; a catalogue agreement
+line matches only a line picked from the catalogue (item_id), never by name.
 """
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from app.db import get_db
 from app.security import user_has_permission
@@ -43,6 +50,8 @@ EXPIRY_WARN_DAYS = 30
 _RELEASED = ("cancelled", "rejected")
 # A line can be drawn (or released) only while the request is still being decided.
 _DRAWABLE = ("draft", "rejected", "pending")
+# A draft left untouched this long no longer holds any of an agreement's ceiling.
+DRAFT_HOLD_DAYS = 30
 
 
 def _today():
@@ -103,6 +112,11 @@ def _po_nos(conn, pr):
     return [p["po_no"] for p in svc._pos_for(conn, pr)]
 
 
+def _in_order_flow(conn, pr_id):
+    pr = _pr(conn, pr_id)
+    return bool(pr) and pr["status"] in C.ORDER_FLOW
+
+
 def save_shipment(pr_id, po_no, data, user, ip=None):
     """Create or update the shipment record of one import PO. Returns (ok, code)."""
     if not can_record(user):
@@ -114,6 +128,8 @@ def save_shipment(pr_id, po_no, data, user, ip=None):
             return False, "not_found"
         if not is_import(pr):
             return False, "not_import"
+        if pr["status"] not in C.ORDER_FLOW:
+            return False, "ship_locked"
         if po_no not in _po_nos(conn, pr):
             return False, "no_po"
         vals = {"bl_no": str(data.get("bl_no") or "").strip()[:60],
@@ -194,6 +210,8 @@ def add_charge(pr_id, po_no, data, user, filename=None, content_type=None,
             return False, "not_found"
         if not is_import(pr):
             return False, "not_import"
+        if pr["status"] not in C.ORDER_FLOW:
+            return False, "ship_locked"
         if po_no not in _po_nos(conn, pr):
             return False, "no_po"
         now, who = svc._now(), _uname(user)
@@ -239,6 +257,8 @@ def correct_charge(charge_id, data, user, ip=None):
             return False, "void", r["pr_id"]
         if not money:
             return False, err, r["pr_id"]
+        if not _in_order_flow(conn, r["pr_id"]):
+            return False, "ship_locked", r["pr_id"]
         amount, cur, fx, egp = money
         who = _uname(user)
         conn.execute("UPDATE pr_landed_charges SET amount=?, currency=?, fx_rate=?, amount_egp=?, "
@@ -271,6 +291,8 @@ def void_charge(charge_id, reason, user, ip=None):
             return False, "void", r["pr_id"]
         if not reason:
             return False, "reason_required", r["pr_id"]
+        if not _in_order_flow(conn, r["pr_id"]):
+            return False, "ship_locked", r["pr_id"]
         who = _uname(user)
         conn.execute("UPDATE pr_landed_charges SET status='void', void_reason=?, updated_by=?, "
                      "updated_at=? WHERE id=?", (reason, who, svc._now(), charge_id))
@@ -350,29 +372,45 @@ def landed_view(conn, pr, items=None):
     return out
 
 
-def stock_unit_cost(pr_id, item_id, price):
+def _landed_units(conn, pr_id):
+    """{pr_item_id: landed EGP unit} for the lines whose order carries charges."""
+    if not svc.bool_setting(conn, "landed_cost_to_stock"):
+        return {}
+    pr = _pr(conn, pr_id)
+    if not pr or not is_import(pr):
+        return {}
+    return {r["id"]: r["landed_unit_egp"] for po in landed_view(conn, pr)
+            if po["charges_egp"] > 0 for r in po["lines"] if r["landed_unit_egp"]}
+
+
+def stock_unit_cost(pr_id, item_id, price, cache=None):
     """The EGP unit cost a receipt of this line enters stock at: `price` (what
     post_stock_postings already computed) unless the landed-cost setting is ON,
-    the request is an import and its order carries charges. Never raises."""
+    the request is an import and its order carries charges. Never raises, and
+    never leaves the shared PostgreSQL connection aborted (the stock posting
+    that follows runs on it). `cache` (a dict the caller keeps for one receipt)
+    builds the landed view once per request instead of once per line."""
+    if cache is not None and pr_id in cache:
+        return cache[pr_id].get(item_id) or price
     try:
         conn = get_db()
-        try:
-            if not svc.bool_setting(conn, "landed_cost_to_stock"):
-                return price
-            pr = _pr(conn, pr_id)
-            if not pr or not is_import(pr):
-                return price
-            for po in landed_view(conn, pr):
-                if po["charges_egp"] <= 0:
-                    continue
-                for r in po["lines"]:
-                    if r["id"] == item_id and r["landed_unit_egp"]:
-                        return r["landed_unit_egp"]
-        finally:
-            conn.close()
+    except Exception:
+        log.warning("landed cost unavailable for PR %s", pr_id, exc_info=True)
+        return price
+    try:
+        units = _landed_units(conn, pr_id)
     except Exception:
         log.warning("landed cost unavailable for PR %s line %s", pr_id, item_id, exc_info=True)
-    return price
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return price
+    finally:
+        conn.close()
+    if cache is not None:
+        cache[pr_id] = units
+    return units.get(item_id) or price
 
 
 # ==========================================================================
@@ -392,36 +430,56 @@ def agreement_state(a, today=None):
     return "active"
 
 
-def _drawn_rows(conn, agr_id):
-    """Every request line still drawn against `agr_id`: carries the link, the
-    agreed price, the agreement supplier and currency (a re-priced, re-sourced
-    or re-currencied line has silently left the agreement)."""
-    a = conn.execute("SELECT vendor, currency FROM proc_agreements WHERE id=?", (agr_id,)).fetchone()
-    if not a:
-        return []
-    out = []
+def _draws(conn, agr_ids):
+    """{agreement_id: [request lines still drawn against it]} in ONE query.
+    A line carries the link, the agreed price, the agreement supplier and
+    currency (a re-priced, re-sourced or re-currencied line has silently left
+    the agreement). Sorted in draw order: `key` is the later of the draw and
+    the request's (re)submission, so a request sent back in later queues behind
+    the lines drawn meanwhile. `holds` is False for a draft untouched for
+    DRAFT_HOLD_DAYS: an abandoned draft does not hold the ceiling forever."""
+    agr_ids = sorted({int(a) for a in agr_ids if a})
+    out = {a: [] for a in agr_ids}
+    if not agr_ids:
+        return out
+    stale = (date.fromisoformat(_today()) - timedelta(days=DRAFT_HOLD_DAYS)).isoformat()
     for r in conn.execute(
-            "SELECT i.id, i.pr_id, i.item, i.qty, i.unit_price, i.vendor, al.unit_price AS agreed, "
-            "al.id AS line_id, r.pr_no, r.title, r.status, r.vendor AS pr_vendor, r.currency "
+            "SELECT i.id, i.pr_id, i.item, i.qty, i.unit_price, i.vendor, i.agreement_drawn_at, "
+            "al.unit_price AS agreed, al.id AS line_id, al.agreement_id, a.vendor AS agr_vendor, "
+            "a.currency AS agr_currency, r.pr_no, r.title, r.status, r.vendor AS pr_vendor, "
+            "r.currency, r.submitted_at, r.created_at AS pr_created "
             "FROM pr_items i JOIN proc_agreement_lines al ON al.id=i.agreement_line_id "
-            "JOIN pr_requests r ON r.id=i.pr_id WHERE al.agreement_id=? "
-            "AND COALESCE(r.is_active,1)=1 ORDER BY i.pr_id, i.id", (agr_id,)).fetchall():
+            "JOIN proc_agreements a ON a.id=al.agreement_id "
+            "JOIN pr_requests r ON r.id=i.pr_id WHERE al.agreement_id IN (%s) "
+            "AND COALESCE(r.is_active,1)=1" % ",".join("?" * len(agr_ids)), agr_ids).fetchall():
         d = dict(r)
         if d["status"] in _RELEASED:
             continue
         if abs(float(d["unit_price"] or 0) - float(d["agreed"] or 0)) > 0.005:
             continue
-        if C.vendor_key(d["vendor"] or d["pr_vendor"]) != C.vendor_key(a["vendor"]):
+        if C.vendor_key(d["vendor"] or d["pr_vendor"]) != C.vendor_key(d["agr_vendor"]):
             continue
-        if (d["currency"] or "EGP").upper() != (a["currency"] or "EGP").upper():
+        if (d["currency"] or "EGP").upper() != (d["agr_currency"] or "EGP").upper():
             continue
         d["value"] = round(float(d["qty"] or 0) * float(d["agreed"] or 0), 2)
-        out.append(d)
+        # A line drawn before the draw date was stored is judged as of today.
+        d["key"] = max(str(d["agreement_drawn_at"] or ""), str(d["submitted_at"] or "")) or svc._now()
+        d["holds"] = not (d["status"] == "draft" and str(d["pr_created"] or "")[:10] < stale)
+        out[d["agreement_id"]].append(d)
+    for rows in out.values():
+        rows.sort(key=lambda d: (d["key"], d["id"]))
     return out
 
 
-def consumption(conn, agr_id, exclude_item=None):
-    rows = [r for r in _drawn_rows(conn, agr_id) if r["id"] != exclude_item]
+def _drawn_rows(conn, agr_id):
+    return _draws(conn, [agr_id]).get(int(agr_id), [])
+
+
+def consumption(conn, agr_id, exclude_item=None, rows=None):
+    """What the agreement's live draws use. `rows` = its _draws() entry, when
+    the caller already loaded it."""
+    rows = [r for r in (_drawn_rows(conn, agr_id) if rows is None else rows)
+            if r["holds"] and r["id"] != exclude_item]
     return {"value": round(sum(r["value"] for r in rows), 2),
             "qty": round(sum(float(r["qty"] or 0) for r in rows), 4), "rows": rows}
 
@@ -435,9 +493,9 @@ def _within_ceiling(a, used_value, used_qty):
     return True
 
 
-def _decorate(conn, a, today=None):
+def _decorate(conn, a, today=None, rows=None):
     a = dict(a)
-    use = consumption(conn, a["id"])
+    use = consumption(conn, a["id"], rows=rows)
     a["state"] = agreement_state(a, today)
     a["used_value"], a["used_qty"], a["draws"] = use["value"], use["qty"], use["rows"]
     pcts = []
@@ -459,11 +517,11 @@ def _decorate(conn, a, today=None):
 def list_agreements(vendor="", status=""):
     conn = get_db()
     try:
-        sql, args = "SELECT * FROM proc_agreements", []
-        if vendor:
-            sql += " WHERE LOWER(TRIM(vendor))=?"
-            args.append(_norm(vendor))
-        rows = [_decorate(conn, r) for r in conn.execute(sql + " ORDER BY id DESC", args).fetchall()]
+        rows = conn.execute("SELECT * FROM proc_agreements ORDER BY id DESC").fetchall()
+        if vendor:   # the same key po_groups uses: case, spacing and non-ASCII folded alike
+            rows = [r for r in rows if C.vendor_key(r["vendor"]) == C.vendor_key(vendor)]
+        draws = _draws(conn, [r["id"] for r in rows])
+        rows = [_decorate(conn, r, rows=draws.get(r["id"], [])) for r in rows]
         return [r for r in rows if not status or r["state"] == status]
     finally:
         conn.close()
@@ -646,17 +704,34 @@ def _line_matches(al, item):
 
 def drawable(conn, pr, items):
     """{pr_item_id: [usable agreement lines]} for the request page: active, in
-    date, same currency as the request, same item."""
+    date, same currency as the request, same item, supplier still approved, and
+    the line still fits the ceiling (draw_line would refuse anything else)."""
     cur = (svc._pr_field(pr, "currency") or "EGP").upper()
     today = _today()
     rows = conn.execute(
-        "SELECT al.*, a.ref, a.vendor, a.currency, a.valid_to FROM proc_agreement_lines al "
+        "SELECT al.*, a.ref, a.vendor, a.currency, a.valid_to, a.ceiling_value, a.ceiling_qty "
+        "FROM proc_agreement_lines al "
         "JOIN proc_agreements a ON a.id=al.agreement_id WHERE a.status='active' "
         "AND a.valid_from<=? AND a.valid_to>=? AND UPPER(a.currency)=?",
         (today, today, cur)).fetchall()
+    if not rows:
+        return {}
+    draws = _draws(conn, [al["agreement_id"] for al in rows])
+    use = {aid: consumption(conn, aid, rows=d) for aid, d in draws.items()}
+    approved = {}
     out = {}
     for it in items:
-        hits = [dict(al) for al in rows if _line_matches(al, it)]
+        qty = float(svc._pr_field(it, "qty") or 0)
+        hits = []
+        for al in rows:
+            if not _line_matches(al, it):
+                continue
+            if al["vendor"] not in approved:
+                approved[al["vendor"]] = svc.vendor_approved(conn, al["vendor"])
+            u = use.get(al["agreement_id"], {"value": 0.0, "qty": 0.0})
+            if approved[al["vendor"]] and _within_ceiling(
+                    al, u["value"] + qty * float(al["unit_price"] or 0), u["qty"] + qty):
+                hits.append(dict(al))
         if hits:
             out[svc._pr_field(it, "id")] = hits
     return out
@@ -700,9 +775,17 @@ def draw_line(pr_id, pr_item_id, agr_line_id, user, ip=None):
             return False, "agreement_ceiling"
         price, priced = float(al["unit_price"]), (pr["pricing_status"] or "priced") == "priced"
         if not priced:
+            # Not price_pr: that would mark the WHOLE request priced while its
+            # other lines are still blank. The line's net, discounts and the
+            # request total are recomputed exactly as price_pr does.
             conn.execute("UPDATE pr_items SET unit_price=?, est_cost=?, vendor=?, quote_id=NULL, "
-                         "agreement_line_id=? WHERE id=?",
-                         (price, round(qty * price, 2), a["vendor"], al["id"], pr_item_id))
+                         "agreement_line_id=?, agreement_drawn_at=? WHERE id=?",
+                         (price, round(qty * price, 2), a["vendor"], al["id"], svc._now(), pr_item_id))
+            if svc._reprice(conn, pr_id) is None:
+                conn.execute("UPDATE pr_requests SET total=? WHERE id=?", (round(sum(
+                    svc._amount(dict(i)) for i in conn.execute(
+                        "SELECT qty, unit_price, est_cost, disc_amount FROM pr_items WHERE pr_id=?",
+                        (pr_id,)).fetchall()), 2), pr_id))
             svc.audit(conn, pr_id, who, "agreement_drawn",
                       "Line %s priced from %s" % (it["item"], a["ref"]), ip)
             conn.commit()
@@ -715,7 +798,8 @@ def draw_line(pr_id, pr_item_id, agr_line_id, user, ip=None):
         return False, code
     conn = get_db()
     try:
-        conn.execute("UPDATE pr_items SET agreement_line_id=? WHERE id=?", (al["id"], pr_item_id))
+        conn.execute("UPDATE pr_items SET agreement_line_id=?, agreement_drawn_at=? WHERE id=?",
+                     (al["id"], svc._now(), pr_item_id))
         svc.audit(conn, pr_id, who, "agreement_drawn",
                   "Line %s priced from %s" % (it["item"], a["ref"]), ip)
         conn.commit()
@@ -738,7 +822,8 @@ def release_line(pr_id, pr_item_id, user, ip=None):
             return False, "not_found"
         if pr["status"] not in _DRAWABLE:
             return False, "locked"
-        conn.execute("UPDATE pr_items SET agreement_line_id=NULL WHERE id=?", (pr_item_id,))
+        conn.execute("UPDATE pr_items SET agreement_line_id=NULL, agreement_drawn_at=NULL WHERE id=?",
+                     (pr_item_id,))
         svc.audit(conn, pr_id, _uname(user), "agreement_released", "Line %s" % it["item"], ip)
         conn.commit()
         return True, "released"
@@ -747,10 +832,14 @@ def release_line(pr_id, pr_item_id, user, ip=None):
 
 
 def rfq_waiver(conn, pr):
-    """The request lines exempt from the competitive-quotation count: drawn
-    against an agreement that is active, in date and still inside its ceiling.
-    {"lines": [ids], "egp": their EGP value, "all": every line is covered}.
-    Fails closed (nothing waived) on any error."""
+    """The request lines exempt from the competitive-quotation count. A line
+    is waived when its agreement is active (not closed) with its supplier still
+    on the approved list, the line was drawn or its request (re)submitted
+    inside the validity window -- so an agreement expiring while the request
+    climbs the ladder does not take the waiver back -- and it fits the ceiling
+    in draw order (cumulative use up to and including it).
+    {"lines": [ids], "egp": their EGP value NET of every discount, "all": every
+    line is covered}. Fails closed (nothing waived) on any error."""
     out = {"lines": [], "egp": 0.0, "all": False}
     try:
         pr_id = svc._pr_field(pr, "id")
@@ -761,19 +850,31 @@ def rfq_waiver(conn, pr):
         if not agr_ids:
             return out
         fx = svc._pr_fx(pr)
+        agrs = {a["id"]: a for a in conn.execute(
+            "SELECT * FROM proc_agreements WHERE id IN (%s)" % ",".join("?" * len(agr_ids)),
+            sorted(agr_ids)).fetchall()}
         covered = []
-        for aid in agr_ids:
-            a = conn.execute("SELECT * FROM proc_agreements WHERE id=?", (aid,)).fetchone()
-            if not a or agreement_state(a) != "active":
+        for aid, rows in _draws(conn, agr_ids).items():
+            a = agrs.get(aid)
+            if not a or a["status"] != "active" or not svc.vendor_approved(conn, a["vendor"]):
                 continue
-            use = consumption(conn, aid)
-            if not _within_ceiling(a, use["value"], use["qty"]):
-                continue
-            covered += [r["id"] for r in use["rows"] if r["pr_id"] == pr_id]
+            used_v = used_q = 0.0
+            for r in rows:
+                if not r["holds"] and r["pr_id"] != pr_id:
+                    continue
+                used_v += r["value"]
+                used_q += float(r["qty"] or 0)
+                day = r["key"][:10]
+                if (r["pr_id"] == pr_id and (a["valid_from"] or "") <= day <= (a["valid_to"] or "9999")
+                        and _within_ceiling(a, used_v, used_q)):
+                    covered.append(r["id"])
         if not covered:
             return out
         out["lines"] = sorted(covered)
-        out["egp"] = round(sum(svc._amount(dict(i)) for i in items if i["id"] in covered) * fx, 2)
+        # net_price carries the line's share of the request discount, the same
+        # basis as pr_requests.total this is subtracted from.
+        out["egp"] = round(sum(svc.net_unit_price(i) * float(i["qty"] or 0)
+                               for i in items if i["id"] in covered) * fx, 2)
         out["all"] = all(i["id"] in covered for i in items)
     except Exception:
         log.warning("agreement waiver unavailable", exc_info=True)
@@ -833,7 +934,8 @@ def detail_ctx(pr, bundle, user):
             ctx["drawn_lines"] = [dict(i, agr=ctx["drawn"].get(i["agreement_line_id"]),
                                        waived=i["id"] in waived)
                                   for i in items if i.get("agreement_line_id")]
-        if ctx["can_record"] and pr["status"] in _DRAWABLE:
+        # Purchasing draws; anyone else reads a note that an agreement exists.
+        if pr["status"] in _DRAWABLE:
             ctx["draw"] = drawable(conn, pr, [i for i in items if not i.get("agreement_line_id")])
         ctx["line_by_id"] = {i["id"]: i for i in items}
         return ctx

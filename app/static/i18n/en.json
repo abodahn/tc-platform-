@@ -4792,6 +4792,16 @@
   "proc.imports.value": "Value",
   "proc.imports.void": "Void charge",
   "proc.imports.void_reason": "Why void it?",
+  "proc.imports.agr_exists": "An active agreement covers this item. Purchasing will price it from the agreement.",
+  "proc.imports.rs_draft": "Draft",
+  "proc.imports.rs_pending": "Pending approval",
+  "proc.imports.rs_approved": "Approved",
+  "proc.imports.rs_po_issued": "PO issued",
+  "proc.imports.rs_in_transit": "In transit",
+  "proc.imports.rs_partially_received": "Partially received",
+  "proc.imports.rs_received": "Received",
+  "proc.imports.rs_closed": "Closed",
+  "proc.imports.rs_rejected": "Rejected",
   "proc.imports.voided": "Voided",
   "proc.imports.waived": "Quotes waived"
 }

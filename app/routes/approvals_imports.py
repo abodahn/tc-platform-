@@ -18,6 +18,7 @@ MSG = {
     "forbidden": "You are not allowed to do this.",
     "not_import": "This request is not an import order. Shipments and landed costs are only for import orders.",
     "no_po": "Choose one of this request's purchase orders.",
+    "ship_locked": "Shipments and landed costs can only be recorded once the purchase order is issued.",
     "bad_incoterm": "Choose an incoterm from the list.",
     "bad_method": "Choose how to allocate the charges: by value or by quantity.",
     "bad_date": "A date is not valid. Use the date picker.",
@@ -189,7 +190,8 @@ def agreements():
     return render_template("approvals/agreements.html", active="proc_agreements",
                            rows=imp.list_agreements(vendor, status), vendor=vendor, status=status,
                            vendors=svc.list_vendors(), money_full=svc.money_view(user) == "full",
-                           can_add=imp.can_record(user), today=imp._today())
+                           can_add=imp.can_record(user), today=imp._today(),
+                           currencies=imp.C.CURRENCIES)
 
 
 @bp.route("/agreements.xlsx", methods=["GET"])

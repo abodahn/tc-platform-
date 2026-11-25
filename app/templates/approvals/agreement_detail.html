@@ -31,7 +31,7 @@
     <div class="panel-pad">
       <dl class="imp-meta">
         <div><dt data-i18n="proc.imports.supplier">Supplier</dt><dd>{{ a.vendor }}</dd></div>
-        <div><dt data-i18n="proc.imports.validity">Valid</dt><dd class="nw">{{ a.valid_from }} → {{ a.valid_to }}</dd></div>
+        <div><dt data-i18n="proc.imports.validity">Valid</dt><dd class="nw"><bdi>{{ a.valid_from }}</bdi> – <bdi>{{ a.valid_to }}</bdi></dd></div>
         <div><dt data-i18n="proc.imports.currency">Currency</dt><dd>{{ a.currency }}</dd></div>
         {% if money_full %}<div><dt data-i18n="proc.imports.ceiling_value">Ceiling value</dt><dd class="num">{{ '{:,.2f}'.format(a.ceiling_value) if a.ceiling_value else '—' }}</dd></div>
         <div><dt data-i18n="proc.imports.used_value">Used value</dt><dd class="num">{{ '{:,.2f}'.format(a.used_value) }}</dd></div>{% endif %}
@@ -110,7 +110,7 @@
             <td>{{ d.item }}</td>
             <td class="num">{{ '%g'|format(d.qty or 0) }}</td>
             {% if money_full %}<td class="num nw">{{ '{:,.2f}'.format(d.value) }} {{ a.currency }}</td>{% endif %}
-            <td><span class="badge b-{{ d.status }}">{{ d.status|replace('_', ' ')|title }}</span></td>
+            <td><span class="badge b-{{ d.status }}" data-i18n="proc.imports.rs_{{ d.status }}">{{ d.status|replace('_', ' ')|title }}</span></td>
           </tr>
         {% endfor %}
         </tbody>

@@ -42,6 +42,15 @@
     </div>
     {% endfor %}
     {% for item_id, hits in ix.draw.items() %}{% set it = ix.line_by_id[item_id] %}
+    {% if not ix.can_record %}
+    <div class="imp-row">
+      <div class="imp-row-main">
+        <b>{{ it.item }}</b>
+        {% for h in hits %}<span class="tag">{{ h.ref }}</span>{% endfor %}
+        <span class="muted imp-small" data-i18n="proc.imports.agr_exists">An active agreement covers this item. Purchasing will price it from the agreement.</span>
+      </div>
+    </div>
+    {% else %}
     <form class="imp-row" method="post" action="{{ url_for('approvals.imp_draw', pr_id=pr.id) }}" data-once>
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <input type="hidden" name="item_id" value="{{ item_id }}">
@@ -54,6 +63,7 @@
       </select>
       <button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.imports.draw">Price from agreement</button>
     </form>
+    {% endif %}
     {% endfor %}
   </div>
 </div>

@@ -4792,6 +4792,16 @@
   "proc.imports.value": "القيمة",
   "proc.imports.void": "إلغاء المصروف",
   "proc.imports.void_reason": "سبب الإلغاء؟",
+  "proc.imports.agr_exists": "فيه اتفاقية إطارية سارية للصنف ده. المشتريات هتسعّره من الاتفاقية.",
+  "proc.imports.rs_draft": "مسودة",
+  "proc.imports.rs_pending": "مستني الموافقة",
+  "proc.imports.rs_approved": "اتوافق عليه",
+  "proc.imports.rs_po_issued": "أمر الشراء طلع",
+  "proc.imports.rs_in_transit": "في الطريق",
+  "proc.imports.rs_partially_received": "اتستلم جزء منه",
+  "proc.imports.rs_received": "اتستلم",
+  "proc.imports.rs_closed": "مقفول",
+  "proc.imports.rs_rejected": "مرفوض",
   "proc.imports.voided": "ملغي",
   "proc.imports.waived": "معفي من عروض الأسعار"
 }

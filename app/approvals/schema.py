@@ -1008,6 +1008,8 @@ CREATE INDEX IF NOT EXISTS ix_proc_agr_lines ON proc_agreement_lines(agreement_i
 _IMPORTS_MIGRATIONS = [
     # NULL = not drawn against an agreement (every existing line).
     ("agreement_line_id", "ALTER TABLE pr_items ADD COLUMN agreement_line_id INTEGER"),
+    # When the line was drawn ('YYYY-MM-DD HH:MM:SS'): the waiver is judged on it.
+    ("agreement_drawn_at", "ALTER TABLE pr_items ADD COLUMN agreement_drawn_at TEXT"),
 ]
 
 

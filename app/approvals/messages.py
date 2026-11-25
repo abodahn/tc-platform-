@@ -36,6 +36,7 @@ MESSAGES = {
     'That could not be done. Reload the page and try again.': {'ar': 'مقدرناش ننفذ ده. حدّث الصفحة وجرّب تاني.', 'tr': 'Bu işlem yapılamadı. Sayfayı yenileyip tekrar deneyin.'},
     'You are not allowed to do this.': {'ar': 'مش مسموح لك تعمل ده.', 'tr': 'Bunu yapma yetkiniz yok.'},
     'This request is not an import order. Shipments and landed costs are only for import orders.': {'ar': 'الطلب ده مش أمر استيراد. الشحنات والتكلفة الكاملة لأوامر الاستيراد بس.', 'tr': 'Bu talep bir ithalat siparişi değil. Sevkiyat ve varış maliyeti yalnızca ithalat siparişleri içindir.'},
+    'Shipments and landed costs can only be recorded once the purchase order is issued.': {'ar': 'الشحنات والتكلفة الكاملة بتتسجل بس بعد ما أمر الشراء يطلع.', 'tr': 'Sevkiyat ve varış maliyeti ancak satın alma siparişi verildikten sonra kaydedilebilir.'},
     "Choose one of this request's purchase orders.": {'ar': 'اختار أمر شراء من أوامر الطلب ده.', 'tr': 'Bu talebin satın alma siparişlerinden birini seçin.'},
     'Choose an incoterm from the list.': {'ar': 'اختار شرط التسليم (Incoterm) من القائمة.', 'tr': 'Listeden bir teslim şekli (Incoterm) seçin.'},
     'Choose how to allocate the charges: by value or by quantity.': {'ar': 'اختار طريقة توزيع المصروفات: حسب القيمة أو حسب الكمية.', 'tr': 'Masrafların nasıl dağıtılacağını seçin: değere veya miktara göre.'},

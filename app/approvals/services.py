@@ -4571,6 +4571,7 @@ def post_stock_postings(pr_id, user=None, manual=False):
                 "(status='skipped' AND COALESCE(last_error,'no_matching_material')='no_matching_material'))" if manual
                 else "status IN ('pending','failed')")
     selected = eligible.replace("status", "p.status").replace("last_error", "p.last_error")
+    landed = {}      # imports.stock_unit_cost: the landed view once per receipt
     try:
         conn = get_db()
         try:
@@ -4628,7 +4629,7 @@ def post_stock_postings(pr_id, user=None, manual=False):
                 if price and float(row["qty"]) > 0:
                     # Landed cost: unchanged unless the admin switched it on.
                     from app.approvals import imports as _imp
-                    price = _imp.stock_unit_cost(row["pr_id"], row["item_id"], price)
+                    price = _imp.stock_unit_cost(row["pr_id"], row["item_id"], price, cache=landed)
                 try:
                     if float(row["qty"]) < 0:
                         ok, err = _unpost(row, actor)
@@ -7420,16 +7421,15 @@ def rfq_requirement(conn, pr):
     _pcur = _pr_field(pr, "currency") or "EGP"
     if ch and ch["egp_rate"] and ch["currency"] != (C.currency_code(_pcur) or _pcur):
         total = max(total, round(float(ch.get("amount") or 0) * ch["egp_rate"], 2))
-    # Framework agreements: a line drawn against an agreement that is active, in
-    # date and inside its ceiling needs no competitive quotes; the rest of the
-    # request is judged on its own value. Nothing here touches the ladder.
+    # Framework agreements: a line drawn against an agreement (see
+    # imports.rfq_waiver) needs no competitive quotes; the rest of the request
+    # is judged on its own NET value. DOAM 4.4 below still applies to every
+    # line, agreement price included. Nothing here touches the ladder.
     from app.approvals import imports as _imp
     _fa = _imp.rfq_waiver(conn, pr)
     if _fa["lines"]:
         out["agreement_lines"] = _fa["lines"]
-        if _fa["all"]:
-            out["agreement"] = True
-            return out
+        out["agreement"] = _fa["all"]
         total = max(0.0, total - _fa["egp"])
     out["value"] = round(total, 2)
     # DOAM §4.3 bands when the matrix is in force: 1 quote up to 50,000, three to
@@ -7445,6 +7445,8 @@ def rfq_requirement(conn, pr):
         # what the band says. A genuinely uncontested buy still has to carry a
         # single-source justification, which is checked just below.
         required_quotes = max(1, required_quotes)
+        if _fa["all"]:
+            required_quotes = 0      # every line rests on an approved agreement price
     else:
         if total < num_setting(conn, "rfq_value_threshold"):
             return out           # below the competitive-quote threshold
@@ -7461,6 +7463,8 @@ def rfq_requirement(conn, pr):
     except Exception as exc:  # noqa: BLE001
         logging.getLogger(__name__).warning(
             "DOAM 4.4: deviation quote requirement unavailable (%s)", exc)
+    if _fa["all"] and not required_quotes:
+        return out               # all-agreement request priced on plan
     out["required"] = int(required_quotes)
     if str(_pr_field(pr, "single_source_reason") or "").strip():
         out["single_source"] = True

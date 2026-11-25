@@ -71,7 +71,7 @@
             <td><a href="{{ url_for('approvals.agreement_detail', agr_id=a.id) }}"><b>{{ a.ref }}</b></a>
               {% if a.title %}<div class="muted imp-small">{{ a.title }}</div>{% endif %}</td>
             <td>{{ a.vendor }}</td>
-            <td class="nw">{{ a.valid_from }} → {{ a.valid_to }}
+            <td class="nw"><bdi>{{ a.valid_from }}</bdi> – <bdi>{{ a.valid_to }}</bdi>
               {% if a.expiring %}<div class="imp-small imp-warn-t"><span data-i18n="proc.imports.days_left">Days left</span>: {{ a.days_left }}</div>{% endif %}</td>
             <td>{{ state_badge(a.state) }}</td>
             <td class="imp-used">
@@ -106,7 +106,7 @@
           <input id="n-title" name="title" maxlength="160" autocomplete="off"></div>
         <div class="field"><label for="n-cur" data-i18n="proc.imports.currency">Currency</label>
           <select id="n-cur" name="currency" data-no-search>
-            <option>EGP</option><option>USD</option><option>EUR</option><option>TRY</option>
+            {% for cu in currencies %}<option>{{ cu }}</option>{% endfor %}
           </select></div>
         <div class="field"><label for="n-from" data-i18n="proc.imports.from">Valid from *</label>
           <input id="n-from" type="date" name="valid_from" required value="{{ today }}"></div>
