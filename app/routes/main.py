@@ -1077,6 +1077,11 @@ def _notification_background_pass():
         except Exception:
             pass
         try:
+            from app.approvals.delivery import maybe_run_overdue_alerts
+            maybe_run_overdue_alerts()   # late purchase-order deliveries -> bell (throttled)
+        except Exception:
+            pass
+        try:
             from app.services.alerts import dispatch_pending_alerts
             dispatch_pending_alerts()   # email/webhook any new critical alerts (once)
         except Exception:
@@ -1305,9 +1310,8 @@ def my_work():
         try:
             conn = get_db()
             try:
-                data["recv_queue"] = conn.execute(
-                    "SELECT id, pr_no, title, status, po_no FROM pr_requests WHERE is_active=1 AND status "
-                    "IN ('po_issued','in_transit','partially_received') ORDER BY id ASC LIMIT 10").fetchall()
+                from app.approvals.delivery import recv_queue
+                data["recv_queue"] = recv_queue(conn, limit=10)   # overdue first
             finally:
                 conn.close()
         except Exception:

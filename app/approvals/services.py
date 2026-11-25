@@ -3736,6 +3736,8 @@ def _issue_po_rows(conn, pr_id, pr, base_no, user):
              "issued", now, uname))
         row["id"] = c.lastrowid
         out.append(row)
+    from app.approvals import delivery as _delivery
+    _delivery.stamp_promised(conn, pr, out)
     return out
 
 
@@ -3788,7 +3790,19 @@ def split_order(conn, pr, po_id):
     except (TypeError, ValueError):
         return None, "po_required"
     po = next((p for p in pos if p.get("id") == want), None)
+    if po and po.get("status") == "cancelled":
+        return None, "po_cancelled"      # cancelled alone (delivery.cancel_po): owed nothing
     return (po, None) if po else (None, "po_required")
+
+
+def _cancelled_grand(conn, pr_id):
+    """Value of a split request's orders cancelled one by one (delivery.cancel_po):
+    never owed, so never payable. 0 once every order is cancelled (cancel_pr)."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(grand),0) s FROM pr_purchase_orders WHERE pr_id=? AND status='cancelled' "
+        "AND EXISTS (SELECT 1 FROM pr_purchase_orders o2 WHERE o2.pr_id=? "
+        "AND COALESCE(o2.status,'issued')<>'cancelled')", (pr_id, pr_id)).fetchone()
+    return round(float(row["s"] or 0), 2)
 
 
 def po_exposure(conn, pr, po):
@@ -4427,6 +4441,12 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
             except (TypeError, ValueError):
                 return 0.0
 
+        # Lines of a supplier's order cancelled alone (delivery.cancel_po) are
+        # owed by nobody: refuse the whole receipt rather than book against them.
+        from app.approvals import delivery as _delivery
+        dead = _delivery.cancelled_item_ids(conn, pr_id)
+        if any(_qty(receipts, i) > 0 or _qty(rejects, i) > 0 for i in dead):
+            return False, "po_cancelled"
         for it in items:
             add = _qty(receipts, it["id"])
             rej = _qty(rejects, it["id"])
@@ -4465,8 +4485,9 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
         if not any_recv:
             return False, "nothing_received"
         # recompute fulfilment
-        items = conn.execute("SELECT qty, received_qty FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
-        fully = all(float(i["received_qty"] or 0) >= float(i["qty"] or 0) for i in items)
+        items = conn.execute("SELECT id, qty, received_qty FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+        fully = all(float(i["received_qty"] or 0) >= float(i["qty"] or 0) for i in items
+                    if i["id"] not in dead)
         new_status = "received" if fully else "partially_received"
         conn.execute(
             "UPDATE pr_requests SET status=?, received_at=?, received_by=?, "
@@ -5721,7 +5742,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         # below is bit-for-bit what it was. Resolved before any write so the
         # read-through in split_order cannot roll one back.
         po, po_err = split_order(conn, pr, data.get("po_id"))
-        if po_err and not force:
+        if po_err and (not force or po_err == "po_cancelled"):
             return False, po_err
         role = (user or {}).get("role")
         exempt = (role == "super_admin" or user_has_permission(user, "proc_admin")) and bool_setting(conn, "sod_admin_exempt")
@@ -5750,7 +5771,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         # others stay overridable like every other gate here.
         if not adv_ok and (not force or adv_msg == "advance_vendor_not_approved"):
             return False, adv_msg
-        grand = pr_amounts(pr)["grand"]
+        grand = pr_amounts(pr)["grand"] - _cancelled_grand(conn, pr_id)
         # Configurable slack on the caps. Written as x * (pct/100.0), NOT
         # x * pct / 100.0: with the default 1.0 the first form is bit-for-bit the
         # old `x * 0.01`, the second can differ in the last bit.
@@ -5819,7 +5840,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
              data.get("method"), data.get("reference"), data.get("paid_at") or now[:10],
              data.get("notes"), user.get("username") if user else "system", now))
         paid = float(pr["paid_amount"] or 0) + amount
-        grand = pr_amounts(pr)["grand"]
+        grand = pr_amounts(pr)["grand"] - _cancelled_grand(conn, pr_id)
         pstatus = _payment_status(paid, match, grand)
         conn.execute("UPDATE pr_requests SET paid_amount=?, payment_status=? WHERE id=?",
                      (round(paid, 2), pstatus, pr_id))
@@ -5848,9 +5869,11 @@ def close_pr(pr_id, user, ip=None, reason=None):
             return False, "not_found"
         if pr["status"] not in ("received", "po_issued", "in_transit", "partially_received"):
             return False, "not_closable"
-        items = conn.execute("SELECT qty, received_qty, unit_price, net_price FROM pr_items "
+        items = conn.execute("SELECT id, qty, received_qty, unit_price, net_price FROM pr_items "
                              "WHERE pr_id=?", (pr_id,)).fetchall()
-        short = any(float(it["qty"] or 0) > 0 and
+        from app.approvals import delivery as _delivery
+        dead = _delivery.cancelled_item_ids(conn, pr_id)
+        short = any(it["id"] not in dead and float(it["qty"] or 0) > 0 and
                     round(float(it["received_qty"] or 0), 6) < round(float(it["qty"] or 0), 6)
                     for it in items)
         reason = (reason or "").strip()
@@ -5908,6 +5931,8 @@ def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
     from app.approvals import pdf as _pdf
     sent, log_lines = False, []
     for i, p in enumerate(pos):
+        if p.get("status") == "cancelled":
+            continue          # never re-send an order cancelled alone
         vendor_email = emails.get(p["po_no"])
         if not vendor_email:
             log_lines.append(f"{p['po_no']}: no email on file for {p.get('vendor') or '—'}")
@@ -9618,7 +9643,7 @@ def reverse_payment(pay_id, reason, user, ip=None):
                      (pr_id, pay["po_id"], pay["invoice_id"], -float(pay["amount"] or 0), pay["currency"],
                       pay["reference"], now[:10], reason, pay_id, (user or {}).get("username"), now))
         paid = float(pr["paid_amount"] or 0) - float(pay["amount"] or 0)
-        status = _payment_status(paid, match, pr_amounts(pr)["grand"])
+        status = _payment_status(paid, match, pr_amounts(pr)["grand"] - _cancelled_grand(conn, pr_id))
         conn.execute("UPDATE pr_requests SET paid_amount=?, payment_status=? WHERE id=?", (round(paid, 2), status, pr_id))
         audit(conn, pr_id, (user or {}).get("username"), "payment_reversed", f"Payment #{pay_id}: {reason}", ip)
         _notify_correction(conn, pr, user, "Payment reversed", f"a payment was reversed: {reason}")

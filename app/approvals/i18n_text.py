@@ -947,6 +947,7 @@ UI = {
             "actually received. Pay for what was received, book the rest once it "
             "arrives — or ask an administrator to override.",
         # --- a requisition buying from several suppliers ---
+        "po_cancelled_flash": "That supplier's purchase order was cancelled, so nothing can be invoiced or paid against it.",
         "po_required_flash":
             "This request buys from several suppliers, so it has one purchase "
             "order per supplier. Choose which order this belongs to.",
@@ -1082,6 +1083,7 @@ UI = {
             "مقابل ما تم استلامه وسجّل الباقي عند وصوله — أو اطلب من مسؤول النظام "
             "التجاوز.",
         # --- a requisition buying from several suppliers ---
+        "po_cancelled_flash": "أمر الشراء بتاع المورد ده اتلغى، فمينفعش تتسجل عليه فاتورة أو دفعة.",
         "po_required_flash":
             "هذا الطلب يشتري من أكثر من مورد، ولكل مورد أمر شراء خاص به. اختر أمر "
             "الشراء الذي يخص هذه العملية.",
@@ -1214,6 +1216,7 @@ UI = {
             "Teslim alınan kadarını ödeyin, kalanı geldiğinde kaydedin — ya da bir "
             "yöneticiden geçersiz kılmasını isteyin.",
         # --- a requisition buying from several suppliers ---
+        "po_cancelled_flash": "Bu tedarikçinin satın alma siparişi iptal edildi; ona karşı fatura veya ödeme kaydedilemez.",
         "po_required_flash":
             "Bu talep birden fazla tedarikçiden alım yapıyor ve her tedarikçinin "
             "kendi siparişi var. Bunun hangi siparişe ait olduğunu seçin.",
