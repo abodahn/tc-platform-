@@ -1311,7 +1311,30 @@ def update_rfq(rfq_id, vendor=None, reply_by=None, notes=None, keep_items=None,
         conn.close()
 
 
-def list_prs(status=None, requester=None, limit=500):
+_PR_DATE = "COALESCE(NULLIF(request_date, ''), SUBSTR(created_at, 1, 10))"
+_PR_EGP = ("COALESCE(total, 0) * CASE WHEN UPPER(COALESCE(currency, 'EGP')) = 'EGP' "
+           "THEN 1 ELSE COALESCE(NULLIF(fx_rate, 0), 1) END")
+# The list's sort keys -> ORDER BY. A whitelist: the key comes from the URL.
+LIST_SORTS = {
+    "new": "id DESC",
+    "old": "id ASC",
+    "date_desc": _PR_DATE + " DESC, id DESC",
+    "date_asc": _PR_DATE + " ASC, id ASC",
+    "value_desc": _PR_EGP + " DESC, id DESC",
+    "value_asc": _PR_EGP + " ASC, id DESC",
+    "priority": ("CASE COALESCE(priority, 'normal') WHEN 'top_urgent' THEN 0 "
+                 "WHEN 'urgent' THEN 1 ELSE 2 END, id DESC"),
+    "requester": "LOWER(COALESCE(NULLIF(requester_name, ''), requester, '')) ASC, id DESC",
+    "dept": "LOWER(COALESCE(department, '')) ASC, id DESC",
+    "status": "status ASC, id DESC",
+}
+
+
+def list_prs(status=None, requester=None, limit=500, q="", dept="", priority="",
+             date_from="", date_to="", sort="new"):
+    """The request register. Every filter is optional; `sort` is a LIST_SORTS
+    key (anything else = newest first). `q` matches the PR number, title,
+    requester, department or any line's item / description."""
     conn = get_db()
     try:
         sql = "SELECT * FROM pr_requests WHERE is_active=1"
@@ -1322,9 +1345,41 @@ def list_prs(status=None, requester=None, limit=500):
         if requester:
             sql += " AND requester=?"
             args.append(requester)
-        sql += " ORDER BY id DESC LIMIT ?"
+        q = (q or "").strip()[:100]
+        if q:
+            like = "%" + q.lower() + "%"
+            sql += (" AND (LOWER(COALESCE(pr_no, '')) LIKE ? OR LOWER(COALESCE(title, '')) LIKE ?"
+                    " OR LOWER(COALESCE(requester_name, '')) LIKE ? OR LOWER(COALESCE(requester, '')) LIKE ?"
+                    " OR LOWER(COALESCE(department, '')) LIKE ?"
+                    " OR EXISTS (SELECT 1 FROM pr_items i WHERE i.pr_id = pr_requests.id AND"
+                    " (LOWER(COALESCE(i.item, '')) LIKE ? OR LOWER(COALESCE(i.description, '')) LIKE ?)))")
+            args += [like] * 7
+        if dept:
+            sql += " AND department=?"
+            args.append(dept)
+        if priority in C.PRIORITY_LABELS:
+            sql += " AND COALESCE(priority, 'normal')=?"
+            args.append(priority)
+        if date_from:
+            sql += " AND " + _PR_DATE + " >= ?"
+            args.append(date_from)
+        if date_to:
+            sql += " AND " + _PR_DATE + " <= ?"
+            args.append(date_to)
+        sql += " ORDER BY " + LIST_SORTS.get(sort, LIST_SORTS["new"]) + " LIMIT ?"
         args.append(limit)
         return [dict(r) for r in conn.execute(sql, args).fetchall()]
+    finally:
+        conn.close()
+
+
+def list_departments():
+    """Departments that appear on live requests, for the list's filter."""
+    conn = get_db()
+    try:
+        return [r["department"] for r in conn.execute(
+            "SELECT DISTINCT department FROM pr_requests WHERE is_active=1 AND "
+            "COALESCE(department, '') <> '' ORDER BY department").fetchall()]
     finally:
         conn.close()
 

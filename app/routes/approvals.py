@@ -9,6 +9,7 @@ approval actions are additionally gated by the per-stage authority check.
 import base64
 import io
 import math
+import re
 import time
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
@@ -194,8 +195,9 @@ def listing_xlsx():
     status = request.args.get("status", "all")
     mine = request.args.get("mine") == "1"
     user = _u()
+    f = _list_filters(user)
     prs = svc.list_prs(status=status,
-                       requester=(user["username"] if mine else None))
+                       requester=(user["username"] if mine else None), **f)
 
     levels = svc.money_views(user, prs)
     wb = openpyxl.Workbook()
@@ -247,6 +249,24 @@ def listing_xlsx():
         as_attachment=True, download_name=name)
 
 
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _list_filters(user):
+    """The list's search / filter / sort arguments, cleaned. Sorting by value
+    is only honoured for a viewer who sees every amount: ranking requests by a
+    figure the viewer may not see would leak it."""
+    a = request.args
+    sort = a.get("sort", "new")
+    if sort not in svc.LIST_SORTS or (sort.startswith("value")
+                                      and svc.money_view(user) != "full"):
+        sort = "new"
+    day = lambda k: a.get(k, "") if _ISO_DAY.match(a.get(k, "")) else ""
+    return {"q": a.get("q", "").strip()[:100], "dept": a.get("dept", "").strip(),
+            "priority": a.get("priority", "") if a.get("priority") in C.PRIORITY_LABELS else "",
+            "date_from": day("from"), "date_to": day("to"), "sort": sort}
+
+
 @bp.route("/list")
 @login_required
 @permission_required("proc_view")
@@ -254,8 +274,18 @@ def listing():
     status = request.args.get("status", "all")
     mine = request.args.get("mine") == "1"
     user = _u()
-    prs = svc.list_prs(status=status, requester=(user["username"] if mine else None))
+    f = _list_filters(user)
+    prs = svc.list_prs(status=status, requester=(user["username"] if mine else None), **f)
+    # Every link on the page (status chips, Mine, headers, Excel) keeps the rest.
+    keep = {k: v for k, v in (("q", f["q"]), ("dept", f["dept"]), ("priority", f["priority"]),
+                              ("from", f["date_from"]), ("to", f["date_to"]),
+                              ("sort", f["sort"] if f["sort"] != "new" else ""),
+                              ("status", status if status != "all" else ""),
+                              ("mine", "1" if mine else "")) if v}
     return render_template("approvals/list.html", active="proc_list",
+                           f=f, keep=keep, depts=svc.list_departments(),
+                           value_sort=svc.money_view(user) == "full",
+                           filtered=any(f[k] for k in ("q", "dept", "priority", "date_from", "date_to")),
                            prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES,
                            money=svc.money_views(user, prs),
                            items=svc.items_preview(prs),
