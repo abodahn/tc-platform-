@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% from "approvals/_analytics_card.html" import card %}
+{% block content_class %}proc{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/proc-analytics.css') }}">{% endblock %}
+{% block title %}{{ T('proc.analytics.builder') }}{% endblock %}
+{% block content %}
+{% set cargs = an.config_args(cfg) %}
+{% set qs_now = dict(fargs, **cargs) %}
+
+<div class="page-head an-head">
+  <div>
+    <h1 data-i18n="proc.analytics.builder">{{ T('proc.analytics.builder') }}</h1>
+    <div class="sub" data-i18n="proc.analytics.b.sub">{{ T('proc.analytics.b.sub') }}</div>
+  </div>
+  <div class="an-head-act">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.analytics', **fargs) }}" data-i18n="proc.analytics.title">{{ T('proc.analytics.title') }}</a>
+    {% if viewing %}<a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.analytics_builder') }}" data-i18n="proc.analytics.b.new">{{ T('proc.analytics.b.new') }}</a>{% endif %}
+  </div>
+</div>
+
+<form method="get" action="{{ url_for('approvals.analytics_builder') }}" class="an-filters" id="an-builder" data-an-builder
+      data-run="{{ url_for('approvals.analytics_run', fmt='json') }}"
+      data-xlsx="{{ url_for('approvals.analytics_run', fmt='xlsx') }}"
+      data-csv="{{ url_for('approvals.analytics_run', fmt='csv') }}">
+  {% if viewing %}<input type="hidden" name="rid" value="{{ viewing.id }}">{% endif %}
+  {% include "approvals/_analytics_filters.html" %}
+
+  <fieldset class="panel an-design">
+    <legend class="an-design-title" data-i18n="proc.analytics.b.design">{{ T('proc.analytics.b.design') }}</legend>
+    <div class="an-design-grid">
+      <div class="field">
+        <label for="b-d1" data-i18n="proc.analytics.b.d1">{{ T('proc.analytics.b.d1') }}</label>
+        <select id="b-d1" name="d1" data-no-search>
+          {% for d in dims %}<option value="{{ d }}" {{ 'selected' if cfg.d1 == d }} data-i18n="proc.analytics.dim.{{ d }}">{{ T('proc.analytics.dim.' + d) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="b-d2" data-i18n="proc.analytics.b.d2">{{ T('proc.analytics.b.d2') }}</label>
+        <select id="b-d2" name="d2" data-no-search>
+          <option value="" data-i18n="proc.analytics.b.nothing">{{ T('proc.analytics.b.nothing') }}</option>
+          {% for d in dims %}<option value="{{ d }}" {{ 'selected' if cfg.d2 == d }} data-i18n="proc.analytics.dim.{{ d }}">{{ T('proc.analytics.dim.' + d) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="b-m" data-i18n="proc.analytics.b.measure">{{ T('proc.analytics.b.measure') }}</label>
+        <select id="b-m" name="m" data-no-search>
+          {% for m in measures %}<option value="{{ m }}" {{ 'selected' if cfg.m == m }} data-i18n="proc.analytics.m.{{ m }}">{{ T('proc.analytics.m.' + m) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="b-agg" data-i18n="proc.analytics.b.agg">{{ T('proc.analytics.b.agg') }}</label>
+        <select id="b-agg" name="agg" data-no-search>
+          {% for a in aggs[cfg.m] %}<option value="{{ a }}" {{ 'selected' if cfg.agg == a }} data-i18n="proc.analytics.agg.{{ a }}">{{ T('proc.analytics.agg.' + a) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="b-chart" data-i18n="proc.analytics.b.chart">{{ T('proc.analytics.b.chart') }}</label>
+        <select id="b-chart" name="chart" data-no-search>
+          {% for c in charts %}<option value="{{ c }}" {{ 'selected' if cfg.chart == c }} data-i18n="proc.analytics.ch.{{ c }}">{{ T('proc.analytics.ch.' + c) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="b-sort" data-i18n="proc.analytics.b.sort">{{ T('proc.analytics.b.sort') }}</label>
+        <select id="b-sort" name="sort" data-no-search>
+          {% for s in sorts %}<option value="{{ s }}" {{ 'selected' if cfg.sort == s }} data-i18n="proc.analytics.s.{{ s }}">{{ T('proc.analytics.s.' + s) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="b-top" data-i18n="proc.analytics.b.top">{{ T('proc.analytics.b.top') }}</label>
+        <input id="b-top" type="number" name="top" min="1" max="100" step="1" value="{{ cfg.top }}" inputmode="numeric">
+      </div>
+    </div>
+    {% if not show_money %}<p class="an-note" data-i18n="proc.analytics.b.money_note">{{ T('proc.analytics.b.money_note') }}</p>{% endif %}
+    <p class="an-error" role="alert" data-an-error {{ 'hidden' if not err }}>{{ err or '' }}</p>
+    <noscript><button class="btn btn-primary" type="submit" data-i18n="proc.analytics.apply">{{ T('proc.analytics.apply') }}</button></noscript>
+  </fieldset>
+</form>
+
+{% set spec = dict(spec, key='result', title=(viewing.name if viewing else T('proc.analytics.b.result'))) %}
+<div class="an-result" aria-live="polite">
+  {{ card(spec, T, xlsx=url_for('approvals.analytics_run', fmt='xlsx', **qs_now), csv=url_for('approvals.analytics_run', fmt='csv', **qs_now), wide=True) }}
+</div>
+
+<div class="an-grid an-reports">
+  <section class="panel an-save" aria-labelledby="an-save-h">
+    <div class="panel-head"><h3 id="an-save-h">{% if editing %}<span data-i18n="proc.analytics.b.editing">{{ T('proc.analytics.b.editing') }}</span>: {{ editing.name }}{% else %}<span data-i18n="proc.analytics.b.save">{{ T('proc.analytics.b.save') }}</span>{% endif %}</h3></div>
+    <form method="post" action="{{ url_for('approvals.analytics_save') }}" class="panel-pad" data-an-save>
+      <input type="hidden" name="qs" value="{{ qs_now|urlencode }}" data-an-qs>
+      {% if editing %}<input type="hidden" name="rid" value="{{ editing.id }}">{% endif %}
+      <div class="field">
+        <label for="an-name" data-i18n="proc.analytics.b.name">{{ T('proc.analytics.b.name') }}</label>
+        <input id="an-name" name="name" maxlength="80" required value="{{ editing.name if editing else '' }}" autocomplete="off">
+      </div>
+      {% if show_money %}
+      <label class="an-check"><input type="checkbox" name="shared" value="1" {{ 'checked' if editing and editing.shared }}>
+        <span data-i18n="proc.analytics.b.share">{{ T('proc.analytics.b.share') }}</span></label>
+      {% endif %}
+      <div class="an-sheet-act">
+        {% if editing %}
+        <button class="btn btn-primary" type="submit" name="mode" value="update" data-i18n="proc.analytics.b.update">{{ T('proc.analytics.b.update') }}</button>
+        <button class="btn btn-ghost" type="submit" name="mode" value="new" data-i18n="proc.analytics.b.save_as">{{ T('proc.analytics.b.save_as') }}</button>
+        {% else %}
+        <button class="btn btn-primary" type="submit" data-i18n="proc.analytics.b.save">{{ T('proc.analytics.b.save') }}</button>
+        {% endif %}
+      </div>
+    </form>
+  </section>
+
+  {% for title_key, rows in [('proc.analytics.b.mine', mine), ('proc.analytics.b.shared', shared)] %}
+  {% if rows or title_key == 'proc.analytics.b.mine' %}
+  <section class="panel" aria-labelledby="an-l-{{ loop.index }}">
+    <div class="panel-head"><h3 id="an-l-{{ loop.index }}" data-i18n="{{ title_key }}">{{ T(title_key) }}</h3></div>
+    <ul class="an-list">
+      {% for r in rows %}
+      <li class="{{ 'on' if viewing and viewing.id == r.id }}">
+        <a class="an-list-name" href="{{ url_for('approvals.analytics_builder', rid=r.id) }}">{{ r.name }}</a>
+        <span class="an-list-meta">
+          {% if r.shared %}<span class="badge b-research" data-i18n="proc.analytics.b.shared_tag">{{ T('proc.analytics.b.shared_tag') }}</span>{% endif %}
+          {% if r.owner != (cu.username if cu else '') %}<span class="muted"><span data-i18n="proc.analytics.b.by">{{ T('proc.analytics.b.by') }}</span> {{ r.owner }}</span>{% endif %}
+        </span>
+        <span class="an-list-act">
+          <form method="post" action="{{ url_for('approvals.analytics_pin', rid=r.id) }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button class="btn btn-ghost btn-sm" type="submit" aria-pressed="{{ 'true' if r.pinned else 'false' }}"
+                    data-i18n="proc.analytics.b.{{ 'unpin' if r.pinned else 'pin' }}">{{ T('proc.analytics.b.unpin' if r.pinned else 'proc.analytics.b.pin') }}</button>
+          </form>
+          {% if r.owner == (cu.username if cu else '') %}
+          <form method="post" action="{{ url_for('approvals.analytics_delete', rid=r.id) }}" data-an-confirm="{{ T('proc.analytics.b.confirm_delete') }}">
+            <input type="hidden" name="next" value="{{ url_for('approvals.analytics_builder') }}">
+            <button class="btn btn-ghost btn-sm an-del" type="submit" data-i18n="proc.analytics.b.delete">{{ T('proc.analytics.b.delete') }}</button>
+          </form>
+          {% endif %}
+        </span>
+      </li>
+      {% else %}
+      <li class="muted" data-i18n="proc.analytics.b.no_reports">{{ T('proc.analytics.b.no_reports') }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+  {% endfor %}
+</div>
+
+<script type="application/json" id="an-data">{{ {'specs': {'result': spec}, 'list': url_for('approvals.listing'), 'lang': lang,
+  'aggs': aggs, 'aggLabels': dict(sum=T('proc.analytics.agg.sum'), avg=T('proc.analytics.agg.avg'), max=T('proc.analytics.agg.max'), min=T('proc.analytics.agg.min'), count=T('proc.analytics.agg.count')),
+  'lineDims': line_dims, 'shareOnly': share_only, 'errLine': T('proc.analytics.err.needs_request_dim'), 'errRun': T('proc.analytics.b.error'),
+  'L': {'others': T('proc.analytics.others'), 'n': T('proc.analytics.col.n'), 'empty': T('proc.analytics.empty'),
+        'days': T('proc.analytics.u.days'), 'h': T('proc.analytics.u.hours'), 'loading': T('proc.analytics.b.loading')}}|tojson }}</script>
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/proc-analytics.js') }}"></script>
+{% endblock %}

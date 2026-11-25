@@ -1331,10 +1331,12 @@ LIST_SORTS = {
 
 
 def list_prs(status=None, requester=None, limit=500, q="", dept="", priority="",
-             date_from="", date_to="", sort="new"):
+             date_from="", date_to="", sort="new", vendor="", cat="", cc="", kind=""):
     """The request register. Every filter is optional; `sort` is a LIST_SORTS
     key (anything else = newest first). `q` matches the PR number, title,
-    requester, department or any line's item / description."""
+    requester, department or any line's item / description. vendor / cat / cc /
+    kind are the analytics drill-down: a supplier on the header, a line or an
+    order; an item category on any line; the cost centre; OPEX / CAPEX."""
     conn = get_db()
     try:
         sql = "SELECT * FROM pr_requests WHERE is_active=1"
@@ -1366,6 +1368,23 @@ def list_prs(status=None, requester=None, limit=500, q="", dept="", priority="",
         if date_to:
             sql += " AND " + _PR_DATE + " <= ?"
             args.append(date_to)
+        if vendor:
+            sql += (" AND (TRIM(COALESCE(vendor, '')) = ?"
+                    " OR EXISTS (SELECT 1 FROM pr_purchase_orders o WHERE o.pr_id = pr_requests.id"
+                    " AND TRIM(COALESCE(o.vendor, '')) = ? AND COALESCE(o.status, 'issued') <> 'cancelled')"
+                    " OR EXISTS (SELECT 1 FROM pr_items i WHERE i.pr_id = pr_requests.id"
+                    " AND TRIM(COALESCE(i.vendor, '')) = ?))")
+            args += [vendor] * 3
+        if cat:
+            sql += (" AND EXISTS (SELECT 1 FROM pr_items i JOIN proc_items pi ON pi.id = i.item_id"
+                    " WHERE i.pr_id = pr_requests.id AND TRIM(COALESCE(pi.category_name, '')) = ?)")
+            args.append(cat)
+        if cc:
+            sql += " AND TRIM(COALESCE(cost_center, '')) = ?"
+            args.append(cc)
+        if kind in ("opex", "capex"):
+            sql += " AND LOWER(COALESCE(NULLIF(TRIM(expenditure_kind), ''), 'opex')) = ?"
+            args.append(kind)
         sql += " ORDER BY " + LIST_SORTS.get(sort, LIST_SORTS["new"]) + " LIMIT ?"
         args.append(limit)
         return [dict(r) for r in conn.execute(sql, args).fetchall()]
@@ -8017,22 +8036,13 @@ def analytics_summary():
             "SELECT * FROM pr_requests WHERE is_active=1").fetchall()]
         steps = [dict(r) for r in conn.execute(
             "SELECT * FROM pr_steps").fetchall()]
-        committed = _committed_rows(conn)
+        # One definition of spend for every screen and export: analytics.py.
+        from app.approvals import analytics as _an
+        spend_dept = {r[0]: r[2] for r in _an.spend_rows("department", conn=conn)}
+        spend_vendor = {r[0]: r[2] for r in _an.spend_rows("supplier", conn=conn)}
+        monthly = sorted((r[0], r[2]) for r in _an.spend_rows("month", conn=conn) if r[0] != "—")
     finally:
         conn.close()
-
-    spend_dept, spend_vendor, months = {}, {}, {}
-    for p in committed:
-        dept = p.get("department") or "—"
-        spend_dept[dept] = spend_dept.get(dept, 0) + p["committed_egp"]
-        for vendor, value in p["vendors"].items():
-            spend_vendor[vendor] = spend_vendor.get(vendor, 0) + value
-        m = (p.get("request_date") or p.get("created_at") or "")[:7]
-        if m:
-            months[m] = months.get(m, 0) + p["committed_egp"]
-    spend_dept = {k: round(v, 2) for k, v in spend_dept.items()}
-    spend_vendor = {k: round(v, 2) for k, v in spend_vendor.items()}
-    monthly = sorted((k, round(v, 2)) for k, v in months.items())
 
     # cycle time (submitted -> approved), in days
     durs = []
@@ -8063,7 +8073,7 @@ def analytics_summary():
 
     return {
         "total_prs": len(prs),
-        "committed_spend": round(sum(p["committed_egp"] for p in committed), 2),
+        "committed_spend": round(sum(spend_vendor.values()), 2),
         "pending_value": round(sum(egp_commitment(p) for p in prs if p["status"] == "pending"), 2),
         "avg_cycle_days": avg_cycle,
         "status_counts": status_counts,
@@ -8106,16 +8116,10 @@ def export_dataset(key):
                      for r in rows])
 
         if key in ("spend_dept", "spend_vendor"):
-            groups = {}
-            for pr in _committed_rows(conn):
-                shares = pr["vendors"] if key == "spend_vendor" else {
-                    pr.get("department") or "—": pr["committed_egp"]}
-                for label, value in shares.items():
-                    ids, total = groups.get(label, (set(), 0.0))
-                    ids.add(pr["id"])
-                    groups[label] = (ids, total + value)
-            rows = [[label, len(ids), round(total, 2)] for label, (ids, total) in groups.items()]
-            rows.sort(key=lambda r: -r[2])
+            # The analytics definition of spend, so the CSV, the dashboard and
+            # the report builder can only ever show one number.
+            from app.approvals import analytics as _an
+            rows = _an.spend_rows("supplier" if key == "spend_vendor" else "department", conn=conn)
             return (["Vendor" if key == "spend_vendor" else "Department", "PRs", "Total (EGP)"], rows)
 
         if key == "open_orders":
@@ -9626,31 +9630,6 @@ def reverse_payment(pay_id, reason, user, ip=None):
         return True, ""
     finally:
         conn.close()
-
-
-def _committed_rows(conn):
-    prs = [dict(r) for r in conn.execute(
-        "SELECT * FROM pr_requests WHERE is_active=1 AND status IN ("
-        + ",".join("?" for _ in _SPEND_STATUSES) + ")", _SPEND_STATUSES).fetchall()]
-    orders = {}
-    for row in conn.execute("SELECT pr_id, vendor, grand FROM pr_purchase_orders "
-                           "WHERE COALESCE(status,'issued')<>'cancelled'").fetchall():
-        orders.setdefault(row["pr_id"], []).append(dict(row))
-    for pr in prs:
-        reduced = dict(pr, total=float(pr.get("total") or 0) - float(pr.get("budget_released") or 0))
-        value = egp_commitment(reduced)
-        pos = orders.get(pr["id"], [])
-        grand = sum(float(po["grand"] or 0) for po in pos)
-        shares = {}
-        if pos:
-            for po in pos:
-                vendor = (po["vendor"] or "").strip() or "(unassigned)"
-                part = value * float(po["grand"] or 0) / grand if grand else value / len(pos)
-                shares[vendor] = shares.get(vendor, 0.0) + part
-        else:
-            shares[(pr.get("vendor") or "").strip() or "(unassigned)"] = value
-        pr["committed_egp"], pr["vendors"] = value, shares
-    return prs
 
 
 def change_requester(pr_id, username, actor, reason="", ip=None):

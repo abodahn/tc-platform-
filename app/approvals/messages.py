@@ -32,6 +32,19 @@ next is not worth translating carefully.
 # that choice honest.
 MESSAGES = {
     'Enter the budget as a positive number.': {'ar': 'اكتب الميزانية كرقم موجب.', 'tr': 'Bütçeyi pozitif bir sayı olarak girin.'},
+    # --- Procurement analytics: saved reports ---
+    'Report saved.': {'ar': 'التقرير اتحفظ.', 'tr': 'Rapor kaydedildi.'},
+    'Report deleted.': {'ar': 'التقرير اتمسح.', 'tr': 'Rapor silindi.'},
+    'Report not found.': {'ar': 'التقرير مش موجود.', 'tr': 'Rapor bulunamadı.'},
+    'Report unpinned.': {'ar': 'التقرير اتشال من اللوحة.', 'tr': 'Raporun sabitlemesi kaldırıldı.'},
+    'Report pinned to the analytics dashboard.': {'ar': 'التقرير اتثبّت في لوحة التحليلات.', 'tr': 'Rapor analitik panosuna sabitlendi.'},
+    'Give the report a name.': {'ar': 'اكتب اسم للتقرير.', 'tr': 'Rapora bir ad verin.'},
+    'This report shows money, which your role does not see.': {'ar': 'التقرير ده فيه أرقام مالية، ودورك مش بيشوفها.', 'tr': 'Bu rapor parasal tutarlar gösterir; rolünüz bunları görmez.'},
+    'Only Purchasing, Finance and procurement admins can share reports.': {'ar': 'المشاركة متاحة للمشتريات والمالية ومديري المشتريات بس.', 'tr': 'Raporları yalnızca Satın Alma, Finans ve satın alma yöneticileri paylaşabilir.'},
+    'Only the person who created this report can change it.': {'ar': 'اللي عمل التقرير بس هو اللي يقدر يعدّله.', 'tr': 'Bu raporu yalnızca oluşturan kişi değiştirebilir.'},
+    'Choose what to group the report by.': {'ar': 'اختار هتجمّع التقرير بإيه.', 'tr': 'Raporun neye göre gruplanacağını seçin.'},
+    'Choose what the report should measure.': {'ar': 'اختار التقرير هيقيس إيه.', 'tr': 'Raporun neyi ölçeceğini seçin.'},
+    'This measure is counted per request, so it cannot be split by item or category.': {'ar': 'المقياس ده بيتحسب لكل طلب، فمش ينفع يتقسم حسب الصنف أو الفئة.', 'tr': 'Bu ölçü talep başına hesaplanır; kaleme veya kategoriye göre bölünemez.'},
     # --- Quick fixes 2026-11-26 ---
     'This request is closed or cancelled, so files can no longer be attached.': {'ar': 'الطلب مقفول أو ملغي، فمش ممكن نرفق ملفات تاني.', 'tr': 'Bu talep kapalı veya iptal edildi; artık dosya eklenemez.'},
     'Choose how the supplier settled the debit note.': {'ar': 'اختر طريقة تسوية المورد لإشعار الخصم.', 'tr': 'Tedarikçinin borç dekontunu nasıl kapattığını seçin.'},

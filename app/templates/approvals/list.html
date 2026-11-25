@@ -38,6 +38,21 @@
     <form method="get" action="{{ url_for('approvals.listing') }}" class="pl-filters" role="search">
       {% if status != 'all' %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
       {% if mine %}<input type="hidden" name="mine" value="1">{% endif %}
+      {#- Drill-down filters from the analytics charts: kept by Apply, shown as
+          removable chips so the reader knows why the list is short. -#}
+      {% for k, lbl in [('vendor', 'Supplier'), ('cat', 'Item category'), ('cc', 'Cost centre'), ('kind', 'OPEX / CAPEX')] %}{% if f[k] %}
+      <input type="hidden" name="{{ k }}" value="{{ f[k] }}">
+      {% endif %}{% endfor %}
+      {% if f.vendor or f.cat or f.cc or f.kind %}
+      <div class="pl-drill" style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        {% for k, key, lbl in [('vendor', 'proc.analytics.f.vendor', 'Supplier'), ('cat', 'proc.analytics.f.cat', 'Item category'), ('cc', 'proc.analytics.f.cc', 'Cost centre'), ('kind', 'proc.analytics.dim.kind', 'OPEX / CAPEX')] %}{% if f[k] %}
+        <a class="chip" style="position:relative" href="{{ url_for('approvals.listing', **dict(keep, **{k: None})) }}">
+          <span data-i18n="{{ key }}">{{ lbl }}</span>: <b>{{ f[k]|upper if k == 'kind' else f[k] }}</b>
+          <span aria-hidden="true">×</span><span class="sr-only" data-i18n="proc.analytics.remove">Remove filter</span>
+        </a>
+        {% endif %}{% endfor %}
+      </div>
+      {% endif %}
       <div class="pl-q">
         <label for="pl-q" data-i18n="proc.flt.search">Search</label>
         <input id="pl-q" type="search" name="q" value="{{ f.q }}" maxlength="100" autocomplete="off"

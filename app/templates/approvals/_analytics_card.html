@@ -1,0 +1,28 @@
+{#- One chart card: title, Chart/Table toggle, exports, and the canvas that
+    proc-analytics.js draws from the spec with the same key. A card may bring its
+    own server-rendered table (the `table` block of a call) instead of the
+    generated one. -#}
+{% macro card(spec, T, xlsx=None, csv=None, sub='', wide=False, server_table=False, extra_head='', view='') %}
+<article class="panel an-card{{ ' an-wide' if wide }}" data-spec="{{ spec.key }}" aria-labelledby="an-h-{{ spec.key }}"{% if view %} data-default-view="{{ view }}"{% endif %}>
+  <header class="an-card-head">
+    <div class="an-card-title">
+      <h3 id="an-h-{{ spec.key }}">{{ spec.title }}</h3>
+      {% if sub %}<p class="an-card-sub">{{ sub }}</p>{% endif %}
+    </div>
+    <div class="an-card-tools">
+      {{ extra_head }}
+      <div class="seg an-toggle" role="group" aria-label="{{ T('proc.analytics.view_chart') }} / {{ T('proc.analytics.view_table') }}">
+        <button type="button" class="on" data-view="chart" aria-pressed="true" data-i18n="proc.analytics.view_chart">{{ T('proc.analytics.view_chart') }}</button>
+        <button type="button" data-view="table" aria-pressed="false" data-i18n="proc.analytics.view_table">{{ T('proc.analytics.view_table') }}</button>
+      </div>
+      {% if xlsx %}<a class="btn btn-ghost btn-sm an-dl" href="{{ xlsx }}" data-i18n="proc.analytics.export_xlsx">{{ T('proc.analytics.export_xlsx') }}</a>{% endif %}
+      {% if csv %}<a class="btn btn-ghost btn-sm an-dl" href="{{ csv }}" data-i18n="proc.analytics.export_csv">{{ T('proc.analytics.export_csv') }}</a>{% endif %}
+    </div>
+  </header>
+  <div class="an-card-body">
+    <div class="an-canvas"><canvas role="img" aria-label="{{ spec.title }}"></canvas></div>
+    <div class="an-empty" hidden data-i18n="proc.analytics.empty">{{ T('proc.analytics.empty') }}</div>
+    <div class="an-table tbl-wrap" hidden {{ 'data-server' if server_table }}>{{ caller() if server_table else '' }}</div>
+  </div>
+</article>
+{% endmacro %}

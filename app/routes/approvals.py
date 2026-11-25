@@ -132,9 +132,8 @@ def index():
 @login_required
 @permission_required("proc_view")
 def analytics():
-    return render_template("approvals/analytics.html", active="proc_analytics",
-                           a=svc.analytics_summary(),
-                           show_money=(svc.money_view(_u()) == "full"))
+    from app.routes.approvals_analytics import dashboard_page
+    return dashboard_page()
 
 
 @bp.route("/export/<key>.csv")
@@ -264,7 +263,11 @@ def _list_filters(user):
     day = lambda k: a.get(k, "") if _ISO_DAY.match(a.get(k, "")) else ""
     return {"q": a.get("q", "").strip()[:100], "dept": a.get("dept", "").strip(),
             "priority": a.get("priority", "") if a.get("priority") in C.PRIORITY_LABELS else "",
-            "date_from": day("from"), "date_to": day("to"), "sort": sort}
+            "date_from": day("from"), "date_to": day("to"), "sort": sort,
+            # analytics drill-down (a chart bar -> the requests behind it)
+            "vendor": a.get("vendor", "").strip()[:120], "cat": a.get("cat", "").strip()[:120],
+            "cc": a.get("cc", "").strip()[:120],
+            "kind": a.get("kind", "") if a.get("kind") in ("opex", "capex") else ""}
 
 
 @bp.route("/list")
@@ -279,13 +282,16 @@ def listing():
     # Every link on the page (status chips, Mine, headers, Excel) keeps the rest.
     keep = {k: v for k, v in (("q", f["q"]), ("dept", f["dept"]), ("priority", f["priority"]),
                               ("from", f["date_from"]), ("to", f["date_to"]),
+                              ("vendor", f["vendor"]), ("cat", f["cat"]), ("cc", f["cc"]),
+                              ("kind", f["kind"]),
                               ("sort", f["sort"] if f["sort"] != "new" else ""),
                               ("status", status if status != "all" else ""),
                               ("mine", "1" if mine else "")) if v}
     return render_template("approvals/list.html", active="proc_list",
                            f=f, keep=keep, depts=svc.list_departments(),
                            value_sort=svc.money_view(user) == "full",
-                           filtered=any(f[k] for k in ("q", "dept", "priority", "date_from", "date_to")),
+                           filtered=any(f[k] for k in ("q", "dept", "priority", "date_from", "date_to",
+                                                       "vendor", "cat", "cc", "kind")),
                            prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES,
                            money=svc.money_views(user, prs),
                            items=svc.items_preview(prs),
@@ -3277,3 +3283,6 @@ def change_requester(pr_id):
     else:
         flash(_REQUESTER_ERRORS.get(msg, "Request not found."), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+from app.routes import approvals_analytics  # noqa: E402,F401  (analytics routes on bp)

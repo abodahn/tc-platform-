@@ -675,6 +675,30 @@ CREATE TABLE IF NOT EXISTS pr_quote_lines (
 CREATE INDEX IF NOT EXISTS ix_pr_quote_lines_q ON pr_quote_lines(quote_id);
 """
 
+# Saved analytics reports (app/approvals/analytics.py). config_json holds the
+# builder definition and its filters, both re-validated against the whitelists
+# every time the report runs. shared=1 = visible to every user who sees all
+# procurement money; pins are per user, so pinning a shared report changes only
+# the pinner's own dashboard.
+_ANALYTICS_DDL = """
+CREATE TABLE IF NOT EXISTS proc_saved_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    config_json TEXT,
+    shared INTEGER DEFAULT 0,
+    created_at TEXT, updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_proc_saved_reports_owner ON proc_saved_reports(owner);
+CREATE TABLE IF NOT EXISTS proc_report_pins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    created_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_proc_report_pins ON proc_report_pins(report_id, username);
+"""
+
 # Columns added to pr_quotes after first release: the RFQ a returned quotation
 # answers. NULL is normal and stays legal — a quote handed over without an RFQ
 # (or recorded before this column existed) is still a quote.
@@ -957,6 +981,7 @@ def create_and_seed(conn):
     conn.executescript(_PO_REV_DDL)
     conn.executescript(_GRN_DDL)
     conn.executescript(_RFQ_DDL)
+    conn.executescript(_ANALYTICS_DDL)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS

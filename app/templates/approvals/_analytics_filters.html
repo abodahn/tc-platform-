@@ -1,0 +1,77 @@
+{#- The global filter bar's FIELDS (the page supplies the <form>). On a phone the
+    fields live in a bottom sheet opened by the Filters button; every value is in
+    the URL, so a filtered view is a link that can be shared and survives Back. -#}
+{% set nactive = (fargs|length) - (1 if fargs.period is defined else 0) %}
+<div class="an-filterbar" data-an-filterbar>
+  <button type="button" class="btn btn-ghost an-filter-btn" data-an-sheet-open aria-controls="an-sheet" aria-expanded="false">
+    <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+    <span data-i18n="proc.analytics.filters">{{ T('proc.analytics.filters') }}</span>
+    {% if nactive %}<span class="an-count">{{ nactive }}</span>{% endif %}
+    <span class="an-filter-period">· {{ T('proc.analytics.p.' + f.period) }}</span>
+  </button>
+  <div class="an-sheet-backdrop" data-an-sheet-close hidden></div>
+  <div class="an-sheet" id="an-sheet" role="group" aria-labelledby="an-sheet-title">
+    <div class="an-sheet-head">
+      <h2 id="an-sheet-title" data-i18n="proc.analytics.filters">{{ T('proc.analytics.filters') }}</h2>
+      <button type="button" class="btn btn-ghost btn-sm" data-an-sheet-close data-i18n="proc.analytics.close">{{ T('proc.analytics.close') }}</button>
+    </div>
+    <fieldset class="an-periods">
+      <legend data-i18n="proc.analytics.period">{{ T('proc.analytics.period') }}</legend>
+      <div class="an-chips">
+        {% for p in periods %}
+        <label class="an-chip"><input type="radio" name="period" value="{{ p }}" {{ 'checked' if f.period == p }} data-an-auto>
+          <span data-i18n="proc.analytics.p.{{ p }}">{{ T('proc.analytics.p.' + p) }}</span></label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <div class="an-fields">
+      <div class="field an-custom" {{ 'hidden' if f.period != 'custom' }}>
+        <label for="an-from" data-i18n="proc.analytics.from">{{ T('proc.analytics.from') }}</label>
+        <input id="an-from" type="date" name="from" value="{{ f['from'] }}">
+      </div>
+      <div class="field an-custom" {{ 'hidden' if f.period != 'custom' }}>
+        <label for="an-to" data-i18n="proc.analytics.to">{{ T('proc.analytics.to') }}</label>
+        <input id="an-to" type="date" name="to" value="{{ f['to'] }}">
+      </div>
+      {% for key, opts in [('dept', options.dept), ('vendor', options.vendor), ('cat', options.cat), ('cc', options.cc)] %}
+      <div class="field">
+        <label for="an-{{ key }}" data-i18n="proc.analytics.f.{{ key }}">{{ T('proc.analytics.f.' + key) }}</label>
+        <select id="an-{{ key }}" name="{{ key }}" data-an-auto>
+          <option value="" data-i18n="proc.analytics.any">{{ T('proc.analytics.any') }}</option>
+          {% for o in opts %}<option value="{{ o }}" {{ 'selected' if f[key] == o }}>{{ o }}</option>{% endfor %}
+          {% if f[key] and f[key] not in opts %}<option value="{{ f[key] }}" selected>{{ f[key] }}</option>{% endif %}
+        </select>
+      </div>
+      {% endfor %}
+      <div class="field">
+        <label for="an-status" data-i18n="proc.analytics.f.status">{{ T('proc.analytics.f.status') }}</label>
+        <select id="an-status" name="status" data-no-search data-an-auto>
+          <option value="" data-i18n="proc.analytics.any">{{ T('proc.analytics.any') }}</option>
+          {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f.status == s }} data-i18n="proc.analytics.st.{{ s }}">{{ T('proc.analytics.st.' + s) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="an-cur" data-i18n="proc.analytics.f.cur">{{ T('proc.analytics.f.cur') }}</label>
+        <select id="an-cur" name="cur" data-no-search data-an-auto>
+          <option value="" data-i18n="proc.analytics.any">{{ T('proc.analytics.any') }}</option>
+          {% for o in options.cur %}<option value="{{ o }}" {{ 'selected' if f.cur == o }}>{{ o }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="an-sheet-act">
+      <button class="btn btn-primary" type="submit" data-i18n="proc.analytics.apply">{{ T('proc.analytics.apply') }}</button>
+      <a class="btn btn-ghost" href="{{ reset_url }}" data-i18n="proc.analytics.reset">{{ T('proc.analytics.reset') }}</a>
+    </div>
+  </div>
+</div>
+{% if nactive %}
+<div class="an-active" aria-label="{{ T('proc.analytics.active') }}">
+  {% for key in ['from', 'to', 'dept', 'vendor', 'cat', 'cc', 'status', 'cur'] %}{% if fargs[key] %}
+  <a class="chip an-active-chip" href="{{ url_for(request.endpoint, **dict(keep_extra or {}, **dict(fargs, **{key: None}))) }}">
+    <span>{% if key in ('from', 'to') %}<span data-i18n="proc.analytics.{{ key }}">{{ T('proc.analytics.' + key) }}</span>{% else %}<span data-i18n="proc.analytics.f.{{ key }}">{{ T('proc.analytics.f.' + key) }}</span>{% endif %}:
+      <b>{{ T('proc.analytics.st.' + fargs[key]) if key == 'status' else fargs[key] }}</b></span>
+    <span aria-hidden="true">×</span><span class="sr-only" data-i18n="proc.analytics.remove">{{ T('proc.analytics.remove') }}</span>
+  </a>
+  {% endif %}{% endfor %}
+</div>
+{% endif %}
