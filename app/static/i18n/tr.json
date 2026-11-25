@@ -4172,6 +4172,8 @@
   "proc.quote.replace_file": "Dosyayı değiştir",
   "proc.quote.file_hint": "PDF, PNG, JPG, WEBP, XLSX veya CSV, en fazla 3 MB. Zorunlu: tedarikçi dosyası olmayan teklif seçilemez ve sayılmaz.",
   "proc.quote.matrix": "Kalem bazında fiyat",
+  "proc.quote.mx_hint": "Her kalem için bir tedarikçi seçin veya bir teklifin tüm kalemlerini almak için teklifteki Seç'i kullanın.",
+  "proc.quote.line_chosen": "Seçildi",
   "proc.quote.lowest_item": "En düşük birim fiyat",
   "proc.quote.not_quoted": "Fiyat verilmedi",
   "proc.quote.prefilled": "Birim fiyatlar seçilen tekliften önceden dolduruldu. Kontrol edin, ardından Fiyatlandırmayı kaydet'e basın.",

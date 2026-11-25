@@ -2137,7 +2137,10 @@
         the line under it says how it was reached. -#}
     {% if show_commercial and quote_matrix %}
     {% set mx_foreign = quote_matrix.quotes|rejectattr('currency', 'equalto', 'EGP')|list|length > 0 %}
+    {#- Per-line award: Purchasing picks the supplier per line (one PO per supplier follows). -#}
+    {% set mx_award = can_purchasing and not rfq_locked %}
     <h4 style="margin:4px 0 6px" data-i18n="proc.quote.matrix">Price per item</h4>
+    {% if mx_award %}<p class="muted qt-mx-hint" data-i18n="proc.quote.mx_hint">Choose a supplier per line, or use Choose on a quotation to take all its lines.</p>{% endif %}
     <div class="tbl-wrap" style="margin-bottom:12px">
     <table class="tbl qt-mx">
       <thead><tr>
@@ -2155,13 +2158,19 @@
           <td><div style="font-weight:600">{{ r.item.item }}</div>
             <div class="qt-sub">{{ '%g'|format(r.item.qty or 0) }} {{ r.item.unit or '' }}</div></td>
           {% for c in r.cells %}{% set mq = quote_matrix.quotes[loop.index0] %}
-          <td class="qt-num{{ ' qt-best' if c and c.best }}">
+          {% set awarded = c and r.item.quote_id and r.item.quote_id == mq.id %}
+          <td class="qt-num{{ ' qt-best' if c and c.best }}{{ ' qt-awarded' if awarded }}">
             {% if c %}
             <div class="qt-net">{% if c.best %}<span data-i18n-title="proc.quote.lowest_item" title="Lowest unit price">▼</span> {% endif %}<bdi>{{ '{:,.2f}'.format(c.net_unit if c.net_unit is defined else c.unit_price) }}</bdi></div>
             {% if c.disc_pct or mq.disc_pct %}<div class="qt-sub"><bdi>{{ '{:,.2f}'.format(c.unit_price) }}</bdi>
               {%- if c.disc_pct %} − <span data-i18n="proc.quote.m_line">line</span> <bdi>{{ '%g'|format(c.disc_pct) }}%</bdi>{% endif %}
               {%- if mq.disc_pct %} − <span data-i18n="proc.quote.m_quote">quote</span> <bdi>{{ '%g'|format(mq.disc_pct) }}%</bdi>{% endif %}</div>{% endif %}
             <div class="qt-sub"><span data-i18n="proc.quote.line_total">Line total</span> <bdi>{{ '{:,.2f}'.format(c.net_total if c.net_total is defined else c.line_total) }}</bdi></div>
+            {% if awarded %}<div class="qt-pick"><span class="badge b-approved">✓ <span data-i18n="proc.quote.line_chosen">Chosen</span><span class="sr-only"> {{ mq.vendor }} — {{ r.item.item }}</span></span></div>
+            {% elif mx_award and mq.has_file %}<form class="qt-pick" method="post" action="{{ url_for('approvals.award_quote_line', pr_id=pr.id, quote_id=mq.id, item_id=r.item.id) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button class="btn btn-ghost btn-sm" type="submit"><span data-i18n="proc.choose">Choose</span><span class="sr-only"> {{ mq.vendor }} — {{ r.item.item }}</span></button>
+            </form>{% endif %}
             {% else %}<span class="muted" data-i18n-title="proc.quote.not_quoted" title="Not quoted">—</span>{% endif %}
           </td>
           {% endfor %}

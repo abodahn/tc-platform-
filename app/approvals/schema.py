@@ -761,6 +761,9 @@ _ITEM_MIGRATIONS = [
     ("disc_value", "ALTER TABLE pr_items ADD COLUMN disc_value REAL"),
     ("disc_amount", "ALTER TABLE pr_items ADD COLUMN disc_amount REAL"),
     ("net_price", "ALTER TABLE pr_items ADD COLUMN net_price REAL"),
+    # The quotation this line's price was awarded from (award_quote_line /
+    # apply_chosen_quote). NULL = priced by hand, or before per-line awards.
+    ("quote_id", "ALTER TABLE pr_items ADD COLUMN quote_id INTEGER"),
 ]
 
 

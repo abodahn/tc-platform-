@@ -4172,6 +4172,8 @@
   "proc.quote.replace_file": "استبدال الملف",
   "proc.quote.file_hint": "PDF أو PNG أو JPG أو WEBP أو XLSX أو CSV، بحد أقصى 3 ميجابايت. إلزامي: عرض السعر بدون ملف المورد لا يمكن اختياره ولا يُحتسب.",
   "proc.quote.matrix": "السعر لكل بند",
+  "proc.quote.mx_hint": "اختر المورد لكل بند، أو استخدم «اختيار» على عرض السعر لأخذ كل بنوده.",
+  "proc.quote.line_chosen": "تم الاختيار",
   "proc.quote.lowest_item": "أقل سعر للوحدة",
   "proc.quote.not_quoted": "لم يُسعَّر",
   "proc.quote.prefilled": "أسعار الوحدات مملوءة مسبقًا من عرض السعر المختار. راجعها ثم اضغط حفظ التسعير.",

@@ -1635,6 +1635,18 @@ def choose_quote(pr_id, quote_id):
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 
+@bp.route("/pr/<int:pr_id>/quote/<int:quote_id>/award/<int:item_id>", methods=["POST"])
+@login_required
+@permission_required("proc_purchasing")
+def award_quote_line(pr_id, quote_id, item_id):
+    """Per-line supplier choice: this quotation wins this one line."""
+    ok, msg = svc.award_quote_line(pr_id, item_id, quote_id, _u(), ip=_ip())
+    flash("Line awarded — its price, line discount and supplier are now on the request."
+          if ok else _QUOTE_ERRORS.get(msg) or f"Could not award the line ({msg}).",
+          "success" if ok else "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id) + "#prQuotes")
+
+
 def _flash_not_applied(msg):
     """Why the chosen quotation's prices did not reach the request. A foreign
     quote with no rate is an ERROR, not a hint: the request keeps a value that
@@ -1692,6 +1704,15 @@ _QUOTE_ERRORS = {
     "attachment_required": "Attach the supplier's quotation file.",
     "no_attachment": "This quotation has no supplier file. Attach it (Edit this "
                      "quotation) before choosing it.",
+    "no_line_price": "This quotation has no price for that line.",
+    "vat_mismatch": "This quotation's VAT differs from the request's other priced lines. "
+                    "A request has one VAT rate — choose a quotation with the same VAT "
+                    "for this line, or enter its price in Pricing.",
+    "partial_other_currency": "This quotation is in another currency than the request's "
+                              "other priced lines. A request has one currency — choose a "
+                              "quotation in the same currency for this line.",
+    "awarded": "A line of this request is awarded to this quotation. Choose another "
+               "supplier for that line first, then remove this.",
 }
 
 
@@ -1743,6 +1764,16 @@ def edit_quote(pr_id, quote_id):
             flash("Quote selected — its prices and VAT are now the request's prices.", "success")
         else:
             _flash_not_applied(msg2)
+    elif ok and msg != "no_change":
+        # A quotation lines were awarded from (per-line choice) carries its
+        # corrected figures to those lines, the same way.
+        ok2, msg2 = svc.reaward_quote_lines(pr_id, quote_id, _u(), ip=_ip())
+        if not ok2:
+            if msg2 in _QUOTE_ERRORS:
+                flash(_QUOTE_ERRORS[msg2], "error")
+            flash("A line awarded from this quotation could not take its corrected "
+                  "figures, so it is no longer marked as awarded. Check that line's "
+                  "price in Pricing.", "warning")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
 
 

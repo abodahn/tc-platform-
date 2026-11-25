@@ -2914,7 +2914,7 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None,
                 return False, "fx_required"
         before = _commercial_terms(conn, pr_id)
         items = conn.execute(
-            "SELECT id, qty, unit_price FROM pr_items WHERE pr_id=? ORDER BY seq",
+            "SELECT id, qty, unit_price, vendor FROM pr_items WHERE pr_id=? ORDER BY seq",
             (pr_id,)).fetchall()
         total = 0.0
         for it in items:
@@ -2927,6 +2927,7 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None,
             est = round(float(it["qty"] or 0) * up, 2)
             conn.execute("UPDATE pr_items SET unit_price=?, est_cost=? WHERE id=?",
                          (up, est, it["id"]))
+            moved = abs(up - float(it["unit_price"] or 0)) > 1e-9
             # The supplier for this line, if Purchasing named one. A key that was
             # not posted at all leaves the line alone; a key posted BLANK clears
             # it back to the header vendor, which is how a buyer un-splits a
@@ -2934,8 +2935,12 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None,
             if vendors:
                 lv = vendors.get(it["id"], vendors.get(str(it["id"])))
                 if lv is not None:
-                    conn.execute("UPDATE pr_items SET vendor=? WHERE id=?",
-                                 (str(lv).strip()[:120] or None, it["id"]))
+                    lv = str(lv).strip()[:120] or None
+                    moved = moved or (lv or "") != (it["vendor"] or "")
+                    conn.execute("UPDATE pr_items SET vendor=? WHERE id=?", (lv, it["id"]))
+            if moved:
+                # No longer the awarded quotation's figure; an award re-sets it after.
+                conn.execute("UPDATE pr_items SET quote_id=NULL WHERE id=?", (it["id"],))
             # Purchasing's own two figures on the line (spec §2): what this part
             # cost the last time it was bought, and how long this supplier says
             # it takes. Same blank-is-not-zero rule as the warehouse rung — a
@@ -3007,7 +3012,7 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None,
         # one Purchasing chose — worst on the maintenance auto-reorder bridge,
         # whose requests are unpriced by design and all pass through here.
         if meta.get("vendor") and meta["vendor"] != pr["vendor"]:
-            conn.execute("UPDATE pr_items SET vendor=? WHERE pr_id=? AND "
+            conn.execute("UPDATE pr_items SET vendor=?, quote_id=NULL WHERE pr_id=? AND "
                          "(vendor IS NULL OR vendor='' OR vendor=?)",
                          (meta["vendor"], pr_id, pr["vendor"]))
 
@@ -6711,11 +6716,13 @@ def _sync_line_vendors(conn, pr_id, quote_id, vendor):
             "SELECT pr_item_id FROM pr_quote_lines WHERE quote_id=?", (quote_id,)).fetchall()]
     except Exception:
         ids = []
+    # A line whose supplier changes no longer rests on the quotation it was awarded from.
+    keep = "quote_id=CASE WHEN COALESCE(vendor,'')=? THEN quote_id ELSE NULL END, vendor=?"
     if ids:
-        conn.execute("UPDATE pr_items SET vendor=? WHERE pr_id=? AND id IN (%s)"
-                     % ",".join("?" * len(ids)), (vendor, pr_id, *ids))
+        conn.execute("UPDATE pr_items SET " + keep + " WHERE pr_id=? AND id IN (%s)"
+                     % ",".join("?" * len(ids)), (vendor, vendor, pr_id, *ids))
     else:
-        conn.execute("UPDATE pr_items SET vendor=? WHERE pr_id=?", (vendor, pr_id))
+        conn.execute("UPDATE pr_items SET " + keep + " WHERE pr_id=?", (vendor, vendor, pr_id))
 
 
 def choose_quote(pr_id, quote_id, user, ip=None):
@@ -6841,10 +6848,186 @@ def apply_chosen_quote(pr_id, quote_id, user, ip=None):
         # A partial quote's discount is the supplier's money off ITS lines only;
         # as a request percent it would also cut lines it never priced.
         meta.update(disc_type="val", disc_value=q_disc)
-    return price_pr(pr_id, prices, meta, user, ip=ip,
+    res = price_pr(pr_id, prices, meta, user, ip=ip,
+                   vendors={i: (q["vendor"] or "") for i in prices},
+                   discounts={i: discounts.get(i, (None, None)) for i in prices})
+    if res[0]:
+        # The per-item matrix marks these lines as awarded to this quotation.
+        conn = get_db()
+        try:
+            conn.execute("UPDATE pr_items SET quote_id=? WHERE pr_id=? AND id IN (%s)"
+                         % ",".join("?" * len(prices)), (quote_id, pr_id, *prices))
+            conn.commit()
+        finally:
+            conn.close()
+    return res
 
-                    vendors={i: (q["vendor"] or "") for i in prices},
-                    discounts={i: discounts.get(i, (None, None)) for i in prices})
+
+_LOCKED_SOURCING = ("approved", "po_issued", "in_transit", "partially_received",
+                    "received", "closed", "cancelled")
+
+
+def award_quote_line(pr_id, item_id, quote_id, user, ip=None):
+    """Award ONE request line to ONE quotation (owner, 2026-11-25): supplier A
+    may win line 1 and supplier B line 2. The line takes that quotation's unit
+    price, its own line discount and its supplier; the quote-level discount is
+    NOT carried (it was the supplier's money off its whole offer). The price is
+    written only through price_pr(), so every pricing guard, the total, the
+    ladder and the signature withdrawal apply. One PO per line vendor already
+    follows from po_groups().
+
+    The request has ONE currency and ONE VAT rate that every split PO uses, so
+    a line from a quotation in another currency or with another VAT than the
+    lines already priced is refused rather than silently mixed.
+
+    Afterwards: all priced lines from one quotation -> that quotation is the
+    chosen one; a mixed award -> no quotation is 'chosen' and the request's
+    header vendor is the first line's (the primary PO's owner).
+    Returns (ok, msg)."""
+    conn = get_db()
+    try:
+        q = conn.execute("SELECT * FROM pr_quotes WHERE id=? AND pr_id=?",
+                         (quote_id, pr_id)).fetchone()
+        pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        item = conn.execute("SELECT id FROM pr_items WHERE id=? AND pr_id=?",
+                            (item_id, pr_id)).fetchone()
+        if not q or not pr or not item:
+            return False, "not_found"
+        _bad = _refuse_self_commercial(pr, user, "quote_choice")
+        if _bad:
+            return False, _bad
+        if pr["status"] in _LOCKED_SOURCING:
+            return False, "locked"
+        if not q["content_b64"]:
+            return False, "no_attachment"
+        ln = None
+        for cols in (", disc_type, disc_value", ""):
+            try:
+                ln = conn.execute("SELECT unit_price" + cols + " FROM pr_quote_lines "
+                                  "WHERE quote_id=? AND pr_item_id=?",
+                                  (quote_id, item_id)).fetchone()
+                break
+            except Exception:
+                conn.rollback()
+        if not ln or ln["unit_price"] is None:
+            return False, "no_line_price"
+        # Lines priced by a whole-quote choice before quote_id existed rest on the
+        # chosen quotation: mark them, where its price and supplier still match.
+        ch = conn.execute("SELECT id, vendor FROM pr_quotes WHERE pr_id=? AND is_chosen=1",
+                          (pr_id,)).fetchone()
+        if ch:
+            conn.execute("UPDATE pr_items SET quote_id=? WHERE pr_id=? AND quote_id IS NULL "
+                         "AND unit_price>0 AND COALESCE(vendor,'')=? AND EXISTS (SELECT 1 "
+                         "FROM pr_quote_lines l WHERE l.quote_id=? AND l.pr_item_id=pr_items.id "
+                         "AND ABS(l.unit_price - pr_items.unit_price) < 0.0001)",
+                         (ch["id"], pr_id, ch["vendor"] or "", ch["id"]))
+            conn.commit()
+        others = conn.execute("SELECT id, unit_price, quote_id FROM pr_items "
+                              "WHERE pr_id=? AND id<>?", (pr_id, item_id)).fetchall()
+        before = _commercial_terms(conn, pr_id)
+    finally:
+        conn.close()
+    keys = q.keys()
+    qcur = C.currency_code(q["currency"] or "EGP") if "currency" in keys else "EGP"
+    if not qcur:
+        return False, "bad_currency"
+    prcur = C.currency_code(pr["currency"] or "EGP") or ""
+    fx = None
+    if qcur != "EGP":
+        fx = _valid_fx(q["fx_rate"] if "fx_rate" in keys else None)
+        if not fx and prcur == qcur:
+            fx = _valid_fx(pr["fx_rate"])
+        if not fx:
+            return False, "quote_fx_required"
+    priced = [o for o in others if float(o["unit_price"] or 0)]
+    if priced and qcur != prcur:
+        return False, "partial_other_currency"
+    vat_on = bool(q["vat_applies"]) if "vat_applies" in keys else False
+    rate = (float(q["vat_rate"] or 0.14) if "vat_rate" in keys else 0.14) if vat_on else 0.0
+    if 0 < rate <= 1:          # quotes store VAT as a fraction (0.14); requests as a percent
+        rate = round(rate * 100, 4)
+    if priced and abs(rate - float(pr["tax_rate"] or 0)) > 1e-6:
+        return False, "vat_mismatch"
+    meta = {"tax_rate": str(rate), "currency": qcur}
+    if fx:
+        meta["fx_rate"] = str(fx)
+    # A request-level discount was one supplier's money off its whole offer; once
+    # the lines come from more than one quotation it belongs to nobody's PO.
+    sources = {o["quote_id"] for o in priced} | {quote_id}   # None = priced by hand: its own source
+    if len(sources) > 1 and (pr["disc_type"] or pr["disc_value"]):
+        meta.update(disc_type=None, disc_value=None)
+    dd = ((ln["disc_type"], ln["disc_value"]) if "disc_type" in ln.keys()
+          else (None, None))
+    price = float(ln["unit_price"])
+    ok, msg = price_pr(pr_id, {item_id: price}, meta, user, ip=ip,
+                       vendors={item_id: q["vendor"] or ""}, discounts={item_id: dd})
+    if not ok:
+        return False, msg
+    conn = get_db()
+    try:
+        conn.execute("UPDATE pr_items SET quote_id=? WHERE id=?", (quote_id, item_id))
+        rows = conn.execute("SELECT id, vendor, unit_price, quote_id FROM pr_items "
+                            "WHERE pr_id=? ORDER BY seq, id", (pr_id,)).fetchall()
+        srcs = {r["quote_id"] for r in rows if float(r["unit_price"] or 0)}
+        mine = {r["id"] for r in rows if r["quote_id"] == quote_id}
+        # 'Chosen' = this quotation's WHOLE offer is taken: every priced line is
+        # from it and every line it prices is awarded to it.
+        whole = srcs == {quote_id} and all(
+            r["pr_item_id"] in mine for r in conn.execute(
+                "SELECT pr_item_id FROM pr_quote_lines WHERE quote_id=?", (quote_id,)).fetchall())
+        conn.execute("UPDATE pr_quotes SET is_chosen=0 WHERE pr_id=?", (pr_id,))
+        if whole:
+            conn.execute("UPDATE pr_quotes SET is_chosen=1 WHERE id=?", (quote_id,))
+        if srcs == {quote_id}:
+            head = q["vendor"]
+        else:
+            head = (rows[0]["vendor"] if rows else None) or pr["vendor"]
+        conn.execute("UPDATE pr_requests SET vendor=? WHERE id=?", (head, pr_id))
+        if pr["status"] == "pending":
+            # price_pr already withdrew for the price; this catches the header vendor.
+            _withdraw_signatures_on_changed_terms(
+                conn, pr, before, (user or {}).get("username") or "system", ip,
+                "Line awarded while approval was pending")
+        audit(conn, pr_id, (user or {}).get("username") or "system", "quote_line_awarded",
+              "Line %s awarded to %s @ %s %s" % (item_id, q["vendor"], price, qcur), ip)
+        conn.commit()
+    finally:
+        conn.close()
+    if whole:
+        # The whole offer again: price it exactly as whole-quote Choose does, so
+        # its quote-level discount (cleared while the award was mixed) is back.
+        ok2, msg2 = apply_chosen_quote(pr_id, quote_id, user, ip=ip)
+        if not ok2:
+            log.warning("award_quote_line: re-applying quote %s failed: %s", quote_id, msg2)
+    return True, ""
+
+
+def reaward_quote_lines(pr_id, quote_id, user, ip=None):
+    """A corrected quotation that lines were awarded from (not the chosen one,
+    which is re-applied whole) carries its new figures to those lines, through
+    award_quote_line and so every refusal. A line it can no longer be awarded
+    on keeps its price but loses the award mark, which would no longer be true.
+    Returns (ok, first refusal)."""
+    conn = get_db()
+    try:
+        ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM pr_items WHERE pr_id=? AND quote_id=? ORDER BY seq, id",
+            (pr_id, quote_id)).fetchall()]
+    finally:
+        conn.close()
+    bad = ""
+    for i in ids:
+        ok, msg = award_quote_line(pr_id, i, quote_id, user, ip=ip)
+        if ok:
+            continue
+        bad = bad or msg
+        conn = get_db()
+        try:
+            conn.execute("UPDATE pr_items SET quote_id=NULL WHERE id=?", (i,))
+            conn.commit()
+        finally:
+            conn.close()
+    return not bad, bad
 
 
 # --- supplier quotation editing (Procurement & Warehouse spec §5) -----------
@@ -6900,8 +7083,10 @@ def update_quote(quote_id, data, user=None, ip=None, filename=None, content_type
         if pr and pr["status"] in ("approved", "po_issued", "in_transit",
                                    "partially_received", "received", "closed", "cancelled"):
             return False, "locked"
-        if q["is_chosen"] and pr:
-            # Re-pricing the chosen offer is choosing its price: same rule as choose_quote.
+        if pr and (q["is_chosen"] or conn.execute(
+                "SELECT 1 FROM pr_items WHERE quote_id=? LIMIT 1", (quote_id,)).fetchone()):
+            # Re-pricing the chosen (or a line's awarded) offer is choosing its
+            # price: same rule as choose_quote.
             _bad = _refuse_self_commercial(pr, user, "quote_choice")
             if _bad:
                 return False, _bad
@@ -7054,6 +7239,9 @@ def delete_quote(quote_id, user=None, ip=None):
             return False, "not_found"
         if q["is_chosen"]:
             return False, "chosen"
+        if conn.execute("SELECT 1 FROM pr_items WHERE quote_id=? LIMIT 1",
+                        (quote_id,)).fetchone():
+            return False, "awarded"   # a line's price rests on it
         pr = conn.execute("SELECT status FROM pr_requests WHERE id=?",
                           (q["pr_id"],)).fetchone()
         if pr and pr["status"] in ("approved", "po_issued", "in_transit",

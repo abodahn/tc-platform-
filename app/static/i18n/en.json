@@ -4172,6 +4172,8 @@
   "proc.quote.replace_file": "Replace file",
   "proc.quote.file_hint": "PDF, PNG, JPG, WEBP, XLSX or CSV, max 3 MB. Required: a quotation without the supplier's file cannot be chosen or counted.",
   "proc.quote.matrix": "Price per item",
+  "proc.quote.mx_hint": "Choose a supplier per line, or use Choose on a quotation to take all its lines.",
+  "proc.quote.line_chosen": "Chosen",
   "proc.quote.lowest_item": "Lowest unit price",
   "proc.quote.not_quoted": "Not quoted",
   "proc.quote.prefilled": "Unit prices are pre-filled from the chosen quotation. Review them, then press Save pricing.",

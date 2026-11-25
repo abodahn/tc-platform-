@@ -996,6 +996,35 @@ MESSAGES = {
     'That reference belongs to a purchase order. Receiving against a PO needs purchasing rights — use the Receiving tab on the request, or receive here without the PO reference.': {"ar": 'هذا المرجع يخص أمر شراء. يتطلب الاستلام على أمر شراء صلاحيات المشتريات — استخدم علامة تبويب الاستلام في الطلب، أو سجّل الاستلام هنا دون مرجع أمر الشراء.', "tr": 'Bu referans bir satınalma siparişine ait. Siparişe karşı teslim almak satınalma yetkisi gerektirir — talepteki Teslim Alma sekmesini kullanın veya burada sipariş referansı olmadan teslim alın.'},
     'Stock booked, but the purchase order refused the receipt (': {"ar": 'تم تسجيل المخزون، لكن أمر الشراء رفض الاستلام (', "tr": 'Stok kaydedildi ancak satınalma siparişi teslim almayı reddetti ('},
     'Quarantined, not added to stock - over the ordered quantity: ': {"ar": 'تم عزل الكمية الزائدة ولم تُضف إلى المخزون - الزيادة عن الكمية المطلوبة: ', "tr": 'Karantinaya alındı, stoğa eklenmedi - sipariş miktarını aşan: '},
+    # --- per-line supplier choice (owner, 2026-11-25) --------------------------
+    "Line awarded — its price, line discount and supplier are now on the request.": {
+        "ar": "تم اختيار المورد لهذا البند — سعره وخصم البند والمورد أصبحت على الطلب.",
+        "tr": "Kalem tedarikçiye verildi — fiyatı, kalem indirimi ve tedarikçisi artık talepte.",
+    },
+    "Could not award the line (": {
+        "ar": "تعذّر اختيار المورد لهذا البند (",
+        "tr": "Kalem tedarikçiye verilemedi (",
+    },
+    "This quotation has no price for that line.": {
+        "ar": "عرض السعر هذا لا يتضمن سعرًا لهذا البند.",
+        "tr": "Bu teklifte o kalem için fiyat yok.",
+    },
+    "This quotation's VAT differs from the request's other priced lines. A request has one VAT rate — choose a quotation with the same VAT for this line, or enter its price in Pricing.": {
+        "ar": "ضريبة القيمة المضافة في هذا العرض تختلف عن باقي البنود المسعّرة في الطلب. للطلب نسبة ضريبة واحدة — اختر لهذا البند عرضًا بنفس الضريبة، أو أدخل سعره في التسعير.",
+        "tr": "Bu teklifin KDV'si talebin fiyatlanmış diğer kalemlerinden farklı. Bir talebin tek bir KDV oranı vardır — bu kalem için aynı KDV'li bir teklif seçin veya fiyatını Fiyatlandırma'da girin.",
+    },
+    "This quotation is in another currency than the request's other priced lines. A request has one currency — choose a quotation in the same currency for this line.": {
+        "ar": "هذا العرض بعملة مختلفة عن باقي البنود المسعّرة في الطلب. للطلب عملة واحدة — اختر لهذا البند عرضًا بنفس العملة.",
+        "tr": "Bu teklif, talebin fiyatlanmış diğer kalemlerinden farklı bir para biriminde. Bir talebin tek bir para birimi vardır — bu kalem için aynı para biriminde bir teklif seçin.",
+    },
+    "A line awarded from this quotation could not take its corrected figures, so it is no longer marked as awarded. Check that line's price in Pricing.": {
+        "ar": "تعذّر نقل الأرقام المصحّحة إلى بند مُسند إلى هذا العرض، لذلك لم يعد مُعلّمًا كمُسند إليه. راجع سعر هذا البند في التسعير.",
+        "tr": "Bu tekliften verilen bir kalem düzeltilmiş rakamları alamadı, bu yüzden artık verilmiş olarak işaretli değil. O kalemin fiyatını Fiyatlandırma'da kontrol edin.",
+    },
+    "A line of this request is awarded to this quotation. Choose another supplier for that line first, then remove this.": {
+        "ar": "أحد بنود هذا الطلب مُسند إلى هذا العرض. اختر موردًا آخر لهذا البند أولًا، ثم احذف هذا العرض.",
+        "tr": "Bu talebin bir kalemi bu teklife verilmiş. Önce o kalem için başka bir tedarikçi seçin, sonra bunu kaldırın.",
+    },
 }
 
 
