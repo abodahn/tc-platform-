@@ -186,12 +186,33 @@ def run():
             == (False, "po_cancelled")
         assert svc.add_invoice(pid, {"invoice_no": "INV-DL1", "amount": "5", "tax": "0",
                                      "po_id": b["id"]}, buyer) == (False, "po_cancelled")
+        # ...nor at the warehouse door: refused before any stock moves.
+        from app.warehouse import services as wsvc
+        assert wsvc.create_material({"code": "DLV-NUT", "name": "Nut", "kind": "trim",
+                                     "uom": "pcs"}, store)[0]
+        nut_mat = q("SELECT id, stock_qty FROM wh_materials WHERE code='DLV-NUT'")[0]
+        pr_no = q("SELECT pr_no FROM pr_requests WHERE id=?", pid)[0]["pr_no"]
+        assert wsvc.po_line_for(pr_no, nut_mat["id"]) == {"cancelled": True, "pr_id": pid}
+        r = client(ids["dl.store"]).post("/warehouse/receive", follow_redirects=True, data={
+            "_csrf": "tok", "material_id": str(nut_mat["id"]), "qty": "3",
+            "unit_cost": "50", "grn_ref": pr_no})
+        assert "That purchase order was cancelled." in r.get_data(as_text=True)
+        assert q("SELECT stock_qty FROM wh_materials WHERE id=?",
+                 nut_mat["id"])[0]["stock_qty"] == nut_mat["stock_qty"], "stock booked"
+        # The PO panel marks the cancelled order and offers no PDF for it.
+        html = b_cli.get("/procurement/pr/%d" % pid).get_data(as_text=True)
+        assert ('po=%d"' % a["id"]) in html and ('po=%d"' % b["id"]) not in html
         ui = svc.labels("ar")["ui"]
         assert ui["po_cancelled_flash"] and ui["po_cancelled_flash"] != svc.labels("en")["ui"]["po_cancelled_flash"]
         # The rest of the order arrives: the cancelled lines do not hold it open.
         assert svc.receive_items(pid, {bolt: 2}, store)[0]
         assert q("SELECT status FROM pr_requests WHERE id=?", pid)[0]["status"] == "received"
         assert dl.run_overdue_alerts() == 0 and pid not in dl.late_map()
+        # The match forgets the cancelled order: nothing short, ceiling = live order.
+        m = svc.three_way_match(pid)
+        assert m["qty_ok"] and m["short_qty"] == 0, m["flags"]
+        full = svc.pr_amounts(q("SELECT * FROM pr_requests WHERE id=?", pid)[0])["grand"]
+        assert abs(m["ordered_grand"] - (full - b["grand"])) < 0.01, m["ordered_grand"]
 
         # -- scorecard: arrived today against a promise 3 days ago = late, even
         #    though the requester's own date (day 20) was still ahead.
@@ -201,11 +222,49 @@ def run():
 
         # -- every order cancelled -> the request is cancelled, as cancel_pr leaves it
         pid2, pos2 = split_pr("Split two")
+        # A debit note under another spelling of the vendor still blocks the cancel.
+        x("INSERT INTO pr_returns (dn_no, pr_id, vendor, total, status) "
+          "VALUES ('DN-DLV-1', ?, ' dlv alpha ', 10, 'open')", pid2)
+        assert dl.cancel_po(pos2["DLV Alpha"]["id"], "dup", buyer)[1] == "already_received"
+        x("DELETE FROM pr_returns WHERE dn_no='DN-DLV-1'")
         assert dl.cancel_po(pos2["DLV Alpha"]["id"], "dup", buyer)[0]
         assert q("SELECT status FROM pr_requests WHERE id=?", pid2)[0]["status"] == "po_issued"
-        ok, code, _ = dl.cancel_po(pos2["DLV Beta"]["id"], "dup", buyer)
+        # The last live order = the whole request: an admin decision, as in cancel_pr.
+        beta2 = pos2["DLV Beta"]["id"]
+        assert dl.cancel_po(beta2, "dup", buyer)[1] == "needs_admin"
+        r = b_cli.post("/procurement/po/%d/cancel" % beta2, follow_redirects=True,
+                       data={"_csrf": "tok", "reason": "dup"})
+        assert "only an administrator" in r.get_data(as_text=True)
+        assert not next(p for p in dl.po_states(pid2) if p["id"] == beta2)["can_cancel"]
+        assert next(p for p in dl.po_states(pid2, is_admin=True) if p["id"] == beta2)["can_cancel"]
+        assert q("SELECT status FROM pr_requests WHERE id=?", pid2)[0]["status"] == "po_issued"
+        ok, code, _ = dl.cancel_po(beta2, "dup", buyer, is_admin=True)
         assert ok and code == "cancelled"                       # never emailed: no mail offered
         assert q("SELECT status FROM pr_requests WHERE id=?", pid2)[0]["status"] == "cancelled"
+
+        # -- SMTP set up but the send fails: said as such, not as "no SMTP"
+        import config
+        from app.services import alerts as AL
+        pid3, pos3 = split_pr("Split three")
+        x("UPDATE pr_requests SET po_sent_at=? WHERE id=?", svc._now(), pid3)
+        old_host, old_send = config.Config.SMTP_HOST, AL.send_email_to
+        config.Config.SMTP_HOST, AL.send_email_to = "smtp.example.test", lambda *a, **k: False
+        try:
+            assert dl.cancel_po(pos3["DLV Alpha"]["id"], "x", buyer)[:2] == (True, "send_failed")
+        finally:
+            config.Config.SMTP_HOST, AL.send_email_to = old_host, old_send
+
+        # -- an order issued before promised_date existed is dated on first read
+        pid4, pos4 = split_pr("Legacy order", lead=4)
+        x("UPDATE pr_purchase_orders SET promised_date=NULL, issued_at=? WHERE pr_id=?",
+          day(-10) + " 09:00:00", pid4)
+        late4 = {p["vendor"]: p for p in dl.open_orders(get_db(), pid4)}
+        assert late4["DLV Alpha"]["promised_date"] == day(-6) and late4["DLV Alpha"]["days_late"] == 6
+        assert late4["DLV Beta"]["promised_date"] is None      # nothing to date it from
+
+        # -- open-orders page: translated title, labelled cells for the phone layout
+        dv = b_cli.get("/procurement/deliveries").get_data(as_text=True)
+        assert "<title>Open orders &amp; late deliveries" in dv and "dl-lbl" in dv
 
         # -- every new sentence exists in Arabic and Turkish
         from app.approvals.tests_messages_i18n import user_facing_strings

@@ -4870,6 +4870,17 @@ def three_way_match(pr_id):
     pr, items = bundle["pr"], bundle["items"]
     amt = pr_amounts(pr)
     ordered_grand = amt["grand"]
+    # A supplier's order cancelled alone (delivery.cancel_po) is owed nothing:
+    # its lines and value leave the match, as they leave add_payment's cap.
+    from app.approvals import delivery as _delivery
+    conn = get_db()
+    try:
+        dead = _delivery.cancelled_item_ids(conn, pr_id)
+        if dead and len(dead) < len(items):      # all dead = cancel_pr: match as before
+            ordered_grand = round(ordered_grand - _cancelled_grand(conn, pr_id), 2)
+            items = [i for i in items if i["id"] not in dead]
+    finally:
+        conn.close()
     ordered_qty = sum(float(i["qty"] or 0) for i in items)
     received_qty = sum(float(i["received_qty"] or 0) for i in items)
     received_value = round(sum(float(i["received_qty"] or 0) * net_unit_price(i)

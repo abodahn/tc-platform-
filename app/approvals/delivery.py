@@ -19,9 +19,14 @@ Two things the module could not do before:
    once every order is cancelled the request is cancelled exactly as cancel_pr
    leaves it.
 
-Triggered with no cron: run_overdue_alerts() rides on the procurement landing
-page sweep (next to run_escalations) and on the notification-feed background
-pass every signed-in browser already drives — throttled here, per process.
+Triggered with no cron: run_overdue_alerts() rides on the notification-feed
+background pass every signed-in browser already drives (never on a page load,
+since it may send email) — throttled here, per process.
+
+Orders issued before promised_date existed are dated lazily (_backfill) from
+their quote lead time and issue date the first time an open-orders read sees
+them. Requests older still, with no pr_purchase_orders rows at all (their one
+order synthesised from pr_requests.po_no), stay out of this follow-up.
 """
 import time
 from datetime import date, datetime, timedelta
@@ -153,9 +158,35 @@ def _outstanding(lines):
 # --------------------------------------------------------------------------
 # Open orders and lateness
 # --------------------------------------------------------------------------
+def _backfill(conn, pr_id=None):
+    """Date open orders issued before promised_date existed. stamp_promised only
+    writes NULL rows, so a buyer's own date is never touched.
+    shortcut: an order with no lead time and no required-by date is re-tried on
+    every read; mark it as tried if that ever shows up as slow."""
+    sql = ("SELECT DISTINCT o.pr_id FROM pr_purchase_orders o JOIN pr_requests p "
+           "ON p.id = o.pr_id WHERE p.is_active=1 AND p.status IN "
+           "('po_issued','in_transit','partially_received') AND o.promised_date IS NULL "
+           "AND COALESCE(o.status,'issued') <> 'cancelled'")
+    args = ()
+    if pr_id is not None:
+        sql += " AND o.pr_id=?"
+        args = (pr_id,)
+    try:
+        todo = [r["pr_id"] for r in conn.execute(sql, args).fetchall()]
+        for pid in todo:
+            pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pid,)).fetchone()
+            stamp_promised(conn, pr, [dict(r) for r in conn.execute(
+                "SELECT * FROM pr_purchase_orders WHERE pr_id=? ORDER BY id", (pid,)).fetchall()])
+        if todo:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+
+
 def open_orders(conn, pr_id=None):
     """Every issued order still owed goods: request open, order not cancelled,
     at least one of its lines short. Late ones first, then by promised date."""
+    _backfill(conn, pr_id)
     sql = ("SELECT o.*, p.pr_no, p.title, p.requester, p.status AS pr_status, "
            "p.vendor AS head_vendor, p.source_module, p.source_ref "
            "FROM pr_purchase_orders o JOIN pr_requests p ON p.id = o.pr_id "
@@ -228,8 +259,9 @@ def recv_queue(conn, limit=10):
     return rows[:limit]
 
 
-def po_states(pr_id):
-    """Per-order delivery state for the request page."""
+def po_states(pr_id, is_admin=False):
+    """Per-order delivery state for the request page. is_admin: the user may
+    also cancel the LAST live order (which cancels the request)."""
     conn = get_db()
     try:
         pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
@@ -243,12 +275,14 @@ def po_states(pr_id):
                              (pr_id,)).fetchall()
         live = {p["id"]: p for p in open_orders(conn, pr_id)}
         single = len(pos) == 1
+        n_live = sum(1 for p in pos if p.get("status") != "cancelled")
         for p in pos:
             lines = _lines_of(items, pr, p, single)
             p["cancelled"] = p.get("status") == "cancelled"
             p["delivered"] = not p["cancelled"] and not _outstanding(lines)
             p["days_late"] = live.get(p["id"], {}).get("days_late", 0)
             p["can_cancel"] = (not single and not p["cancelled"]
+                               and (is_admin or n_live > 1)
                                and _cancel_refusal(conn, pr, p, lines) is None)
         return pos
     finally:
@@ -352,8 +386,9 @@ def _cancel_refusal(conn, pr, po, lines):
         return "not_cancellable"
     if any(float(i["received_qty"] or 0) > 0 for i in lines):
         return "already_received"
-    if conn.execute("SELECT 1 FROM pr_returns WHERE pr_id=? AND COALESCE(TRIM(vendor),'')=?",
-                    (pr["id"], (po.get("vendor") or "").strip())).fetchone():
+    vk = C.vendor_key(po.get("vendor") or pr["vendor"])
+    if any(C.vendor_key(r["vendor"] or pr["vendor"]) == vk for r in conn.execute(
+            "SELECT vendor FROM pr_returns WHERE pr_id=?", (pr["id"],)).fetchall()):
         return "already_received"     # rejected at the door: a debit note hangs on it
     # Net of reversals, the way cancel_pr reads payments. Money booked against
     # no order (an admin override) could be this supplier's, so it blocks too.
@@ -367,9 +402,11 @@ def _cancel_refusal(conn, pr, po, lines):
     return None
 
 
-def cancel_po(po_id, reason, user, ip=None, email_vendor=True):
+def cancel_po(po_id, reason, user, ip=None, email_vendor=True, is_admin=False):
     """Cancel ONE supplier's order on a split request. Returns (ok, code, pr_id);
-    on success code is cancelled / emailed / no_smtp / no_email."""
+    on success code is cancelled / emailed / no_smtp / no_email / send_failed.
+    Cancelling the LAST live order cancels the request, which cancel_pr keeps
+    for an admin once a PO is out — so it needs is_admin here too."""
     reason = (reason or "").strip()
     conn = get_db()
     try:
@@ -392,6 +429,9 @@ def cancel_po(po_id, reason, user, ip=None, email_vendor=True):
         bad = _cancel_refusal(conn, pr, po, lines)
         if bad:
             return False, bad, pr_id
+        remaining = [p for p in pos if p["id"] != po_id and p.get("status") != "cancelled"]
+        if not remaining and not is_admin:
+            return False, "needs_admin", pr_id
         uname = (user or {}).get("username")
         now = svc._now()
         if conn.execute("UPDATE pr_purchase_orders SET status='cancelled', cancelled_at=?, "
@@ -399,7 +439,6 @@ def cancel_po(po_id, reason, user, ip=None, email_vendor=True):
                         "<>'cancelled'", (now, uname, reason[:500], po_id)).rowcount != 1:
             return False, "already_cancelled", pr_id
         vendor = po.get("vendor") or pr["vendor"] or "—"
-        remaining = [p for p in pos if p["id"] != po_id and p.get("status") != "cancelled"]
         released = round(sum(float(i["qty"] or 0) * svc.net_unit_price(i) for i in lines), 2)
         if not remaining:
             # The last order gone: the request ends exactly as cancel_pr leaves it.
@@ -453,4 +492,4 @@ def cancel_po(po_id, reason, user, ip=None, email_vendor=True):
         conn.commit()
     finally:
         conn.close()
-    return True, ("emailed" if ok else "no_smtp"), pr_id
+    return True, ("emailed" if ok else "send_failed"), pr_id

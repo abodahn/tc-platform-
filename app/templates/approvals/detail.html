@@ -1631,11 +1631,11 @@
         {% for p in pos %}
           <tr>
             <td style="font-weight:600">{{ p.vendor or pr.vendor or '—' }}</td>
-            <td style="font-variant-numeric:tabular-nums">{{ p.po_no }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ p.po_no }}{% if p.status == 'cancelled' %} <span class="badge b-cancelled" data-i18n="proc.delivery.cancelled">Cancelled</span>{% endif %}</td>
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.grand or 0) }} {{ p.currency or pr.currency }}</td>
             {% endif %}
-            <td>{% if money %}<div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+            <td>{% if money and p.status != 'cancelled' %}<div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                    href="{{ url_for('approvals.po_pdf', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_pdf', pr_id=pr.id) }}">
               <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
               <a class="btn btn-ghost btn-sm" download

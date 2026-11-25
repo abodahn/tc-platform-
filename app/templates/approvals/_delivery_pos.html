@@ -25,11 +25,11 @@
         <b class="nw">{{ p.promised_date or '—' }}</b>
         {% if not p.promised_date and not p.cancelled and not p.delivered %}· <span data-i18n="proc.delivery.no_date">No date yet — set the date the supplier promised.</span>{% endif %}
       </div>
-      {% if p.cancelled %}
+      {% if p.cancelled and (p.cancelled_at or p.cancelled_by) %}
       <div class="muted" style="font-size:12.5px;margin-top:4px;overflow-wrap:anywhere">
         {{ (p.cancelled_at or '')[:16] }} · {{ p.cancelled_by or '' }}{% if p.cancel_reason %} · {{ p.cancel_reason }}{% endif %}
       </div>
-      {% elif d_buyer and d_open and not p.delivered %}
+      {% elif d_buyer and d_open and not p.delivered and not p.cancelled %}
       <form method="post" action="{{ url_for('approvals.po_promised', po_id=p.id) }}" class="dl-form">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <label class="sr-only" for="dlDate{{ p.id }}" data-i18n="proc.delivery.promised">Promised delivery</label>

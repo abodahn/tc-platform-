@@ -116,8 +116,8 @@ def index():
         if now - _LAST_SWEEP[0] >= _SWEEP_INTERVAL:
             _LAST_SWEEP[0] = now
             svc.run_escalations()
-            from app.approvals.delivery import maybe_run_overdue_alerts
-            maybe_run_overdue_alerts()      # late deliveries ride the same sweep
+            # Overdue-delivery alerts are NOT run here: they may send email, so
+            # they ride the notification feed's background pass instead.
     except Exception:
         pass
     queue = svc.my_queue(user)

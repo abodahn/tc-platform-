@@ -9,7 +9,7 @@ translating flash().
 """
 from flask import render_template, request, redirect, url_for
 
-from app.auth import login_required, permission_required
+from app.auth import login_required, permission_required, user_can
 from app.approvals import delivery as dl
 from app.routes.approvals import bp, flash, _u, _ip
 
@@ -32,7 +32,7 @@ def delivery_late():
 def delivery_pos(pr_id):
     """Per-order delivery state for the request page."""
     try:
-        return dl.po_states(pr_id)
+        return dl.po_states(pr_id, is_admin=user_can("proc_admin"))
     except Exception:                                        # noqa: BLE001
         return []
 
@@ -67,6 +67,8 @@ _CANCEL_ERR = {
                         "cannot be cancelled. Close the request short instead.",
     "has_payments": "Money was already invoiced or paid against this order, so it cannot be "
                     "cancelled.",
+    "needs_admin": "This is the last open order on the request, so cancelling it cancels the "
+                   "whole request — only an administrator can do that.",
 }
 
 _CANCEL_OK = {
@@ -76,6 +78,8 @@ _CANCEL_OK = {
                "(SMTP) is not set up on this server, so tell the supplier yourself.",
     "no_email": "Purchase order cancelled. The supplier has no email address on file, so "
                 "tell them yourself.",
+    "send_failed": "Purchase order cancelled, but the cancellation email could not be sent — "
+                   "tell the supplier yourself.",
 }
 
 
@@ -101,7 +105,8 @@ def po_promised(po_id):
 @permission_required("proc_purchasing")
 def po_cancel(po_id):
     ok, code, pr_id = dl.cancel_po(po_id, request.form.get("reason"), _u(), ip=_ip(),
-                                   email_vendor=request.form.get("email_vendor") == "1")
+                                   email_vendor=request.form.get("email_vendor") == "1",
+                                   is_admin=user_can("proc_admin"))
     if ok:
         flash(_CANCEL_OK.get(code, "Purchase order cancelled."),
               "success" if code in ("cancelled", "emailed") else "warning")
@@ -124,5 +129,8 @@ def deliveries():
     n_late = sum(1 for r in rows if r["days_late"] > 0)
     if late_only:
         rows = [r for r in rows if r["days_late"] > 0]
+    from app.approvals.guide import t
     return render_template("approvals/deliveries.html", active="proc_deliveries",
-                           rows=rows, late_only=late_only, n_late=n_late)
+                           rows=rows, late_only=late_only, n_late=n_late,
+                           page_title=t((_u() or {}).get("lang_pref") or "en",
+                                        "proc.delivery.list_title"))

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content_class %}proc{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
-{% block title %}Open orders{% endblock %}
+{% block title %}{{ page_title }}{% endblock %}
 {% block content %}
 
 <div class="page-head">
@@ -37,8 +37,8 @@
           <td><a href="{{ url_for('approvals.detail', pr_id=r.pr_id) }}#delivery" style="font-weight:600">{{ r.pr_no }}</a>
             <span class="muted nw" style="font-variant-numeric:tabular-nums">{{ r.po_no }}</span>
             <div class="muted" style="font-size:12px;overflow-wrap:anywhere">{{ r.title or '' }}</div></td>
-          <td>{{ r.vendor or r.head_vendor or '—' }}</td>
-          <td class="nw">{{ r.promised_date or '—' }}</td>
+          <td><span class="muted dl-lbl" data-i18n="proc.vendor_l">Vendor</span> {{ r.vendor or r.head_vendor or '—' }}</td>
+          <td class="nw"><span class="muted dl-lbl" data-i18n="proc.delivery.promised">Promised delivery</span> {{ r.promised_date or '—' }}</td>
           <td>
             {% if r.days_late %}<span class="badge b-rejected nw"><span data-i18n="proc.delivery.overdue">Overdue</span> {{ r.days_late }} <span data-i18n="proc.delivery.days">days</span></span>
             {% elif r.days_left is not none %}<span class="badge b-pending nw"><span data-i18n="proc.delivery.due_in">Due in</span> {{ r.days_left }} <span data-i18n="proc.delivery.days">days</span></span>

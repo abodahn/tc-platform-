@@ -1057,6 +1057,9 @@ MESSAGES = {
     "Purchase order cancelled. The cancellation email was not sent — email (SMTP) is not set up on this server, so tell the supplier yourself.": {"ar": "تم إلغاء أمر الشراء. إيميل الإلغاء متبعتش — الإيميل (SMTP) مش متظبط على السيرفر ده، فبلّغ المورد بنفسك.", "tr": "Satın alma siparişi iptal edildi. İptal e-postası gönderilmedi — bu sunucuda e-posta (SMTP) ayarlı değil, tedarikçiye kendiniz bildirin."},
     "Purchase order cancelled. The supplier has no email address on file, so tell them yourself.": {"ar": "تم إلغاء أمر الشراء. المورد مالوش إيميل مسجل، فبلّغه بنفسك.", "tr": "Satın alma siparişi iptal edildi. Tedarikçinin kayıtlı e-posta adresi yok, kendiniz bildirin."},
     "Promised delivery date saved.": {"ar": "تم حفظ ميعاد التوريد المتفق عليه.", "tr": "Söz verilen teslimat tarihi kaydedildi."},
+    "This is the last open order on the request, so cancelling it cancels the whole request — only an administrator can do that.": {"ar": "ده آخر أمر شراء مفتوح على الطلب، فإلغاؤه هيلغي الطلب كله — وده مينفعش يعمله غير الأدمن.", "tr": "Bu, talepteki son açık sipariş; iptal etmek talebin tamamını iptal eder — bunu yalnızca bir yönetici yapabilir."},
+    "Purchase order cancelled, but the cancellation email could not be sent — tell the supplier yourself.": {"ar": "تم إلغاء أمر الشراء، بس إيميل الإلغاء معرفش يتبعت — بلّغ المورد بنفسك.", "tr": "Satın alma siparişi iptal edildi, ancak iptal e-postası gönderilemedi — tedarikçiye kendiniz bildirin."},
+    "That purchase order was cancelled. Nothing can be received against it - receive here without the reference.": {"ar": "أمر الشراء ده اتلغى. مينفعش يتسجل عليه أي استلام - سجّل الاستلام هنا من غير المرجع.", "tr": "Bu satın alma siparişi iptal edildi. Bu siparişe karşı teslim alınamaz - burada referans olmadan teslim alın."},
 }
 
 
