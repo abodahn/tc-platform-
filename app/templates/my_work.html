@@ -277,8 +277,12 @@
       {% for pr in my_prs %}
       <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
          style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
-        <span><b>{{ pr.pr_no }}</b> · {{ pr.title or '' }}</span>
-        <span class="tag">{{ pr.status }}</span>
+        <span><b>{{ pr.pr_no }}</b> · {{ pr.title or '' }}
+          {% set w = my_wait.get(pr.id) %}
+          {% if w and w.kind == 'sign' and w.who %}<span class="muted" style="display:block;font-size:12px"><span data-i18n="mywork.waiting_for">Waiting for</span>: {{ w.who|join(', ') }}</span>{% endif %}</span>
+        {% if w and w.kind == 'requester' %}<span class="badge b-rejected" data-i18n="mywork.needs_you">Needs your action</span>
+        {% elif w and w.kind == 'hold' %}<span class="badge b-pending" data-i18n="proc.waiting_hold">On hold</span>
+        {% else %}<span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span>{% endif %}
       </a>
       {% endfor %}
     </div>

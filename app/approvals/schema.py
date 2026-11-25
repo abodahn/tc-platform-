@@ -719,6 +719,10 @@ _CORRECTION_MIGRATIONS = [
     ("reversal_of", "ALTER TABLE pr_payments ADD COLUMN reversal_of INTEGER"),
     ("tax_id", "ALTER TABLE proc_vendors ADD COLUMN tax_id TEXT"),
     ("budget_released", "ALTER TABLE pr_requests ADD COLUMN budget_released REAL"),
+    # How a debit note was cleared, and the supplier's document behind it.
+    ("settle_type", "ALTER TABLE pr_returns ADD COLUMN settle_type TEXT"),
+    ("settle_ref", "ALTER TABLE pr_returns ADD COLUMN settle_ref TEXT"),
+    ("settle_amount", "ALTER TABLE pr_returns ADD COLUMN settle_amount REAL"),
 ]
 
 # Columns added to pr_items after first release (line-level receiving).

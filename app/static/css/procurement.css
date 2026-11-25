@@ -377,3 +377,6 @@
 .content.proc .req-change{display:grid;gap:12px;max-width:560px}
 .content.proc .req-change label{display:block;margin-bottom:4px}
 .content.proc .req-change :is(input,select){width:100%;min-width:0}
+.content.proc .rtv-settle summary{list-style:none}
+.content.proc .rtv-settle-f{display:grid;gap:8px;margin-top:8px;min-width:min(260px,80vw)}
+.content.proc .rtv-settle-f label{display:grid;gap:3px;font-size:12.5px}

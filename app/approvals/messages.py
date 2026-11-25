@@ -31,6 +31,12 @@ next is not worth translating carefully.
 # module docstring for why, and tests_messages_i18n.py for the check that keeps
 # that choice honest.
 MESSAGES = {
+    'Enter the budget as a positive number.': {'ar': 'اكتب الميزانية كرقم موجب.', 'tr': 'Bütçeyi pozitif bir sayı olarak girin.'},
+    # --- Quick fixes 2026-11-26 ---
+    'This request is closed or cancelled, so files can no longer be attached.': {'ar': 'الطلب مقفول أو ملغي، فمش ممكن نرفق ملفات تاني.', 'tr': 'Bu talep kapalı veya iptal edildi; artık dosya eklenemez.'},
+    'Choose how the supplier settled the debit note.': {'ar': 'اختر طريقة تسوية المورد لإشعار الخصم.', 'tr': 'Tedarikçinin borç dekontunu nasıl kapattığını seçin.'},
+    "Enter the supplier's document number.": {'ar': 'اكتب رقم مستند المورد.', 'tr': 'Tedarikçinin belge numarasını girin.'},
+    'Enter the credited amount.': {'ar': 'اكتب المبلغ المُسوّى.', 'tr': 'Alacaklandırılan tutarı girin.'},
     # --- Change requester (admin) ---
     'Requester changed.': {'ar': 'تم تغيير مقدّم الطلب.', 'tr': 'Talep eden değiştirildi.'},
     'Write why the requester is being changed.': {'ar': 'اكتب سبب تغيير مقدّم الطلب.', 'tr': 'Talep edenin neden değiştirildiğini yazın.'},

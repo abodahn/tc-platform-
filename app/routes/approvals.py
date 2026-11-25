@@ -1400,7 +1400,7 @@ def detail(pr_id):
     finally:
         _c.close()
     return render_template("approvals/detail.html", active="proc_list",
-                           req_users=(svc.active_users_brief() if user_can("proc_admin") else []),
+                           req_users=(svc.active_users_brief() if (user or {}).get("role") == "super_admin" else []),
                            stock_issues=svc.stock_posting_issues(pr_id),
                            stock_skipped=svc.stock_posting_issues(pr_id, ("skipped",)),
                            fields=svc.visible_fields(),
@@ -1583,7 +1583,7 @@ def _quote_upload():
 
 @bp.route("/pr/<int:pr_id>/quote", methods=["POST"])
 @login_required
-@permission_required("proc_create")
+@permission_required("proc_purchasing")
 def add_quote(pr_id):
     bundle = svc.get_pr(pr_id)
     if not bundle:
@@ -2006,6 +2006,8 @@ def save_budget():
     f = request.form
     if not f.get("department") or not f.get("amount"):
         flash("Department and amount are required.", "error")
+    elif svc._money(f.get("amount")) is None:
+        flash("Enter the budget as a positive number.", "error")
     else:
         svc.set_budget(f.get("department").strip(), f.get("amount"),
                        period=f.get("period", "").strip() or None,
@@ -2725,12 +2727,19 @@ def debit_note_pdf(ret_id):
 
 @bp.route("/return/<int:ret_id>/settle", methods=["POST"])
 @login_required
-@permission_required("proc_purchasing")
+# Finance clears what the supplier owes, the way it releases payments (proc_pay).
+@permission_required("proc_pay")
 def settle_return(ret_id):
-    ok, msg = svc.settle_return(ret_id, _u(), ip=_ip())
+    f = request.form
+    ok, msg = svc.settle_return(ret_id, _u(), ip=_ip(), settle_type=f.get("settle_type", ""),
+                                ref=f.get("settle_ref", ""), amount=f.get("settle_amount"))
     flash(f"Debit note {msg} settled — the supplier's dues are cleared." if ok
           else {"already_settled": "That debit note is already settled.",
-                "not_found": "Debit note not found."}.get(msg, f"Could not settle ({msg})."),
+                "not_found": "Debit note not found.",
+                "settle_type_required": "Choose how the supplier settled the debit note.",
+                "settle_ref_required": "Enter the supplier's document number.",
+                "settle_amount_required": "Enter the credited amount.",
+                }.get(msg, f"Could not settle ({msg})."),
           "success" if ok else "error")
     return redirect(request.referrer or url_for("approvals.index"))
 
@@ -2838,8 +2847,16 @@ def resolve_quarantine(q_id, decision):
 @login_required
 @permission_required("proc_create")
 def attach(pr_id):
-    if not svc.get_pr(pr_id):
+    b = svc.get_pr(pr_id)
+    if not b:
         abort(404)
+    pr = b["pr"]
+    # Buyers attach to any live request; a requester only to their own.
+    if not (user_can("proc_purchasing") or pr["requester"] == (_u() or {}).get("username")):
+        abort(403)
+    if pr["status"] in ("closed", "cancelled"):
+        flash("This request is closed or cancelled, so files can no longer be attached.", "error")
+        return redirect(url_for("approvals.detail", pr_id=pr_id))
     file = request.files.get("file")
     if not file or not file.filename:
         flash("No file selected.", "error")
@@ -3250,8 +3267,9 @@ _REQUESTER_ERRORS = {
 
 @bp.route("/pr/<int:pr_id>/requester", methods=["POST"])
 @login_required
-@permission_required("proc_admin")
 def change_requester(pr_id):
+    if (_u() or {}).get("role") != "super_admin":
+        abort(403)
     ok, msg = svc.change_requester(pr_id, request.form.get("username", ""), _u(),
                                    request.form.get("reason", ""), ip=_ip())
     if ok:

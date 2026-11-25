@@ -1271,7 +1271,7 @@ def search():
 def my_work():
     user = current_user()
     data = {"wh_counts": [], "wh_issues": [], "sign_queue": [], "maint_approvals": [], "prob_pending": [],
-            "my_prs": [], "my_tickets": [], "my_pm": [], "alerts": [],
+            "my_prs": [], "my_wait": {}, "my_prs_action": [], "my_tickets": [], "my_pm": [], "alerts": [],
             "cmp_caps": [], "cmp_expiring": [], "late_milestones": [],
             "recv_queue": [], "store_issue": [], "po_queue": [],
             "stuck_postings": [], "pay_queue": []}
@@ -1294,6 +1294,10 @@ def my_work():
             data["sign_queue"] = proc.my_queue(user)[:15]
             data["my_prs"] = [p for p in proc.list_prs(requester=user["username"], limit=10)
                               if p.get("status") not in ("closed", "cancelled")][:8]
+            data["my_wait"] = proc.waiting_on(data["my_prs"])
+            # Draft or rejected: the requester is the one who must act.
+            data["my_prs_action"] = [p for p in data["my_prs"]
+                                     if data["my_wait"].get(p["id"], {}).get("kind") == "requester"]
         except Exception:
             pass
 
@@ -1460,6 +1464,6 @@ def my_work():
                      + len(data["cmp_caps"]) + len(data["cmp_expiring"])
                      + len(data["recv_queue"]) + len(data["store_issue"])
                      + len(data["po_queue"]) + len(data["stuck_postings"])
-                     + len(data["pay_queue"]))
+                     + len(data["pay_queue"]) + len(data["my_prs_action"]))
     return render_template("my_work.html", user=user, total_actions=total_actions,
                            active="my_work", today=_date.today().isoformat(), **data)

@@ -241,9 +241,9 @@ def run():
             "two open debit notes (300 + 200) cap the order at 500: %r" % m)
 
         # ---- settling releases the due and the ceiling -------------------------
-        ok, msg = svc.settle_return(dn1["id"], buyer)
+        ok, msg = svc.settle_return(dn1["id"], buyer, settle_type="credit_note", ref="CN-1", amount=300)
         assert ok and msg == dn1["dn_no"], (ok, msg)
-        assert svc.settle_return(dn1["id"], buyer) == (False, "already_settled")
+        assert svc.settle_return(dn1["id"], buyer, settle_type="credit_note", ref="CN-1", amount=300) == (False, "already_settled")
         assert svc.vendor_dues().get(VENDOR, {}).get("amount") == 200.0, svc.vendor_dues()
         m = svc.three_way_match(pr_id)
         assert m["debit_open"] == 200.0 and m["payable"] == 700.0, (

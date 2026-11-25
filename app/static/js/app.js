@@ -1070,3 +1070,12 @@
   list.addEventListener("click", function (e) { var it = e.target.closest(".cmdk-item"); if (it) go(parseInt(it.getAttribute("data-i"), 10)); });
   modal.addEventListener("click", function (e) { if (e.target === modal) close(); });
 })();
+
+// ---------------- One submit per form ([data-once]): money forms on slow phones ----------------
+document.addEventListener("submit", function (e) {
+  var f = e.target;
+  if (e.defaultPrevented || !f.hasAttribute || !f.hasAttribute("data-once")) return;
+  if (f.dataset.sent) { e.preventDefault(); return; }
+  f.dataset.sent = "1";
+  f.setAttribute("aria-busy", "true");
+});

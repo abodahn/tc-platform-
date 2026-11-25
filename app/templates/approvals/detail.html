@@ -1384,17 +1384,31 @@
           <td class="muted">{{ r.reason or '—' }}</td>
           <td>{% if r.status == 'open' %}<span class="badge b-rejected" data-i18n="proc.rtv.open">Open — supplier owes</span>
               {% else %}<span class="badge b-approved" data-i18n="proc.rtv.settled">Settled</span>
-              <span class="muted" style="font-size:11px">{{ r.settled_by }} · {{ (r.settled_at or '')[:16] }}</span>{% endif %}</td>
+              <span class="muted" style="font-size:11px">{{ r.settled_by }} · {{ (r.settled_at or '')[:16] }}
+                {% if r.settle_ref %}<br><span data-i18n="proc.rtv.st_{{ r.settle_type }}">{{ r.settle_type }}</span>: {{ r.settle_ref }}{% if r.settle_amount and money_full %} · {{ '{:,.2f}'.format(r.settle_amount) }}{% endif %}{% endif %}</span>{% endif %}</td>
           <td class="flex gap center wrap">
             {% if money_full %}<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                href="{{ url_for('approvals.debit_note_pdf', ret_id=r.id) }}">
               <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rtv.pdf">Debit note PDF</span></a>{% endif %}
-            {% if r.status == 'open' and can_purchasing %}
-            <form method="post" style="display:inline"
-                  action="{{ url_for('approvals.settle_return', ret_id=r.id) }}">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.rtv.settle">Mark settled</button>
-            </form>
+            {% if r.status == 'open' and can_pay %}
+            <details class="rtv-settle">
+              <summary class="btn btn-ghost btn-sm" data-i18n="proc.rtv.settle">Mark settled</summary>
+              <form method="post" class="rtv-settle-f" data-once
+                    action="{{ url_for('approvals.settle_return', ret_id=r.id) }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <label><span data-i18n="proc.rtv.how">How the supplier settled</span>
+                  <select name="settle_type" required data-no-search>
+                    <option value="credit_note" data-i18n="proc.rtv.st_credit_note">Credit note</option>
+                    <option value="replacement" data-i18n="proc.rtv.st_replacement">Replacement delivery</option>
+                    <option value="offset" data-i18n="proc.rtv.st_offset">Offset on an invoice</option>
+                  </select></label>
+                <label><span data-i18n="proc.rtv.ref">Supplier document no.</span>
+                  <input name="settle_ref" required maxlength="120" autocomplete="off"></label>
+                <label><span data-i18n="proc.rtv.amt">Credited amount (not needed for a replacement)</span>
+                  <input name="settle_amount" type="number" step="any" min="0" inputmode="decimal"></label>
+                <button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.rtv.settle_go">Settle debit note</button>
+              </form>
+            </details>
             {% endif %}
           </td>
         </tr>
@@ -1505,7 +1519,7 @@
     {% endif %}
     {% if can_pay and pr.status in ('po_issued','in_transit','partially_received','received','closed') and (pr.payment_status or 'unpaid') != 'paid' %}
     <details class="mt-2"><summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_payment">+ Record payment</summary>
-      <form method="post" action="{{ url_for('approvals.add_payment', pr_id=pr.id) }}" class="mt-2">
+      <form method="post" action="{{ url_for('approvals.add_payment', pr_id=pr.id) }}" class="mt-2" data-once>
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <div class="grid cols-2">
           <div class="field"><label data-i18n="proc.amount">Amount *</label><input name="amount" type="number" step="any" min="0" required></div>
@@ -1998,7 +2012,7 @@
           {% endfor %}
         </div>
         {% endif %}
-        {% if is_owner or can_purchasing %}
+        {% if (is_owner or can_purchasing) and pr.status not in ('closed','cancelled') %}
         <form method="post" action="{{ url_for('approvals.attach', pr_id=pr.id) }}" enctype="multipart/form-data" class="flex gap center wrap">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv" required>
@@ -2379,7 +2393,7 @@
       </form>
     </details>
     {% endif %}
-    {% if is_owner or can_purchasing %}
+    {% if can_purchasing and pr.status not in ('approved','po_issued','in_transit','partially_received','received','closed','cancelled') %}
     <details>
       <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.add_quote">+ Add quote</summary>
       <form method="post" action="{{ url_for('approvals.add_quote', pr_id=pr.id) }}" enctype="multipart/form-data" class="qf mt-2" data-vat-form>
@@ -2467,8 +2481,8 @@
   </div>
 </div>
 
-{% if can('proc_admin') and req_users %}
-<!-- Change requester (procurement admins): a request keyed in on someone's behalf -->
+{% if req_users %}
+<!-- Change requester (super admin only): a request keyed in on someone's behalf -->
 <div class="panel mt-4">
   <details>
     <summary class="panel-head" style="cursor:pointer">

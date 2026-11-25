@@ -2921,6 +2921,8 @@ def price_pr(pr_id, prices, meta, user, ip=None, vendors=None, line_fields=None,
             up = prices.get(it["id"], prices.get(str(it["id"])))
             try:
                 up = float(up)
+                if not math.isfinite(up):
+                    raise ValueError(up)
             except (TypeError, ValueError):
                 up = float(it["unit_price"] or 0)   # keep existing if not supplied
             up = max(up, 0.0)
@@ -4164,13 +4166,34 @@ def get_return(ret_id):
         conn.close()
 
 
-def settle_return(ret_id, user, ip=None):
+SETTLE_TYPES = ("credit_note", "replacement", "offset")
+
+
+def settle_return(ret_id, user, ip=None, settle_type="", ref="", amount=None):
     """Mark a debit note settled — the supplier has credited it (or replaced the
     goods). Procurement's half of the story ends here: the dues drop off the
     vendor's outstanding balance and the payable ceiling rises back.
 
     Deliberately NOT a payment or a journal entry: what the credit was actually
-    applied against is a finance-system question."""
+    applied against is a finance-system question.
+
+    Needs the supplier's document behind it: a credit note (number + amount),
+    a replacement delivery (its delivery-note number) or an offset on an
+    invoice (the invoice number + amount)."""
+    settle_type = (settle_type or "").strip()
+    ref = (ref or "").strip()[:120]
+    if settle_type not in SETTLE_TYPES:
+        return False, "settle_type_required"
+    if not ref:
+        return False, "settle_ref_required"
+    amt = None
+    if settle_type != "replacement":
+        try:
+            amt = float(amount)
+        except (TypeError, ValueError):
+            return False, "settle_amount_required"
+        if not math.isfinite(amt) or amt <= 0:
+            return False, "settle_amount_required"
     conn = get_db()
     try:
         r = conn.execute("SELECT * FROM pr_returns WHERE id=?", (ret_id,)).fetchone()
@@ -4179,10 +4202,13 @@ def settle_return(ret_id, user, ip=None):
         if r["status"] != "open":
             return False, "already_settled"
         uname = (user or {}).get("username") or "system"
-        conn.execute("UPDATE pr_returns SET status='settled', settled_by=?, "
-                     "settled_at=? WHERE id=?", (uname, _now(), ret_id))
+        conn.execute("UPDATE pr_returns SET status='settled', settled_by=?, settled_at=?, "
+                     "settle_type=?, settle_ref=?, settle_amount=? WHERE id=?",
+                     (uname, _now(), settle_type, ref, amt, ret_id))
         audit(conn, r["pr_id"], uname, "debit_note_settled",
-              f"{r['dn_no']} settled by the supplier ({float(r['total'] or 0):,.2f})", ip)
+              f"{r['dn_no']} settled by {settle_type} {ref}"
+              + (f" ({amt:,.2f})" if amt is not None else "")
+              + f" against {float(r['total'] or 0):,.2f}", ip)
         conn.commit()
         return True, r["dn_no"]
     finally:
@@ -4726,6 +4752,8 @@ def add_invoice(pr_id, data, user, filename=None, content_type=None, content_b64
         if pr["status"] not in ("approved", "po_issued", "in_transit",
                                 "partially_received", "received", "closed"):
             return False, "not_invoicable"
+        if not _money(data.get("amount")) or _money(data.get("tax")) is None:
+            return False, "bad_amount"
         po, po_err = split_order(conn, pr, data.get("po_id"))
         if po_err:
             return False, po_err
@@ -5685,8 +5713,8 @@ def add_payment(pr_id, data, user, ip=None, force=False):
             return False, "not_found"
         if pr["status"] not in ("po_issued", "in_transit", "partially_received", "received", "closed"):
             return False, "not_payable"
-        amount = float(data.get("amount") or 0)
-        if amount <= 0:
+        amount = _money(data.get("amount"))
+        if amount is None or amount <= 0:
             return False, "bad_amount"
         # WHICH supplier's order this money is for. Only a SPLIT requisition has
         # a choice to make; with one supplier this is (None, None) and every cap
@@ -5776,6 +5804,9 @@ def add_payment(pr_id, data, user, ip=None, force=False):
                and done + amount > ex["payable"] + max(1.0, ex["payable"] * _tol_pct):
                 return False, "exceeds_received"
         now = _now()
+        if not force and _repeat_payment(conn, pr_id, amount, data.get("reference"),
+                                         (user or {}).get("username")):
+            return False, "duplicate_payment"
         if force:
             audit(conn, pr_id, (user or {}).get("username"), "payment_override",
                   "Payment recorded with admin override (match/limit checks bypassed)", ip)
@@ -6637,10 +6668,12 @@ def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=N
         # the cheapest way past DOAM §4.3 there is: the RFQ gate counts suppliers,
         # and it cannot tell a real three-vendor comparison from three names typed
         # by the person who wants the purchase.
-        _pr = conn.execute("SELECT id, requester FROM pr_requests WHERE id=?",
+        _pr = conn.execute("SELECT id, requester, status FROM pr_requests WHERE id=?",
                            (pr_id,)).fetchone()
         if not _pr:
             return False, "not_found"
+        if _pr["status"] in _LOCKED_SOURCING:
+            return False, "locked"      # same lock as editing a quote
         _bad = _refuse_self_commercial(_pr, user, "quote")
         if _bad:
             return False, _bad
@@ -6651,7 +6684,9 @@ def add_quote(pr_id, data, user, filename=None, content_type=None, content_b64=N
         if err:
             return False, err
         amount = (round(sum(ln[3] for ln in lines), 2) if lines
-                  else float(data.get("amount") or 0))
+                  else _money(data.get("amount")))
+        if amount is None:
+            return False, "bad_amount"
         # The supplier's discount on the whole quotation: amount is stored
         # AFTER it, so ranking, the lowest badge and the RFQ gate compare what
         # would really be paid.
@@ -7111,9 +7146,8 @@ def update_quote(quote_id, data, user=None, ip=None, filename=None, content_type
         qdisc, qval = 0.0, 0.0
         if dkind or qk("disc_amount"):
             if "amount" in data:
-                try:
-                    base = float(data.get("amount") or 0)
-                except (TypeError, ValueError):
+                base = _money(data.get("amount"))
+                if base is None:
                     return False, "bad_amount"
             else:
                 base = float(q["amount"] or 0) + float(qk("disc_amount") or 0)
@@ -7559,6 +7593,8 @@ def list_budgets(period=None):
 
 
 def set_budget(department, amount, period=None, currency="EGP", user=None):
+    if _money(amount) is None:
+        raise ValueError("bad_amount")
     period = period or _period()
     conn = get_db()
     try:
@@ -9661,3 +9697,32 @@ def active_users_brief():
             "ORDER BY LOWER(COALESCE(full_name, username))").fetchall()]
     finally:
         conn.close()
+
+
+def _repeat_payment(conn, pr_id, amount, reference, username, window_s=120):
+    """True when the same person booked the same amount and reference on this
+    request in the last `window_s` seconds and it was not reversed: a double tap
+    on a slow phone, not a second instalment."""
+    r = conn.execute(
+        "SELECT created_at FROM pr_payments p WHERE pr_id=? AND ABS(amount-?)<0.005 "
+        "AND COALESCE(reference,'')=? AND created_by=? AND reversal_of IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM pr_payments x WHERE x.reversal_of=p.id) "
+        "ORDER BY id DESC LIMIT 1",
+        (pr_id, amount, (reference or "").strip(), username or "system")).fetchone()
+    if not r or not r["created_at"]:
+        return False
+    try:
+        at = datetime.strptime(str(r["created_at"])[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc) - at).total_seconds() < window_s
+
+
+def _money(raw):
+    """A money value as a finite, non-negative float; None for '1,500', 'nan',
+    'inf', negatives or junk. Blank counts as 0 (callers decide if 0 is allowed)."""
+    try:
+        v = float(raw if raw not in (None, "") else 0)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) and v >= 0 else None

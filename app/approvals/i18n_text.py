@@ -937,6 +937,8 @@ UI = {
         "over_payment_flash":
             "This payment would exceed the PO total. Check the amount — an "
             "administrator can override if intentional.",
+        "bad_amount_flash": 'Enter the amount as a positive number.',
+        "duplicate_payment_flash": 'This payment was just recorded (same amount and reference). Check the payments list before booking it again.',
         "exceeds_invoiced_flash":
             "This payment would exceed what the supplier has invoiced. Book the "
             "invoice first, or reduce the amount — an administrator can override.",
@@ -1070,6 +1072,8 @@ UI = {
         "over_payment_flash":
             "هذا السداد يتجاوز إجمالي أمر الشراء. راجع المبلغ — ويمكن لمسؤول النظام "
             "التجاوز إذا كان مقصودًا.",
+        "bad_amount_flash": 'اكتب المبلغ كرقم موجب.',
+        "duplicate_payment_flash": 'الدفعة دي اتسجّلت حالاً (نفس المبلغ والمرجع). راجع قائمة المدفوعات قبل ما تسجّلها تاني.',
         "exceeds_invoiced_flash":
             "هذا السداد يتجاوز ما فوتره المورد. سجّل الفاتورة أولًا أو خفّض المبلغ — "
             "ويمكن لمسؤول النظام التجاوز.",
@@ -1200,6 +1204,8 @@ UI = {
         "over_payment_flash":
             "Bu ödeme sipariş toplamını aşıyor. Tutarı kontrol edin — kasıtlıysa bir "
             "yönetici geçersiz kılabilir.",
+        "bad_amount_flash": 'Tutarı pozitif bir sayı olarak girin.',
+        "duplicate_payment_flash": 'Bu ödeme az önce kaydedildi (aynı tutar ve referans). Tekrar kaydetmeden önce ödeme listesini kontrol edin.',
         "exceeds_invoiced_flash":
             "Bu ödeme, tedarikçinin faturaladığı tutarı aşıyor. Önce faturayı "
             "kaydedin ya da tutarı düşürün — bir yönetici geçersiz kılabilir.",
