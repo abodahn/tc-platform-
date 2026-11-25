@@ -31,6 +31,13 @@ next is not worth translating carefully.
 # module docstring for why, and tests_messages_i18n.py for the check that keeps
 # that choice honest.
 MESSAGES = {
+    # --- Change requester (admin) ---
+    'Requester changed.': {'ar': 'تم تغيير مقدّم الطلب.', 'tr': 'Talep eden değiştirildi.'},
+    'Write why the requester is being changed.': {'ar': 'اكتب سبب تغيير مقدّم الطلب.', 'tr': 'Talep edenin neden değiştirildiğini yazın.'},
+    'No such user. Pick the person from the list.': {'ar': 'لا يوجد مستخدم بهذا الاسم. اختر الشخص من القائمة.', 'tr': 'Böyle bir kullanıcı yok. Kişiyi listeden seçin.'},
+    'That user is not active.': {'ar': 'هذا المستخدم غير مفعّل.', 'tr': 'Bu kullanıcı aktif değil.'},
+    'That user is already the requester.': {'ar': 'هذا المستخدم هو مقدّم الطلب بالفعل.', 'tr': 'Bu kullanıcı zaten talep eden.'},
+    'That user already signed this request, so they cannot become its requester.': {'ar': 'هذا المستخدم وقّع على الطلب بالفعل، فلا يمكن أن يصبح مقدّمه.', 'tr': 'Bu kullanıcı talebi zaten imzaladı, bu yüzden talep eden olamaz.'},
     'Stock posting retry completed.': {'ar': 'تمت إعادة محاولة ترحيل المخزون.', 'tr': 'Stok aktarımı yeniden denendi.'},
     'Some stock postings still need attention. Check the store before retrying.': {'ar': 'في ترحيلات مخزون لسه محتاجة مراجعة. راجع المخزن قبل ما تحاول تاني.', 'tr': 'Bazı stok aktarımlarının incelenmesi gerekiyor. Yeniden denemeden önce depoyu kontrol edin.'},
 

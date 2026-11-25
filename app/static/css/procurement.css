@@ -374,3 +374,6 @@
 /* Keeps the per-line Choose buttons' screen-reader text inside the scrolling matrix:
    an absolute .sr-only with no positioned cell escaped it and widened the page on phones. */
 .content.proc .qt-mx td.qt-num{position:relative}
+.content.proc .req-change{display:grid;gap:12px;max-width:560px}
+.content.proc .req-change label{display:block;margin-bottom:4px}
+.content.proc .req-change :is(input,select){width:100%;min-width:0}

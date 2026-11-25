@@ -2467,6 +2467,35 @@
   </div>
 </div>
 
+{% if can('proc_admin') and req_users %}
+<!-- Change requester (procurement admins): a request keyed in on someone's behalf -->
+<div class="panel mt-4">
+  <details>
+    <summary class="panel-head" style="cursor:pointer">
+      <h3 style="display:inline" data-i18n="proc.req_change.title">Change requester</h3>
+      <span class="muted" style="font-weight:400"> &middot; {{ pr.requester_name or pr.requester }}</span>
+    </summary>
+    <form class="panel-pad req-change" method="post" action="{{ url_for('approvals.change_requester', pr_id=pr.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <p class="muted" data-i18n="proc.req_change.hint">For a request raised on someone's behalf. The change is recorded in the audit trail.</p>
+      <div>
+        <label for="rc-user" data-i18n="proc.req_change.new">New requester</label>
+        <select id="rc-user" name="username" data-search required>
+          <option value="" data-i18n="proc.req_change.pick">Choose a person</option>
+          {% for un, fn in req_users %}{% if un != pr.requester %}<option value="{{ un }}">{{ fn }} ({{ un }})</option>{% endif %}{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="rc-reason" data-i18n="proc.req_change.reason">Reason</label>
+        <input id="rc-reason" name="reason" maxlength="300" required autocomplete="off"
+               placeholder="e.g. raised by IT on their behalf" data-i18n-ph="proc.req_change.reason_ph">
+      </div>
+      <div><button class="btn btn-primary" type="submit" data-i18n="proc.req_change.submit">Change requester</button></div>
+    </form>
+  </details>
+</div>
+{% endif %}
+
 <!-- Audit timeline -->
 <div class="panel mt-4">
   <details>

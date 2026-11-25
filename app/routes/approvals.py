@@ -1400,6 +1400,7 @@ def detail(pr_id):
     finally:
         _c.close()
     return render_template("approvals/detail.html", active="proc_list",
+                           req_users=(svc.active_users_brief() if user_can("proc_admin") else []),
                            stock_issues=svc.stock_posting_issues(pr_id),
                            stock_skipped=svc.stock_posting_issues(pr_id, ("skipped",)),
                            fields=svc.visible_fields(),
@@ -3235,3 +3236,26 @@ def reverse_payment(pay_id):
     ok, code = svc.reverse_payment(pay_id, request.form.get("reason"), _u(), ip=_ip())
     _correction_flash(ok, code)
     return redirect(url_for("approvals.detail", pr_id=row["pr_id"]))
+
+
+_REQUESTER_ERRORS = {
+    "reason_required": "Write why the requester is being changed.",
+    "no_user": "No such user. Pick the person from the list.",
+    "inactive": "That user is not active.",
+    "same": "That user is already the requester.",
+    "signed_own": "That user already signed this request, so they cannot become its requester.",
+    "not_found": "Request not found.",
+}
+
+
+@bp.route("/pr/<int:pr_id>/requester", methods=["POST"])
+@login_required
+@permission_required("proc_admin")
+def change_requester(pr_id):
+    ok, msg = svc.change_requester(pr_id, request.form.get("username", ""), _u(),
+                                   request.form.get("reason", ""), ip=_ip())
+    if ok:
+        flash("Requester changed.", "success")
+    else:
+        flash(_REQUESTER_ERRORS.get(msg, "Request not found."), "error")
+    return redirect(url_for("approvals.detail", pr_id=pr_id))

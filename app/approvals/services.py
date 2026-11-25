@@ -9615,3 +9615,49 @@ def _committed_rows(conn):
             shares[(pr.get("vendor") or "").strip() or "(unassigned)"] = value
         pr["committed_egp"], pr["vendors"] = value, shares
     return prs
+
+
+def change_requester(pr_id, username, actor, reason="", ip=None):
+    """Make another user the requester of a request (keyed in on their behalf).
+    Procurement admins only (the route checks). Returns (ok, msg):
+    not_found / no_user / inactive / same / reason_required / signed_own."""
+    reason = (reason or "").strip()[:300]
+    if not reason:
+        return False, "reason_required"
+    conn = get_db()
+    try:
+        pr = conn.execute("SELECT id, requester FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        if not pr:
+            return False, "not_found"
+        u = conn.execute("SELECT id, username, full_name, is_active FROM users "
+                         "WHERE LOWER(username)=LOWER(?)", ((username or "").strip(),)).fetchone()
+        if not u:
+            return False, "no_user"
+        if not u["is_active"]:
+            return False, "inactive"
+        if (pr["requester"] or "").lower() == u["username"].lower():
+            return False, "same"
+        # They would then have approved their own request.
+        if conn.execute("SELECT 1 FROM pr_steps WHERE pr_id=? AND status='approved' AND "
+                        "LOWER(COALESCE(approver_user,''))=LOWER(?)",
+                        (pr_id, u["username"])).fetchone():
+            return False, "signed_own"
+        conn.execute("UPDATE pr_requests SET requester=?, requester_name=?, requester_user_id=? "
+                     "WHERE id=?", (u["username"], u["full_name"] or u["username"], u["id"], pr_id))
+        audit(conn, pr_id, (actor or {}).get("username") or "system", "requester_changed",
+              "%s -> %s: %s" % (pr["requester"], u["username"], reason), ip)
+        conn.commit()
+        return True, u["full_name"] or u["username"]
+    finally:
+        conn.close()
+
+
+def active_users_brief():
+    """(username, full name) of every active user, for the change-requester picker."""
+    conn = get_db()
+    try:
+        return [(r["username"], r["full_name"] or r["username"]) for r in conn.execute(
+            "SELECT username, full_name FROM users WHERE is_active=1 "
+            "ORDER BY LOWER(COALESCE(full_name, username))").fetchall()]
+    finally:
+        conn.close()
