@@ -1233,6 +1233,8 @@ def po_meta_pairs(pr):
         ("Approved on", (pr.get("approved_at") or "")[:10]),
         ("Currency", pr.get("currency")),
     ]
+    if pr.get("po_delivery_date"):          # set by a PO revision (porev.py)
+        meta_pairs.append(("Delivery date", pr.get("po_delivery_date")))
     if fx not in (0.0, 1.0):
         meta_pairs.append(("FX rate", f"1 {pr.get('currency') or ''} = {fx:g} EGP"))
     return meta_pairs + _cost_object_pairs(pr)
@@ -1260,9 +1262,18 @@ def po_view(bundle, po=None):
             pr = dict(pr, total=po.get("subtotal"))
         # The legacy synthesised row from _pos_for() carries the request's own
         # vendor and po_no, so this is a no-op for every pre-split request.
+        # Rev N belongs to the order that was revised: once any order of a split
+        # request carries its own number, each prints only its own. A request
+        # revised the old way (pr_requests.po_rev only) prints as it always has.
+        try:
+            own = [int(p.get("rev") or 0) for p in pos]
+            rev = (int(po.get("rev") or 0) if len(pos) > 1 and any(own)
+                   else max(int(po.get("rev") or 0), int(pr.get("po_rev") or 0)))
+        except (TypeError, ValueError):
+            rev = po.get("rev") or pr.get("po_rev")
         pr = dict(pr, vendor=po.get("vendor") or pr.get("vendor"),
-                  po_no=po.get("po_no") or pr.get("po_no"),
-                  po_rev=po.get("rev") or pr.get("po_rev"))
+                  po_no=po.get("po_no") or pr.get("po_no"), po_rev=rev,
+                  po_delivery_date=po.get("delivery_date"))
     return pr, items
 
 

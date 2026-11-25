@@ -1474,7 +1474,8 @@ def my_queue(user, own_only=False):
     which is what made procurement pages crawl once auto-reorder PRs landed.)"""
     if not user:
         return []
-    prs = list_prs(status="pending")
+    # No row cap: a queue silently cut at list_prs' default 500 hid signatures.
+    prs = list_prs(status="pending", limit=1_000_000_000)
     if not prs:
         return []
     ids = [pr["id"] for pr in prs]
@@ -5875,20 +5876,23 @@ def close_pr(pr_id, user, ip=None, reason=None):
         conn.close()
 
 
-def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
+def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None, po_id=None):
     """Email each Purchase Order (PDF attached) to ITS OWN vendor's address.
 
     One send per order, never one broadcast: a request split across suppliers
     has one document per supplier, and each supplier may only ever receive the
     document carrying their own lines and prices. `pdf_bytes` (if supplied) is
-    the primary order's PDF, as before."""
+    the primary order's PDF, as before. `po_id` sends that ONE order only (a
+    revised order goes to its own supplier, the others are not re-sent)."""
     bundle = get_pr(pr_id)
     if not bundle:
         return False, "not_found"
     pr = bundle["pr"]
-    if pr["status"] not in ("approved", "po_issued", "in_transit", "received", "closed"):
+    if pr["status"] not in ("approved", "po_issued", "in_transit", "received", "closed")             and not (po_id and pr["status"] == "partially_received"):
         return False, "not_approved"
     pos = bundle.get("pos") or []
+    if po_id:
+        pos = [p for p in pos if p.get("id") == po_id]
     if not pos:
         return False, "no_vendor_email"
     # find each vendor's email
@@ -5926,7 +5930,9 @@ def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
                 f"Delivery: {pr.get('delivery_condition') or '-'}\n\n"
                 f"Regards,\nT&C Garments — Purchasing")
         atts = [(f"{p['po_no']}.pdf", blob, "application/pdf")] if blob else None
-        ok = send_email_to([vendor_email], f"Purchase Order {p['po_no']} — T&C Garments",
+        ok = send_email_to([vendor_email], f"Purchase Order {p['po_no']}"
+                           + (f" Rev {p['rev']}" if po_id and p.get("rev") else "")
+                           + " — T&C Garments",
                            body, attachments=atts)
         sent = sent or ok
         log_lines.append(f"{p['po_no']} -> {vendor_email}"

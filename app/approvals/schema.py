@@ -478,7 +478,39 @@ CREATE TABLE IF NOT EXISTS pr_po_revisions (
     created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_po_rev_pr ON pr_po_revisions(pr_id);
+-- The signatures a PO revision that RAISES the order needs (porev.py). The rungs
+-- are the value ladder dept_ladder() gives the new total; kept apart from
+-- pr_steps because those are the request's own ladder and every reader of them
+-- assumes a pending row belongs to a pending request.
+CREATE TABLE IF NOT EXISTS pr_po_rev_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rev_id INTEGER,
+    pr_id INTEGER,
+    seq INTEGER,
+    stage TEXT,
+    esc_role TEXT,
+    status TEXT DEFAULT 'pending',
+    approver_user TEXT, approver_name TEXT, sig_png TEXT, comment TEXT,
+    acted_at TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_po_rev_steps_rev ON pr_po_rev_steps(rev_id);
 """
+
+# Real PO revisions (porev.py). Rows written before have status 'applied' (the
+# column default), no po_id (= the request's primary order) and no change set.
+_PO_REV_MIGRATIONS = [
+    ("po_id", "ALTER TABLE pr_po_revisions ADD COLUMN po_id INTEGER"),
+    ("status", "ALTER TABLE pr_po_revisions ADD COLUMN status TEXT DEFAULT 'applied'"),
+    ("changes_json", "ALTER TABLE pr_po_revisions ADD COLUMN changes_json TEXT"),
+    ("old_grand", "ALTER TABLE pr_po_revisions ADD COLUMN old_grand REAL"),
+    ("new_grand", "ALTER TABLE pr_po_revisions ADD COLUMN new_grand REAL"),
+    ("stages", "ALTER TABLE pr_po_revisions ADD COLUMN stages TEXT"),
+    ("decided_by", "ALTER TABLE pr_po_revisions ADD COLUMN decided_by TEXT"),
+    ("decided_at", "ALTER TABLE pr_po_revisions ADD COLUMN decided_at TEXT"),
+    # NULL = the order's grand total as issued (grandfathered on first revision).
+    ("approved_grand", "ALTER TABLE pr_purchase_orders ADD COLUMN approved_grand REAL"),
+    ("delivery_date", "ALTER TABLE pr_purchase_orders ADD COLUMN delivery_date TEXT"),
+]
 
 # Goods Received Notes. A GRN is a CONTROLLED, PRE-NUMBERED document: one row per
 # receipt EVENT, its number allocated when the goods are booked in — not derived at
@@ -961,7 +993,7 @@ def create_and_seed(conn):
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS
                        + _QUOTE_MIGRATIONS + _MONEY_MIGRATIONS + _PROSE_MIGRATIONS
-                       + _CORRECTION_MIGRATIONS):
+                       + _CORRECTION_MIGRATIONS + _PO_REV_MIGRATIONS):
         try:
             conn.execute(_ddl)
             conn.commit()

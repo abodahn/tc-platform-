@@ -1500,6 +1500,9 @@ WORKFLOW_SETTINGS = {
     # Capped at 100%: a fat-fingered 5000 would let someone pay 51x the PO.
     "payment_tolerance_pct": {"kind": "num", "min": 0, "max": 100,
                               "default": PAYMENT_TOLERANCE_PCT},
+    # How far a PO revision may RAISE an order above its approved value before
+    # it needs the value ladder's signatures again (porev.py). 0 = any increase.
+    "po_rev_tolerance_pct": {"kind": "num", "min": 0, "max": 100, "default": 0.0},
     # --- optional fields on the request form and the request page ------------
     # Not every plant uses all of these, and a field nobody fills is a field
     # people learn to skip past. Each defaults to VISIBLE, so a database with no

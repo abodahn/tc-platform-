@@ -146,24 +146,8 @@
   </div>
   {% endif %}
 
-  {# ── Approvals waiting for my signature ── #}
-  {% if sign_queue %}
-  <div class="panel">
-    <div class="panel-head">
-      <h3 data-i18n="mywork.sign_queue">Requests waiting for my signature</h3>
-      <span class="badge-count">{{ sign_queue|length }}</span>
-    </div>
-    <div class="panel-pad">
-      {% for pr in sign_queue %}
-      <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
-         style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
-        <span><b>{{ pr.pr_no }}</b> · {{ pr.title or '' }}</span>
-        <span class="tag">{{ pr._stage_label }}</span>
-      </a>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
+  {# ── Approvals waiting for my signature (bulk sign) + PO revisions to sign ── #}
+  {% include "approvals/_porev_my_work.html" %}
 
   {# ── Maintenance part-requests to decide ── #}
   {% if maint_approvals %}
@@ -333,7 +317,7 @@
 
 </div>
 
-{% if not (wh_issues or wh_counts or sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets or my_pm
+{% if not (wh_issues or wh_counts or sign_queue or rev_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets or my_pm
            or late_milestones or cmp_caps or cmp_expiring
            or recv_queue or store_issue or po_queue or stuck_postings or pay_queue) %}
 <div class="panel"><div class="panel-pad muted" data-i18n="mywork.empty">

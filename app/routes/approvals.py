@@ -351,10 +351,17 @@ I18N = {
 @permission_required("proc_create")
 def new():
     prefill = {}
+    copy_items = []
     ticket_id = request.args.get("from_ticket")
     if ticket_id and ticket_id.isdigit():
         prefill = svc.ticket_prefill(int(ticket_id)) or {}
-    return render_template("approvals/new.html", active="proc_new",
+    elif request.args.get("copy", "").isdigit() or request.args.get("stock", "").isdigit():
+        from app.routes.approvals_porev import form_prefill    # copy a request / low stock
+        resp, prefill, copy_items = form_prefill(request.args.get("copy", ""),
+                                                 request.args.get("stock", ""))
+        if resp is not None:
+            return resp
+    return render_template("approvals/new.html", active="proc_new", edit_items=copy_items,
                            lock_hint=_LOCK_HINT.get(_lang(), _LOCK_HINT["en"]),
                            desc_ph=_DESC_PH.get(_lang(), _DESC_PH["en"]),
                            can_buy=user_can("proc_purchasing") or user_can("proc_admin"),
@@ -3277,3 +3284,4 @@ def change_requester(pr_id):
     else:
         flash(_REQUESTER_ERRORS.get(msg, "Request not found."), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
+from app.routes import approvals_porev as _porev  # noqa: E402,F401  PO lane routes

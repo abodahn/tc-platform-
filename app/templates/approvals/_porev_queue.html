@@ -1,0 +1,83 @@
+{#- The approver's queue on /procurement/ with bulk signing (porev lane).
+    Needs: queue, money, items (from the index route). Every ticked request is
+    still signed one by one through act_on_step on the server. -#}
+{% from "approvals/_items_line.html" import items_line %}
+{% set can_bulk = cu and (cu.has_sig or cu.sig_png) %}
+<div class="panel" id="my-queue">
+  <div class="panel-head">
+    <h3 data-i18n="proc.my_queue">Waiting for my approval</h3>
+    <span class="badge b-warning">{{ queue|length }}</span>
+  </div>
+  <div class="panel-pad">
+    {% if queue %}
+    <form method="post" action="{{ url_for('approvals.bulk_sign') }}" data-once data-porev-bulk>
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          {% if can_bulk %}<th class="porev-tick"><label class="porev-chk"><input type="checkbox" data-porev-all>
+            <span class="sr-only" data-i18n="proc.porev.select_all">Select all</span></label></th>{% endif %}
+          <th data-i18n="proc.pr">Request</th>
+          <th data-i18n="proc.stage">My stage</th>
+          <th data-i18n="proc.total">Total</th>
+          <th></th>
+        </tr></thead>
+        <tbody>
+        {% for pr in queue %}
+          <tr>
+            {% if can_bulk %}<td class="porev-tick"><label class="porev-chk"><input type="checkbox" name="pr_id" value="{{ pr.id }}">
+              <span class="sr-only">{{ pr.pr_no }}</span></label></td>{% endif %}
+            <td><div style="font-weight:600">{{ pr.pr_no }}</div>
+                <div class="muted" style="font-size:12px">{{ pr.title }}</div>
+                {{ items_line(items.get(pr.id)) }}</td>
+            <td><span class="badge b-pending">{{ pr._stage_label }}</span></td>
+            <td style="font-variant-numeric:tabular-nums">{% if money.get(pr.id) %}{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}{% else %}—{% endif %}</td>
+            <td style="text-align:end"><a class="btn btn-primary btn-sm" href="{{ url_for('approvals.detail', pr_id=pr.id) }}" data-i18n="proc.review">Review</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% if can_bulk %}
+      <div class="porev-bulkbar">
+        <div class="field" style="margin:0;flex:1 1 220px">
+          <label for="porevBulkNote" data-i18n="proc.comment">Comment (optional)</label>
+          <input id="porevBulkNote" name="comment" autocomplete="off" maxlength="300">
+        </div>
+        <button class="btn btn-primary" type="submit" data-porev-go disabled>
+          <span data-i18n="proc.porev.sign_selected">Sign selected</span>
+          (<span data-porev-n>0</span>)</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:6px" data-i18n="proc.porev.bulk_hint">Each request is still checked on its own — anything that cannot be signed is listed with the reason, and the rest are signed with your saved signature.</div>
+      {% else %}
+      <div class="muted" style="font-size:12.5px;margin-top:8px">
+        <span data-i18n="proc.porev.bulk_needs_sig">To sign several requests at once, save your digital signature first.</span>
+        <a href="{{ url_for('main.profile') }}#signature" data-i18n="proc.set_sig">Set signature</a></div>
+      {% endif %}
+    </form>
+    {% else %}
+    <div class="muted" data-i18n="proc.queue_empty">Nothing is waiting on you right now. 🎉</div>
+    {% endif %}
+    {% include "approvals/_porev_rev_list.html" %}
+  </div>
+</div>
+<script>
+(function () {
+  document.querySelectorAll('[data-porev-bulk]').forEach(function (f) {
+    var all = f.querySelector('[data-porev-all]'), go = f.querySelector('[data-porev-go]'),
+        n = f.querySelector('[data-porev-n]');
+    function boxes() { return f.querySelectorAll('input[name="pr_id"]'); }
+    function sync() {
+      var c = f.querySelectorAll('input[name="pr_id"]:checked').length;
+      if (n) n.textContent = c;
+      if (go) go.disabled = !c;
+      if (all) all.checked = c && c === boxes().length;
+    }
+    if (all) all.addEventListener('change', function () {
+      boxes().forEach(function (b) { b.checked = all.checked; }); sync();
+    });
+    f.addEventListener('change', function (e) { if (e.target.name === 'pr_id') sync(); });
+    sync();
+  });
+})();
+</script>

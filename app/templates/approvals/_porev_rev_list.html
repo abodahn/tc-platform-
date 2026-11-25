@@ -1,0 +1,15 @@
+{#- PO revisions waiting for the viewer's signature (porev lane). Uses
+    rev_queue when the caller passed it (My Work), else asks for it. -#}
+{% set _rq = rev_queue if rev_queue is defined else porev_rev_queue() %}
+{% if _rq %}
+<div class="porev-revq">
+  <h4 data-i18n="proc.porev.rev_queue">PO revisions waiting for my signature</h4>
+  {% for r in _rq %}
+  <a class="row-line porev-row" href="{{ url_for('approvals.detail', pr_id=r.pr_id) }}#porev">
+    <span><b>{{ r.po_no }} · Rev {{ r.rev_no }}</b> · {{ r.pr_no }}
+      <span class="muted">{{ r.title or '' }}</span></span>
+    <span class="tag">{{ porev_stage(r._stage) }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}

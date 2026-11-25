@@ -1274,7 +1274,7 @@ def my_work():
             "my_prs": [], "my_wait": {}, "my_prs_action": [], "my_tickets": [], "my_pm": [], "alerts": [],
             "cmp_caps": [], "cmp_expiring": [], "late_milestones": [],
             "recv_queue": [], "store_issue": [], "po_queue": [],
-            "stuck_postings": [], "pay_queue": []}
+            "stuck_postings": [], "pay_queue": [], "rev_queue": []}
 
     if user_has_permission(user, "wh_approve"):
         try:
@@ -1291,7 +1291,10 @@ def my_work():
     if user_has_permission(user, "proc_view"):
         try:
             from app.approvals import services as proc
-            data["sign_queue"] = proc.my_queue(user)[:15]
+            # The whole queue: the panel shows the first rows and the true count.
+            data["sign_queue"] = proc.my_queue(user)
+            from app.approvals import porev
+            data["rev_queue"] = porev.rev_queue(user)
             data["my_prs"] = [p for p in proc.list_prs(requester=user["username"], limit=10)
                               if p.get("status") not in ("closed", "cancelled")][:8]
             data["my_wait"] = proc.waiting_on(data["my_prs"])
@@ -1464,6 +1467,7 @@ def my_work():
                      + len(data["cmp_caps"]) + len(data["cmp_expiring"])
                      + len(data["recv_queue"]) + len(data["store_issue"])
                      + len(data["po_queue"]) + len(data["stuck_postings"])
-                     + len(data["pay_queue"]) + len(data["my_prs_action"]))
+                     + len(data["pay_queue"]) + len(data["my_prs_action"])
+                     + len(data["rev_queue"]))
     return render_template("my_work.html", user=user, total_actions=total_actions,
                            active="my_work", today=_date.today().isoformat(), **data)
