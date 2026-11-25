@@ -371,3 +371,6 @@
 .content.proc .pl-q{grid-column:1/-1}
 @media (max-width:719.98px){.content.proc .pl-act .btn{flex:1 1 0}}
 @media (min-width:720px){.content.proc .pl-q{grid-column:span 2}}
+/* Keeps the per-line Choose buttons' screen-reader text inside the scrolling matrix:
+   an absolute .sr-only with no positioned cell escaped it and widened the page on phones. */
+.content.proc .qt-mx td.qt-num{position:relative}
