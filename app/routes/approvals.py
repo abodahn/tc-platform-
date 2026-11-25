@@ -3277,3 +3277,6 @@ def change_requester(pr_id):
     else:
         flash(_REQUESTER_ERRORS.get(msg, "Request not found."), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+from app.routes import approvals_imports  # noqa: E402,F401  imports + framework agreements

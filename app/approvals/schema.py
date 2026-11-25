@@ -950,6 +950,67 @@ def drop_legacy_doam_role_rows(conn):
     return cur.rowcount if (cur.rowcount or 0) > 0 else 0
 
 
+# ===== Imports & framework agreements (app/approvals/imports.py) ===========
+# Shipment tracking and landed-cost charges hang off a purchase order by its
+# NUMBER, not pr_purchase_orders.id: a request issued before the per-vendor
+# split has its one order only in pr_requests.po_no, and the number is what
+# both cases share. A charge is never deleted — a correction voids it.
+# Framework agreements: one supplier, a validity window, a ceiling, agreed
+# prices per line. A request line drawn against one carries agreement_line_id.
+_IMPORTS_DDL = """
+CREATE TABLE IF NOT EXISTS pr_shipments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER, po_no TEXT,
+    bl_no TEXT, carrier TEXT, incoterm TEXT,
+    shipped_at TEXT, port_at TEXT, cleared_at TEXT, delivered_at TEXT,
+    alloc_method TEXT DEFAULT 'value',  -- value | qty
+    notes TEXT,
+    created_by TEXT, created_at TEXT, updated_by TEXT, updated_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_pr_ship_po ON pr_shipments(pr_id, po_no);
+CREATE TABLE IF NOT EXISTS pr_landed_charges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER, po_no TEXT,
+    kind TEXT,                          -- freight | insurance | duty | clearance | port | other
+    amount REAL DEFAULT 0, currency TEXT DEFAULT 'EGP', fx_rate REAL DEFAULT 1,
+    amount_egp REAL DEFAULT 0,
+    reference TEXT,
+    filename TEXT, content_type TEXT, content_b64 TEXT,
+    status TEXT DEFAULT 'active',       -- active | void
+    void_reason TEXT,
+    created_by TEXT, created_at TEXT, updated_by TEXT, updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_pr_landed_po ON pr_landed_charges(pr_id, po_no);
+CREATE TABLE IF NOT EXISTS proc_agreements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ref TEXT UNIQUE,
+    vendor TEXT, title TEXT,
+    valid_from TEXT, valid_to TEXT,
+    currency TEXT DEFAULT 'EGP',
+    ceiling_value REAL, ceiling_qty REAL,
+    status TEXT DEFAULT 'draft',        -- draft | active | closed (expired is read from valid_to)
+    notes TEXT,
+    created_by TEXT, created_at TEXT,
+    approved_by TEXT, approved_at TEXT,
+    closed_by TEXT, closed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS proc_agreement_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agreement_id INTEGER,
+    item_id INTEGER,                    -- proc_items.id, or NULL for a free item
+    item TEXT, unit TEXT,
+    unit_price REAL DEFAULT 0,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_proc_agr_lines ON proc_agreement_lines(agreement_id);
+"""
+
+_IMPORTS_MIGRATIONS = [
+    # NULL = not drawn against an agreement (every existing line).
+    ("agreement_line_id", "ALTER TABLE pr_items ADD COLUMN agreement_line_id INTEGER"),
+]
+
+
 def create_and_seed(conn):
     """Create procurement tables, run column migrations, and seed sample data."""
     conn.executescript(SCHEMA)
@@ -957,11 +1018,12 @@ def create_and_seed(conn):
     conn.executescript(_PO_REV_DDL)
     conn.executescript(_GRN_DDL)
     conn.executescript(_RFQ_DDL)
+    conn.executescript(_IMPORTS_DDL)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS
                        + _QUOTE_MIGRATIONS + _MONEY_MIGRATIONS + _PROSE_MIGRATIONS
-                       + _CORRECTION_MIGRATIONS):
+                       + _CORRECTION_MIGRATIONS + _IMPORTS_MIGRATIONS):
         try:
             conn.execute(_ddl)
             conn.commit()

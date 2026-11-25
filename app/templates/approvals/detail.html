@@ -1667,6 +1667,8 @@
 </div>
 {% endif %}
 
+{% include "approvals/_imports_panel.html" %}
+
 {% if pr.status in ('draft', 'rejected') and is_owner %}
 <div class="panel mt-4"><div class="panel-pad flex between center wrap gap">
   <div class="muted">

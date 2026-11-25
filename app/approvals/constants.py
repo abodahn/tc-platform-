@@ -1529,6 +1529,10 @@ WORKFLOW_SETTINGS = {
     # in the plant on the first run and teach them to ignore it.
     "aging_warn_days": {"kind": "int", "min": 1, "default": 2},
     "aging_overdue_days": {"kind": "int", "min": 1, "default": 4},
+    # Imports (app/approvals/imports.py): when ON, a receipt is valued in stock at
+    # its LANDED unit cost (price + its share of freight, duty, clearance ...)
+    # instead of the purchase price. OFF by default: stock valuation is unchanged.
+    "landed_cost_to_stock": {"kind": "bool", "default": False},
 }
 
 # All rungs are always required; governance offers no amount-threshold knobs.

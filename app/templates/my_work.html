@@ -146,6 +146,8 @@
   </div>
   {% endif %}
 
+  {% include "approvals/_imports_mywork.html" %}
+
   {# ── Approvals waiting for my signature ── #}
   {% if sign_queue %}
   <div class="panel">
@@ -335,7 +337,7 @@
 
 {% if not (wh_issues or wh_counts or sign_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets or my_pm
            or late_milestones or cmp_caps or cmp_expiring
-           or recv_queue or store_issue or po_queue or stuck_postings or pay_queue) %}
+           or recv_queue or store_issue or po_queue or stuck_postings or pay_queue or agr_queue) %}
 <div class="panel"><div class="panel-pad muted" data-i18n="mywork.empty">
   Nothing to show yet — new approvals, tickets and alerts assigned to you will appear here.
 </div></div>

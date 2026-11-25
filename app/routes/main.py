@@ -1201,6 +1201,8 @@ def search():
                     results.append({"type": "pr", "name": f"{pr['pr_no']} · {pr['title'] or ''}",
                                     "sub": "Purchase request",
                                     "url": url_for("approvals.detail", pr_id=pr["id"])})
+            from app.approvals import imports as _proc_imp
+            results.extend(_proc_imp.search(conn, fuzzy))
         if user_has_permission(user, "proc_catalogue"):
             # The item master, searched in the database rather than pulled into
             # memory: it holds five figures of rows, and the fuzzy() helper above
@@ -1354,6 +1356,13 @@ def my_work():
         except Exception:
             pass
 
+    if user_has_permission(user, "proc_admin") or user_has_permission(user, "proc_pay"):
+        try:
+            from app.approvals import imports as proc_imp
+            data["agr_queue"] = proc_imp.approval_queue(user)
+        except Exception:
+            pass
+
     if user_has_permission(user, "maint_approve"):
         try:
             conn = get_db()
@@ -1464,6 +1473,7 @@ def my_work():
                      + len(data["cmp_caps"]) + len(data["cmp_expiring"])
                      + len(data["recv_queue"]) + len(data["store_issue"])
                      + len(data["po_queue"]) + len(data["stuck_postings"])
-                     + len(data["pay_queue"]) + len(data["my_prs_action"]))
+                     + len(data["pay_queue"]) + len(data["my_prs_action"])
+                     + len(data.get("agr_queue") or []))
     return render_template("my_work.html", user=user, total_actions=total_actions,
                            active="my_work", today=_date.today().isoformat(), **data)

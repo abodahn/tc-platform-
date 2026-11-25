@@ -72,6 +72,7 @@ NAV = [
         # store already works from rather than behind the admin import screen.
         ("proc_items", "items.nav", "boxes", "approvals.items", "proc_catalogue", "nav.b_requests"),
         ("proc_vendors", "nav.proc_vendors", "users", "approvals.vendors", "proc_view", "nav.b_suppliers"),
+        ("proc_agreements", "proc.imports.nav", "book", "approvals.agreements", "proc_view", "nav.b_suppliers"),
         ("proc_budgets", "nav.proc_budgets", "wallet", "approvals.budgets", "proc_view", "nav.b_suppliers"),
         ("proc_delegations", "nav.proc_delegations", "users", "approvals.delegations", "proc_view", "nav.b_suppliers"),
         ("proc_analytics", "nav.proc_analytics", "chart", "approvals.analytics", "proc_view", "nav.b_insight"),

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content_class %}proc{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
+{% block title %}{{ a.ref }}{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <a class="muted" href="{{ url_for('approvals.agreements') }}" data-i18n="proc.imports.back">Back to agreements</a>
+    <h1>{{ a.ref }} <span class="muted">· {{ a.vendor }}</span></h1>
+    {% if a.title %}<div class="sub">{{ a.title }}</div>{% endif %}
+  </div>
+  <div class="flex gap wrap">
+    {% if a.state == 'active' %}<span class="badge b-approved" data-i18n="proc.imports.st_active">Active</span>
+    {% elif a.state == 'draft' %}<span class="badge b-pending" data-i18n="proc.imports.st_draft">Draft — awaiting approval</span>
+    {% elif a.state == 'scheduled' %}<span class="badge b-in_transit" data-i18n="proc.imports.st_scheduled">Not started yet</span>
+    {% elif a.state == 'expired' %}<span class="badge b-rejected" data-i18n="proc.imports.st_expired">Expired</span>
+    {% else %}<span class="badge b-closed" data-i18n="proc.imports.st_closed">Closed</span>{% endif %}
+  </div>
+</div>
+
+{% if a.expiring %}
+<div class="panel mt-2 imp-warn"><div class="panel-pad">
+  <b data-i18n="proc.imports.expiring">Expiring within 30 days</b> — <span data-i18n="proc.imports.days_left">Days left</span>: {{ a.days_left }}
+</div></div>
+{% endif %}
+
+<div class="grid cols-2 mt-2" style="align-items:start">
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.imports.terms">Terms</h3></div>
+    <div class="panel-pad">
+      <dl class="imp-meta">
+        <div><dt data-i18n="proc.imports.supplier">Supplier</dt><dd>{{ a.vendor }}</dd></div>
+        <div><dt data-i18n="proc.imports.validity">Valid</dt><dd class="nw">{{ a.valid_from }} → {{ a.valid_to }}</dd></div>
+        <div><dt data-i18n="proc.imports.currency">Currency</dt><dd>{{ a.currency }}</dd></div>
+        {% if money_full %}<div><dt data-i18n="proc.imports.ceiling_value">Ceiling value</dt><dd class="num">{{ '{:,.2f}'.format(a.ceiling_value) if a.ceiling_value else '—' }}</dd></div>
+        <div><dt data-i18n="proc.imports.used_value">Used value</dt><dd class="num">{{ '{:,.2f}'.format(a.used_value) }}</dd></div>{% endif %}
+        <div><dt data-i18n="proc.imports.ceiling_qty">Ceiling quantity</dt><dd class="num">{{ '%g'|format(a.ceiling_qty) if a.ceiling_qty else '—' }}</dd></div>
+        <div><dt data-i18n="proc.imports.used_qty">Used quantity</dt><dd class="num">{{ '%g'|format(a.used_qty) }}</dd></div>
+        <div><dt data-i18n="proc.imports.created_by">Created by</dt><dd>{{ a.created_by }} <span class="muted imp-small">{{ (a.created_at or '')[:10] }}</span></dd></div>
+        {% if a.approved_by %}<div><dt data-i18n="proc.imports.approved_by">Approved by</dt><dd>{{ a.approved_by }} <span class="muted imp-small">{{ (a.approved_at or '')[:10] }}</span></dd></div>{% endif %}
+        {% if a.closed_by %}<div><dt data-i18n="proc.imports.closed_by">Closed by</dt><dd>{{ a.closed_by }} <span class="muted imp-small">{{ (a.closed_at or '')[:10] }}</span></dd></div>{% endif %}
+      </dl>
+      <div class="imp-bar{{ ' is-high' if a.used_pct >= 90 }} mt-2" role="img" aria-label="{{ a.used_pct }}%"><span style="width:{{ [a.used_pct, 100]|min }}%"></span></div>
+      <div class="imp-small num">{{ a.used_pct }}%</div>
+      {% if a.notes %}<p class="muted">{{ a.notes }}</p>{% endif %}
+      <div class="flex gap wrap mt-2">
+        {% if can_approve %}
+        <form method="post" action="{{ url_for('approvals.agreement_approve', agr_id=a.id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button class="btn btn-primary" type="submit" data-i18n="proc.imports.approve">Approve and activate</button>
+        </form>
+        {% elif a.state == 'draft' %}
+        <span class="muted imp-small" data-i18n="proc.imports.approve_hint">A draft draws nothing. A Procurement admin or Finance who did not create it must approve it.</span>
+        {% endif %}
+        {% if can_close %}
+        <form method="post" action="{{ url_for('approvals.agreement_close', agr_id=a.id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button class="btn btn-ghost" type="submit" data-advance data-i18n="proc.imports.close">Close agreement</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3 data-i18n="proc.imports.lines">Agreement lines</h3></div>
+    <div class="panel-pad">
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th data-i18n="proc.item">Item</th>
+            <th data-i18n="proc.imports.unit">Unit</th>
+            {% if money_full %}<th data-i18n="proc.imports.agreed_price">Agreed unit price</th>{% endif %}
+          </tr></thead>
+          <tbody>
+          {% for l in a.lines %}
+            <tr>
+              <td>{{ l.item }}{% if l.item_id %} <span class="tag" data-i18n="proc.imports.catalogue">Catalogue</span>{% endif %}</td>
+              <td>{{ l.unit or '' }}</td>
+              {% if money_full %}<td class="num nw">{{ ('{:,.4f}' if (l.unit_price or 0) < 1 else '{:,.2f}').format(l.unit_price or 0) }} {{ a.currency }}</td>{% endif %}
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="proc.imports.draws">Requests drawn against it</h3>
+    <span class="muted">{{ a.draws|length }}</span></div>
+  <div class="panel-pad">
+    {% if a.draws %}
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.imports.request">Request</th>
+          <th data-i18n="proc.item">Item</th>
+          <th data-i18n="proc.qty">Qty</th>
+          {% if money_full %}<th data-i18n="proc.imports.value">Value</th>{% endif %}
+          <th data-i18n="proc.imports.status">Status</th>
+        </tr></thead>
+        <tbody>
+        {% for d in a.draws %}
+          <tr>
+            <td><a href="{{ url_for('approvals.detail', pr_id=d.pr_id) }}"><b>{{ d.pr_no }}</b></a>
+              <div class="muted imp-small">{{ d.title or '' }}</div></td>
+            <td>{{ d.item }}</td>
+            <td class="num">{{ '%g'|format(d.qty or 0) }}</td>
+            {% if money_full %}<td class="num nw">{{ '{:,.2f}'.format(d.value) }} {{ a.currency }}</td>{% endif %}
+            <td><span class="badge b-{{ d.status }}">{{ d.status|replace('_', ' ')|title }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted" data-i18n="proc.imports.no_draws">No request has drawn on this agreement yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

@@ -4625,6 +4625,10 @@ def post_stock_postings(pr_id, user=None, manual=False):
                         (row["target_id"], row["id"])) != 1:
                     continue      # another request claimed it
                 price = 0.0 if row["free"] else float(row["unit_price"] or 0) * _pr_fx(row)
+                if price and float(row["qty"]) > 0:
+                    # Landed cost: unchanged unless the admin switched it on.
+                    from app.approvals import imports as _imp
+                    price = _imp.stock_unit_cost(row["pr_id"], row["item_id"], price)
                 try:
                     if float(row["qty"]) < 0:
                         ok, err = _unpost(row, actor)
@@ -7416,6 +7420,17 @@ def rfq_requirement(conn, pr):
     _pcur = _pr_field(pr, "currency") or "EGP"
     if ch and ch["egp_rate"] and ch["currency"] != (C.currency_code(_pcur) or _pcur):
         total = max(total, round(float(ch.get("amount") or 0) * ch["egp_rate"], 2))
+    # Framework agreements: a line drawn against an agreement that is active, in
+    # date and inside its ceiling needs no competitive quotes; the rest of the
+    # request is judged on its own value. Nothing here touches the ladder.
+    from app.approvals import imports as _imp
+    _fa = _imp.rfq_waiver(conn, pr)
+    if _fa["lines"]:
+        out["agreement_lines"] = _fa["lines"]
+        if _fa["all"]:
+            out["agreement"] = True
+            return out
+        total = max(0.0, total - _fa["egp"])
     out["value"] = round(total, 2)
     # DOAM §4.3 bands when the matrix is in force: 1 quote up to 50,000, three to
     # 500,000, three plus negotiation to 2,000,000, formal tender above that. The
