@@ -2621,13 +2621,13 @@
         data-csrf="{{ csrf_token }}">
   <div class="ps-head">
     <h3 id="psTitle" data-i18n="ps.title">Compare prices online</h3>
-    <button type="button" class="icon-btn ps-x" data-ps-close aria-label="Close"
-            data-i18n-title="ps.close" title="Close">&#x2715;</button>
+    <button type="button" class="icon-btn ps-x" data-ps-close
+            data-i18n-title="ps.close" title="Close"><span aria-hidden="true">&#x2715;</span></button>
   </div>
   <form class="ps-form" data-ps-form novalidate>
     <label for="psQ" class="ps-lbl" data-i18n="ps.query_l">Search text — taken from the request, edit it if needed</label>
     <div class="ps-row">
-      <input id="psQ" type="search" maxlength="120" autocomplete="off" enterkeyhint="search" dir="auto">
+      <input id="psQ" type="text" role="searchbox" maxlength="120" autocomplete="off" enterkeyhint="search" dir="auto">
       <button class="btn btn-primary" type="submit" data-ps-go>
         <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
         <span data-i18n="ps.search">Search</span></button>

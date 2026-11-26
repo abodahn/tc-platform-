@@ -1080,6 +1080,48 @@ def drop_legacy_doam_role_rows(conn):
     return cur.rowcount if (cur.rowcount or 0) > 0 else 0
 
 
+PRICE_SEARCH_ROLES = ("financial_controller", "cfo", "financial_director", "ceo",
+                      "managing_director", "board")
+
+
+def grant_price_search_to_saved_roles(conn):
+    """Add proc_price_search to custom_roles rows saved for its target roles.
+
+    A custom_roles row REPLACES the code permissions of its role, so a role an
+    admin once re-saved in Admin -> Roles would never see the new permission
+    the code grants it. Runs once: a proc_settings marker records it, so an
+    admin who later removes the permission from a role is not overridden.
+    """
+    import json
+    marker = "perm_migr_price_search"
+    try:
+        if conn.execute("SELECT 1 FROM proc_settings WHERE key=?", (marker,)).fetchone():
+            return 0
+        n = 0
+        rows = conn.execute(
+            "SELECT role_key, perms_json FROM custom_roles WHERE role_key IN (%s)"
+            % ",".join("?" * len(PRICE_SEARCH_ROLES)), PRICE_SEARCH_ROLES).fetchall()
+        for r in rows:
+            try:
+                perms = json.loads(r["perms_json"] or "[]")
+            except ValueError:
+                continue
+            if isinstance(perms, list) and "proc_price_search" not in perms:
+                conn.execute("UPDATE custom_roles SET perms_json=? WHERE role_key=?",
+                             (json.dumps(perms + ["proc_price_search"]), r["role_key"]))
+                n += 1
+        conn.execute("INSERT INTO proc_settings (key, value, updated_by, updated_at) "
+                     "VALUES (?,?,?,?)", (marker, "1", "system", _now()))
+        conn.commit()
+    except Exception:
+        conn.rollback()    # custom_roles not created yet: try again next boot
+        return 0
+    if n:
+        from app.security import refresh_db_roles
+        refresh_db_roles()
+    return n
+
+
 # ===== Imports & framework agreements (app/approvals/imports.py) ===========
 # Shipment tracking and landed-cost charges hang off a purchase order by its
 # NUMBER, not pr_purchase_orders.id: a request issued before the per-vendor
@@ -1174,6 +1216,7 @@ def create_and_seed(conn):
     # a row this seed never committed is missing wherever the write did not land.
     # The rows it already wrote shadow that code definition, so clear them once.
     drop_legacy_doam_role_rows(conn)
+    grant_price_search_to_saved_roles(conn)
     seed_governance(conn)
     if conn.execute("SELECT COUNT(*) c FROM proc_vendors").fetchone()["c"] > 0:
         return  # already seeded; never overwrite

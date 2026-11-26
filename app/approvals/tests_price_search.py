@@ -117,9 +117,13 @@ def fake_post(url, headers=None, json=None, timeout=None):   # noqa: A002 — re
     return FakeResp(200, payload={"choices": [{"message": msg}]})
 
 
+REAL = {}
+
+
 def install():
     import requests
     from app.services import price_verify as pv
+    REAL["get"] = pv._get
     pv._get = fake_get
     pv._resolve = fake_resolve
     requests.post = fake_post
@@ -152,8 +156,37 @@ def page_check():
     chk("within 2% -> confirmed (page price shown)", pv.classify(100, "EGP", page) == ("confirmed", 101.5, "EGP"))
     chk("clear different price -> price_changed", pv.classify(80, "EGP", page) == ("price_changed", 101.5, "EGP"))
     chk("unreadable page -> unconfirmed", pv.classify(80, "EGP", None)[0] == "unconfirmed")
-    chk("text-only number confirms a matching claim",
-        pv.classify(1234, "EGP", {"structured": [], "text": [5.0, 1234.5]})[0] == "confirmed")
+    chk("text-only: the page's one price confirms a matching claim",
+        pv.classify(1234, "EGP", {"structured": [], "text": [1234.5, 1234.5]})[0] == "confirmed")
+    chk("text-only: several different prices confirm nothing",
+        pv.classify(1234, "EGP", {"structured": [], "text": [5.0, 1234.5]})[0] == "unconfirmed")
+    for html, claim, what in (
+            ("<p>Only 25 left in stock</p>", 25, "'left' is not LE"),
+            ("<p>Sale 30% off</p>", 30, "'Sale' is not LE"),
+            ("<s>EGP 1,500</s> <b>EGP 1,200</b>", 1500, "a struck-through old price"),
+            ('<span class="price-old">EGP 1,500</span> EGP 1,200', 1500, "an old-price class"),
+            ("<p>EGP 6</p><p>Shipping EGP 7</p>", 7, "a shipping fee beside the price"),
+            ("<p>EGP 7</p>", 6, "a 1-EGP gap on a cheap item")):
+        chk("text never confirms %s" % what, pv.classify(claim, "EGP", pv.extract(html))[0] == "unconfirmed",
+            pv.extract(html))
+    chk("the struck price is skipped, the real one read",
+        pv.extract('<del>EGP 1,500</del><p class="font-bold">EGP 1,200</p>')["text"] == [1200.0])
+    il = {"@context": "https://schema.org", "@type": "ItemList", "itemListElement": [
+        {"@type": "Product", "name": "a", "url": "https://j.example.com/a",
+         "offers": {"@type": "Offer", "price": 99, "priceCurrency": "EGP"}},
+        {"@type": "Product", "name": "b", "url": "https://j.example.com/b",
+         "offers": {"@type": "Offer", "price": 250, "priceCurrency": "EGP"}}]}
+    lp = '<script type="application/ld+json">%s</script><p>EGP 250</p>' % json.dumps(il)
+    chk("a listing of several products confirms nothing",
+        pv.classify(250, "EGP", pv.extract(lp, "https://j.example.com/catalog?q=water")) == ("unconfirmed", None, None))
+    chk("and never reports another product's price as changed",
+        pv.classify(180, "EGP", pv.extract(lp, "https://j.example.com/catalog"))[0] == "unconfirmed")
+    chk("the product the URL names is picked from a multi-product page",
+        pv.classify(250, "EGP", pv.extract(lp, "https://www.j.example.com/b/")) == ("confirmed", 250.0, "EGP"))
+    deep = '<script type="application/ld+json">' + "[" * 200000 + "</script>"
+    chk("deeply nested JSON-LD is ignored, not a crash", pv.extract(deep)["structured"] == [])
+    chk("NaN / Infinity are not prices",
+        pv.parse_number(float("nan")) is None and pv.parse_number(float("inf")) is None)
     chk("text-only number never claims a change",
         pv.classify(900, "EGP", {"structured": [], "text": [1234.5]})[0] == "unconfirmed")
 
@@ -197,8 +230,81 @@ def page_check():
         pv.verify_offer(o("https://s.example.com/hop", 10)) is None)
     chk("and the private hop was never requested", GETS == ["https://s.example.com/hop"], GETS)
     PAGES["https://s.example.com/hop2"] = lambda: FakeResp(301, "", {"Location": "/ok"})
-    chk("a same-site relative redirect is followed",
-        pv.verify_offer(o("https://s.example.com/hop2", 100))["status"] == "confirmed")
+    chk("a redirect to another page of the site -> unconfirmed",
+        pv.verify_offer(o("https://s.example.com/hop2", 100))["status"] == "unconfirmed")
+    PAGES["http://s.example.com/ok"] = lambda: FakeResp(301, "", {"Location": "https://www.s.example.com/ok/"})
+    PAGES["https://www.s.example.com/ok/"] = lambda: FakeResp(200, ld_page(100))
+    chk("an http->https / www redirect to the same page is followed",
+        pv.verify_offer(o("http://s.example.com/ok", 100))["status"] == "confirmed")
+    deep = '<script type="application/ld+json">' + "[" * 200000 + "</script>"
+    PAGES["https://s.example.com/deep"] = lambda: FakeResp(200, deep)
+    r = pv.verify_offers([o("https://s.example.com/deep", 10), o("https://s.example.com/ok", 100)])
+    chk("a hostile page leaves the other offers standing",
+        [x["status"] for x in r] == ["unconfirmed", "confirmed"], r)
+
+    print("SSRF guard: parser tricks, rebinding, unreadable vs dead")
+    for bad in ("http://127.0.0.1\\.x.attacker.example/", "http://10.0.0.5\\@s.example.com/",
+                "http://s.example.com /x", "http://under_score.example.com/", "http://[abc/x"):
+        try:
+            pv.check_url(bad)
+            refused = False
+        except pv.Refused:
+            refused = True
+        chk("refuses %r" % bad, refused)
+    GETS.clear()
+    PAGES["https://s.example.com/bs"] = lambda: FakeResp(
+        302, "", {"Location": "http://10.0.0.5\\.x.attacker.example/admin"})
+    chk("a backslash host in a redirect -> dead, never requested",
+        pv.verify_offer(o("https://s.example.com/bs", 10)) is None and GETS == ["https://s.example.com/bs"], GETS)
+    import socket
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    try:
+        REAL["get"]("http://127.0.0.1:%d/" % srv.getsockname()[1])
+        chk("a socket that lands on a private address is refused before sending (rebinding)", False)
+    except pv.Refused:
+        chk("a socket that lands on a private address is refused before sending (rebinding)", True)
+    finally:
+        srv.close()
+    PAGES["https://s.example.com/loop"] = lambda: FakeResp(302, "", {"Location": "/loop"})
+    r = pv.verify_offer(o("https://s.example.com/loop", 10))
+    chk("a redirect loop -> unconfirmed, kept", r is not None and r["status"] == "unconfirmed")
+    real_resolve = pv._resolve
+
+    def flaky(host, port):
+        raise socket.gaierror(socket.EAI_AGAIN, "temporary failure")
+    pv._resolve = flaky
+    try:
+        r = pv.verify_offer(o("https://s.example.com/ok", 100))
+    finally:
+        pv._resolve = real_resolve
+    chk("a temporary DNS failure -> unconfirmed, kept", r is not None and r["status"] == "unconfirmed")
+
+    print("deadlines")
+    import time
+
+    def slow_chunks():
+        for _ in range(40):
+            time.sleep(0.02)
+            yield b"a" * 100
+    PAGES["https://s.example.com/drip"] = lambda: FakeResp(200, chunks=slow_chunks())
+    old = pv.DEADLINE, pv.BATCH_WAIT
+    pv.DEADLINE = 0.2
+    try:
+        r = pv.verify_offer(o("https://s.example.com/drip", 10))
+    finally:
+        pv.DEADLINE = old[0]
+    chk("a dripping page stops at the deadline -> unconfirmed", r["status"] == "unconfirmed")
+    PAGES["https://s.example.com/stuck"] = lambda: (time.sleep(1.5), FakeResp(200, ld_page(10)))[1]
+    pv.BATCH_WAIT = 0.3
+    t0 = time.monotonic()
+    try:
+        r = pv.verify_offers([o("https://s.example.com/stuck", 10), o("https://s.example.com/ok", 100)])
+    finally:
+        pv.BATCH_WAIT = old[1]
+    chk("the batch does not wait for a stuck page", time.monotonic() - t0 < 1.2, time.monotonic() - t0)
+    chk("the stuck offer comes back unconfirmed", [x["status"] for x in r] == ["unconfirmed", "confirmed"], r)
 
     big = FakeResp(200, chunks=[b"a" * 65536] * 48)          # 3 MB on offer
     text = pv._read_capped(big)
@@ -216,7 +322,7 @@ def engine():
     for u in ("https://www.cited.example.com/p/1", "https://cited.example.com/other/9",
               "https://nocite.example.org/x"):
         PAGES[u] = lambda: FakeResp(403, "captcha")
-    MODEL["annotations"] = ["https://cited.example.com/p/1/?utm_source=openrouter"]
+    MODEL["annotations"] = ["https://cited.example.com/p/1/?utm_source=openrouter", "http://[abc/x"]
     MODEL["offers"] = [
         {"title": "C", "store": "NoCite", "price": 5, "url": "https://nocite.example.org/x"},
         {"title": "B", "store": "Cited", "price": 9, "url": "https://cited.example.com/other/9"},
@@ -225,6 +331,8 @@ def engine():
         {"title": "data", "store": "x", "price": 3, "url": "data:text/html,hi"},
         {"title": "zero", "store": "x", "price": 0, "url": "https://z.example.com/0"},
         {"title": "nan", "store": "x", "price": "call us", "url": "https://z.example.com/n"},
+        {"title": "NaN", "store": "x", "price": float("nan"), "url": "https://z.example.com/nan"},
+        {"title": "inf", "store": "x", "price": float("inf"), "url": "https://z.example.com/inf"},
         {"title": "dup", "store": "x", "price": 12, "url": "https://cited.example.com/p/1/"},
     ]
     POSTS.clear()
@@ -233,14 +341,15 @@ def engine():
     chk("query cleaned", r["query"] == "Mineral water 1.5L", r["query"])
     chk("the web plugin was asked for", POSTS[0].get("plugins") == [{"id": "web", "max_results": 10}])
     titles = [o["title"] for o in r["offers"]]
-    chk("javascript:/data:, zero, non-numeric and duplicate URLs dropped", sorted(titles) == ["A", "B", "C"], titles)
+    chk("javascript:/data:, zero, non-numeric, NaN/Infinity and duplicate URLs dropped", sorted(titles) == ["A", "B", "C"], titles)
     lv = {o["title"]: (o["verified"], o["verified_level"]) for o in r["offers"]}
     chk("URL = citation -> verified page", lv["A"] == (True, "page"), lv)
     chk("same store as a citation -> verified site", lv["B"] == (True, "site"), lv)
     chk("uncited host -> unverified", lv["C"] == (False, ""), lv)
     chk("unconfirmed sorted by citation strength", titles == ["A", "B", "C"], titles)
     chk("stats flagged as estimate (nothing confirmed)", r["stats"]["estimate"] and r["stats"]["confirmed"] == 0)
-    chk("sources returned", [s["url"] for s in r["sources"]] == MODEL["annotations"])
+    chk("sources returned, a malformed citation dropped",
+        [s["url"] for s in r["sources"]] == MODEL["annotations"][:1], r["sources"])
 
     gm._PS_CACHE.clear()
     PAGES.clear()
@@ -403,6 +512,37 @@ def routes(app):
     chk("offline: the friendly offline dict", r.status_code == 200 and r.get_json().get("offline") is True)
 
 
+def saved_roles(app):
+    """A role an admin re-saved before this feature still gets it, once."""
+    from app.approvals import schema
+    from app.db import get_db
+    from app.security import refresh_db_roles, user_has_permission
+    print("roles saved in Admin -> Roles before the feature")
+    old = json.dumps(["proc_view", "proc_create", "proc_approve", "proc_pay"])
+    with app.app_context():
+        c = get_db()
+        c.execute("DELETE FROM proc_settings WHERE key='perm_migr_price_search'")
+        c.execute("DELETE FROM custom_roles WHERE role_key='cfo'")
+        c.execute("INSERT INTO custom_roles (role_key,label,perms_json,is_builtin,created_at) "
+                  "VALUES ('cfo','CFO',?,1,'2026-01-01')", (old,))
+        c.commit()
+        refresh_db_roles()
+        chk("a saved cfo row hides the permission (the gap)",
+            not user_has_permission({"role": "cfo"}, "proc_price_search"))
+        schema.create_and_seed(c)
+        chk("the boot migration adds it to the saved row", user_has_permission({"role": "cfo"}, "proc_price_search"))
+        c.execute("UPDATE custom_roles SET perms_json=? WHERE role_key='cfo'", (old,))
+        c.commit()
+        schema.create_and_seed(c)
+        refresh_db_roles()
+        chk("an admin who removes it later is not overridden",
+            not user_has_permission({"role": "cfo"}, "proc_price_search"))
+        c.execute("DELETE FROM custom_roles WHERE role_key='cfo'")
+        c.commit()
+        c.close()
+        refresh_db_roles()
+
+
 def run():
     app = _app()
     install()
@@ -417,6 +557,7 @@ def run():
     page_check()
     engine()
     routes(app)
+    saved_roles(app)
     print("ALL PASS" if OK_ALL[0] else "SOME CHECKS FAILED")
     return OK_ALL[0]
 

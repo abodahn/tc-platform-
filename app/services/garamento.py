@@ -16,6 +16,7 @@ exception, so the UI can always show *something* sensible.
 from __future__ import annotations
 
 import json
+import math
 import re
 import statistics
 import threading
@@ -563,8 +564,8 @@ def _clean_offers(raw, currency, engine="ai"):
         except ValueError:
             continue
         price = None if isinstance(o.get("price"), bool) else _num(o.get("price"))
-        if not host or price is None or price <= 0:
-            continue
+        if not host or price is None or not math.isfinite(price) or price <= 0:
+            continue                      # NaN / Infinity would also break jsonify
         key = _norm_url(url)
         if key in seen:
             continue
@@ -592,6 +593,11 @@ def _citations(msg):
         c = a.get("url_citation") if isinstance(a, dict) else None
         url = str((c or {}).get("url") or "").strip()
         if not re.match(r"^https?://", url, re.I) or url in seen:
+            continue
+        try:
+            if not urlsplit(url).hostname:
+                continue
+        except ValueError:                # e.g. "http://[abc/x"
             continue
         seen.add(url)
         out.append({"url": url[:1000], "title": str(c.get("title") or "")[:200]})

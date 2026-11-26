@@ -5336,6 +5336,7 @@
   "ps.all_empty": "Mağaza teklifi bulunamadı",
   "ps.all_wait": "Aranıyor…",
   "ps.all_done": "Bitti: %(n)s kalem kontrol edildi.",
+  "ps.all_capped": "Burada yalnızca ilk %(n)s kalem karşılaştırılır; diğerlerini tek tek açın.",
   "ps.all_prog": "%(n)s kalemden %(d)s kontrol edildi… (her biri bir dakikayı bulabilir)",
   "proc.audit.price_search": "Çevrimiçi fiyat araması"
 }

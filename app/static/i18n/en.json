@@ -5336,6 +5336,7 @@
   "ps.all_empty": "No store offers found",
   "ps.all_wait": "Searching…",
   "ps.all_done": "Done: %(n)s items checked.",
+  "ps.all_capped": "Only the first %(n)s lines are compared here; open the others one by one.",
   "ps.all_prog": "Checked %(d)s of %(n)s items… (each can take up to a minute)",
   "proc.audit.price_search": "Online price search"
 }

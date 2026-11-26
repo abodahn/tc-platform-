@@ -14,7 +14,7 @@
   var form = dlg.querySelector("[data-ps-form]"), input = dlg.querySelector("#psQ"),
       go = dlg.querySelector("[data-ps-go]"), out = dlg.querySelector("[data-ps-out]"),
       ctx = dlg.querySelector("[data-ps-ctx]");
-  var line = null, opener = null, ctrlLine = null, ctrlAll = null, allView = null, allRes = {};
+  var line = null, opener = null, ctrlLine = null, ctrlAll = null, allView = null, allRes = {}, allRows = {};
   var BATCH = 2;   // lines per price-search-all call: short requests, steady progress
 
   function el(tag, cls, text) {
@@ -201,21 +201,29 @@
   function search(fresh) {
     if (!line) return;
     var q = input.value.replace(/\s+/g, " ").trim();
-    if (q.length < 2) { showError(out, { error: "bad_query" }); input.focus(); return; }
+    if (q.length < 2) { showError(out, { error: "bad_query" }); addBack(); input.focus(); return; }
     if (ctrlLine) ctrlLine.abort();       // a new search supersedes the old one
     var my = ctrlLine = new AbortController(), l = line;
     loading(out);
+    addBack();
     go.disabled = true;
     // Unchanged text is sent empty: the server rebuilds it from the request line.
     post(dlg.dataset.urlLine, { line_id: Number(l.id), query: q === l.q ? "" : q, fresh: !!fresh }, my.signal)
-      .then(function (r) { if (my === ctrlLine) { allRes[l.id] = r; renderLine(r); } })
+      .then(function (r) { if (my === ctrlLine) { allRes[l.id] = r; fill(l.id, r); renderLine(r); } })
       .catch(function (e) {
-        if (e.name !== "AbortError" && my === ctrlLine) showError(out, { error: "network" }, function () { search(fresh); });
+        if (e.name !== "AbortError" && my === ctrlLine) {
+          showError(out, { error: "network" }, function () { search(fresh); });
+          addBack();
+        }
       })
       .then(function () { if (my === ctrlLine) { go.disabled = false; ctrlLine = null; } });
   }
   function renderLine(r) {
     renderResult(out, r, line ? line.qty : 0, search);
+    addBack();
+  }
+  /* Opened from "compare all": the way back to the list, whatever the line shows. */
+  function addBack() {
     if (allView) out.insertBefore(button("ps-linkbtn ps-back", t("ps.back", "← All items"), backToAll), out.firstChild);
   }
   function backToAll() {
@@ -235,13 +243,28 @@
     if ((r.offers || []).length) return { text: fmt(t("ps.all_none_conf", "%(n)s offers, none confirmed on site"), { n: r.offers.length }), href: null };
     return { text: t("ps.all_empty", "No store offers found"), href: null };
   }
+  /* (Re)write a line's row in the "compare all" list, e.g. after a re-search. */
+  function fill(id, r) {
+    var row = allView && allRows[id];
+    if (!row) return;
+    allRes[id] = r;
+    var s = summaryOf(r);
+    row.sum.textContent = s.text;
+    row.btn.disabled = false;
+    if (row.link) { row.li.removeChild(row.link); row.link = null; }
+    if (s.href) {
+      row.link = el("a", "ps-all-link", t("ps.open", "Open store ↗"));
+      link(row.link, s.href);
+      row.li.appendChild(row.link);
+    }
+  }
   function runAll(lines, fresh) {
     if (ctrlAll) ctrlAll.abort();
     var my = ctrlAll = new AbortController(), done = 0;
     allView = el("div", "ps-allview");
     var prog = el("p", "ps-wait", t("ps.wait", "Checking stores and confirming prices on each site… (can take up to a minute)"));
     var ul = el("ul", "ps-all");
-    var rows = {};
+    allRows = {};
     lines.forEach(function (l) {
       var li = el("li", "ps-all-row");
       var b = button("ps-all-open", null, function () {
@@ -254,25 +277,12 @@
       b.disabled = true;
       li.appendChild(b);
       ul.appendChild(li);
-      rows[l.id] = { li: li, btn: b, sum: sum };
+      allRows[l.id] = { li: li, btn: b, sum: sum, link: null };
     });
     allView.appendChild(prog);
     allView.appendChild(ul);
     out.textContent = "";
     out.appendChild(allView);
-    function fill(id, r) {
-      var row = rows[id];
-      if (!row) return;
-      allRes[id] = r;
-      var s = summaryOf(r);
-      row.sum.textContent = s.text;
-      row.btn.disabled = false;
-      if (s.href) {
-        var a = el("a", "ps-all-link", t("ps.open", "Open store ↗"));
-        link(a, s.href);
-        row.li.appendChild(a);
-      }
-    }
     var ids = lines.map(function (l) { return l.id; });
     var step = function (i) {
       if (my !== ctrlAll) return;
@@ -325,8 +335,12 @@
       setLine(null);
       allRes = {};
       show();
-      // the server checks at most 25 lines of a request
-      runAll(Array.prototype.map.call(document.querySelectorAll("[data-ps-line]"), lineOf).slice(0, 25), false);
+      // the server checks at most 25 lines of a request: say so when there are more
+      var all = Array.prototype.map.call(document.querySelectorAll("[data-ps-line]"), lineOf);
+      runAll(all.slice(0, 25), false);
+      if (all.length > 25)
+        allView.insertBefore(el("p", "ps-note ps-note-warn", fmt(t("ps.all_capped",
+          "Only the first %(n)s lines are compared here; open the others one by one."), { n: 25 })), allView.firstChild);
     } else {
       allView = null;
       setLine(lineOf(b));
