@@ -5220,5 +5220,11 @@
   "proc.imports.rs_closed": "Kapatıldı",
   "proc.imports.rs_rejected": "Reddedildi",
   "proc.imports.voided": "İptal edildi",
-  "proc.imports.waived": "Teklif muafiyeti"
+  "proc.imports.waived": "Teklif muafiyeti",
+  "navback.back": "Geri",
+  "navback.go_home": "Ana sayfaya git",
+  "navback.preparing": "Dosya hazırlanıyor…",
+  "navback.file_ready": "Dosyanız hazır.",
+  "navback.open_file": "Dosyayı aç",
+  "navback.failed": "Dosya açılamadı. Bağlantınızı kontrol edip tekrar deneyin."
 }

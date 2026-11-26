@@ -8,7 +8,7 @@
     <div class="hd"><h3 data-i18n="ai.exec_report">Executive risk report</h3></div>
     <div class="bd">
       <div class="muted" style="margin-bottom:12px" data-i18n="ai.exec_desc">Company health, domain risk scores and the top alerts with recommendations.</div>
-      <a class="btn btn-primary btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='pdf') }}" data-i18n="ai.download_pdf">Download PDF</a>
+      <a data-file-download class="btn btn-primary btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='pdf') }}" data-i18n="ai.download_pdf">Download PDF</a>
     </div>
   </div>
   <div class="ai-card">
@@ -16,8 +16,8 @@
     <div class="bd">
       <div class="muted" style="margin-bottom:12px" data-i18n="ai.alerts_export_desc">Every predicted risk with score, severity, status, owner and recommended action.</div>
       <div class="flex gap">
-        <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='xlsx') }}">Excel</a>
-        <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='csv') }}">CSV</a>
+        <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='xlsx') }}">Excel</a>
+        <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='csv') }}">CSV</a>
       </div>
     </div>
   </div>

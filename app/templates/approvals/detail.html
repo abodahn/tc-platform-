@@ -180,15 +180,15 @@
       {% if source_link %} · <a href="{{ source_link.url }}" class="tag" style="text-decoration:none">🔗 {{ source_link.label }}</a>{% endif %}</div>
   </div>
   <div class="flex gap center wrap">
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
       <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.pdf">PR PDF</span></a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_xlsx', pr_id=pr.id) }}" download>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_xlsx', pr_id=pr.id) }}" download>
       <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.pr_xlsx">PR Excel</span></a>
     {% include "approvals/_porev_copy_btn.html" %}
     {% if money and pr.status in ('approved','po_issued','closed') %}
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
       <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_xlsx', pr_id=pr.id) }}" download>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_xlsx', pr_id=pr.id) }}" download>
       <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.po_xlsx">PO Excel</span></a>
     {% endif %}
   </div>
@@ -1254,7 +1254,7 @@
           <td>{{ '%g'|format(g.accepted_qty or 0) }}</td>
           <td style="{{ 'color:var(--crit);font-weight:600' if (g.quarantined_qty or 0) > 0 }}">{{ '%g'|format(g.quarantined_qty or 0) }}</td>
           <td class="muted">{{ g.received_by }}</td>
-          <td><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+          <td><a data-file-download class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                  href="{{ url_for('approvals.grn_pdf', pr_id=pr.id, grn=g.id) }}">
             <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.grn.pdf">GRN PDF</span></a></td>
         </tr>
@@ -1262,7 +1262,7 @@
       </tbody>
     </table>
     {% elif pr.status in ('partially_received','received','closed') %}
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.grn_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener" style="margin-top:6px">
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('approvals.grn_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener" style="margin-top:6px">
       <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.grn.pdf">GRN PDF</span></a>
     {% endif %}
 
@@ -1395,7 +1395,7 @@
               <span class="muted" style="font-size:11px">{{ r.settled_by }} · {{ (r.settled_at or '')[:16] }}
                 {% if r.settle_ref %}<br><span data-i18n="proc.rtv.st_{{ r.settle_type }}">{{ r.settle_type }}</span>: {{ r.settle_ref }}{% if r.settle_amount and money_full %} · {{ '{:,.2f}'.format(r.settle_amount) }}{% endif %}{% endif %}</span>{% endif %}</td>
           <td class="flex gap center wrap">
-            {% if money_full %}<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+            {% if money_full %}<a data-file-download class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                href="{{ url_for('approvals.debit_note_pdf', ret_id=r.id) }}">
               <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rtv.pdf">Debit note PDF</span></a>{% endif %}
             {% if r.status == 'open' and can_pay %}
@@ -1643,10 +1643,10 @@
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.grand or 0) }} {{ p.currency or pr.currency }}</td>
             {% endif %}
-            <td>{% if money and p.status != 'cancelled' %}<div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+            <td>{% if money and p.status != 'cancelled' %}<div class="flex gap wrap"><a data-file-download class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                    href="{{ url_for('approvals.po_pdf', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_pdf', pr_id=pr.id) }}">
               <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
-              <a class="btn btn-ghost btn-sm" download
+              <a data-file-download class="btn btn-ghost btn-sm" download
                  href="{{ url_for('approvals.po_xlsx', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_xlsx', pr_id=pr.id) }}">
               <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.po_xlsx">PO Excel</span></a></div>{% endif %}</td>
           </tr>
@@ -1910,10 +1910,10 @@
                 <td>{% if r.status == 'answered' %}
                     <span class="badge b-approved" data-i18n="proc.rfq.answered">Answered</span>
                     {% else %}<span class="badge b-pending" data-i18n="proc.rfq.sent">Sent</span>{% endif %}</td>
-                <td><div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+                <td><div class="flex gap wrap"><a data-file-download class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                        href="{{ url_for('approvals.rfq_pdf', pr_id=pr.id, rfq=r.id) }}">
                   <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rfq.pdf">RFQ PDF</span></a>
-                  <a class="btn btn-ghost btn-sm" download
+                  <a data-file-download class="btn btn-ghost btn-sm" download
                      href="{{ url_for('approvals.rfq_xlsx', pr_id=pr.id, rfq=r.id) }}">
                   <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.rfq.xlsx">RFQ Excel</span></a></div></td>
               </tr>

@@ -132,9 +132,9 @@
     <h3 data-i18n="rpt.results">Results</h3>
     <div class="flex gap center">
       <span class="muted"><span dir="ltr">{{ r.total }}</span> <span data-i18n="reports.rows">rows</span></span>
-      <a class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.export', key=spec.key, fmt='csv') }}{% if r.qs %}?{{ r.qs }}{% endif %}">CSV</a>
-      <a class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.export', key=spec.key, fmt='xlsx') }}{% if r.qs %}?{{ r.qs }}{% endif %}">Excel</a>
-      <a class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.export', key=spec.key, fmt='pdf') }}{% if r.qs %}?{{ r.qs }}{% endif %}">PDF</a>
+      <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.export', key=spec.key, fmt='csv') }}{% if r.qs %}?{{ r.qs }}{% endif %}">CSV</a>
+      <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.export', key=spec.key, fmt='xlsx') }}{% if r.qs %}?{{ r.qs }}{% endif %}">Excel</a>
+      <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('reports_hub.export', key=spec.key, fmt='pdf') }}{% if r.qs %}?{{ r.qs }}{% endif %}">PDF</a>
     </div>
   </div>
   <div class="panel-pad" style="overflow-x:auto">

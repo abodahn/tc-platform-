@@ -8,7 +8,7 @@
     <div class="sub" data-i18n="trc.partners.sub">Every mill, spinner, dyehouse and farm behind the product, placed at its tier.</div>
   </div>
   <div class="flex gap">
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.export_csv', key='partners') }}" data-i18n="trc.action.export">Export CSV</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('trace.export_csv', key='partners') }}" data-i18n="trc.action.export">Export CSV</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('trace.index') }}" data-i18n="trc.nav.home">Traceability & DPP</a>
   </div>
 </div>

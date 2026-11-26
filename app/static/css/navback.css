@@ -1,0 +1,38 @@
+/* Lane navback — top-bar Back button + the busy state of a file link that is
+   being fetched for the iOS share sheet (installed app only, see navback.js). */
+
+/* 44px square: the platform's minimum touch target. Sits at the start of the
+   bar, so it is on the left in LTR and on the right in RTL with no extra rule. */
+.topbar .navback { width: 44px; height: 44px; text-decoration: none; }
+.topbar .navback .ico { width: 20px; height: 20px; }
+[dir="rtl"] .navback .ico { transform: scaleX(-1); }   /* the arrow points the way back */
+
+/* Phones: one more button in the bar. Trim the bar's own gaps and the language
+   pills a little so a 360px screen still has no horizontal scroll. */
+@media (max-width: 400px) {
+  .topbar { gap: 4px; padding-inline: 8px; }
+  .topbar .seg button { min-width: 36px; padding: 0 6px; }
+}
+
+/* Error pages (no top bar): the Back button sits with the other action. */
+.err-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.err-actions .btn { min-height: 44px; }
+.err-actions .navback-arrow { display: inline-block; }
+[dir="rtl"] .err-actions .navback-arrow { transform: scaleX(-1); }
+
+/* A file link while it downloads for the share sheet. */
+[data-file-download][aria-busy="true"] { opacity: .6; pointer-events: none; cursor: progress; }
+[data-file-download][aria-busy="true"]::after {
+  content: ""; display: inline-block; width: 12px; height: 12px; margin-inline-start: 8px;
+  border: 2px solid currentColor; border-inline-end-color: transparent; border-radius: 50%;
+  vertical-align: -2px; animation: nbspin .8s linear infinite;
+}
+@keyframes nbspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  [data-file-download][aria-busy="true"]::after { animation: none; border-inline-end-color: currentColor; }
+}
+
+/* "File ready" toast with a button: a second tap gives iOS the fresh user
+   gesture its share sheet requires when the download took too long. */
+.toast.nb-ready { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.toast.nb-ready .btn { min-height: 44px; }

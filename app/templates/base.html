@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/tc-combobox.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/navback.css') }}">
   {% if cu %}<link rel="stylesheet" href="{{ url_for('static', filename='css/garamento.css') }}">{% endif %}
   {% block head %}{% endblock %}
   <script>
@@ -134,6 +135,7 @@
       <button class="icon-btn" id="sidebarToggle" type="button" aria-controls="appSidebar" data-i18n-title="top.menu" title="Menu">
         <svg class="ico"><use href="#i-menu"></use></svg>
       </button>
+      {% include "_navback.html" %}
 
       <div class="search">
         <svg class="ico"><use href="#i-search"></use></svg>
@@ -243,6 +245,7 @@
 {% if cu %}{% include "_garamento.html" %}{% endif %}
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/navback.js') }}"></script>
 {# Searchable dropdowns. Loaded after app.js so window.tcT / tcApplyI18n exist
    when it enhances the selects on this page. #}
 <script src="{{ url_for('static', filename='js/tc-combobox.js') }}"></script>

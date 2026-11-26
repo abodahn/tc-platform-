@@ -5220,5 +5220,11 @@
   "proc.imports.rs_closed": "Closed",
   "proc.imports.rs_rejected": "Rejected",
   "proc.imports.voided": "Voided",
-  "proc.imports.waived": "Quotes waived"
+  "proc.imports.waived": "Quotes waived",
+  "navback.back": "Back",
+  "navback.go_home": "Go to the home page",
+  "navback.preparing": "Preparing the file…",
+  "navback.file_ready": "Your file is ready.",
+  "navback.open_file": "Open file",
+  "navback.failed": "The file could not be opened. Check your connection and try again."
 }

@@ -9,7 +9,7 @@
   </div>
   <div class="flex gap center">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.shipments') }}" data-i18n="shp.nav.list">All shipments</a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('shipping.export_csv', key='reconciliation') }}" data-i18n="shp.action.export">Export CSV</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('shipping.export_csv', key='reconciliation') }}" data-i18n="shp.action.export">Export CSV</a>
   </div>
 </div>
 

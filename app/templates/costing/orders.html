@@ -35,9 +35,9 @@
     <div class="sub" data-i18n="cst.orders.sub2">What each order was quoted at, what it actually cost, and where the margin went. Worst first.</div>
   </div>
   <div class="flex gap center">
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.export_csv', key='order-margin') }}"
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('costing.export_csv', key='order-margin') }}"
        data-i18n="cst.action.export">Export CSV</a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.export_csv', key='bom-lines') }}"
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('costing.export_csv', key='bom-lines') }}"
        data-i18n="cst.action.export_bom">BOM lines CSV</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('costing.index') }}" data-i18n="cst.nav.home">Dashboard</a>
   </div>

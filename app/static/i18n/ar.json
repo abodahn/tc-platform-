@@ -5220,5 +5220,11 @@
   "proc.imports.rs_closed": "مقفول",
   "proc.imports.rs_rejected": "مرفوض",
   "proc.imports.voided": "ملغي",
-  "proc.imports.waived": "معفي من عروض الأسعار"
+  "proc.imports.waived": "معفي من عروض الأسعار",
+  "navback.back": "رجوع",
+  "navback.go_home": "روح للصفحة الرئيسية",
+  "navback.preparing": "جاري تجهيز الملف…",
+  "navback.file_ready": "الملف جاهز.",
+  "navback.open_file": "افتح الملف",
+  "navback.failed": "تعذّر فتح الملف. اتأكد من الاتصال وحاول مرة تانية."
 }
