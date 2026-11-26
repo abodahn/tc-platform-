@@ -31,6 +31,7 @@ next is not worth translating carefully.
 # module docstring for why, and tests_messages_i18n.py for the check that keeps
 # that choice honest.
 MESSAGES = {
+    "Write the request in English only. Arabic text is not accepted in: ": {"ar": "اكتب الطلب بالإنجليزي بس. الكتابة بالعربي مش مقبولة في: ", "tr": "Talebi yalnızca İngilizce yazın. Arapça metin kabul edilmiyor: "},
     "That purchase order is cancelled, so it cannot be revised.": {"ar": "أمر الشراء ده ملغي، فمش ممكن يتعدّل.", "tr": "Bu satın alma siparişi iptal edildi, revize edilemez."},
     # --- Imports + framework agreements (app/routes/approvals_imports.py) ---
     'Not found or no longer available.': {'ar': 'مش موجود أو مبقاش متاح.', 'tr': 'Bulunamadı veya artık mevcut değil.'},

@@ -3116,6 +3116,8 @@
   "proc.after_vat": "بعد الضريبة",
   "proc.in_place_tag": "وقّع السوبر أدمن بدلاً من",
   "proc.rfq.for_value": "مطلوبة لقيمة الطلب (قبل الضريبة)",
+  "proc.en_only.note": "اكتب الطلب بالإنجليزي. الكتابة بالعربي مش مقبولة.",
+  "proc.en_only.msg": "بالإنجليزي بس من فضلك، العربي مش مقبول.",
   "proc.rtv.how": "طريقة التسوية من المورد",
   "proc.rtv.st_credit_note": "إشعار دائن",
   "proc.rtv.st_replacement": "توريد بديل",

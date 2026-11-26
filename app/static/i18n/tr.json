@@ -3116,6 +3116,8 @@
   "proc.after_vat": "KDV dahil",
   "proc.in_place_tag": "Süper yönetici şunun yerine imzaladı",
   "proc.rfq.for_value": "bu tutar için gerekli (KDV hariç)",
+  "proc.en_only.note": "Talebi İngilizce yazın. Arapça metin kabul edilmez.",
+  "proc.en_only.msg": "Lütfen yalnızca İngilizce. Arapça kabul edilmez.",
   "proc.rtv.how": "Tedarikçi nasıl kapattı",
   "proc.rtv.st_credit_note": "Alacak dekontu",
   "proc.rtv.st_replacement": "Yedek teslimat",
