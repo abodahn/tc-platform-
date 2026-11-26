@@ -1504,7 +1504,8 @@ def my_queue(user, own_only=False):
     which is what made procurement pages crawl once auto-reorder PRs landed.)"""
     if not user:
         return []
-    prs = list_prs(status="pending")
+    # No row cap: a queue silently cut at list_prs' default 500 hid signatures.
+    prs = list_prs(status="pending", limit=1_000_000_000)
     if not prs:
         return []
     ids = [pr["id"] for pr in prs]
@@ -3766,6 +3767,8 @@ def _issue_po_rows(conn, pr_id, pr, base_no, user):
              "issued", now, uname))
         row["id"] = c.lastrowid
         out.append(row)
+    from app.approvals import delivery as _delivery
+    _delivery.stamp_promised(conn, pr, out)
     return out
 
 
@@ -3818,7 +3821,19 @@ def split_order(conn, pr, po_id):
     except (TypeError, ValueError):
         return None, "po_required"
     po = next((p for p in pos if p.get("id") == want), None)
+    if po and po.get("status") == "cancelled":
+        return None, "po_cancelled"      # cancelled alone (delivery.cancel_po): owed nothing
     return (po, None) if po else (None, "po_required")
+
+
+def _cancelled_grand(conn, pr_id):
+    """Value of a split request's orders cancelled one by one (delivery.cancel_po):
+    never owed, so never payable. 0 once every order is cancelled (cancel_pr)."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(grand),0) s FROM pr_purchase_orders WHERE pr_id=? AND status='cancelled' "
+        "AND EXISTS (SELECT 1 FROM pr_purchase_orders o2 WHERE o2.pr_id=? "
+        "AND COALESCE(o2.status,'issued')<>'cancelled')", (pr_id, pr_id)).fetchone()
+    return round(float(row["s"] or 0), 2)
 
 
 def po_exposure(conn, pr, po):
@@ -4457,6 +4472,12 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
             except (TypeError, ValueError):
                 return 0.0
 
+        # Lines of a supplier's order cancelled alone (delivery.cancel_po) are
+        # owed by nobody: refuse the whole receipt rather than book against them.
+        from app.approvals import delivery as _delivery
+        dead = _delivery.cancelled_item_ids(conn, pr_id)
+        if any(_qty(receipts, i) > 0 or _qty(rejects, i) > 0 for i in dead):
+            return False, "po_cancelled"
         for it in items:
             add = _qty(receipts, it["id"])
             rej = _qty(rejects, it["id"])
@@ -4495,8 +4516,9 @@ def receive_items(pr_id, receipts, user, notes=None, ip=None, post_stock=True,
         if not any_recv:
             return False, "nothing_received"
         # recompute fulfilment
-        items = conn.execute("SELECT qty, received_qty FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
-        fully = all(float(i["received_qty"] or 0) >= float(i["qty"] or 0) for i in items)
+        items = conn.execute("SELECT id, qty, received_qty FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
+        fully = all(float(i["received_qty"] or 0) >= float(i["qty"] or 0) for i in items
+                    if i["id"] not in dead)
         new_status = "received" if fully else "partially_received"
         conn.execute(
             "UPDATE pr_requests SET status=?, received_at=?, received_by=?, "
@@ -4601,6 +4623,7 @@ def post_stock_postings(pr_id, user=None, manual=False):
                 "(status='skipped' AND COALESCE(last_error,'no_matching_material')='no_matching_material'))" if manual
                 else "status IN ('pending','failed')")
     selected = eligible.replace("status", "p.status").replace("last_error", "p.last_error")
+    landed = {}      # imports.stock_unit_cost: the landed view once per receipt
     try:
         conn = get_db()
         try:
@@ -4655,6 +4678,10 @@ def post_stock_postings(pr_id, user=None, manual=False):
                         (row["target_id"], row["id"])) != 1:
                     continue      # another request claimed it
                 price = 0.0 if row["free"] else float(row["unit_price"] or 0) * _pr_fx(row)
+                if price and float(row["qty"]) > 0:
+                    # Landed cost: unchanged unless the admin switched it on.
+                    from app.approvals import imports as _imp
+                    price = _imp.stock_unit_cost(row["pr_id"], row["item_id"], price, cache=landed)
                 try:
                     if float(row["qty"]) < 0:
                         ok, err = _unpost(row, actor)
@@ -4879,6 +4906,17 @@ def three_way_match(pr_id):
     pr, items = bundle["pr"], bundle["items"]
     amt = pr_amounts(pr)
     ordered_grand = amt["grand"]
+    # A supplier's order cancelled alone (delivery.cancel_po) is owed nothing:
+    # its lines and value leave the match, as they leave add_payment's cap.
+    from app.approvals import delivery as _delivery
+    conn = get_db()
+    try:
+        dead = _delivery.cancelled_item_ids(conn, pr_id)
+        if dead and len(dead) < len(items):      # all dead = cancel_pr: match as before
+            ordered_grand = round(ordered_grand - _cancelled_grand(conn, pr_id), 2)
+            items = [i for i in items if i["id"] not in dead]
+    finally:
+        conn.close()
     ordered_qty = sum(float(i["qty"] or 0) for i in items)
     received_qty = sum(float(i["received_qty"] or 0) for i in items)
     received_value = round(sum(float(i["received_qty"] or 0) * net_unit_price(i)
@@ -5751,7 +5789,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         # below is bit-for-bit what it was. Resolved before any write so the
         # read-through in split_order cannot roll one back.
         po, po_err = split_order(conn, pr, data.get("po_id"))
-        if po_err and not force:
+        if po_err and (not force or po_err == "po_cancelled"):
             return False, po_err
         role = (user or {}).get("role")
         exempt = (role == "super_admin" or user_has_permission(user, "proc_admin")) and bool_setting(conn, "sod_admin_exempt")
@@ -5780,7 +5818,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         # others stay overridable like every other gate here.
         if not adv_ok and (not force or adv_msg == "advance_vendor_not_approved"):
             return False, adv_msg
-        grand = pr_amounts(pr)["grand"]
+        grand = pr_amounts(pr)["grand"] - _cancelled_grand(conn, pr_id)
         # Configurable slack on the caps. Written as x * (pct/100.0), NOT
         # x * pct / 100.0: with the default 1.0 the first form is bit-for-bit the
         # old `x * 0.01`, the second can differ in the last bit.
@@ -5849,7 +5887,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
              data.get("method"), data.get("reference"), data.get("paid_at") or now[:10],
              data.get("notes"), user.get("username") if user else "system", now))
         paid = float(pr["paid_amount"] or 0) + amount
-        grand = pr_amounts(pr)["grand"]
+        grand = pr_amounts(pr)["grand"] - _cancelled_grand(conn, pr_id)
         pstatus = _payment_status(paid, match, grand)
         conn.execute("UPDATE pr_requests SET paid_amount=?, payment_status=? WHERE id=?",
                      (round(paid, 2), pstatus, pr_id))
@@ -5878,9 +5916,11 @@ def close_pr(pr_id, user, ip=None, reason=None):
             return False, "not_found"
         if pr["status"] not in ("received", "po_issued", "in_transit", "partially_received"):
             return False, "not_closable"
-        items = conn.execute("SELECT qty, received_qty, unit_price, net_price FROM pr_items "
+        items = conn.execute("SELECT id, qty, received_qty, unit_price, net_price FROM pr_items "
                              "WHERE pr_id=?", (pr_id,)).fetchall()
-        short = any(float(it["qty"] or 0) > 0 and
+        from app.approvals import delivery as _delivery
+        dead = _delivery.cancelled_item_ids(conn, pr_id)
+        short = any(it["id"] not in dead and float(it["qty"] or 0) > 0 and
                     round(float(it["received_qty"] or 0), 6) < round(float(it["qty"] or 0), 6)
                     for it in items)
         reason = (reason or "").strip()
@@ -5905,20 +5945,23 @@ def close_pr(pr_id, user, ip=None, reason=None):
         conn.close()
 
 
-def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
+def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None, po_id=None):
     """Email each Purchase Order (PDF attached) to ITS OWN vendor's address.
 
     One send per order, never one broadcast: a request split across suppliers
     has one document per supplier, and each supplier may only ever receive the
     document carrying their own lines and prices. `pdf_bytes` (if supplied) is
-    the primary order's PDF, as before."""
+    the primary order's PDF, as before. `po_id` sends that ONE order only (a
+    revised order goes to its own supplier, the others are not re-sent)."""
     bundle = get_pr(pr_id)
     if not bundle:
         return False, "not_found"
     pr = bundle["pr"]
-    if pr["status"] not in ("approved", "po_issued", "in_transit", "received", "closed"):
+    if pr["status"] not in ("approved", "po_issued", "in_transit", "received", "closed")             and not (po_id and pr["status"] == "partially_received"):
         return False, "not_approved"
     pos = bundle.get("pos") or []
+    if po_id:
+        pos = [p for p in pos if p.get("id") == po_id]
     if not pos:
         return False, "no_vendor_email"
     # find each vendor's email
@@ -5938,6 +5981,8 @@ def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
     from app.approvals import pdf as _pdf
     sent, log_lines = False, []
     for i, p in enumerate(pos):
+        if p.get("status") == "cancelled":
+            continue          # never re-send an order cancelled alone
         vendor_email = emails.get(p["po_no"])
         if not vendor_email:
             log_lines.append(f"{p['po_no']}: no email on file for {p.get('vendor') or '—'}")
@@ -5956,7 +6001,9 @@ def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
                 f"Delivery: {pr.get('delivery_condition') or '-'}\n\n"
                 f"Regards,\nT&C Garments — Purchasing")
         atts = [(f"{p['po_no']}.pdf", blob, "application/pdf")] if blob else None
-        ok = send_email_to([vendor_email], f"Purchase Order {p['po_no']} — T&C Garments",
+        ok = send_email_to([vendor_email], f"Purchase Order {p['po_no']}"
+                           + (f" Rev {p['rev']}" if po_id and p.get("rev") else "")
+                           + " — T&C Garments",
                            body, attachments=atts)
         sent = sent or ok
         log_lines.append(f"{p['po_no']} -> {vendor_email}"
@@ -7446,6 +7493,16 @@ def rfq_requirement(conn, pr):
     _pcur = _pr_field(pr, "currency") or "EGP"
     if ch and ch["egp_rate"] and ch["currency"] != (C.currency_code(_pcur) or _pcur):
         total = max(total, round(float(ch.get("amount") or 0) * ch["egp_rate"], 2))
+    # Framework agreements: a line drawn against an agreement (see
+    # imports.rfq_waiver) needs no competitive quotes; the rest of the request
+    # is judged on its own NET value. DOAM 4.4 below still applies to every
+    # line, agreement price included. Nothing here touches the ladder.
+    from app.approvals import imports as _imp
+    _fa = _imp.rfq_waiver(conn, pr)
+    if _fa["lines"]:
+        out["agreement_lines"] = _fa["lines"]
+        out["agreement"] = _fa["all"]
+        total = max(0.0, total - _fa["egp"])
     out["value"] = round(total, 2)
     # DOAM §4.3 bands when the matrix is in force: 1 quote up to 50,000, three to
     # 500,000, three plus negotiation to 2,000,000, formal tender above that. The
@@ -7460,6 +7517,8 @@ def rfq_requirement(conn, pr):
         # what the band says. A genuinely uncontested buy still has to carry a
         # single-source justification, which is checked just below.
         required_quotes = max(1, required_quotes)
+        if _fa["all"]:
+            required_quotes = 0      # every line rests on an approved agreement price
     else:
         if total < num_setting(conn, "rfq_value_threshold"):
             return out           # below the competitive-quote threshold
@@ -7476,6 +7535,8 @@ def rfq_requirement(conn, pr):
     except Exception as exc:  # noqa: BLE001
         logging.getLogger(__name__).warning(
             "DOAM 4.4: deviation quote requirement unavailable (%s)", exc)
+    if _fa["all"] and not required_quotes:
+        return out               # all-agreement request priced on plan
     out["required"] = int(required_quotes)
     if str(_pr_field(pr, "single_source_reason") or "").strip():
         out["single_source"] = True
@@ -9633,7 +9694,7 @@ def reverse_payment(pay_id, reason, user, ip=None):
                      (pr_id, pay["po_id"], pay["invoice_id"], -float(pay["amount"] or 0), pay["currency"],
                       pay["reference"], now[:10], reason, pay_id, (user or {}).get("username"), now))
         paid = float(pr["paid_amount"] or 0) - float(pay["amount"] or 0)
-        status = _payment_status(paid, match, pr_amounts(pr)["grand"])
+        status = _payment_status(paid, match, pr_amounts(pr)["grand"] - _cancelled_grand(conn, pr_id))
         conn.execute("UPDATE pr_requests SET paid_amount=?, payment_status=? WHERE id=?", (round(paid, 2), status, pr_id))
         audit(conn, pr_id, (user or {}).get("username"), "payment_reversed", f"Payment #{pay_id}: {reason}", ip)
         _notify_correction(conn, pr, user, "Payment reversed", f"a payment was reversed: {reason}")

@@ -1,0 +1,256 @@
+{#- Imports + framework agreements on the request page (app/approvals/imports.py).
+    Built by one template global so detail() itself is untouched. -#}
+{%- set ix = proc_imports_ctx(pr, b) -%}
+{%- macro mlabel(m) -%}
+  {%- if m == 'shipped_at' %}<span data-i18n="proc.imports.m_shipped">Shipped</span>
+  {%- elif m == 'port_at' %}<span data-i18n="proc.imports.m_port">Arrived at port</span>
+  {%- elif m == 'cleared_at' %}<span data-i18n="proc.imports.m_cleared">Customs cleared</span>
+  {%- else %}<span data-i18n="proc.imports.m_delivered">Delivered to warehouse</span>{% endif -%}
+{%- endmacro -%}
+{%- macro klabel(k) -%}
+  {%- if k == 'freight' %}<span data-i18n="proc.imports.k_freight">Freight</span>
+  {%- elif k == 'insurance' %}<span data-i18n="proc.imports.k_insurance">Insurance</span>
+  {%- elif k == 'duty' %}<span data-i18n="proc.imports.k_duty">Customs duty</span>
+  {%- elif k == 'clearance' %}<span data-i18n="proc.imports.k_clearance">Clearance</span>
+  {%- elif k == 'port' %}<span data-i18n="proc.imports.k_port">Port / storage</span>
+  {%- else %}<span data-i18n="proc.imports.k_other">Other</span>{% endif -%}
+{%- endmacro -%}
+
+{% if ix.drawn_lines or ix.draw %}
+<div class="panel mt-4" id="imp-agr">
+  <div class="panel-head"><h3 data-i18n="proc.imports.agr_title">Framework agreements</h3>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.agreements') }}" data-i18n="proc.imports.agr_all">All agreements</a></div>
+  <div class="panel-pad">
+    <p class="muted imp-note" data-i18n="proc.imports.agr_hint">A line drawn against an active agreement takes the agreed price and supplier, and needs no competitive quotes while the agreement is in date and inside its ceiling. Every approval signature is still collected.</p>
+    {% for d in ix.drawn_lines or [] %}
+    <div class="imp-row">
+      <div class="imp-row-main">
+        <b>{{ d.item }}</b>
+        <span class="muted">{{ '%g'|format(d.qty or 0) }} {{ d.unit or '' }}</span>
+        {% if d.agr %}<a class="tag" href="{{ url_for('approvals.agreement_detail', agr_id=d.agr.agreement_id) }}">{{ d.agr.ref }}</a>{% endif %}
+        {% if ix.money_full and d.agr %}<span class="nw">{{ '{:,.2f}'.format(d.agr.unit_price or 0) }} {{ pr.currency }}</span>{% endif %}
+        {% if d.waived %}<span class="badge b-approved" data-i18n="proc.imports.waived">Quotes waived</span>
+        {% else %}<span class="badge b-pending" data-i18n="proc.imports.not_waived">Normal quotation rule</span>{% endif %}
+      </div>
+      {% if ix.can_record and pr.status in ('draft', 'rejected', 'pending') %}
+      <form method="post" action="{{ url_for('approvals.imp_release', pr_id=pr.id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="item_id" value="{{ d.id }}">
+        <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.imports.release">Release</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% for item_id, hits in ix.draw.items() %}{% set it = ix.line_by_id[item_id] %}
+    {% if not ix.can_record %}
+    <div class="imp-row">
+      <div class="imp-row-main">
+        <b>{{ it.item }}</b>
+        {% for h in hits %}<span class="tag">{{ h.ref }}</span>{% endfor %}
+        <span class="muted imp-small" data-i18n="proc.imports.agr_exists">An active agreement covers this item. Purchasing will price it from the agreement.</span>
+      </div>
+    </div>
+    {% else %}
+    <form class="imp-row" method="post" action="{{ url_for('approvals.imp_draw', pr_id=pr.id) }}" data-once>
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="item_id" value="{{ item_id }}">
+      <div class="imp-row-main">
+        <b>{{ it.item }}</b> <span class="muted">{{ '%g'|format(it.qty or 0) }} {{ it.unit or '' }}</span>
+      </div>
+      <label class="sr-only" for="imp-line-{{ item_id }}" data-i18n="proc.imports.pick_agr">Agreement</label>
+      <select id="imp-line-{{ item_id }}" name="line_id" data-no-search>
+        {% for h in hits %}<option value="{{ h.id }}">{{ h.ref }} · {{ h.vendor }}{% if ix.money_full %} · {{ '{:,.2f}'.format(h.unit_price or 0) }} {{ h.currency }}{% endif %}</option>{% endfor %}
+      </select>
+      <button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.imports.draw">Price from agreement</button>
+    </form>
+    {% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if ix.pos %}
+<div class="panel mt-4" id="imp-ship">
+  <div class="panel-head"><h3 data-i18n="proc.imports.title">Import shipment &amp; landed cost</h3></div>
+  <div class="panel-pad">
+  {% for o in ix.pos %}{% set sh = o.shipment %}{% set pk = loop.index %}
+    <section class="imp-po">
+      <h4 class="imp-po-h"><span class="tag">{{ o.po.po_no }}</span> {{ o.po.vendor or pr.vendor or '' }}</h4>
+
+      <ol class="imp-tl">
+        {% for m, d in o.milestones %}
+        <li class="{{ 'is-done' if d else ('is-next' if m == o.next_milestone else '') }}">
+          <span class="imp-tl-l">{{ mlabel(m) }}</span>
+          <span class="imp-tl-d">{{ d or '—' }}</span>
+        </li>
+        {% endfor %}
+      </ol>
+      <dl class="imp-meta">
+        <div><dt data-i18n="proc.imports.bl">BL / AWB number</dt><dd>{{ sh.bl_no or '—' }}</dd></div>
+        <div><dt data-i18n="proc.imports.carrier">Shipping line / forwarder</dt><dd>{{ sh.carrier or '—' }}</dd></div>
+        <div><dt data-i18n="proc.imports.incoterm">Incoterm</dt><dd>{{ sh.incoterm or '—' }}</dd></div>
+      </dl>
+
+      {% if ix.can_record %}
+      <details class="imp-edit">
+        <summary data-i18n="proc.imports.edit_ship">Update shipment</summary>
+        <form method="post" action="{{ url_for('approvals.imp_shipment', pr_id=pr.id) }}" class="mt-2">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="po_no" value="{{ o.po.po_no }}">
+          <div class="grid cols-3 imp-grid">
+            <div class="field"><label for="bl-{{ pk }}" data-i18n="proc.imports.bl">BL / AWB number</label>
+              <input id="bl-{{ pk }}" name="bl_no" maxlength="60" autocomplete="off" value="{{ sh.bl_no or '' }}"></div>
+            <div class="field"><label for="car-{{ pk }}" data-i18n="proc.imports.carrier">Shipping line / forwarder</label>
+              <input id="car-{{ pk }}" name="carrier" maxlength="120" autocomplete="off" value="{{ sh.carrier or '' }}"></div>
+            <div class="field"><label for="inc-{{ pk }}" data-i18n="proc.imports.incoterm">Incoterm</label>
+              <select id="inc-{{ pk }}" name="incoterm" data-no-search>
+                <option value="">—</option>
+                {% for t in ix.incoterms %}<option value="{{ t }}" {{ 'selected' if sh.incoterm == t }}>{{ t }}</option>{% endfor %}
+              </select></div>
+            {% for m, d in o.milestones %}
+            <div class="field"><label for="{{ m }}-{{ pk }}">{{ mlabel(m) }}</label>
+              <input id="{{ m }}-{{ pk }}" type="date" name="{{ m }}" value="{{ d or '' }}"></div>
+            {% endfor %}
+            <div class="field"><label for="al-{{ pk }}" data-i18n="proc.imports.alloc">Allocate charges by</label>
+              <select id="al-{{ pk }}" name="alloc_method" data-no-search>
+                <option value="value" {{ 'selected' if o.method == 'value' }} data-i18n="proc.imports.by_value">Line value</option>
+                <option value="qty" {{ 'selected' if o.method == 'qty' }} data-i18n="proc.imports.by_qty">Quantity</option>
+              </select></div>
+          </div>
+          <button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.imports.save_ship">Save shipment</button>
+        </form>
+      </details>
+      {% endif %}
+
+      {% if ix.money_full %}
+      <h5 class="imp-sub" data-i18n="proc.imports.charges">Landed-cost charges</h5>
+      {% if o.charges %}
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th data-i18n="proc.imports.kind">Charge</th>
+            <th data-i18n="proc.imports.amount">Amount</th>
+            <th data-i18n="proc.imports.rate">Rate to EGP</th>
+            <th>EGP</th>
+            <th data-i18n="proc.imports.ref">Reference</th>
+            <th></th>
+          </tr></thead>
+          <tbody>
+          {% for c in o.charges %}
+            <tr class="{{ 'imp-void' if c.status == 'void' }}">
+              <td>{{ klabel(c.kind) }}{% if c.status == 'void' %} <span class="badge b-cancelled" data-i18n="proc.imports.voided">Voided</span>{% endif %}</td>
+              <td class="nw num">{{ '{:,.2f}'.format(c.amount or 0) }} {{ c.currency }}</td>
+              <td class="num">{{ '%g'|format(c.fx_rate or 1) }}</td>
+              <td class="nw num">{{ '{:,.2f}'.format(c.amount_egp or 0) }}</td>
+              <td>{{ c.reference or '' }}{% if c.filename %}
+                <a href="{{ url_for('approvals.imp_charge_file', charge_id=c.id) }}" data-i18n="proc.imports.doc">Document</a>{% endif %}
+                {% if c.void_reason %}<div class="muted imp-small">{{ c.void_reason }}</div>{% endif %}</td>
+              <td>{% if ix.can_correct and c.status == 'active' %}
+                <details class="imp-fix">
+                  <summary data-i18n="proc.imports.correct">Correct</summary>
+                  <form method="post" action="{{ url_for('approvals.imp_charge_correct', charge_id=c.id) }}" data-once>
+                    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                    <div class="field"><label for="ca-{{ c.id }}" data-i18n="proc.imports.amount">Amount</label>
+                      <input id="ca-{{ c.id }}" name="amount" type="number" step="0.01" min="0.01" required value="{{ '%.2f'|format(c.amount or 0) }}"></div>
+                    <div class="field"><label for="cc-{{ c.id }}" data-i18n="proc.imports.currency">Currency</label>
+                      <select id="cc-{{ c.id }}" name="currency" data-no-search>
+                        {% for cu in ix.currencies %}<option {{ 'selected' if cu == c.currency }}>{{ cu }}</option>{% endfor %}
+                      </select></div>
+                    <div class="field"><label for="cf-{{ c.id }}" data-i18n="proc.imports.rate">Rate to EGP</label>
+                      <input id="cf-{{ c.id }}" name="fx_rate" type="number" step="any" min="0" value="{{ '%g'|format(c.fx_rate or 1) }}"></div>
+                    <button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.imports.save">Save</button>
+                  </form>
+                  <form method="post" action="{{ url_for('approvals.imp_charge_void', charge_id=c.id) }}" class="mt-2">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                    <div class="field"><label for="cv-{{ c.id }}" data-i18n="proc.imports.void_reason">Why void it?</label>
+                      <input id="cv-{{ c.id }}" name="reason" maxlength="300" required autocomplete="off"></div>
+                    <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.imports.void">Void charge</button>
+                  </form>
+                </details>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="muted" data-i18n="proc.imports.no_charges">No charges recorded yet.</p>
+      {% endif %}
+
+      {% if ix.can_record %}
+      <details class="imp-edit">
+        <summary data-i18n="proc.imports.add_charge">Add a charge</summary>
+        <form method="post" action="{{ url_for('approvals.imp_charge', pr_id=pr.id) }}" enctype="multipart/form-data" class="mt-2" data-once>
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="po_no" value="{{ o.po.po_no }}">
+          <div class="grid cols-3 imp-grid">
+            <div class="field"><label for="k-{{ pk }}" data-i18n="proc.imports.kind">Charge</label>
+              <select id="k-{{ pk }}" name="kind" required data-no-search>
+                <option value="freight" data-i18n="proc.imports.k_freight">Freight</option>
+                <option value="insurance" data-i18n="proc.imports.k_insurance">Insurance</option>
+                <option value="duty" data-i18n="proc.imports.k_duty">Customs duty</option>
+                <option value="clearance" data-i18n="proc.imports.k_clearance">Clearance</option>
+                <option value="port" data-i18n="proc.imports.k_port">Port / storage</option>
+                <option value="other" data-i18n="proc.imports.k_other">Other</option>
+              </select></div>
+            <div class="field"><label for="a-{{ pk }}" data-i18n="proc.imports.amount">Amount</label>
+              <input id="a-{{ pk }}" name="amount" type="number" step="0.01" min="0.01" required inputmode="decimal"></div>
+            <div class="field"><label for="cu-{{ pk }}" data-i18n="proc.imports.currency">Currency</label>
+              <select id="cu-{{ pk }}" name="currency" data-no-search>
+                {% for cu in ix.currencies %}<option>{{ cu }}</option>{% endfor %}
+              </select></div>
+            <div class="field"><label for="fx-{{ pk }}" data-i18n="proc.imports.rate">Rate to EGP</label>
+              <input id="fx-{{ pk }}" name="fx_rate" type="number" step="any" min="0" inputmode="decimal"
+                     placeholder="EGP per 1 unit" data-i18n-ph="proc.imports.rate_ph"></div>
+            <div class="field"><label for="r-{{ pk }}" data-i18n="proc.imports.ref">Reference</label>
+              <input id="r-{{ pk }}" name="reference" maxlength="80" autocomplete="off"></div>
+            <div class="field"><label for="d-{{ pk }}" data-i18n="proc.imports.doc">Document</label>
+              <input id="d-{{ pk }}" name="document" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.csv"></div>
+          </div>
+          <button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.imports.save_charge">Record charge</button>
+        </form>
+      </details>
+      {% endif %}
+
+      <h5 class="imp-sub" data-i18n="proc.imports.landed">Landed cost per line</h5>
+      <div class="imp-sum">
+        <div><span data-i18n="proc.imports.po_value">Order value</span><b class="num">{{ '{:,.2f}'.format(o.po_value_egp) }} EGP</b></div>
+        <div><span data-i18n="proc.imports.charges_total">Charges</span><b class="num">{{ '{:,.2f}'.format(o.charges_egp) }} EGP</b></div>
+        <div><span data-i18n="proc.imports.landed_total">Landed total</span><b class="num">{{ '{:,.2f}'.format(o.landed_egp) }} EGP</b>
+          {% if o.uplift_pct is not none %}<span class="muted">+{{ o.uplift_pct }}%</span>{% endif %}</div>
+      </div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th data-i18n="proc.item">Item</th>
+            <th data-i18n="proc.qty">Qty</th>
+            <th data-i18n="proc.imports.unit_egp">Unit price (EGP)</th>
+            <th data-i18n="proc.imports.share">Share of charges</th>
+            <th data-i18n="proc.imports.landed_unit">Landed unit cost</th>
+            <th data-i18n="proc.imports.landed_line">Landed total</th>
+          </tr></thead>
+          <tbody>
+          {% for r in o.lines %}
+            <tr>
+              <td>{{ r.item }}</td>
+              <td class="num">{{ '%g'|format(r.qty) }} {{ r.unit or '' }}</td>
+              <td class="num">{{ '{:,.2f}'.format(r.unit_egp) }}</td>
+              <td class="num">{{ '{:,.2f}'.format(r.alloc_egp) }}</td>
+              <td class="num"><b>{{ '{:,.2f}'.format(r.landed_unit_egp) if r.landed_unit_egp is not none else '—' }}</b></td>
+              <td class="num">{{ '{:,.2f}'.format(r.landed_egp) }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted imp-note">
+        {% if o.method == 'qty' %}<span data-i18n="proc.imports.alloc_qty_note">Charges are shared by quantity.</span>
+        {% else %}<span data-i18n="proc.imports.alloc_value_note">Charges are shared by line value.</span>{% endif %}
+        {% if ix.stock_on %}<span data-i18n="proc.imports.stock_on">Stock valuation: ON. Goods booked in after these charges were recorded enter stock at the landed unit cost. Goods already booked in are not revalued.</span>
+        {% else %}<span data-i18n="proc.imports.stock_off">Stock valuation: OFF. Stock keeps the purchase price; this table is for costing only. An admin can switch it on in Workflow settings.</span>{% endif %}
+      </p>
+      {% endif %}
+    </section>
+  {% endfor %}
+  </div>
+</div>
+{% endif %}

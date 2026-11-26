@@ -62,6 +62,7 @@ NAV = [
         # Sits with the requests, not under Insight: "who is sitting on my PR" is
         # something a buyer acts on this morning, not something they report on.
         ("proc_aging", "aging.nav", "clock", "proc_aging.index", "proc_view", "nav.b_requests"),
+        ("proc_deliveries", "proc.delivery.late_nav", "clock", "approvals.deliveries", "proc_purchasing", "nav.b_requests"),
         # DOAM §3.4 — the register that makes "...or agreed forecast" real.
         ("proc_forecasts", "nav.proc_forecasts", "target", "approvals.forecasts", "proc_view", "nav.b_requests"),
         ("proc_item_requests", "nir.queue", "boxes", "approvals.item_requests", "proc_purchasing", "nav.b_requests"),
@@ -72,6 +73,7 @@ NAV = [
         # store already works from rather than behind the admin import screen.
         ("proc_items", "items.nav", "boxes", "approvals.items", "proc_catalogue", "nav.b_requests"),
         ("proc_vendors", "nav.proc_vendors", "users", "approvals.vendors", "proc_view", "nav.b_suppliers"),
+        ("proc_agreements", "proc.imports.nav", "book", "approvals.agreements", "proc_view", "nav.b_suppliers"),
         ("proc_budgets", "nav.proc_budgets", "wallet", "approvals.budgets", "proc_view", "nav.b_suppliers"),
         ("proc_delegations", "nav.proc_delegations", "users", "approvals.delegations", "proc_view", "nav.b_suppliers"),
         ("proc_analytics", "nav.proc_analytics", "chart", "approvals.analytics", "proc_view", "nav.b_insight"),

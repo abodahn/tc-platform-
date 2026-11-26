@@ -380,3 +380,88 @@
 .content.proc .rtv-settle summary{list-style:none}
 .content.proc .rtv-settle-f{display:grid;gap:8px;margin-top:8px;min-width:min(260px,80vw)}
 .content.proc .rtv-settle-f label{display:grid;gap:3px;font-size:12.5px}
+/* ---- Imports + framework agreements (app/approvals/imports.py) ---- */
+.content.proc .imp-note{font-size:12.5px;max-width:80ch}
+.content.proc .imp-small{font-size:11.5px}
+.content.proc .num{font-variant-numeric:tabular-nums}
+.content.proc .imp-row{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 0;border-bottom:1px solid var(--line-2)}
+.content.proc .imp-row:last-child{border-bottom:0}
+.content.proc .imp-row-main{flex:1 1 220px;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.content.proc .imp-row select{flex:1 1 200px;min-width:0;max-width:100%}
+.content.proc .imp-po{padding:4px 0 18px}
+.content.proc .imp-po + .imp-po{border-top:2px solid var(--line-2);padding-top:18px}
+.content.proc .imp-po-h{margin:0 0 12px;font-size:14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.content.proc .imp-sub{margin:16px 0 8px;font-size:13px}
+.content.proc .imp-tl{list-style:none;margin:0 0 12px;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.content.proc .imp-tl li{position:relative;padding:8px 10px;border-radius:8px;background:var(--line-2);border-top:3px solid var(--line);min-width:0}
+.content.proc .imp-tl li.is-done{background:var(--ok-bg);border-top-color:var(--ok)}
+.content.proc .imp-tl li.is-next{border-top-color:var(--warn)}
+.content.proc .imp-tl-l{display:block;font-size:12px;font-weight:600}
+.content.proc .imp-tl-d{display:block;font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--muted)}
+.content.proc .imp-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 16px;margin:0}
+.content.proc .imp-meta dt{font-size:11.5px;color:var(--muted)}
+.content.proc .imp-meta dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+.content.proc .imp-edit{margin-top:12px}
+.content.proc .imp-edit > summary,.content.proc .imp-fix > summary{cursor:pointer;font-weight:600;color:var(--tc-red)}
+.content.proc .imp-fix form{display:grid;gap:4px;min-width:min(240px,80vw);margin-top:6px}
+.content.proc .imp-fix .field{margin-bottom:4px}
+.content.proc .imp-grid{gap:0 14px}
+.content.proc .imp-grid .field input,.content.proc .imp-grid .field select{width:100%;min-width:0}
+.content.proc tr.imp-void td{color:var(--muted);text-decoration:line-through}
+.content.proc tr.imp-void td .badge,.content.proc tr.imp-void td .muted{text-decoration:none}
+.content.proc .imp-sum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.content.proc .imp-sum > div{padding:8px 10px;border-radius:8px;background:var(--line-2);display:grid;gap:2px;font-size:12px}
+.content.proc .imp-sum b{font-size:14px}
+.content.proc .imp-bar{height:8px;border-radius:4px;background:var(--line-2);overflow:hidden;min-width:80px}
+.content.proc .imp-bar > span{display:block;height:100%;background:var(--ok);border-radius:inherit}
+.content.proc .imp-bar.is-high > span{background:var(--warn)}
+.content.proc .imp-used{min-width:120px}
+.content.proc .imp-warn{border-color:var(--warn)}
+.content.proc .imp-warn .tag{margin:2px}
+.content.proc .imp-warn-t{color:var(--warn)}
+.content.proc .imp-filter{display:flex;flex-wrap:wrap;gap:0 14px;align-items:flex-end}
+.content.proc .imp-filter .field{flex:1 1 200px;min-width:0}
+.content.proc .imp-filter .field select{width:100%}
+.content.proc .imp-filter-btns{display:flex;gap:8px;margin-bottom:14px}
+.content.proc .imp-line{display:grid;grid-template-columns:1fr 2fr 1fr 1fr;gap:0 12px;border-bottom:1px solid var(--line-2);padding-top:8px}
+.content.proc .imp-line .field input{width:100%;min-width:0}
+@media (max-width:760px){
+  .content.proc .imp-tl{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .content.proc .imp-sum{grid-template-columns:1fr}
+  .content.proc .imp-line{grid-template-columns:1fr 1fr}
+  .content.proc .imp-line .field:nth-child(2){grid-column:1/-1;order:-1}
+  .content.proc .span-2{grid-column:auto}
+}
+
+/* Delivery follow-up panel (approvals/_delivery_pos.html) */
+.content.proc .dl-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.content.proc .dl-row:last-child { border-bottom: 0; }
+.content.proc .dl-form { position: relative; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.content.proc .dl-form input[type="date"] { max-width: 100%; }
+.content.proc .dl-lbl { display: none; font-size: 12px; }
+@media (max-width: 767.98px) { .content.proc .dl-lbl { display: inline; } }
+
+/* ---- PO lane (porev): bulk signing, PO revisions ---- */
+.porev-tick { width: 44px; }
+.porev-chk { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 32px; cursor: pointer; }
+.porev-chk input { width: 20px; height: 20px; margin: 0; }
+.porev-bulkbar { position: relative; display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 12px; }
+.porev-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; min-height: 44px;
+  padding: 8px 4px; border-bottom: 1px solid var(--line-2); text-decoration: none; color: inherit; }
+.porev-revq h4, .porev-h { margin: 16px 0 6px; font-size: 13.5px; }
+.porev-pending { border: 1px solid var(--line); border-inline-start: 4px solid var(--warn, #8A5D04);
+  border-radius: var(--r-md); padding: 12px 14px; margin: 12px 0; background: var(--panel-2); }
+.porev-grand { margin: 6px 0; font-variant-numeric: tabular-nums; }
+.porev-steps { margin: 8px 0; padding-inline-start: 20px; display: grid; gap: 4px; font-size: 13px; }
+.porev-steps li span + span { margin-inline-start: 6px; }
+.porev-form { margin-top: 10px; }
+.porev-form > summary { cursor: pointer; font-weight: 600; color: var(--tc-red); min-height: 44px; display: flex; align-items: center; }
+.porev-lines input[type="number"] { width: 100%; min-width: 72px; max-width: 130px; }
+.porev-rev { padding: 10px 0; border-bottom: 1px solid var(--line-2); }
+.porev-diff { margin-top: 6px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.porev-diff s { color: var(--muted); }
+[dir="rtl"] .porev-arr { display: inline-block; transform: scaleX(-1); }
+@media (max-width: 767.98px) {
+  .porev-bulkbar > .btn { flex: 1 1 100%; min-height: 44px; }
+  .porev .grid.cols-2 { grid-template-columns: 1fr; }
+}

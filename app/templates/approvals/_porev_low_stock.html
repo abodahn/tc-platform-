@@ -1,0 +1,44 @@
+{#- Short materials -> procurement (porev lane): what is already on order or
+    requested, and a pre-filled purchase request (proc_create). An item with an
+    open request also lists it (a link only for proc_view); the form then warns. -#}
+{% set lows = porev_low_stock() %}
+{% if lows %}
+<div class="panel mt-4" id="low-to-pr">
+  <div class="panel-head"><h3 data-i18n="proc.porev.low_title">Low stock — purchase requests</h3>
+    <span class="tag">{{ lows|length }}</span></div>
+  <div class="panel-pad">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th data-i18n="wh.field.material">Material</th>
+        <th style="text-align:end" data-i18n="wh.field.available">Available</th>
+        <th style="text-align:end" data-i18n="wh.field.reorder">Reorder level</th>
+        <th style="text-align:end" data-i18n="proc.porev.on_order">On order</th>
+        <th style="text-align:end" data-i18n="proc.porev.suggested">Suggested qty</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+      {% for r in lows %}
+        <tr>
+          <td>{{ r.code }}<div class="muted" style="font-size:11px">{{ r.name or '' }}</div></td>
+          <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.1f}'.format(r.available) }} {{ r.uom or '' }}</td>
+          <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '{:,.0f}'.format(r.reorder_level or 0) }}</td>
+          <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '%g'|format(r.on_order) }}</td>
+          <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '%g'|format(r.suggested) }}</td>
+          <td style="text-align:end">
+            {% if r.open_prs %}
+              <span class="muted" style="font-size:12px" data-i18n="proc.porev.open_exists">Already requested:</span>
+              {% for p in r.open_prs %}{% if can('proc_view') %}<a class="tag" href="{{ url_for('approvals.detail', pr_id=p.id) }}">{{ p.pr_no }}</a>{% else %}<span class="tag">{{ p.pr_no }}</span>{% endif %}{% endfor %}
+            {% endif %}
+            {% if can('proc_create') %}
+              <a class="btn btn-primary btn-sm" href="{{ url_for('approvals.new', stock=r.id) }}" data-i18n="proc.porev.raise">Raise purchase request</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endif %}

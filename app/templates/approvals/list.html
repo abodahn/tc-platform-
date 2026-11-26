@@ -124,6 +124,7 @@
       {% endfor %}
       <span style="flex:1"></span>
       <a class="btn btn-sm {{ 'btn-primary' if mine else 'btn-ghost' }}" href="{{ url_for('approvals.listing', **dict(keep, mine=(None if mine else 1))) }}" data-i18n="proc.mine">Mine only</a>
+      {% if can('proc_purchasing') %}<a class="btn btn-sm btn-ghost" href="{{ url_for('approvals.deliveries', late=1) }}" data-i18n="proc.delivery.late_nav">Late deliveries</a>{% endif %}
       {#- Exports exactly what the filters above are showing, which is why it
           sits beside them and carries the same arguments. The count is on the
           button so nobody sends a colleague a file they think is the whole
@@ -144,6 +145,7 @@
     <p class="muted pl-cap" data-i18n="proc.flt.cap">Showing the first 500 — narrow the filters to see the rest.</p>
     {% endif %}
     {% if prs %}
+    {% set late = delivery_late() %}
     <table class="tbl tbl-stack">
       <thead><tr>
         {{ sorth('proc.pr', 'Request', 'new', 'old') }}
@@ -168,6 +170,7 @@
                       data-i18n="proc.prio_{{ 'top' if pr.priority == 'top_urgent' else 'urgent' }}">
                   {{ '🔴 Top urgent' if pr.priority == 'top_urgent' else '🟠 Urgent' }}</span>
                 {% endif %}
+                {% if late.get(pr.id, {}).get('days') %}<span class="badge b-rejected nw"><span data-i18n="proc.delivery.overdue">Overdue</span> {{ late[pr.id].days }} <span data-i18n="proc.delivery.days">days</span></span>{% endif %}
               </div>
               <div class="muted" style="font-size:12px">{{ pr.title }}</div>
               {{ items_line(items.get(pr.id)) }}</td>

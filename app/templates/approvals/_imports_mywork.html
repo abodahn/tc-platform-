@@ -1,0 +1,19 @@
+{#- /my-work: framework agreements waiting for this user's approval. -#}
+{% if agr_queue %}
+<div class="panel">
+  <div class="panel-head">
+    <h3 data-i18n="proc.imports.mw_title">Framework agreements to approve</h3>
+    <span class="badge-count">{{ agr_queue|length }}</span>
+  </div>
+  <div class="panel-pad">
+    {% for a in agr_queue %}
+    <a class="row-line" href="{{ url_for('approvals.agreement_detail', agr_id=a.id) }}"
+       style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
+      <span><b>{{ a.ref }}</b> &middot; {{ a.vendor }}</span>
+      <span class="tag nw">{{ a.valid_to }}</span>
+    </a>
+    {% endfor %}
+    <a href="{{ url_for('approvals.agreements', status='draft') }}" data-i18n="mywork.view_all">View all</a>
+  </div>
+</div>
+{% endif %}

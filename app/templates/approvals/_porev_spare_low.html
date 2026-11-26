@@ -1,0 +1,17 @@
+{#- One maintenance spare in the dashboard's Low Stock panel (porev lane): what is
+    already on order for it (open lines linked by spare_id) and a pre-filled
+    purchase request for the suggested quantity. Expects `s` (an mnt_spare_parts row). -#}
+{% set o = porev_spare(s.id) %}
+{% if o %}
+<div class="muted porev-spare" style="font-size:12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-4px 0 8px">
+  <span><span data-i18n="proc.porev.on_order">On order</span>: {{ '%g'|format(o.on_order) }}</span>
+  <span>· <span data-i18n="proc.porev.suggested">Suggested qty</span>: {{ '%g'|format(o.suggested) }}</span>
+  {% if o.open_prs %}
+    <span data-i18n="proc.porev.open_exists">Already requested:</span>
+    {% for p in o.open_prs %}{% if can('proc_view') %}<a class="tag" href="{{ url_for('approvals.detail', pr_id=p.id) }}">{{ p.pr_no }}</a>{% else %}<span class="tag">{{ p.pr_no }}</span>{% endif %}{% endfor %}
+  {% endif %}
+  {% if can('proc_create') %}
+    <a class="btn btn-primary btn-sm" href="{{ url_for('approvals.new', spare=s.id) }}" data-i18n="proc.porev.raise">Raise purchase request</a>
+  {% endif %}
+</div>
+{% endif %}

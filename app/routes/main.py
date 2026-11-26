@@ -1077,6 +1077,11 @@ def _notification_background_pass():
         except Exception:
             pass
         try:
+            from app.approvals.delivery import maybe_run_overdue_alerts
+            maybe_run_overdue_alerts()   # late purchase-order deliveries -> bell (throttled)
+        except Exception:
+            pass
+        try:
             from app.services.alerts import dispatch_pending_alerts
             dispatch_pending_alerts()   # email/webhook any new critical alerts (once)
         except Exception:
@@ -1201,6 +1206,8 @@ def search():
                     results.append({"type": "pr", "name": f"{pr['pr_no']} · {pr['title'] or ''}",
                                     "sub": "Purchase request",
                                     "url": url_for("approvals.detail", pr_id=pr["id"])})
+            from app.approvals import imports as _proc_imp
+            results.extend(_proc_imp.search(conn, fuzzy))
         if user_has_permission(user, "proc_catalogue"):
             # The item master, searched in the database rather than pulled into
             # memory: it holds five figures of rows, and the fuzzy() helper above
@@ -1274,7 +1281,7 @@ def my_work():
             "my_prs": [], "my_wait": {}, "my_prs_action": [], "my_tickets": [], "my_pm": [], "alerts": [],
             "cmp_caps": [], "cmp_expiring": [], "late_milestones": [],
             "recv_queue": [], "store_issue": [], "po_queue": [],
-            "stuck_postings": [], "pay_queue": []}
+            "stuck_postings": [], "pay_queue": [], "rev_queue": []}
 
     if user_has_permission(user, "wh_approve"):
         try:
@@ -1291,7 +1298,10 @@ def my_work():
     if user_has_permission(user, "proc_view"):
         try:
             from app.approvals import services as proc
-            data["sign_queue"] = proc.my_queue(user)[:15]
+            # The whole queue: the panel shows the first rows and the true count.
+            data["sign_queue"] = proc.my_queue(user)
+            from app.approvals import porev
+            data["rev_queue"] = porev.rev_queue(user)
             data["my_prs"] = [p for p in proc.list_prs(requester=user["username"], limit=10)
                               if p.get("status") not in ("closed", "cancelled")][:8]
             data["my_wait"] = proc.waiting_on(data["my_prs"])
@@ -1305,9 +1315,8 @@ def my_work():
         try:
             conn = get_db()
             try:
-                data["recv_queue"] = conn.execute(
-                    "SELECT id, pr_no, title, status, po_no FROM pr_requests WHERE is_active=1 AND status "
-                    "IN ('po_issued','in_transit','partially_received') ORDER BY id ASC LIMIT 10").fetchall()
+                from app.approvals.delivery import recv_queue
+                data["recv_queue"] = recv_queue(conn, limit=10)   # overdue first
             finally:
                 conn.close()
         except Exception:
@@ -1351,6 +1360,13 @@ def my_work():
                     "ORDER BY id ASC LIMIT 10").fetchall()
             finally:
                 conn.close()
+        except Exception:
+            pass
+
+    if user_has_permission(user, "proc_admin") or user_has_permission(user, "proc_pay"):
+        try:
+            from app.approvals import imports as proc_imp
+            data["agr_queue"] = proc_imp.approval_queue(user)
         except Exception:
             pass
 
@@ -1464,6 +1480,8 @@ def my_work():
                      + len(data["cmp_caps"]) + len(data["cmp_expiring"])
                      + len(data["recv_queue"]) + len(data["store_issue"])
                      + len(data["po_queue"]) + len(data["stuck_postings"])
-                     + len(data["pay_queue"]) + len(data["my_prs_action"]))
+                     + len(data["pay_queue"]) + len(data["my_prs_action"])
+                     + len(data["rev_queue"])
+                     + len(data.get("agr_queue") or []))
     return render_template("my_work.html", user=user, total_actions=total_actions,
                            active="my_work", today=_date.today().isoformat(), **data)

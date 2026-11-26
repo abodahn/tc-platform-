@@ -142,6 +142,7 @@
       <div class="mhealth"><svg class="ico" style="color:var(--warn)"><use href="#i-boxes"></use></svg>
         <div class="mh-name"><a href="{{ url_for('maintenance.spare_profile', sid=s.id) }}">{{ s.code }}</a> · {{ s.name }}</div>
         <span class="badge {{ 'b-critical' if s.stock_qty<=0 else 'b-warning' }}">{{ s.stock_qty }}/{{ s.reorder_level }}</span></div>
+      {% include "approvals/_porev_spare_low.html" %}
       {% else %}<div class="empty muted" data-i18n="m.no_records">No records</div>{% endfor %}
     </div>
   </div>

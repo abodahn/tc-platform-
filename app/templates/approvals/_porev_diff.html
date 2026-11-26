@@ -1,0 +1,28 @@
+{#- Before/after of one PO revision. Context: rev (with .changes), pmoney. -#}
+{% set ch = rev.changes or {} %}
+{% if ch.diff or ch.delivery %}
+<div class="tbl-wrap">
+<table class="tbl porev-diff">
+  <thead><tr>
+    <th data-i18n="proc.item">Item</th>
+    <th data-i18n="proc.qty">Qty</th>
+    {% if pmoney %}<th data-i18n="proc.unit_price">Unit price</th>{% endif %}
+  </tr></thead>
+  <tbody>
+  {% for d in ch.diff or [] %}
+    <tr>
+      <td>{{ d.item }}</td>
+      <td>{% if d.qty[0] != d.qty[1] %}<s>{{ '%g'|format(d.qty[0]) }}</s> <span class="porev-arr" aria-hidden="true">→</span> <b>{{ '%g'|format(d.qty[1]) }}</b>{% else %}{{ '%g'|format(d.qty[1]) }}{% endif %}</td>
+      {% if pmoney %}<td>{% if d.unit_price[0] != d.unit_price[1] %}<s>{{ '{:,.2f}'.format(d.unit_price[0]) }}</s> <span class="porev-arr" aria-hidden="true">→</span> <b>{{ '{:,.2f}'.format(d.unit_price[1]) }}</b>{% else %}{{ '{:,.2f}'.format(d.unit_price[1]) }}{% endif %}</td>{% endif %}
+    </tr>
+  {% endfor %}
+  {% if ch.delivery %}
+    <tr>
+      <td data-i18n="proc.porev.delivery">Delivery date</td>
+      <td colspan="{{ 2 if pmoney else 1 }}"><s>{{ ch.delivery[0] or '—' }}</s> <span class="porev-arr" aria-hidden="true">→</span> <b>{{ ch.delivery[1] }}</b></td>
+    </tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>
+{% endif %}

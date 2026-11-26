@@ -184,6 +184,7 @@
       <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.pdf">PR PDF</span></a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_xlsx', pr_id=pr.id) }}" download>
       <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.pr_xlsx">PR Excel</span></a>
+    {% include "approvals/_porev_copy_btn.html" %}
     {% if money and pr.status in ('approved','po_issued','closed') %}
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
       <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
@@ -1194,6 +1195,7 @@
     {% endif %}
 
     {% if pr.status in ('po_issued','in_transit','partially_received','received') and can_receive %}
+    {% set dead = delivery_dead(pr.id) %}
     <form method="post" action="{{ url_for('approvals.receive', pr_id=pr.id) }}" style="overflow-x:auto">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <table class="tbl" style="margin-bottom:10px">
@@ -1203,7 +1205,7 @@
         <tbody>
         {% for it in b['items'] %}
           <tr>
-            <td>{{ it.item }}</td>
+            <td>{{ it.item }}{% if it.id in dead %} <span class="badge b-cancelled" data-i18n="proc.delivery.cancelled">Cancelled</span>{% endif %}</td>
             <td>{{ '%g'|format(it.qty or 0) }} {{ it.unit }}</td>
             <td>{{ '%g'|format(it.received_qty or 0) }}</td>
             <td>
@@ -1211,11 +1213,11 @@
               {# no max/disabled: an over-delivery must be RECORDABLE — the excess is
                  quarantined, not stocked. A browser-enforced max hid the case entirely. #}
               <input name="recv_qty[]" type="number" min="0" step="any" style="width:90px"
-                     placeholder="0">
+                     placeholder="0"{{ ' readonly' if it.id in dead }}>
             </td>
             <td>
               <input name="rej_qty[]" type="number" min="0" step="any" style="width:90px"
-                     placeholder="0">
+                     placeholder="0"{{ ' readonly' if it.id in dead }}>
             </td>
           </tr>
         {% endfor %}
@@ -1481,7 +1483,7 @@
           {% if (b['pos']|length) > 1 %}
           <div class="field"><label data-i18n="proc.for_order">Which order *</label>
             <select name="po_id" required>
-              {% for p in b['pos'] %}<option value="{{ p.id }}">{{ p.po_no }} — {{ p.vendor or pr.vendor }}</option>{% endfor %}
+              {% for p in b['pos'] if p.status != 'cancelled' %}<option value="{{ p.id }}">{{ p.po_no }} — {{ p.vendor or pr.vendor }}</option>{% endfor %}
             </select></div>
           {% endif %}
         </div>
@@ -1530,7 +1532,7 @@
           {% if (b['pos']|length) > 1 %}
           <div class="field"><label data-i18n="proc.for_order">Which order *</label>
             <select name="po_id" required>
-              {% for p in b['pos'] %}<option value="{{ p.id }}">{{ p.po_no }} — {{ p.vendor or pr.vendor }}</option>{% endfor %}
+              {% for p in b['pos'] if p.status != 'cancelled' %}<option value="{{ p.id }}">{{ p.po_no }} — {{ p.vendor or pr.vendor }}</option>{% endfor %}
             </select></div>
           {% endif %}
         </div>
@@ -1602,11 +1604,12 @@
 
 <!-- Orders issued (one per vendor) + numbered, reasoned, immutable revisions -->
 {% set pos = b['pos'] %}
+{% set porev_rv = porev_view(pr.id) %}
 {# Same statuses the po.pdf route accepts. _pos_for() synthesises an order from
    pr_requests.po_no, which survives a cancellation — so without this a request
    cancelled AFTER approval advertised a PO number and a PDF link answering 400. #}
 {% if (pos and pr.status in ('approved','po_issued','partially_received','received','closed'))
-      or (pr.po_rev or 0) > 0
+      or (pr.po_rev or 0) > 0 or (porev_rv and porev_rv.revs)
       or (can_purchasing and pr.status in ('po_issued','in_transit','partially_received')) %}
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="proc.po.title">Purchase Order</h3>
@@ -1630,11 +1633,11 @@
         {% for p in pos %}
           <tr>
             <td style="font-weight:600">{{ p.vendor or pr.vendor or '—' }}</td>
-            <td style="font-variant-numeric:tabular-nums">{{ p.po_no }}</td>
+            <td style="font-variant-numeric:tabular-nums">{{ p.po_no }}{% if p.status == 'cancelled' %} <span class="badge b-cancelled" data-i18n="proc.delivery.cancelled">Cancelled</span>{% endif %}{% if p.rev %} <span class="badge b-pending">Rev {{ p.rev }}</span>{% endif %}</td>
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.grand or 0) }} {{ p.currency or pr.currency }}</td>
             {% endif %}
-            <td>{% if money %}<div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+            <td>{% if money and p.status != 'cancelled' %}<div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
                    href="{{ url_for('approvals.po_pdf', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_pdf', pr_id=pr.id) }}">
               <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
               <a class="btn btn-ghost btn-sm" download
@@ -1652,20 +1655,13 @@
     {% if (pr.po_rev or 0) > 0 %}
     <div class="muted" style="margin-bottom:10px;font-size:12.5px" data-i18n="proc.po.rev_hint">This order has been revised — the PO PDF carries the revision number, and every revision (with its reason and a snapshot of the lines) is kept on file.</div>
     {% endif %}
-    {% if can_purchasing and pr.status in ('po_issued','in_transit','partially_received') %}
-    <details>
-      <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.po.revise">Revise this PO</summary>
-      <form method="post" action="{{ url_for('approvals.revise_po', pr_id=pr.id) }}" class="mt-2">
-        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <div class="field"><label data-i18n="proc.po.reason">Reason for revision *</label>
-          <textarea name="reason" rows="2" required placeholder="What changed and why?" data-i18n-ph="proc.po.reason_ph"></textarea></div>
-        <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.po.open_rev">Open revision</button>
-      </form>
-    </details>
-    {% endif %}
+    {% include "approvals/_porev_po.html" %}
   </div>
 </div>
 {% endif %}
+{% include "approvals/_delivery_pos.html" %}
+
+{% include "approvals/_imports_panel.html" %}
 
 {% if pr.status in ('draft', 'rejected') and is_owner %}
 <div class="panel mt-4"><div class="panel-pad flex between center wrap gap">
