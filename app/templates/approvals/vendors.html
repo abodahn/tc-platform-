@@ -133,7 +133,8 @@
             </div>
 
             {#- Approval: Finance / admin approves; never whoever created it or
-                changed its email / bank details (the service enforces it too). -#}
+                changed its name / tax / register no. / email / bank details (the service
+                enforces it too). -#}
             {% if can_approve_vendor and vs != 'approved' %}
               {% set mine = me and me in (v.created_by, v.submitted_by) and cu and cu.role != 'super_admin' %}
               <form method="post" action="{{ url_for('approvals.approve_vendor', vendor_id=v.id) }}" class="vnd-act">

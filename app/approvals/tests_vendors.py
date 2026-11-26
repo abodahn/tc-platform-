@@ -146,11 +146,12 @@ def run():
 
         # ---- 4. email / bank change sends it back to pending (masked audit) ----
         assert svc.update_vendor(acme, {"name": "Acme Test Supplies", "email": "acme@example.test",
-                                        "phone": "123"}, buyer)[0]
+                                        "tax_id": "TX-9", "phone": "123"}, buyer)[0]
         assert q("SELECT status FROM proc_vendors WHERE id=?", acme)["status"] == "approved"   # no change
         assert q("SELECT bank_account_no FROM proc_vendors WHERE id=?", acme)["bank_account_no"] \
             == "EG000011112222333344445555"                                  # not posted -> kept
         assert svc.update_vendor(acme, {"name": "Acme Test Supplies", "email": "acme@example.test",
+                                        "tax_id": "TX-9",
                                         "bank_account_no": "EG999988887777666655554321"}, buyer)[0]
         row = dict(q("SELECT * FROM proc_vendors WHERE id=?", acme))
         assert row["status"] == "pending" and row["submitted_by"] == "v.buyer"
@@ -159,7 +160,8 @@ def run():
         assert not any("EG999988887777666655554321" in (r["detail"] or "")
                        for r in get_db().execute("SELECT detail FROM pr_events").fetchall())
         assert V.approve_vendor(acme, fin) == (True, "")
-        assert svc.update_vendor(acme, {"name": "Acme Test Supplies", "email": "new@example.test"}, buyer)[0]
+        assert svc.update_vendor(acme, {"name": "Acme Test Supplies", "email": "new@example.test",
+                                        "tax_id": "TX-9"}, buyer)[0]
         assert q("SELECT status FROM proc_vendors WHERE id=?", acme)["status"] == "pending"
 
         # ---- 5. only APPROVED suppliers are chosen / awarded / ordered ---------
@@ -305,6 +307,138 @@ def run():
             "title"].startswith("New comment on")                              # stored row unchanged
         html = client(ids["v.staff"]).get("/my-work").get_data(as_text=True)
         assert "New comment on" not in html or "تعليق جديد على" in html
+
+        # ---- 10. review fixes --------------------------------------------------
+        # (a) renaming an approved supplier into another company: back to pending
+        assert svc.create_vendor({"name": "Rename Me Co", "tax_id": "TX-R1"}, buyer)[0]
+        ren = vid("Rename Me Co")
+        assert V.approve_vendor(ren, fin)[0]
+        assert svc.update_vendor(ren, {"name": "Other Company Co", "tax_id": "TX-R2"}, buyer)[0]
+        row = dict(q("SELECT * FROM proc_vendors WHERE id=?", ren))
+        assert (row["status"], row["submitted_by"]) == ("pending", "v.buyer"), row
+        ev = q("SELECT detail FROM pr_events WHERE action='vendor_resubmitted' ORDER BY id DESC LIMIT 1")["detail"]
+        assert "name: Rename Me Co -> Other Company Co" in ev and "tax_id: TX-R1 -> TX-R2" in ev, ev
+        assert V.approve_vendor(ren, U["v.fin2"])[0]
+        assert svc.update_vendor(ren, {"name": "Other Company Co", "tax_id": "TX-R2", "cr_no": "CR-9"},
+                                 buyer)[0]
+        assert q("SELECT status FROM proc_vendors WHERE id=?", ren)["status"] == "pending"
+        # (b) four eyes: editing a PENDING supplier's bank details makes you its submitter
+        assert svc.update_vendor(ren, {"name": "Other Company Co", "tax_id": "TX-R2", "cr_no": "CR-9",
+                                       "bank_account_no": "EG0000999900001111"}, U["v.fin2"])[0]
+        assert q("SELECT submitted_by FROM proc_vendors WHERE id=?", ren)["submitted_by"] == "v.fin2"
+        assert V.approve_vendor(ren, U["v.fin2"]) == (False, "vendor_self_approve")
+        # ...and a BLOCKED one: block, change the bank, unblock yourself -> refused
+        assert V.approve_vendor(ren, fin)[0] and V.block_vendor(ren, "check", fin)[0]
+        assert svc.update_vendor(ren, {"name": "Other Company Co", "tax_id": "TX-R2", "cr_no": "CR-9",
+                                       "bank_account_no": "EG0000999900002222"}, fin)[0]
+        assert q("SELECT status FROM proc_vendors WHERE id=?", ren)["status"] == "blocked"
+        assert V.approve_vendor(ren, fin) == (False, "vendor_self_approve")
+
+        # (c) PO issue / email / payment follow the supplier's CURRENT status
+        p3, _ = svc.create_pr({"title": "Pay gate", "department": "IT"},
+                              [{"item": "Paper", "qty": 1, "unit_price": 0}], staff, submit=False)
+        x("UPDATE pr_requests SET status='approved', vendor='Acme Test Supplies' WHERE id=?", p3)
+        x("UPDATE pr_items SET vendor='Acme Test Supplies', unit_price=50 WHERE pr_id=?", p3)
+        assert V.block_vendor(acme, "audit", fin)[0]
+        assert svc.issue_po(p3, buyer) == (False, "vendor_blocked")          # not "must be active"
+        assert V.approve_vendor(acme, U["v.fin2"])[0]
+        ok, res = svc.issue_po(p3, buyer)
+        assert ok, res
+        assert svc.update_vendor(acme, {"name": "Acme Test Supplies", "tax_id": "TX-9",
+                                        "email": "hijack@example.test"}, buyer)[0]
+        assert V.vendor_state(get_db(), "Acme Test Supplies") == "pending"
+        assert svc.email_po_to_vendor(p3, buyer) == (False, "vendor_pending")
+        assert not q("SELECT 1 FROM pr_events WHERE pr_id=? AND action='po_emailed'", p3)
+        r = client(ids["v.buyer"]).post("/procurement/pr/%d/email-po" % p3, data={"_csrf": "tok"},
+                                        follow_redirects=True)
+        assert "still pending approval" in r.get_data(as_text=True)
+        assert svc.add_payment(p3, {"amount": "10"}, fin) == (False, "vendor_pending")
+        assert svc.add_payment(p3, {"amount": "10"}, fin, force=True) == (False, "vendor_pending")
+        assert not q("SELECT 1 FROM pr_payments WHERE pr_id=?", p3)
+        assert V.block_vendor(acme, "dispute", fin)[0]
+        assert svc.add_payment(p3, {"amount": "10"}, fin) == (False, "vendor_blocked")
+        for lang in ("ar", "tr"):
+            assert svc.labels(lang)["ui"]["vendor_blocked_flash"] != \
+                svc.labels("en")["ui"]["vendor_blocked_flash"]
+        assert V.approve_vendor(acme, fin)[0]
+
+        # (d) a chosen quotation of a supplier that is no longer approved cannot be re-priced
+        p4, _ = svc.create_pr({"title": "Quote gate", "department": "IT"},
+                              [{"item": "Ink", "qty": 1, "unit_price": 0}], staff, submit=False)
+        it4 = q("SELECT id FROM pr_items WHERE pr_id=?", p4)["id"]
+        assert svc.add_quote(p4, {"vendor": "Acme Test Supplies", "amount": "7", "payment_terms": "cash",
+                                  "lines": {it4: "7"}}, buyer, filename="q.pdf",
+                             content_type="application/pdf", content_b64=PDF)[0]
+        q4 = q("SELECT id FROM pr_quotes WHERE pr_id=?", p4)["id"]
+        assert svc.choose_quote(p4, q4, buyer)[0] and svc.apply_chosen_quote(p4, q4, buyer)[0]
+        x("UPDATE proc_vendors SET status='pending' WHERE id=?", acme)
+        assert svc.update_quote(q4, {"amount": "9", "lines": {it4: "9"}}, user=buyer, pr_id=p4) \
+            == (False, "vendor_pending")
+        assert float(q("SELECT amount FROM pr_quotes WHERE id=?", q4)["amount"]) == 7.0   # not saved
+        # the pricing gate's line supplier list offers approved suppliers only
+        assert svc.create_vendor({"name": "Brand New Pending Co"}, buyer)[0]
+        p5, _ = svc.create_pr({"title": "Pricing list", "department": "IT"},
+                              [{"item": "Pens", "qty": 1, "unit_price": 0}], staff, submit=False)
+        it5 = q("SELECT id FROM pr_items WHERE pr_id=?", p5)["id"]
+        html = client(ids["v.buyer"]).get("/procurement/pr/%d" % p5).get_data(as_text=True)
+        assert 'name="linevendor_%d"' % it5 in html
+        assert '<option value="Brand New Pending Co" ' not in html
+        assert '<option value="Legacy Active Co" ' in html
+        x("UPDATE proc_vendors SET status='approved' WHERE id=?", acme)
+
+        # (e) maintenance auto-reorder: the people told of a comment may reply
+        x("UPDATE pr_requests SET requester='auto-reorder', source_module='maintenance' WHERE id=?", p4)
+        assert V.add_comment(p4, "Which ink?", buyer) == (True, "")
+        assert q("SELECT 1 FROM notifications WHERE target_user='v.store' AND title LIKE 'New comment%'")
+        assert V.add_comment(p4, "The black one.", {"username": "v.store", "role": "storekeeper",
+                                                    "id": ids["v.store"]}) == (True, "")
+        html = client(ids["v.store"]).get("/procurement/pr/%d" % p4).get_data(as_text=True)
+        assert 'name="body"' in html
+
+        # (f) a requester's comment off the ladder reaches the last signer and the buyer
+        x("UPDATE pr_requests SET status='approved', priced_by='v.buyer2' WHERE id=?", p3)
+        x("INSERT INTO pr_steps (pr_id, seq, stage, status, approver_user) "
+          "VALUES (?, 1, 'factory_manager', 'approved', 'v.signer')", p3)
+        nb = {u: q("SELECT COUNT(*) c FROM notifications WHERE target_user=?", u)["c"]
+              for u in ("v.signer", "v.buyer2")}
+        assert V.add_comment(p3, "When will it arrive?", staff) == (True, "")
+        for u, n0 in nb.items():
+            assert q("SELECT COUNT(*) c FROM notifications WHERE target_user=?", u)["c"] == n0 + 1, u
+
+        # (g) on hold, older comments stay readable on the page (not "see the audit trail")
+        for i in range(4):
+            assert V.add_comment(p3, "thread message %d" % i, buyer)[0]
+        x("UPDATE pr_requests SET status='pending', current_seq=1, hold_reason='Why?', held_by='v.fin' "
+          "WHERE id=?", p3)
+        html = client(ids["v.staff"]).get("/procurement/pr/%d" % p3).get_data(as_text=True)
+        assert "When will it arrive?" in html and 'class="cm-older"' in html
+        x("UPDATE pr_requests SET hold_reason=NULL, held_by=NULL WHERE id=?", p3)
+
+        # (h) audit names, notification patterns, push and email in the reader's language
+        for k in ("aggregated", "escalation_parked", "single_source_escalation", "linked",
+                  "returned_after_receipt", "item_request_rejected"):
+            for l in dicts:
+                assert dicts[l].get("proc.audit." + k), (l, k)
+        assert N.localise("Item ITM-9 retired", "x", "ar")[0] == "الصنف ITM-9 اتوقف"
+        assert N.localise("Request short-closed", "PR-1 was closed before everything arrived; the "
+                          "rest will not be delivered. Reason: late", "tr")[1].endswith("Neden: late")
+        import config as _cfg
+        from app.services import alerts as _alerts
+        sent, old_send, old_host = [], _alerts.send_email_to, getattr(_cfg.Config, "SMTP_HOST", "")
+        _alerts.send_email_to = lambda to, subj, body, **k: sent.append((tuple(to), subj)) or True
+        _cfg.Config.SMTP_HOST = "smtp.example.test"
+        try:
+            x("UPDATE users SET email='staff@example.test' WHERE username='v.staff'")
+            x("UPDATE users SET email='buyer@example.test' WHERE username='v.buyer'")
+            c = get_db()
+            svc._email_targets(c, {"v.staff", "v.buyer"}, "Request cancelled",
+                               "PR-1 was cancelled by v.fin.", "/x")
+            c.close()
+        finally:
+            _alerts.send_email_to, _cfg.Config.SMTP_HOST = old_send, old_host
+        subj = dict((t[0], s) for t, s in sent)
+        assert subj["staff@example.test"] == "[TC Platform] الطلب اتلغى", sent      # v.staff reads Arabic
+        assert subj["buyer@example.test"] == "[TC Platform] Request cancelled", sent
 
         # mobile: every new page renders (the layout is CSS; a 200 with the
         # wrapper classes is what a server-side test can check)

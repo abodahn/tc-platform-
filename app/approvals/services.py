@@ -79,7 +79,7 @@ def notify_users(conn, usernames, severity, title, message, link=None, module="p
             "INSERT INTO notifications (severity, module, title, message, target_user, link, created_at) "
             "VALUES (?,?,?,?,?,?,?)", (severity, module, title, message, u, link, _now()))
     try:
-        _email_targets(conn, targets, title, message, link)
+        _email_targets(conn, targets, title, message, link, module)
     except Exception:
         pass  # email is best-effort; never block the workflow
 
@@ -96,22 +96,30 @@ def _email_enabled(prefs):
         return True
 
 
-def _email_targets(conn, usernames, title, message, link):
+def _email_targets(conn, usernames, title, message, link, module="procurement"):
     from config import Config
     if not getattr(Config, "SMTP_HOST", "") or not usernames:
         return
     ph = ",".join(["?"] * len(usernames))
     rows = conn.execute(
-        f"SELECT email, notif_prefs FROM users WHERE username IN ({ph}) AND is_active=1",
+        f"SELECT email, notif_prefs, lang_pref FROM users WHERE username IN ({ph}) AND is_active=1",
         tuple(usernames)).fetchall()
-    recips = [r["email"] for r in rows if r["email"] and _email_enabled(r["notif_prefs"])]
-    if not recips:
+    # one email per language, so each reader gets the procurement text in theirs
+    by_lang = {}
+    for r in rows:
+        if r["email"] and _email_enabled(r["notif_prefs"]):
+            lang = (r["lang_pref"] or "en") if module == "procurement" else "en"
+            by_lang.setdefault(lang, []).append(r["email"])
+    if not by_lang:
         return
     base = (getattr(Config, "PUBLIC_URL", "") or "").rstrip("/")
     url = (base + link) if (base and link) else (link or "")
     from app.services.alerts import send_email_to
-    body = f"{message}\n\n{('Open: ' + url) if url else 'Open the TC Platform to review.'}\n\n— TC Platform"
-    send_email_to(recips, f"[TC Platform] {title}", body)
+    from app.approvals.notif_text import localise
+    for lang, recips in by_lang.items():
+        t, m = localise(title, message, lang)
+        body = f"{m}\n\n{('Open: ' + url) if url else 'Open the TC Platform to review.'}\n\n— TC Platform"
+        send_email_to(recips, f"[TC Platform] {t}", body)
 
 
 # --------------------------------------------------------------------------
@@ -3860,8 +3868,8 @@ def issue_po(pr_id, user, ip=None, force=False):
         for vendor in po_groups(items, pr):
             if not C.vendor_key(vendor):
                 return False, "vendor_required"
-            if state.get(C.vendor_key(vendor)) == "pending":
-                return False, "vendor_pending"      # on the master, not yet approved
+            if state.get(C.vendor_key(vendor)) in ("pending", "blocked"):
+                return False, "vendor_" + state[C.vendor_key(vendor)]
             if state.get(C.vendor_key(vendor)) != "approved":
                 return False, "vendor_not_in_master"
     finally:
@@ -5655,9 +5663,10 @@ def authorize_advance(pr_id, pct, guarantee_ref, user, ip=None):
         conn.close()
 
 
-def advance_gate_check(conn, pr, amount):
+def advance_gate_check(conn, pr, amount, vendor=None):
     """Is this payment an advance, and if so is it authorised? Returns
-    (ok, msg). An advance is a payment made before the supplier has invoiced —
+    (ok, msg). `vendor` is the supplier of the order being paid (a split
+    request's line supplier); the header supplier when not given. An advance is a payment made before the supplier has invoiced —
     that is the money genuinely at risk, and the only money §4.3 governs."""
     invoiced = conn.execute(
         # GROSS (amount + tax): it is compared against paid_amount, which is
@@ -5673,7 +5682,7 @@ def advance_gate_check(conn, pr, amount):
     # the PR's own grand total; the RULE below needs EGP for its 500,000 test.
     grand = pr_amounts(pr)["grand"]
     pct = ((already + amount) / grand * 100.0) if grand > 0 else 100.0
-    if not vendor_approved(conn, _pr_field(pr, "vendor")):
+    if not vendor_approved(conn, vendor if vendor is not None else _pr_field(pr, "vendor")):
         return False, "advance_vendor_not_approved"
     authorised = float(_pr_field(pr, "advance_pct") or 0)
     if authorised <= 0:
@@ -5725,6 +5734,22 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         po, po_err = split_order(conn, pr, data.get("po_id"))
         if po_err and not force:
             return False, po_err
+        # The supplier this money goes to must be APPROVED right now: a bank or
+        # email change sends it back to pending, and paying before Finance has
+        # re-approved those details is how a payment gets diverted, so pending
+        # is never overridable. Blocked is, by an admin (audited as an
+        # override): an invoiced debt may still have to be settled. Advances to
+        # either stay refused by the advance gate below. A supplier that is not
+        # on the master at all keeps today's behaviour.
+        if po is not None:
+            pay_vendor = po.get("vendor")
+        else:
+            _one = _pos_for(conn, pr)
+            pay_vendor = (_one[0].get("vendor") if _one else None) or _pr_field(pr, "vendor")
+        from app.approvals import vendors as V
+        _vs = V.vendor_state(conn, pay_vendor)
+        if _vs == "pending" or (_vs == "blocked" and not force):
+            return False, "vendor_" + _vs
         role = (user or {}).get("role")
         exempt = (role == "super_admin" or user_has_permission(user, "proc_admin")) and bool_setting(conn, "sod_admin_exempt")
         # Scoped by request/order, never by a posted invoice_id, which the payer controls.
@@ -5746,7 +5771,7 @@ def add_payment(pr_id, data, user, ip=None, force=False):
         # advance, and needs its own authority, an approved vendor, and a bank
         # guarantee on large orders. Checked here rather than in the UI so it
         # holds for the API and for anything else that posts a payment.
-        adv_ok, adv_msg = advance_gate_check(conn, pr, amount)
+        adv_ok, adv_msg = advance_gate_check(conn, pr, amount, vendor=pay_vendor or "")
         # "No advance to a supplier off the approved vendor list" is written
         # without exception, so that one holds even for an admin override — the
         # others stay overridable like every other gate here.
@@ -5894,23 +5919,34 @@ def email_po_to_vendor(pr_id, user, pdf_bytes=None, ip=None):
     if not pos:
         return False, "no_vendor_email"
     # find each vendor's email
+    # Only to an APPROVED supplier: an email change sends a supplier back to
+    # pending, and the order (with its prices) must not go to an address nobody
+    # has approved yet. A pending / blocked supplier's order is skipped.
+    from app.approvals import vendors as V
     conn = get_db()
     try:
-        emails = {}
+        emails, refused = {}, {}
         for p in pos:
-            v = conn.execute("SELECT email FROM proc_vendors WHERE name=?",
-                             (p.get("vendor"),)).fetchone()
-            if v and v["email"]:
+            v = V.vendor_row(conn, p.get("vendor"))
+            st = V.status_of(v)
+            if st in ("pending", "blocked"):
+                refused[p["po_no"]] = "vendor_" + st
+                continue
+            if v and v.get("email"):
                 emails[p["po_no"]] = v["email"]
     finally:
         conn.close()
     if not emails:
-        return False, "no_vendor_email"
+        return False, next(iter(refused.values()), "no_vendor_email")
     from app.services.alerts import send_email_to
     from app.approvals import pdf as _pdf
     sent, log_lines = False, []
     for i, p in enumerate(pos):
         vendor_email = emails.get(p["po_no"])
+        if p["po_no"] in refused:
+            log_lines.append(f"{p['po_no']}: not sent, {p.get('vendor') or '—'} is "
+                             f"{refused[p['po_no']][7:]}")
+            continue
         if not vendor_email:
             log_lines.append(f"{p['po_no']}: no email on file for {p.get('vendor') or '—'}")
             continue
@@ -7153,6 +7189,14 @@ def update_quote(quote_id, data, user=None, ip=None, filename=None, content_type
             _bad = _refuse_self_commercial(pr, user, "quote_choice")
             if _bad:
                 return False, _bad
+            # Its corrected prices could not reach the request (apply_chosen_quote
+            # / award refuse a supplier that is not approved), so the quote and
+            # the request lines would disagree: refuse before saving either.
+            from app.approvals import vendors as V
+            for _v in {q["vendor"], data.get("vendor", q["vendor"])}:
+                _bad = V.award_refusal(conn, _v)
+                if _bad:
+                    return False, _bad
 
         # Line prices, when the form posted them: they replace the quote's lines
         # and, when any is priced, their sum replaces the posted amount.

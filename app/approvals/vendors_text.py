@@ -8,10 +8,10 @@ merged into messages.MESSAGES. No imports: i18n_text and messages load it.
 
 UI_FLASH = {
     "en": {
-        "vendor_pending_flash": "This supplier is still pending approval. Finance or a procurement admin must approve it on the Vendors page before it can be chosen, awarded, ordered from or paid an advance.",
-        "vendor_blocked_flash": "This supplier is blocked. It cannot be chosen, awarded, ordered from or paid an advance.",
+        "vendor_pending_flash": "This supplier is still pending approval. Finance or a procurement admin must approve it on the Vendors page before it can be chosen, awarded, ordered from or paid.",
+        "vendor_blocked_flash": "This supplier is blocked. It cannot be chosen, awarded, ordered from or paid.",
         "vendor_approve_forbidden_flash": "Only Finance or a procurement admin can approve or unblock a supplier.",
-        "vendor_self_approve_flash": "You created this supplier (or changed its email or bank details), so someone else must approve it.",
+        "vendor_self_approve_flash": "You created this supplier or changed its name, tax or register number, email or bank details, so someone else must approve it.",
         "vendor_block_forbidden_flash": "You are not allowed to change this supplier.",
         "block_reason_required_flash": "Write why the supplier is being blocked.",
         "bad_date_flash": "Enter the expiry dates as real dates.",
@@ -27,10 +27,10 @@ UI_FLASH = {
         "comment_forbidden_flash": "Only the requester, the signers, buyers and admins can comment on this request.",
     },
     "ar": {
-        "vendor_pending_flash": "المورد ده لسه مستني الاعتماد. لازم الحسابات أو مسؤول المشتريات يعتمده من صفحة الموردين قبل ما نختاره أو نرسّي عليه أو نطلع له أمر شراء أو نصرف له دفعة مقدمة.",
-        "vendor_blocked_flash": "المورد ده موقوف. مش ممكن نختاره أو نرسّي عليه أو نطلع له أمر شراء أو نصرف له دفعة مقدمة.",
+        "vendor_pending_flash": "المورد ده لسه مستني الاعتماد. لازم الحسابات أو مسؤول المشتريات يعتمده من صفحة الموردين قبل ما نختاره أو نرسّي عليه أو نطلع له أمر شراء أو ندفع له.",
+        "vendor_blocked_flash": "المورد ده موقوف. مش ممكن نختاره أو نرسّي عليه أو نطلع له أمر شراء أو ندفع له.",
         "vendor_approve_forbidden_flash": "الحسابات أو مسؤول المشتريات بس هم اللي يقدروا يعتمدوا المورد أو يرفعوا الإيقاف.",
-        "vendor_self_approve_flash": "إنت اللي ضفت المورد ده (أو غيّرت إيميله أو بياناته البنكية)، فلازم حد تاني يعتمده.",
+        "vendor_self_approve_flash": "إنت اللي ضفت المورد ده أو غيّرت اسمه أو رقمه الضريبي أو السجل التجاري أو إيميله أو بياناته البنكية، فلازم حد تاني يعتمده.",
         "vendor_block_forbidden_flash": "مش مسموح لك تعدّل المورد ده.",
         "block_reason_required_flash": "اكتب سبب إيقاف المورد.",
         "bad_date_flash": "اكتب تواريخ الانتهاء كتواريخ صحيحة.",
@@ -46,10 +46,10 @@ UI_FLASH = {
         "comment_forbidden_flash": "مقدّم الطلب والموقّعين والمشتريات والمسؤولين بس هم اللي يقدروا يعلّقوا على الطلب ده.",
     },
     "tr": {
-        "vendor_pending_flash": "Bu tedarikçi hâlâ onay bekliyor. Seçilmeden, kalem verilmeden, sipariş açılmadan veya avans ödenmeden önce Finans ya da bir satın alma yöneticisi Tedarikçiler sayfasından onaylamalıdır.",
-        "vendor_blocked_flash": "Bu tedarikçi engellendi. Seçilemez, kalem verilemez, sipariş açılamaz ve avans ödenemez.",
+        "vendor_pending_flash": "Bu tedarikçi hâlâ onay bekliyor. Seçilmeden, kalem verilmeden, sipariş açılmadan veya ödeme yapılmadan önce Finans ya da bir satın alma yöneticisi Tedarikçiler sayfasından onaylamalıdır.",
+        "vendor_blocked_flash": "Bu tedarikçi engellendi. Seçilemez, kalem verilemez, sipariş açılamaz ve ödeme yapılamaz.",
         "vendor_approve_forbidden_flash": "Bir tedarikçiyi yalnızca Finans veya bir satın alma yöneticisi onaylayabilir ya da engelini kaldırabilir.",
-        "vendor_self_approve_flash": "Bu tedarikçiyi siz oluşturdunuz (veya e-postasını ya da banka bilgilerini değiştirdiniz); onu başka biri onaylamalıdır.",
+        "vendor_self_approve_flash": "Bu tedarikçiyi siz oluşturdunuz veya adını, vergi ya da sicil numarasını, e-postasını veya banka bilgilerini değiştirdiniz; onu başka biri onaylamalıdır.",
         "vendor_block_forbidden_flash": "Bu tedarikçiyi değiştirme yetkiniz yok.",
         "block_reason_required_flash": "Tedarikçinin neden engellendiğini yazın.",
         "bad_date_flash": "Son geçerlilik tarihlerini geçerli tarih olarak girin.",

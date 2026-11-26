@@ -10,8 +10,10 @@ from is_active (approved / blocked), so nothing already in use breaks.
 
 FOUR EYES. A buyer creates a supplier, Finance (proc_pay) or a procurement admin
 approves it, and never the person who created it or sent it back for approval
-(super_admin excepted). Changing a supplier's email or bank details sends an
-approved supplier back to pending: that is the classic way to divert a payment.
+(super_admin excepted). Changing a supplier's identity (name, tax ID, commercial
+register no.), email or bank details sends an approved supplier back to pending:
+that is the classic way to divert a payment. Whoever makes such a change may not
+approve that supplier afterwards, whatever its status was.
 """
 from datetime import date, timedelta
 
@@ -24,7 +26,7 @@ BANK_FIELDS = ("bank_name", "bank_account_name", "bank_account_no")
 MASTER_FIELDS = BANK_FIELDS + ("cr_no", "cr_expiry", "tax_card_expiry")
 DATE_FIELDS = ("cr_expiry", "tax_card_expiry")
 # the fields whose change sends an approved supplier back for approval
-SENSITIVE = ("email",) + BANK_FIELDS
+SENSITIVE = ("name", "tax_id", "cr_no", "email") + BANK_FIELDS
 EXPIRY = (("cr_expiry", "cr"), ("tax_card_expiry", "tax_card"))
 WARN_DAYS = 30
 DOC_TYPES = ("cr", "tax_card", "bank_letter", "other")
@@ -137,12 +139,12 @@ def master_values(data, old=None):
 
 
 def sensitive_changes(old, new):
-    """[(field, old_shown, new_shown)] for email / bank fields that changed."""
+    """[(field, old_shown, new_shown)] for identity / email / bank fields that changed."""
     out = []
     for k in SENSITIVE:
         if k not in new:
             continue
-        a, b = (old.get(k) or "").strip(), (new.get(k) or "").strip()
+        a, b = str(old.get(k) or "").strip(), str(new.get(k) or "").strip()
         if a != b:
             out.append((k, _show(k, a), _show(k, b)))
     return out
@@ -224,13 +226,16 @@ def block_vendor(vendor_id, reason, user, ip=None):
 
 
 def back_to_pending(conn, vendor_id, old, changes, user, ip=None):
-    """An approved supplier whose email / bank details changed goes back for
-    approval; the audit says old -> new with bank numbers masked."""
+    """An approved supplier whose identity / email / bank details changed goes
+    back for approval; the audit says old -> new with bank numbers masked. The
+    editor is recorded as submitter on EVERY such change (pending or blocked
+    too), so they can never approve / unblock the details they typed."""
     me = _uname(user)
     detail = "; ".join(f"{f}: {a} -> {b}" for f, a, b in changes)
+    conn.execute("UPDATE proc_vendors SET submitted_by=? WHERE id=?", (me, vendor_id))
     if status_of(old) == "approved":
-        conn.execute("UPDATE proc_vendors SET status='pending', submitted_by=?, status_by=?, "
-                     "status_at=? WHERE id=?", (me, me, _now(), vendor_id))
+        conn.execute("UPDATE proc_vendors SET status='pending', status_by=?, "
+                     "status_at=? WHERE id=?", (me, _now(), vendor_id))
         _wf_audit(conn, me, "vendor_resubmitted",
                   f"Vendor #{vendor_id} {old.get('name')}: approved -> pending ({detail})", ip)
     else:
@@ -373,6 +378,20 @@ def _current_steps(conn, pr):
                         (pr["id"], pr.get("current_seq"))).fetchall()
 
 
+def _last_hands(conn, pr):
+    """Who hears a requester's comment when no rung is waiting (rejected, sent
+    back, approved, ordered...): the last signer(s) and the buyer who priced it;
+    failing both, the buyers."""
+    from app.approvals import services as svc
+    rows = conn.execute("SELECT seq, approver_user FROM pr_steps WHERE pr_id=? "
+                        "AND approver_user IS NOT NULL AND approver_user<>'' "
+                        "ORDER BY seq DESC", (pr["id"],)).fetchall()
+    out = {r["approver_user"] for r in rows if r["seq"] == rows[0]["seq"]} if rows else set()
+    if pr.get("priced_by"):
+        out.add(pr["priced_by"])
+    return out or set(svc._perm_holders(conn, "proc_purchasing"))
+
+
 def can_comment(conn, user, pr):
     """The requester, the request's signers (signed or eligible), buyers and admins."""
     from app.approvals import services as svc
@@ -382,7 +401,7 @@ def can_comment(conn, user, pr):
     me = u.get("username")
     if _is_super(u) or user_has_permission(u, ("proc_admin", "proc_purchasing")):
         return True
-    if me and me == pr.get("requester"):
+    if me and (me == pr.get("requester") or me in svc._requester_people(conn, pr)):
         return True
     steps = conn.execute("SELECT * FROM pr_steps WHERE pr_id=?", (pr["id"],)).fetchall()
     if any(s["approver_user"] == me for s in steps):
@@ -433,7 +452,7 @@ def add_comment(pr_id, body, user, ip=None):
         if me not in requester:
             told |= requester
         elif not held:
-            told |= signers
+            told |= signers or _last_hands(conn, pr)
         svc.notify_users(conn, told - {me, None}, "info",
                          "New comment on %s" % (pr.get("pr_no") or "a request"),
                          "%s: %s" % (me, body[:300]), link=svc._pr_link(pr_id))
@@ -448,11 +467,14 @@ def comments_context(pr, user):
     pr = dict(pr or {})
     if not pr.get("id"):
         return {"rows": [], "can_post": False, "is_requester": False}
+    from app.approvals import services as svc
+    me = (user or {}).get("username")
     conn = get_db()
     try:
         can = can_comment(conn, user, pr)
+        mine = bool(me) and (me == pr.get("requester") or me in svc._requester_people(conn, pr))
     finally:
         conn.close()
     return {"rows": list_comments(pr["id"]), "can_post": can,
-            "is_requester": (user or {}).get("username") == pr.get("requester"),
+            "is_requester": mine,
             "max": COMMENT_MAX}

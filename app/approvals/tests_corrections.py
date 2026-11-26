@@ -113,7 +113,7 @@ def run():
         p_inact, _ = approve("Inactive supplier", vendor="Third Vendor")
         svc.set_vendor_active(q("SELECT id FROM proc_vendors WHERE name='Third Vendor'")["id"], False, buyer,
                               reason="test block")
-        assert svc.issue_po(p_inact, buyer, force=True) == (False, "vendor_not_in_master")
+        assert svc.issue_po(p_inact, buyer, force=True) == (False, "vendor_blocked")
         assert svc.add_quote(p_inact, {"payment_terms": "30 days", "vendor": "third vendor", "amount": 5}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK") \
             == (False, "vendor_inactive")
 
@@ -121,11 +121,13 @@ def run():
         vid = q("SELECT id FROM proc_vendors WHERE name=?", VENDOR)["id"]
         assert svc.update_vendor(vid, {"name": "Renamed Corr Vendor"}, buyer) == (False, "vendor_in_use")
         assert q("SELECT name FROM proc_vendors WHERE id=?", vid)["name"] == VENDOR
-        assert svc.update_vendor(vid, {"name": VENDOR, "phone": "2"}, buyer)[0]
+        # the edit form always posts tax_id; leaving it out would clear it (an
+        # identity change, which sends the supplier back for approval)
+        assert svc.update_vendor(vid, {"name": VENDOR, "tax_id": "TX-1", "phone": "2"}, buyer)[0]
         assert q("SELECT phone FROM proc_vendors WHERE id=?", vid)["phone"] == "2"
         # case/spacing-only rename also orphans name-keyed history -> refused
         assert svc.update_vendor(vid, {"name": "  corr VENDOR  "}, buyer) == (False, "vendor_in_use")
-        assert svc.update_vendor(vid, {"name": "  " + VENDOR + "  "}, buyer)[0]  # same name, trimmed
+        assert svc.update_vendor(vid, {"name": "  " + VENDOR + "  ", "tax_id": "TX-1"}, buyer)[0]  # same name, trimmed
         # non-ASCII capitals: SQLite LOWER() would miss these; the guard must not
         assert svc.create_vendor({"name": "ÖZTÜRK Tekstil"}, buyer)[0]
         tvid = q("SELECT id FROM proc_vendors WHERE name=?", "ÖZTÜRK Tekstil")["id"]

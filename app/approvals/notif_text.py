@@ -65,6 +65,12 @@ TITLES = [
     (r"Stock issue reversed on (.+)", r"تم إلغاء صرف المخزن على \g<1>",
      r"\g<1> üzerindeki stok çıkışı geri alındı"),
     (r"New comment on (.+)", r"تعليق جديد على \g<1>", r"\g<1> üzerinde yeni yorum"),
+    # catalogue changes (items_admin.py: "Item %s %s")
+    (r"Item (\S+) added", r"الصنف \g<1> اتضاف", r"\g<1> ürünü eklendi"),
+    (r"Item (\S+) edited", r"الصنف \g<1> اتعدّل", r"\g<1> ürünü düzenlendi"),
+    (r"Item (\S+) retired", r"الصنف \g<1> اتوقف", r"\g<1> ürünü kullanımdan kaldırıldı"),
+    (r"Item (\S+) restored", r"الصنف \g<1> رجع تاني", r"\g<1> ürünü geri alındı"),
+    (r"Item (\S+) changed", r"الصنف \g<1> اتغيّر", r"\g<1> ürünü değişti"),
 ]
 
 BODIES = [
@@ -103,6 +109,13 @@ BODIES = [
      r"\g<1> \g<2> saattir fiyatlandırılmadan bekliyor — ilerlemesi için tutarı girin."),
     (r"(\S+) was cancelled by (\S+)\.", r"\g<1> اتلغى بواسطة \g<2>.",
      r"\g<1>, \g<2> tarafından iptal edildi."),
+    (r"(\S+) was closed before everything arrived; the rest will not be delivered\. "
+     r"Reason: (.*)",
+     r"\g<1> اتقفل قبل ما كل الطلبية توصل؛ الباقي مش هيتورّد. السبب: \g<2>",
+     r"\g<1> her şey gelmeden kapatıldı; kalanı teslim edilmeyecek. Neden: \g<2>"),
+    (r"(\S+): an advance of ([\d.]+)% was authorised by (.+) — it can now be paid\.",
+     r"\g<1>: تم اعتماد دفعة مقدمة \g<2>% بواسطة \g<3> — ممكن تتصرف دلوقتي.",
+     r"\g<1>: %\g<2> avans \g<3> tarafından onaylandı — artık ödenebilir."),
 ]
 
 _LANG_COL = {"ar": 1, "tr": 2}

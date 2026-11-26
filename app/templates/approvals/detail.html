@@ -854,18 +854,21 @@
                 supplier on an existing request, which is a worse bug than the
                 one this change fixes. -#}
             <td class="pf-vendor"><span class="pf-lbl" data-i18n="proc.line_vendor">Supplier for this line</span>
-              {% set known = vendors|map(attribute='name')|list %}
+              {#- Approved suppliers only: a pending one would be priced here and
+                  then refused at PO issue, after the whole ladder signed. -#}
+              {% set ok_vendors = vendors|rejectattr('status', 'in', ['pending', 'blocked'])|list %}
+              {% set known = ok_vendors|map(attribute='name')|list %}
               <select name="linevendor_{{ it.id }}" data-search>
                 <option value="" {{ 'selected' if not it.vendor }}
                         data-hint="{{ pr.vendor or '' }}"
                         data-i18n="proc.line_vendor_ph">Leave blank to use the request's vendor</option>
-                {% for v in vendors %}
+                {% for v in ok_vendors %}
                 <option value="{{ v.name }}" {{ 'selected' if it.vendor == v.name }}
                         {% if v.dues %}data-hint="{{ '{:,.0f}'.format(v.dues) }} due back"{% endif %}>{{ v.name }}</option>
                 {% endfor %}
                 {% if it.vendor and it.vendor not in known %}
                 <option value="{{ it.vendor }}" selected
-                        data-hint="not on the vendor master">{{ it.vendor }}</option>
+                        data-hint="{{ 'pending approval' if it.vendor in vendors|map(attribute='name')|list else 'not on the vendor master' }}">{{ it.vendor }}</option>
                 {% endif %}
               </select>
             </td>

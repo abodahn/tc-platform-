@@ -219,7 +219,7 @@
       {# One requisition, several suppliers: the per-line vendor picks from the
          same supplier list as the header field. Leave a line blank and it takes
          the header vendor, exactly as before. #}
-      <datalist id="vendorList">{% for v in vendors %}<option value="{{ v.name }}"></option>{% endfor %}</datalist>
+      <datalist id="vendorList">{% for v in vendors|rejectattr('status', 'in', ['pending', 'blocked']) %}<option value="{{ v.name }}"></option>{% endfor %}</datalist>
       {#- A request line asks two questions: what, and how many. Everything else
           on it — which catalogue item, in what unit, what is on the shelf, from
           which supplier — is answered later by the people who know, so those

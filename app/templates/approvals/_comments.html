@@ -1,7 +1,15 @@
 {#- Comments thread on a request (vendors lane). Included twice from detail.html:
-    cm_where='top' renders only while the request is ON HOLD (the latest few,
-    with the requester's Reply box, right under the hold banner); the bottom
-    copy renders otherwise. Text is autoescaped; length capped by the service. -#}
+    cm_where='top' renders only while the request is ON HOLD (the latest three,
+    the rest behind "Show older", with the requester's Reply box, right under
+    the hold banner); the bottom copy renders otherwise. Text is autoescaped;
+    length capped by the service. -#}
+{% macro cm_item(c, pr, cu) %}
+      <li class="cm-item{% if cu and c.author == cu.username %} is-mine{% endif %}">
+        <div class="cm-meta"><b>{{ c.author }}</b>{% if c.author == pr.requester %} · <span data-i18n="proc.vendors.cm_requester">requester</span>{% endif %}
+          · <bdi dir="ltr">{{ (c.created_at or '')[:16] }}</bdi></div>
+        <div class="cm-body">{{ c.body }}</div>
+      </li>
+{% endmacro %}
 {% set cm_top = cm_where == 'top' %}
 {% if (cm_top and pr.hold_reason) or (not cm_top and not pr.hold_reason) %}
 {% set cm = proc_comments(pr) %}
@@ -13,16 +21,15 @@
   <div class="panel-pad">
     {% if shown %}
     <ul class="cm-list">
-      {% for c in shown %}
-      <li class="cm-item{% if cu and c.author == cu.username %} is-mine{% endif %}">
-        <div class="cm-meta"><b>{{ c.author }}</b>{% if c.author == pr.requester %} · <span data-i18n="proc.vendors.cm_requester">requester</span>{% endif %}
-          · <bdi dir="ltr">{{ (c.created_at or '')[:16] }}</bdi></div>
-        <div class="cm-body">{{ c.body }}</div>
-      </li>
-      {% endfor %}
+      {% for c in shown %}{{ cm_item(c, pr, cu) }}{% endfor %}
     </ul>
     {% if cm_top and cm.rows|length > 3 %}
-    <div class="muted" style="font-size:12px;margin-top:6px"><span data-i18n="proc.vendors.cm_more">Older comments are in the audit trail.</span></div>
+    <details class="cm-older" style="margin-top:6px">
+      <summary class="muted" style="font-size:12.5px;cursor:pointer" data-i18n="proc.vendors.cm_more">Show older comments</summary>
+      <ul class="cm-list">
+        {% for c in cm.rows[3:] %}{{ cm_item(c, pr, cu) }}{% endfor %}
+      </ul>
+    </details>
     {% endif %}
     {% else %}
     <div class="muted" style="font-size:12.5px" data-i18n="proc.vendors.cm_none">No comments yet. Ask or answer a question about this request here.</div>

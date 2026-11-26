@@ -432,7 +432,9 @@ def dispatch_once():
                              "body": _TEXT["summary"][_lang(user["lang_pref"])] % len(mine),
                              "url": DEFAULT_URL, "tag": "tc-summary"}]
             else:
-                payloads = [payload_for(r) for r in mine]
+                # procurement rows are stored in English: pushed in the reader's language
+                from app.approvals.notif_text import localise_rows
+                payloads = [payload_for(r) for r in localise_rows(mine, user["lang_pref"])]
             work.append((sub, payloads))
         conn.commit()   # end the read transaction: no table locks held during network sends
         for sub, payloads in work:

@@ -1670,9 +1670,11 @@ def _flash_not_applied(msg):
                                      "the request in Pricing.",
            "demand_rungs_pending": "Its prices will apply once the warehouse has "
                                    "checked the request — save the quotation again then."}
-          .get(msg, "Its prices were not applied. Enter them in Pricing."),
+          .get(msg) or _QUOTE_ERRORS.get(msg)
+          or "Its prices were not applied. Enter them in Pricing.",
           "error" if msg in ("quote_fx_required", "fx_required", "bad_currency",
-                             "partial_other_currency") else "warning")
+                             "partial_other_currency", "vendor_pending",
+                             "vendor_blocked") else "warning")
 
 
 # --- editing an RFQ and the quotations against it (spec §4 and §5) ----------
@@ -2348,8 +2350,8 @@ def email_po(pr_id):
     ok, res = svc.email_po_to_vendor(pr_id, _u(), ip=_ip())
     if not ok:
         flash({"no_vendor_email": "No email on file for this vendor — add one in Vendors.",
-               "not_approved": "The PO isn't ready to send yet."}.get(res, f"Could not send ({res})."),
-              "error")
+               "not_approved": "The PO isn't ready to send yet."}.get(res)
+              or _QUOTE_ERRORS.get(res) or f"Could not send ({res}).", "error")
     elif res == "sent":
         flash("Purchase Order emailed to the vendor.", "success")
     else:
