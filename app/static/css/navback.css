@@ -7,11 +7,11 @@
 .topbar .navback .ico { width: 20px; height: 20px; }
 [dir="rtl"] .navback .ico { transform: scaleX(-1); }   /* the arrow points the way back */
 
-/* Phones: one more button in the bar. Trim the bar's own gaps and the language
-   pills a little so a 360px screen still has no horizontal scroll. */
+/* Phones: one more button in the bar. Only the bar's own gaps and side padding
+   shrink, so a 360px screen still has no horizontal scroll; every button keeps
+   the 40px+ phone target from app.css (language pills included). */
 @media (max-width: 400px) {
-  .topbar { gap: 4px; padding-inline: 8px; }
-  .topbar .seg button { min-width: 36px; padding: 0 6px; }
+  .topbar { gap: 3px; padding-inline: 6px; }
 }
 
 /* Error pages (no top bar): the Back button sits with the other action. */

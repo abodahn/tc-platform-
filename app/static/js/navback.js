@@ -11,7 +11,8 @@
 (function () {
   "use strict";
 
-  var KEY = "tc_navstack", MAX = 30;
+  var KEY = "tc_navstack", SUB = "tc_nb_submit", MAX = 30;
+  var BIG = 25e6;   // bytes: a bigger file is not pulled into an iPhone's memory, it opens over the app
   var t = function (k, f) { var v = window.tcT ? window.tcT(k) : k; return v === k ? f : v; };
 
   /* Same-origin path + query of a URL, or null for anything off-site. */
@@ -37,27 +38,59 @@
     var s = load(), cur = location.pathname + location.search, i = s.lastIndexOf(cur);
     if (i >= 0) s = s.slice(0, i + 1); else s.push(cur);
     save(s);
+    // Reached by submitting a form (POST -> redirect): stepping back would show
+    // that form again, still filled in, and invite a duplicate. Go UP instead.
+    try { if (sessionStorage.getItem(SUB)) { sessionStorage.removeItem(SUB); viaSubmit = true; } } catch (e2) {}
+    // Stamp this entry so in-page #anchor entries can be counted (see hashchange).
+    var st = history.state;
+    if (!(st && typeof st.nbHash === "number")) stamp(0);
+  });
+
+  var viaSubmit = false;
+  function stamp(n) {
+    var st = history.state;
+    try { history.replaceState(Object.assign({}, st && typeof st === "object" ? st : {}, { nbHash: n }), ""); } catch (e) {}
+  }
+  // Bubble phase on window: runs after the page's own handlers, so a form that
+  // was cancelled (validation, fetch, file download) leaves no marker.
+  window.addEventListener("submit", function (ev) {
+    var f = ev.target;
+    if (ev.defaultPrevented || !f || !f.getAttribute || (f.getAttribute("method") || "").toLowerCase() !== "post") return;
+    try { sessionStorage.setItem(SUB, "1"); } catch (e) {}
+  });
+  // Each tap on an href="#..." link adds a history entry on the same page.
+  // A new entry has no stamp yet; an existing one (native back/forward) has.
+  var hashDepth = 0;
+  window.addEventListener("hashchange", function () {
+    var st = history.state;
+    if (st && typeof st.nbHash === "number") { hashDepth = st.nbHash; return; }
+    stamp(++hashDepth);
   });
 
   document.addEventListener("click", function (ev) {
     var a = ev.target.closest && ev.target.closest("a[data-navback]");
     if (!a || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
     ev.preventDefault();
-    var s = load(), prev = s[s.length - 2];
-    // history.back() only when the browser's previous entry is provably the
-    // previous app page: the referrer must be that same page. Anything else
-    // (opened from a notification, an external site in between) goes UP.
-    if (prev && localPath(document.referrer) === prev) { history.back(); return; }
+    var s = load(), prev = s[s.length - 2], st = history.state;
+    var depth = st && typeof st.nbHash === "number" ? st.nbHash : 0;   // #anchor entries on this page
+    // Step back only when the browser's previous page is provably the previous
+    // app page: the referrer must be that same page. Anything else (opened from
+    // a notification, an external site in between, a form just submitted)
+    // goes UP.
+    if (prev && !viaSubmit && history.length > depth + 1 && localPath(document.referrer) === prev) {
+      history.go(-(depth + 1));
+      return;
+    }
     var parent = localPath(a.getAttribute("data-parent") || a.getAttribute("href"));
     if (!parent) return;
     s.pop(); save(s);           // this page is replaced, so UP never ping-pongs with Back
     location.replace(parent);
   });
 
-  /* ---- 2. files in the installed app ---- */
-  var standalone = window.navigator.standalone === true ||
-    (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
-  if (!standalone) return;
+  /* ---- 2. files in the installed app ----
+     iPhone/iPad home-screen app only (navigator.standalone exists only there):
+     Android and desktop installed apps already download files normally. */
+  if (window.navigator.standalone !== true) return;
 
   function toast(msg, type) { if (window.tcToast) window.tcToast(msg, type || ""); }
 
@@ -94,6 +127,8 @@
     setTimeout(function () { el.remove(); }, 15000);
   }
 
+  function drop(res) { try { if (res.body) res.body.cancel().catch(function () {}); } catch (e) {} }
+
   function getFile(url, a) {
     if (a) a.setAttribute("aria-busy", "true");
     toast(t("navback.preparing", "Preparing the file…"));
@@ -102,13 +137,15 @@
       // with a message. Show it in place like any other page.
       var ct = (res.headers.get("Content-Type") || "").toLowerCase();
       // Load the original URL again (not res.url) so a refusal re-flashes its message.
-      if (ct.indexOf("text/html") === 0) { location.href = url.href; return null; }
+      if (ct.indexOf("text/html") === 0) { drop(res); location.href = url.href; return null; }
       if (!res.ok) throw new Error("HTTP " + res.status);
+      var name = fileName(res, url, a), type = ct.split(";")[0] || "application/octet-stream", ok = false;
+      // Decide from the headers, before the body is read: a type iOS will not
+      // share, or a very large file, opens over the app instead (one download).
+      try { ok = navigator.canShare({ files: [new File([""], name, { type: type })] }); } catch (e) {}
+      if (!ok || +(res.headers.get("Content-Length") || 0) > BIG) { drop(res); readyToast(null, url.href); return; }
       return res.blob().then(function (blob) {
-        var file = new File([blob], fileName(res, url, a), { type: blob.type || ct.split(";")[0] || "application/octet-stream" });
-        var ok = false;
-        try { ok = navigator.canShare({ files: [file] }); } catch (e) {}
-        if (!ok) { readyToast(null, url.href); return; }   // e.g. a type iOS will not share
+        var file = new File([blob], name, { type: blob.type || type });
         return navigator.share({ files: [file] }).catch(function (e) {
           if (e && e.name === "AbortError") return;     // the user closed the sheet
           if (e && e.name === "NotAllowedError") { readyToast(file, url.href); return; }
@@ -145,8 +182,9 @@
     // unless the user has typed into a form here, which that would throw away.
     // shortcut: "is it a page" is guessed from the path (no extension, not an
     // attachment/file route); mark any new file route with data-file-download.
+    // /sso/ launches redirect to another system: they keep their browser sheet.
     if (a.target === "_blank" && url.origin === location.origin && !dirty &&
-        !/\.[a-z0-9]{2,5}$|\/(attachment|file|vendor-doc)(\/|$)/i.test(url.pathname)) {
+        !/\.[a-z0-9]{2,5}$|\/(attachment|file|vendor-doc)(\/|$)|^\/sso\//i.test(url.pathname)) {
       ev.preventDefault();
       location.href = url.href;
     }

@@ -3,7 +3,8 @@
     python -m app.tests_navback
 
 Temp SQLite DB; the repo's platform.db is never touched. The JavaScript
-(app/static/js/navback.js) cannot run here; this covers the server side: where
+(app/static/js/navback.js) runs under Node with stubbed browser objects when
+`node` is on PATH (skipped otherwise). The rest covers the server side: where
 the button appears, the parent it falls back to, that the fallback chain always
 ends at home without a loop, that a page's own override cannot point off-site,
 and that every export link carries data-file-download.
@@ -28,7 +29,96 @@ def _app():
 BACK = re.compile(r'<a class="icon-btn navback" id="navBack" href="([^"]*)"')
 
 
+# Runs navback.js with stub window/document/history/sessionStorage objects and
+# prints one JSON line per run; the Python side asserts on the results.
+_JS_HARNESS = r"""
+const src = require('fs').readFileSync(process.argv[1], 'utf8');
+function env(o) {
+  const L = {}, ss = new Map(Object.entries(o.ss || {})), calls = [];
+  const on = (k) => (t, f) => ((L[k + t] = L[k + t] || []).push(f));
+  const [pathname, q] = o.path.split('?');
+  const loc = { origin: 'https://x.test', pathname, search: q ? '?' + q : '',
+                replace: (u) => calls.push(['replace', u]) };
+  loc.href = 'https://x.test' + o.path;
+  const hist = { length: o.len || 3, state: null, go: (n) => calls.push(['go', n]),
+                 back: () => calls.push(['go', -1]), replaceState(s) { hist.state = s; } };
+  const win = { addEventListener: on('w'), navigator: { standalone: o.standalone } };
+  const doc = { referrer: o.ref ? 'https://x.test' + o.ref : '', addEventListener: on('d') };
+  const sto = { getItem: (k) => (ss.has(k) ? ss.get(k) : null), setItem: (k, v) => ss.set(k, String(v)),
+                removeItem: (k) => ss.delete(k) };
+  if (o.stack) ss.set('tc_navstack', JSON.stringify(o.stack));
+  new Function('window', 'document', 'location', 'history', 'sessionStorage', src)(win, doc, loc, hist, sto);
+  const fire = (k, t, ev) => (L[k + t] || []).forEach((f) => f(ev));
+  const ev = (a) => ({ target: { closest: (sel) => (sel.indexOf('data-navback') >= 0 ? (a.nav ? a : null) : (a.nav ? null : a)) },
+                       button: 0, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } });
+  const backBtn = { nav: 1, getAttribute: (n) => (n === 'data-parent' || n === 'href' ? o.parent : null) };
+  return { L, ss, calls, hist, loc, fire, ev, back() { fire('d', 'click', ev(backBtn)); return calls.slice(-1)[0]; } };
+}
+const out = {};
+// 1. list -> detail by a link: Back steps back one entry
+let e = env({ path: '/procurement/pr/9', ref: '/procurement/', stack: ['/procurement/'], parent: '/procurement/' });
+e.fire('w', 'pageshow', {}); out.plain = e.back();
+// 2. new form -> POST -> redirect to the detail: Back goes UP, never to the filled form
+e = env({ path: '/procurement/new', ref: '/procurement/', stack: ['/procurement/'], parent: '/procurement/' });
+e.fire('w', 'pageshow', {});
+const form = (m) => ({ getAttribute: (n) => (n === 'method' ? m : null) });
+e.fire('w', 'submit', { target: form('get'), defaultPrevented: false }); out.get_marks = e.ss.has('tc_nb_submit');
+e.fire('w', 'submit', { target: form('POST'), defaultPrevented: true }); out.cancelled_marks = e.ss.has('tc_nb_submit');
+e.fire('w', 'submit', { target: form('POST'), defaultPrevented: false }); out.post_marks = e.ss.has('tc_nb_submit');
+const after = env({ path: '/procurement/pr/9', ref: '/procurement/new', stack: ['/procurement/', '/procurement/new'],
+                    ss: { tc_nb_submit: '1' }, parent: '/procurement/' });
+after.fire('w', 'pageshow', {}); out.after_submit = after.back(); out.marker_left = after.ss.has('tc_nb_submit');
+// 3. two #anchor taps on the page: Back skips them and lands on the page before
+e = env({ path: '/procurement/guide', ref: '/procurement/', stack: ['/procurement/'], parent: '/procurement/', len: 4 });
+e.fire('w', 'pageshow', {}); out.stamp0 = e.hist.state.nbHash;
+e.hist.state = null; e.fire('w', 'hashchange', {});
+e.hist.state = null; e.fire('w', 'hashchange', {});
+out.two_anchors = e.back();
+e.hist.state = { nbHash: 1 }; e.fire('w', 'hashchange', {});   // native back over one anchor
+e.hist.state = null; e.fire('w', 'hashchange', {});              // then a new anchor from there
+out.renumbered = e.hist.state.nbHash; out.after_native = e.back();
+// 4. a tab with no history at all: UP
+e = env({ path: '/procurement/pr/9', ref: '/procurement/', stack: ['/procurement/'], parent: '/procurement/', len: 1 });
+e.fire('w', 'pageshow', {}); out.no_history = e.back();
+// 5. file handling is iPhone/iPad home-screen only (Android/desktop: navigator.standalone absent)
+out.listeners_other = (env({ path: '/a', parent: '/' }).L.dclick || []).length;
+e = env({ path: '/module/itsm', parent: '/', standalone: true });
+out.listeners_ios = (e.L.dclick || []).length;
+// 6. target=_blank: an /sso/ launch keeps its browser sheet, an app page opens in place
+const blank = (href) => ({ href, target: '_blank', hasAttribute: () => false, getAttribute: () => null });
+let c = e.ev(blank('https://x.test/sso/launch/itsm')); e.fire('d', 'click', c); out.sso_prevented = c.defaultPrevented;
+c = e.ev(blank('https://x.test/procurement/pr/3')); e.fire('d', 'click', c);
+out.page_prevented = c.defaultPrevented; out.page_href = e.loc.href;
+console.log(JSON.stringify(out));
+"""
+
+
+def js_checks():
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        print("skip navback.js behaviour (node not on PATH)")
+        return
+    js = Path(__file__).resolve().parent / "static" / "js" / "navback.js"
+    r = subprocess.run([node, "-e", _JS_HARNESS, str(js)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["plain"] == ["go", -1], o
+    assert (o["get_marks"], o["cancelled_marks"], o["post_marks"]) == (False, False, True), o
+    assert o["after_submit"] == ["replace", "/procurement/"] and not o["marker_left"], o
+    assert o["stamp0"] == 0 and o["two_anchors"] == ["go", -3], o
+    assert o["renumbered"] == 2 and o["after_native"] == ["go", -3], o
+    assert o["no_history"] == ["replace", "/procurement/"], o
+    assert o["listeners_other"] == 1 and o["listeners_ios"] == 2, o
+    assert o["sso_prevented"] is False, o
+    assert o["page_prevented"] is True and o["page_href"] == "https://x.test/procurement/pr/3", o
+    print("ok  navback.js: back, POST->redirect, #anchors, no history, iOS-only files, /sso/ links")
+
+
 def run():
+    js_checks()
     app = _app()
     from flask import g, render_template_string, session
     # One app context for the whole run: drop g.user so a client never inherits
