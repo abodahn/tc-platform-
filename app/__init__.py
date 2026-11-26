@@ -298,6 +298,9 @@ def create_app():
     # the app into a BuildError — base.html resolves nav endpoints unguarded.
     from app.approvals.aging import bp as proc_aging_bp
     app.register_blueprint(proc_aging_bp)
+    # Procurement-only users see /procurement and nothing else (app/proc_scope.py).
+    from app.proc_scope import init_app as _proc_scope_init
+    _proc_scope_init(app)
 
     # --- Error handlers ---
     from flask import render_template

@@ -75,7 +75,9 @@ def test_requires_login(app):
 
 def test_permission_denied_for_low_priv(app):
     c = app.test_client(); _login(c, "low", "Low@1234")
-    assert c.get("/hr/probation/").status_code == 403
+    # normal_user is procurement-only: other modules bounce to /procurement (app/proc_scope.py)
+    r = c.get("/hr/probation/")
+    assert r.status_code == 403 or (r.status_code == 302 and r.headers["Location"].endswith("/procurement/"))
 
 
 def test_all_pages_render_for_admin(app):

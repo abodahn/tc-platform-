@@ -72,14 +72,19 @@ def _system_by_key(key):
 def _unread_notifications(username=None):
     """Bell feed: broadcast notifications (target_user IS NULL) plus any addressed
     to this user. Older rows created before the target_user column are broadcast."""
+    from flask import has_request_context
+    from app.proc_scope import is_procurement_only
+    # Procurement-only users get procurement alerts only (bell, feed and My Work all read this).
+    only_proc = (" AND module = 'procurement'"
+                 if has_request_context() and is_procurement_only(current_user()) else "")
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT * FROM notifications WHERE target_user IS NULL OR target_user = ? "
-            "ORDER BY id DESC LIMIT 30", (username,)).fetchall()
+            "SELECT * FROM notifications WHERE (target_user IS NULL OR target_user = ?)"
+            + only_proc + " ORDER BY id DESC LIMIT 30", (username,)).fetchall()
         unread = conn.execute(
             "SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0 "
-            "AND (target_user IS NULL OR target_user = ?)", (username,)).fetchone()["c"]
+            "AND (target_user IS NULL OR target_user = ?)" + only_proc, (username,)).fetchone()["c"]
     finally:
         conn.close()
     # Procurement rows are stored in English; shown in the reader's language.
@@ -170,11 +175,14 @@ def inject_globals():
         # Company-wide procurement pages are not for a plain requester.
         from app.approvals.services import sees_all_prs
         _hide = () if sees_all_prs(user) else ("proc_analytics", "proc_agreements")
+        from app import proc_scope
+        _only = proc_scope.NAV_KEYS if proc_scope.is_procurement_only(user) else None
         for section in NAV:
             items = [it for it in section["items"]
                      if user_has_permission(user, it[4]) and it[0] not in WIP_KEYS
                      and it[0] not in _hide
-                     and (scope is None or it[0] in scope)]
+                     and (scope is None or it[0] in scope)
+                     and (_only is None or it[0] in _only)]
             if items:
                 visible_nav.append({"section": section["section"], "items": items})
         # Placeholder modules are hidden from the sidebar for EVERYONE now,
@@ -1169,6 +1177,8 @@ def search():
         return jsonify({"q": q, "results": results})
 
     user = current_user()
+    from app.proc_scope import is_procurement_only
+    proc_only = is_procurement_only(user)   # then only procurement results
 
     def fuzzy(hay):
         hay = (hay or "").lower()
@@ -1178,7 +1188,7 @@ def search():
         return any(difflib.SequenceMatcher(None, q, w).ratio() >= 0.82 for w in hay.split())
 
     # 1) modules / apps
-    for row in _systems():
+    for row in ([] if proc_only else _systems()):
         hay = " ".join(filter(None, [row["name_en"], row["name_ar"], row["name_tr"],
                                      row["desc_en"], row["key"], row["category"]]))
         if fuzzy(hay):
@@ -1239,7 +1249,7 @@ def search():
                     "sub": "Item" + ("" if it["active"] else " (retired)"),
                     "url": url_for("approvals.items", q=it["code"])})
 
-        if has_permission(user["role"], "open_module"):
+        if has_permission(user["role"], "open_module") and not proc_only:
             for p in conn.execute("SELECT name,area FROM production_lines"):
                 if fuzzy(f"{p['name']} {p['area']}"):
                     results.append({"type": "production", "name": p["name"], "sub": "Production line",
@@ -1260,7 +1270,7 @@ def search():
                 except Exception:
                     continue
 
-        if user_has_permission(user, "view_dashboard"):
+        if user_has_permission(user, "view_dashboard") and not proc_only:
             _scan("SELECT id,order_no,buyer,style_name,style_ref FROM ord_orders "
                   "ORDER BY id DESC LIMIT 300",
                   lambda r: f"{r['order_no']} {r['buyer']} {r['style_name'] or ''} {r['style_ref'] or ''}",
@@ -1463,7 +1473,8 @@ def my_work():
 
     # Orders: Time & Action milestones whose planned date has passed with no
     # actual — the earliest signal that a ship date is about to slip.
-    if user_has_permission(user, "view_dashboard"):
+    from app.proc_scope import is_procurement_only
+    if user_has_permission(user, "view_dashboard") and not is_procurement_only(user):
         try:
             conn = get_db()
             try:

@@ -98,7 +98,8 @@ def test_signup_success_then_verify_then_approve_then_login(app):
     nc = app.test_client()
     r = nc.post("/login", data={"username": "nour.sami@tcgarments.com",
                                 "password": "Str0ng!Passw0rd#7", "_csrf": _tok(nc), "next": "/"})
-    assert r.status_code == 302 and nc.get("/").status_code == 200
+    # a normal_user is procurement-only: "/" lands on /procurement (app/proc_scope.py)
+    assert r.status_code == 302 and nc.get("/", follow_redirects=True).status_code == 200
 
 
 def test_duplicate_and_weak_and_mismatch(app):
@@ -176,7 +177,9 @@ def test_permission_enforced_on_admin(app):
                    ("plain", generate_password_hash("Plain@1234"), "Plain", "normal_user", 1, "active"))
         cc.commit(); cc.close()
     c = app.test_client(); _login(c, "plain", "Plain@1234")
-    assert c.get("/admin/registrations").status_code == 403
+    # normal_user is procurement-only: other modules bounce to /procurement (app/proc_scope.py)
+    r = c.get("/admin/registrations")
+    assert r.status_code == 403 or (r.status_code == 302 and r.headers["Location"].endswith("/procurement/"))
 
 
 # --------------------------------------------------------------- regression

@@ -906,7 +906,13 @@
       + '</a>';
   }
   function render() {
-    var pins = load();
+    // A pin only shows while its page is still in this user's menu (a narrower
+    // scope, e.g. procurement-only, must not keep a stale shortcut to Orders).
+    var shown = {};
+    document.querySelectorAll(".nav-item[data-navkey]").forEach(function (it) {
+      if (!it.closest("#navPinned")) shown[it.getAttribute("data-navkey")] = 1;
+    });
+    var pins = load().filter(function (p) { return shown[p.key]; });
     var cont = document.getElementById("navPinnedItems");
     var wrap = document.getElementById("navPinned");
     if (cont) cont.innerHTML = pins.map(itemHtml).join("");
