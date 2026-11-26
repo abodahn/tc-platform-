@@ -34,11 +34,14 @@ def run():
         ids, users = {}, {}
         for un, role in (("t.buy", "purchasing_manager"), ("t.buy2", "purchasing_manager"),
                          ("t.fin", "finance_manager"), ("t.itdir", "it_director"),
-                         ("t.staff", "normal_user"), ("t.other", "normal_user")):
+                         ("t.staff", "normal_user"), ("t.other", "normal_user"),
+                         ("t.recv", "normal_user")):
             c.execute("INSERT INTO users (username, password_hash, full_name, role, is_active, created_at) "
                       "VALUES (?, 'x', ?, ?, 1, '2026-01-01')", (un, un, role))
             ids[un] = c.execute("SELECT id FROM users WHERE username=?", (un,)).fetchone()["id"]
             users[un] = dict(c.execute("SELECT * FROM users WHERE id=?", (ids[un],)).fetchone())
+        # a no-money user who may see every request (goods receipt only)
+        c.execute("UPDATE users SET extra_perms='[\"proc_receive\"]' WHERE username='t.recv'")
         c.execute("INSERT INTO proc_vendors (name, is_active, created_at) VALUES ('Fake Vendor A', 1, '2026-01-01')")
         c.execute("INSERT INTO proc_vendors (name, is_active, created_at) VALUES ('Fake Vendor Off', 0, '2026-01-01')")
         c.execute("INSERT INTO proc_items (code, name, unit, active) VALUES ('FAKE-001', 'Fake Catalogue Item', 'Kg', 1)")
@@ -291,7 +294,9 @@ def run():
         # register page, filters, export, detail, search, Arabic
         page = client("t.buy").get("/procurement/agreements").get_data(as_text=True)
         assert a["ref"] in page and "2,000" in page
-        page = client("t.staff").get("/procurement/agreements").get_data(as_text=True)
+        # plain requesters see only their own requests (2026-11-26): no agreements register
+        assert client("t.staff").get("/procurement/agreements").status_code == 403
+        page = client("t.recv").get("/procurement/agreements").get_data(as_text=True)
         assert a["ref"] in page and "2,000" not in page and "agr-new" not in page   # no money, no form
         page = client("t.buy").get("/procurement/agreements?status=draft").get_data(as_text=True)
         assert a["ref"] not in page.split("<tbody>", 1)[-1], page[page.find("<tbody>"):][:600]

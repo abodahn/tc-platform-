@@ -72,10 +72,13 @@ def run():
         c = get_db()
         admin = dict(c.execute("SELECT * FROM users WHERE role='super_admin' ORDER BY id LIMIT 1").fetchone())
         ids = {}
-        for un, role in (("an.staff", "normal_user"),):
+        for un, role in (("an.staff", "normal_user"), ("an.plain", "normal_user")):
             c.execute("INSERT INTO users (username, password_hash, full_name, role, is_active, created_at) "
                       "VALUES (?, 'x', ?, ?, 1, '2026-01-01')", (un, un, role))
             ids[un] = c.execute("SELECT id FROM users WHERE username=?", (un,)).fetchone()["id"]
+        # plain requesters see only their own requests (2026-11-26): "staff" here is a
+        # no-money user who may see all requests (goods receipt only), not a plain requester.
+        c.execute("UPDATE users SET extra_perms='[\"proc_receive\"]' WHERE username='an.staff'")
         cols = ("pr_no,title,department,vendor,status,total,tax_rate,currency,fx_rate,budget_released,"
                 "request_date,created_at,submitted_at,approved_at,is_active,req_del_date,received_at,"
                 "cost_center,expenditure_kind")
@@ -307,6 +310,8 @@ def run():
     chk("staff: budget export refused", staff.get("/procurement/analytics/data/budget.xlsx").status_code == 403)
     r = staff.get("/procurement/analytics/run.json?d1=department&m=requests&period=all")
     chk("staff: counts allowed", r.status_code == 200, r.status_code)
+    plain = client(ids["an.plain"])
+    chk("a plain requester is refused the dashboard", plain.get("/procurement/analytics?period=all").status_code == 403)
     r = adm.get("/procurement/analytics/run.json?d1=supplier&m=spend&period=all")
     chk("admin: spend JSON", r.status_code == 200 and "Fake Supplier A" in r.get_data(as_text=True), r.status_code)
     chk("bad config is a 400", adm.get("/procurement/analytics/run.json?d1=nope&m=spend").status_code == 400)

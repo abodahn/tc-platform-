@@ -86,6 +86,9 @@ def run():
         buyer = signer[C.PRICING_GATE_STAGE]
         store = mkuser("qf_store", "storekeeper")
         outsider = mkuser("qf_viewer", "normal_user")
+        # plain requesters see only their own requests (2026-11-26): the no-money outsider
+        # must be one who may open every request (goods receipt only, no money permission).
+        run_sql("UPDATE users SET extra_perms='[\"proc_receive\"]' WHERE username='qf_viewer'")
 
         def new_pr(title, lines):
             pid, _ = svc.create_pr({"title": title, "department": "Production",

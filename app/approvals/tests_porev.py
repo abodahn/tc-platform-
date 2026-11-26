@@ -396,6 +396,8 @@ def run():
         assert "data-porev-bulk" in client(ids["w.store"]).get("/procurement/").get_data(as_text=True)
 
         # (C) copy: demand only — no price, no vendor
+        # plain requesters see only their own requests (2026-11-26): w.req copies its OWN request
+        ex("UPDATE pr_requests SET requester='w.req', requester_user_id=? WHERE id=?", ids["w.req"], two)
         r = client(ids["w.req"]).get("/procurement/new?copy=%d" % two)
         body = r.get_data(as_text=True)
         assert r.status_code == 200 and "Seal kit" in body

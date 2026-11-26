@@ -180,6 +180,9 @@ def run():                                          # noqa: C901 — one linear 
             conn.execute("INSERT OR IGNORE INTO users (username, password_hash, full_name, "
                          "role, is_active, created_at) VALUES (?,?,?,?,1,'2026-01-01')",
                          (name, "x", name, role))
+        # plain requesters see only their own requests (2026-11-26): the no-money user
+        # must be one who may open every request (goods receipt only, no money permission).
+        conn.execute("UPDATE users SET extra_perms='[\"proc_receive\"]' WHERE username='xl_nomoney'")
         conn.commit()
         conn.close()
         uids = {r["username"]: r["id"] for r in

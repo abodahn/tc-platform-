@@ -3332,6 +3332,10 @@ def _requester_scope():
     ep = request.endpoint or ""
     if ep in _ALL_ONLY_ENDPOINTS or ep.startswith("approvals.analytics"):
         abort(403)
+    # Viewing only: every action (POST) keeps its own permission check and its
+    # own refusal, which already stops a requester acting on someone else's request.
+    if request.method not in ("GET", "HEAD"):
+        return None
     pr = svc.pr_for_args(request.view_args)
     if pr is not None and not svc.can_view_pr(user, pr):
         abort(404)

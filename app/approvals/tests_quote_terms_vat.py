@@ -211,6 +211,9 @@ def run():
         run_sql("INSERT OR IGNORE INTO users (username, password_hash, full_name, role, "
                 "is_active, lang_pref, created_at) VALUES "
                 "('qtv_viewer','x','qtv_viewer','normal_user',1,'en','2026-01-01')")
+        # plain requesters see only their own requests (2026-11-26): the no-money viewer
+        # must be one who may open every request (goods receipt only, no money permission).
+        run_sql("UPDATE users SET extra_perms='[\"proc_receive\"]' WHERE username='qtv_viewer'")
         viewer = dict(one("SELECT * FROM users WHERE username='qtv_viewer'"))
         chk("the viewer has no money view of this request",
             svc.money_view(viewer, svc.get_pr(pr_id)["pr"]) == "")
