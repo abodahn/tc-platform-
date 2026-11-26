@@ -98,6 +98,9 @@ def test_role_access_matrix(client, app, role):
         assert r.status_code in (200, 302, 403), f"role={role} GET {path} -> {r.status_code}"
     # permission routes: precise enforcement
     scope = system_scope({"role": role})    # None => unrestricted role
+    from app.proc_scope import is_procurement_only
+    with app.app_context():
+        proc_only = is_procurement_only({"role": role})
     for path, perm in PERM:
         r = client.get(path, follow_redirects=False)
         assert r.status_code != 500, f"role={role} GET {path} -> 500"
@@ -113,6 +116,11 @@ def test_role_access_matrix(client, app, role):
             prefix = urlparse(path).path.rstrip("/") or "/"
             assert not dest.startswith(prefix), \
                 f"role={role} GET {path} redirected back into the blueprint ({dest})"
+        elif proc_only and path != "/module/itsm":
+            # Procurement-only role (app/proc_scope.py): bounced to /procurement
+            # before the route runs. The IT Service Desk stays open to them.
+            assert r.status_code == 302 and urlparse(r.headers.get("Location", "")).path == "/procurement/", \
+                f"role={role} is procurement-only; GET {path} must go to /procurement/, got {r.status_code}"
         elif has_permission(role, perm):
             assert r.status_code in (200, 302), \
                 f"role={role} HAS {perm} but GET {path} -> {r.status_code}"

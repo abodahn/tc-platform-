@@ -69,14 +69,19 @@ def _system_by_key(key):
     return row
 
 
+def _proc_only_sql():
+    """Extra WHERE for notification queries: procurement-only users read and
+    clear procurement alerts only (bell, feed, My Work and mark-all-read)."""
+    from flask import has_request_context
+    from app.proc_scope import is_procurement_only
+    return (" AND module = 'procurement'"
+            if has_request_context() and is_procurement_only(current_user()) else "")
+
+
 def _unread_notifications(username=None):
     """Bell feed: broadcast notifications (target_user IS NULL) plus any addressed
     to this user. Older rows created before the target_user column are broadcast."""
-    from flask import has_request_context
-    from app.proc_scope import is_procurement_only
-    # Procurement-only users get procurement alerts only (bell, feed and My Work all read this).
-    only_proc = (" AND module = 'procurement'"
-                 if has_request_context() and is_procurement_only(current_user()) else "")
+    only_proc = _proc_only_sql()
     conn = get_db()
     try:
         rows = conn.execute(
@@ -1060,7 +1065,7 @@ def mark_notifications_read():
                          "AND (target_user IS NULL OR target_user = ?)", (nid, me))
         else:
             conn.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0 "
-                         "AND (target_user IS NULL OR target_user = ?)", (me,))
+                         "AND (target_user IS NULL OR target_user = ?)" + _proc_only_sql(), (me,))
         conn.commit()
     finally:
         conn.close()

@@ -94,16 +94,18 @@ check("pulse tiles rendered", len(seen) >= 5, f"tiles={sorted(seen)}")
 check("no raw traceback", "Traceback" not in html)
 
 print("\n=== 2. low-permission user sees NO block it lacks permission for ===")
+# project_manager: generic perms only. A normal_user is procurement-only now and
+# '/' redirects it to /procurement (app/proc_scope.py), checked at the end of this block.
 conn = get_db()
 try:
     conn.execute("INSERT INTO users (username,password_hash,full_name,role,is_active) "
-                 "VALUES (?,?,?,?,1)", ("lane2_low", "x", "Low Perms", "normal_user"))
+                 "VALUES (?,?,?,?,1)", ("lane2_low", "x", "Low Perms", "project_manager"))
     conn.commit()
     low_id = conn.execute("SELECT id FROM users WHERE username='lane2_low'").fetchone()["id"]
 finally:
     conn.close()
 r2 = client(app, low_id).get("/")
-check("dashboard 200 (normal_user)", r2.status_code == 200, f"status={r2.status_code}")
+check("dashboard 200 (project_manager)", r2.status_code == 200, f"status={r2.status_code}")
 h2 = r2.get_data(as_text=True)
 low_seen = set(re.findall(r'data-exec="([a-z_]+)"', h2))
 from app.security import user_has_permission              # noqa: E402
@@ -114,12 +116,23 @@ finally:
     conn.close()
 leaked = sorted(k for k in low_seen if not user_has_permission(low_user, TILE_PERM[k]))
 check("every tile shown is one this user may open", not leaked, f"leaked={leaked}")
-# spot check: normal_user has none of these module permissions, so their markup
+# spot check: project_manager has none of these module permissions, so their markup
 # must be absent from the page entirely.
 absent = {"mat_short", "qc_rate", "qc_failed", "lines_below", "spares_out", "certs_expiring"}
-check("no markup for modules normal_user cannot open", not (low_seen & absent),
+check("no markup for modules project_manager cannot open", not (low_seen & absent),
       f"present={sorted(low_seen & absent)}")
-check("normal_user keeps view_dashboard tiles", "orders_late" in low_seen, f"tiles={sorted(low_seen)}")
+check("project_manager keeps view_dashboard tiles", "orders_late" in low_seen, f"tiles={sorted(low_seen)}")
+conn = get_db()
+try:
+    conn.execute("INSERT INTO users (username,password_hash,full_name,role,is_active) "
+                 "VALUES (?,?,?,?,1)", ("lane2_req", "x", "Requester", "normal_user"))
+    conn.commit()
+    req_id = conn.execute("SELECT id FROM users WHERE username='lane2_req'").fetchone()["id"]
+finally:
+    conn.close()
+r3 = client(app, req_id).get("/")
+check("normal_user (procurement-only) is sent to /procurement",
+      r3.status_code == 302 and r3.headers["Location"].endswith("/procurement/"), f"status={r3.status_code}")
 
 print("\n=== 3. empty database degrades quietly (no fabricated zeros) ===")
 EMPTY = Path(tempfile.mkdtemp(prefix="dash_empty_"))

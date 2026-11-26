@@ -580,9 +580,11 @@ with app.app_context():
     sec._merge_module_rbac(WSH_PERMISSIONS, WSH_ROLE_PERMS, WSH_ROLE_LABELS)
     conn = get_db()
     admin_id = conn.execute("SELECT id FROM users WHERE role='super_admin' LIMIT 1").fetchone()["id"]
+    # project_manager, not normal_user: a procurement-only user is bounced to
+    # /procurement (app/proc_scope.py) before the wash permission check runs.
     if not conn.execute("SELECT id FROM users WHERE username='wash_nobody'").fetchone():
         conn.execute("INSERT INTO users (username,password_hash,full_name,role,is_active) "
-                     "VALUES (?,?,?,?,1)", ("wash_nobody", "x", "No Perms", "normal_user"))
+                     "VALUES (?,?,?,?,1)", ("wash_nobody", "x", "No Perms", "project_manager"))
         conn.commit()
     nobody = conn.execute("SELECT id FROM users WHERE username='wash_nobody'").fetchone()["id"]
     R1 = conn.execute("SELECT id FROM wsh_recipes WHERE code='WR-STN-01'").fetchone()["id"]

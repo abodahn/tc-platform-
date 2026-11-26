@@ -34,6 +34,9 @@ def snapshot(user=None):
     conn = None
     try:
         conn = get_db()
+        from app.proc_scope import is_procurement_only
+        # Procurement-only users (app/proc_scope.py): no maintenance/production data.
+        proc_only = is_procurement_only(user)
 
         # --- Maintenance ---
         open_t = _scalar(conn, "SELECT COUNT(*) c FROM mnt_tickets WHERE status NOT IN ('closed','cancelled','rejected')")
@@ -50,7 +53,7 @@ def snapshot(user=None):
             m.append(f"{stopped} machine(s) stopped")
         if mine_t:
             m.append(f"{mine_t} assigned to you")
-        if m:
+        if m and not proc_only:
             lines.append("Maintenance tickets: " + ", ".join(m) + ".")
 
         # --- Procurement ---
@@ -73,14 +76,15 @@ def snapshot(user=None):
         try:
             rows = conn.execute("SELECT status, COUNT(*) c FROM production_lines GROUP BY status").fetchall()
             by = {r["status"]: r["c"] for r in rows}
-            if by:
+            if by and not proc_only:
                 lines.append("Production lines: " + ", ".join(f"{v} {k}" for k, v in by.items()) + ".")
         except Exception:  # noqa: BLE001
             pass
 
         # --- Notifications (for this user) ---
         if username:
-            unread = _scalar(conn, "SELECT COUNT(*) c FROM notifications WHERE is_read=0 AND (target_user IS NULL OR target_user=?)", (username,))
+            unread = _scalar(conn, "SELECT COUNT(*) c FROM notifications WHERE is_read=0 AND (target_user IS NULL OR target_user=?)"
+                             + (" AND module='procurement'" if proc_only else ""), (username,))
             if unread:
                 lines.append(f"Unread notifications: {unread}.")
     except Exception:  # noqa: BLE001

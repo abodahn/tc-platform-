@@ -21,8 +21,10 @@ def _app():
 
 
 # Built-in roles that become procurement-only under the rule (reported to IT).
+# purchasing_manager is in: its only non-procurement permission is the read-only
+# wh_view, which the scope keeps (warehouse pages stay open for it).
 EXPECTED_PROC_ONLY = {
-    "normal_user", "finance_manager", "financial_controller", "cfo", "ceo",
+    "normal_user", "purchasing_manager", "finance_manager", "financial_controller", "cfo", "ceo",
     "supply_chain_director", "plant_director", "hr_director", "financial_director",
     "managing_director", "board",
 }
@@ -41,7 +43,10 @@ def run():
     with app.app_context():
         from app.db import get_db
         from app.security import ROLES
-        from app.proc_scope import is_procurement_only
+        from app.proc_scope import is_procurement_only, GENERIC_PERMS, OUT_OF_SCOPE_MSG
+        from app.security import user_permissions
+        from app.approvals.messages import MESSAGES
+        assert MESSAGES[OUT_OF_SCOPE_MSG]["ar"] and MESSAGES[OUT_OF_SCOPE_MSG]["tr"]
         from app.approvals import services as svc
 
         # -- the rule, over every built-in role
@@ -49,10 +54,22 @@ def run():
         assert got == EXPECTED_PROC_ONLY, sorted(got ^ EXPECTED_PROC_ONLY)
         assert not is_procurement_only({"role": "super_admin"})
         assert not is_procurement_only({"role": "itsm_user"})          # own system scope
-        assert not is_procurement_only({"role": "purchasing_manager"})  # holds wh_view
+        assert is_procurement_only({"role": "purchasing_manager"})      # wh_view is a companion
+        assert not is_procurement_only({"role": "warehouse_manager"})   # wh_manage is real work
         assert not is_procurement_only({"role": "storekeeper"})
         assert not is_procurement_only({"role": "normal_user", "extra_perms": '["maint_view"]'})
         assert is_procurement_only({"role": "normal_user", "extra_perms": '["view_reports"]'})
+        # proc_view is required: without it /procurement itself 403s, so such a user keeps '/'
+        assert "proc_view" not in user_permissions({"role": "project_manager"})
+        assert not is_procurement_only({"role": "project_manager", "extra_perms": '["proc_create"]'})
+        assert not is_procurement_only({"role": "project_manager", "extra_perms": '["proc_pay"]'})
+        assert is_procurement_only({"role": "project_manager", "extra_perms": '["proc_view","proc_pay"]'})
+        # no shared report is gated on the generic baseline alone, so the Reports
+        # Center only lists procurement (and, with wh_view, warehouse) reports
+        from app.services import reporting
+        for spec in reporting.all_reports():
+            ps = spec["perm"] if isinstance(spec["perm"], (tuple, list)) else (spec["perm"],)
+            assert not set(ps) <= GENERIC_PERMS, spec["key"]
         assert not is_procurement_only(None)
 
         c = get_db()
@@ -60,7 +77,8 @@ def run():
         for un, role, extra in (("t.req", "normal_user", None), ("t.cfo", "cfo", None),
                                 ("t.buyer", "purchasing_manager", None),
                                 ("t.store", "storekeeper", None),
-                                ("t.wide", "normal_user", '["maint_view"]')):
+                                ("t.wide", "normal_user", '["maint_view"]'),
+                                ("t.noview", "project_manager", '["proc_create"]')):
             c.execute("INSERT INTO users (username, password_hash, full_name, role, is_active, "
                       "created_at, extra_perms) VALUES (?, 'x', ?, ?, 1, '2026-01-01', ?)",
                       (un, un, role, extra))
@@ -91,8 +109,20 @@ def run():
             import re
             return set(re.findall(r'data-navkey="([a-z_]+)"', html))
 
+        # the assistant's live snapshot: no maintenance/production, procurement alerts only
+        from app.services.garamento_data import snapshot
+        c = get_db()
+        c.execute("INSERT INTO production_lines (name, area, status) VALUES ('Zqx line', 'Sewing', 'running')")
+        c.commit()
+        c.close()
+        snap_req = snapshot({"id": ids["t.req"], "username": "t.req", "role": "normal_user"})
+        snap_adm = snapshot({"id": ids["admin"], "username": "admin", "role": "super_admin"})
+        assert "Production lines" not in snap_req and "Maintenance tickets" not in snap_req, snap_req
+        assert "Unread notifications: 1." in snap_req, snap_req
+        assert "Production lines" in snap_adm, snap_adm
+
         proc_home = "/procurement/"
-        for un in ("t.req", "t.cfo"):
+        for un in ("t.req", "t.cfo", "t.buyer"):
             cli = client(un)
             # '/' lands on procurement
             r = cli.get("/")
@@ -104,15 +134,38 @@ def run():
             html = cli.get(proc_home).get_data(as_text=True)
             keys = nav_keys(html)
             assert "procurement" in keys and "my_work" in keys, (un, keys)
-            assert not keys & set(OTHER_NAV), (un, keys & set(OTHER_NAV))
+            assert not keys & (set(OTHER_NAV) - {"itsm"}), (un, keys & set(OTHER_NAV))
+            # the IT Service Desk stays (raise IT tickets), the launcher does not
+            assert "itsm" in keys, (un, keys)
+            for url in ("/module/itsm", "/sso/launch/itsm"):
+                r = cli.get(url)
+                assert not (r.status_code == 302 and r.headers["Location"].endswith(proc_home)), (un, url)
+            # read-only warehouse pages only for the buyer (wh_view)
+            if un == "t.buyer":
+                assert "warehouse" in keys, keys
+                assert cli.get("/warehouse/").status_code == 200
+            else:
+                assert "warehouse" not in keys, (un, keys)
+                assert cli.get("/warehouse/").headers.get("Location", "").endswith(proc_home), un
+            # type-ahead: procurement sources yes, orders no
+            assert cli.get("/api/lookup/items?q=a").status_code == 200, un
+            assert cli.get("/api/lookup/users?q=t").status_code == 200, un
+            r = cli.get("/api/lookup/orders?q=zqx")
+            assert r.status_code == 302 and r.headers["Location"].endswith(proc_home), (un, r.status_code)
             # everything else by URL bounces back (GET) or is refused (POST)
             for url in ("/orders/", "/orders/tna", "/launcher", "/registry", "/roadmap",
-                        "/intelligence/", "/factory/", "/bi/", "/module/itsm",
-                        "/sso/launch/itsm", "/reports", "/health"):
+                        "/intelligence/", "/factory/", "/bi/", "/module/bi",
+                        "/sso/launch/bi", "/reports", "/health"):
                 r = cli.get(url)
                 assert r.status_code == 302 and r.headers["Location"].endswith(proc_home), (un, url, r.status_code)
             r = cli.post("/orders/", data={"_csrf": "tok", "order_no": "X"})
             assert r.status_code == 403, (un, r.status_code)
+            # a bounced link says why (the PWA shows no URL); '/' itself does not
+            fresh = client(un)
+            fresh.get("/")
+            assert OUT_OF_SCOPE_MSG not in fresh.get(proc_home).get_data(as_text=True), un
+            html = fresh.get("/orders/", follow_redirects=True).get_data(as_text=True)
+            assert OUT_OF_SCOPE_MSG in html, un
             # search: procurement results only
             res = cli.get("/search?q=zqx").get_json()["results"]
             assert all(x["type"] not in ("order", "production") and "/module/" not in x["url"]
@@ -127,10 +180,17 @@ def run():
         req = client("t.req")
         assert any(x["type"] == "pr" for x in req.get("/search?q=zqx").get_json()["results"])
         assert [i["title"] for i in req.get("/notifications/feed").get_json()["items"]] == ["PROC-BELL"]
+        # 'mark all read' clears only what the requester can see, not everyone's broadcasts
+        assert req.post("/notifications/read", data={"_csrf": "tok"}).status_code == 200
+        c = get_db()
+        unread = {r["title"]: r["is_read"] for r in c.execute("SELECT title, is_read FROM notifications "
+                                                             "WHERE title IN ('PROC-BELL','MAINT-BELL','ITSM-BELL')")}
+        c.close()
+        assert unread == {"PROC-BELL": 1, "MAINT-BELL": 0, "ITSM-BELL": 0}, unread
 
         # -- unchanged: storekeeper (warehouse perms), super_admin, a requester
-        #    with another module's extra permission, and purchasing_manager (wh_view)
-        for un in ("t.store", "admin", "t.wide", "t.buyer"):
+        #    with another module's extra permission, and a proc_create holder without proc_view
+        for un in ("t.store", "admin", "t.wide", "t.noview"):
             cli = client(un)
             r = cli.get("/")
             assert r.status_code == 200, (un, r.status_code, r.headers.get("Location"))

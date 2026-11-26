@@ -37,14 +37,15 @@ def app():
     cfg.Config.DB_PATH = Path(tempfile.mkdtemp(prefix="prob_pytest_")) / "platform.db"
     from app import create_app
     application = create_app()
-    # a low-privilege user (role lacks prob_view)
+    # a low-privilege user (role lacks prob_view; project_manager, because a
+    # normal_user is procurement-only and would bounce before the check runs)
     with application.app_context():
         from app.db import get_db
         from werkzeug.security import generate_password_hash
         c = get_db()
         c.execute("INSERT INTO users (username,password_hash,full_name,role,created_at) "
                   "VALUES (?,?,?,?,datetime('now'))",
-                  ("low", generate_password_hash("Low@1234"), "Low", "normal_user"))
+                  ("low", generate_password_hash("Low@1234"), "Low", "project_manager"))
         c.commit(); c.close()
     yield application
     # Config is process-global: leave it as we found it so the suites that run
@@ -75,9 +76,7 @@ def test_requires_login(app):
 
 def test_permission_denied_for_low_priv(app):
     c = app.test_client(); _login(c, "low", "Low@1234")
-    # normal_user is procurement-only: other modules bounce to /procurement (app/proc_scope.py)
-    r = c.get("/hr/probation/")
-    assert r.status_code == 403 or (r.status_code == 302 and r.headers["Location"].endswith("/procurement/"))
+    assert c.get("/hr/probation/").status_code == 403
 
 
 def test_all_pages_render_for_admin(app):

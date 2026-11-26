@@ -174,12 +174,12 @@ def test_permission_enforced_on_admin(app):
         cc = get_db()
         cc.execute("INSERT INTO users (username,password_hash,full_name,role,is_active,account_status,created_at) "
                    "VALUES (?,?,?,?,?,?,datetime('now'))",
-                   ("plain", generate_password_hash("Plain@1234"), "Plain", "normal_user", 1, "active"))
+                   ("plain", generate_password_hash("Plain@1234"), "Plain", "project_manager", 1, "active"))
         cc.commit(); cc.close()
     c = app.test_client(); _login(c, "plain", "Plain@1234")
-    # normal_user is procurement-only: other modules bounce to /procurement (app/proc_scope.py)
-    r = c.get("/admin/registrations")
-    assert r.status_code == 403 or (r.status_code == 302 and r.headers["Location"].endswith("/procurement/"))
+    # project_manager, not normal_user: a procurement-only user bounces before the
+    # admin check runs (app/proc_scope.py), which would not prove the check
+    assert c.get("/admin/registrations").status_code == 403
 
 
 # --------------------------------------------------------------- regression

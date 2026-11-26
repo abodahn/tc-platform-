@@ -1149,6 +1149,8 @@ MESSAGES = {
     "This is the last open order on the request, so cancelling it cancels the whole request — only an administrator can do that.": {"ar": "ده آخر أمر شراء مفتوح على الطلب، فإلغاؤه هيلغي الطلب كله — وده مينفعش يعمله غير الأدمن.", "tr": "Bu, talepteki son açık sipariş; iptal etmek talebin tamamını iptal eder — bunu yalnızca bir yönetici yapabilir."},
     "Purchase order cancelled, but the cancellation email could not be sent — tell the supplier yourself.": {"ar": "تم إلغاء أمر الشراء، بس إيميل الإلغاء معرفش يتبعت — بلّغ المورد بنفسك.", "tr": "Satın alma siparişi iptal edildi, ancak iptal e-postası gönderilemedi — tedarikçiye kendiniz bildirin."},
     "That purchase order was cancelled. Nothing can be received against it - receive here without the reference.": {"ar": "أمر الشراء ده اتلغى. مينفعش يتسجل عليه أي استلام - سجّل الاستلام هنا من غير المرجع.", "tr": "Bu satın alma siparişi iptal edildi. Bu siparişe karşı teslim alınamaz - burada referans olmadan teslim alın."},
+    # Procurement-only scope (app/proc_scope.py): a link outside the scope bounced.
+    "This page is outside your procurement access, so you were taken to Procurement.": {"ar": "الصفحة دي خارج صلاحياتك في المشتريات، فرجّعناك لصفحة المشتريات.", "tr": "Bu sayfa satın alma erişiminizin dışında, bu yüzden Satın Alma sayfasına yönlendirildiniz."},
 }
 
 
