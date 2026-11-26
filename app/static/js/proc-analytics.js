@@ -120,7 +120,7 @@
         label: s.label, data: s.data, backgroundColor: line ? c + "22" : bg, borderColor: round ? panel : c,
         borderWidth: round ? 2 : (line ? 2.5 : 0), borderRadius: round ? 0 : 6, maxBarThickness: 44,
         fill: line && spec.series.length === 1, tension: 0.3, cubicInterpolationMode: "monotone", pointRadius: line ? 3 : 0, pointHoverRadius: 5,
-        spanGaps: true
+        spanGaps: false
       };
     });
     var drillable = !!spec.dp;
@@ -298,6 +298,11 @@
       clearTimeout(timer); timer = setTimeout(run, 400);
     });
     bform.addEventListener("submit", function (e) { e.preventDefault(); openSheet(false); run(); });
+    // Save what the form shows NOW, not the last successful live run (which may
+    // be pending or refused); the server re-validates it (parse_config).
+    document.querySelectorAll("[data-an-save]").forEach(function (sf) {
+      sf.addEventListener("submit", function () { var q = sf.querySelector("[data-an-qs]"); if (q) q.value = qs(false).toString(); });
+    });
   }
 
   document.querySelectorAll("[data-an-confirm]").forEach(function (f) {

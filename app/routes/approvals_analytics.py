@@ -43,10 +43,15 @@ def _T(lang):
 # --------------------------------------------------------------------------
 # drill-down: a chart value -> the request list, filtered to it
 # --------------------------------------------------------------------------
-def _list_base(f):
+# Measures counted on approved-or-later requests only (analytics.query adds
+# status IN COMMITTED for them): their drill-down list must say the same.
+_COMMITTED_MEASURES = ("spend", "qty", "price", "savings")
+
+
+def _list_base(f, committed=""):
     lo, hi = an.date_range(f)
     p = {"from": lo, "to": hi, "dept": f["dept"], "vendor": f["vendor"], "cat": f["cat"],
-         "cc": f["cc"], "status": f["status"]}
+         "cc": f["cc"], "status": f["status"], "cur": f["cur"], "committed": committed}
     return {k: v for k, v in p.items() if v}
 
 
@@ -76,7 +81,7 @@ def _dim_params(dim, raw):
 def _spec(cfg, rows, f, lang, title=""):
     """Chart-ready JSON for one result: translated labels, series, and the
     drill-down arguments of every label / series."""
-    sh = an.shape(cfg, rows)
+    sh = an.shape(cfg, rows, an.date_range(f))
     d1, d2, m = cfg["d1"], cfg.get("d2") or "", cfg["m"]
     mlabel = an.t("proc.analytics.m." + m, lang)
     series = [{"label": an.label(d2, s, lang) if d2 else mlabel, "data": data}
@@ -88,7 +93,7 @@ def _spec(cfg, rows, f, lang, title=""):
         "series": series, "n": sh["n"],
         "dp": [_dim_params(d1, k) for k in sh["keys"]],
         "sp": [_dim_params(d2, s) for s in sh["series_keys"]] if d2 else None,
-        "base": _list_base(f),
+        "base": _list_base(f, "1" if m in _COMMITTED_MEASURES else ""),
         "cols": [an.t("proc.analytics.dim." + d1, lang)]
                 + ([an.t("proc.analytics.dim." + d2, lang)] if d2 else [])
                 + [mlabel + (" — " + an.t("proc.analytics.agg." + cfg["agg"], lang)
@@ -123,7 +128,9 @@ def _safe(v):
     return v
 
 
-def _send(fmt, name, headers, rows, title=""):
+def _send(fmt, name, headers, rows, title="", money=()):
+    """`money` = the column indexes holding EGP amounts; other decimals (days,
+    hours, %, quantities) get a plain number format."""
     if fmt == "csv":
         buf = io.StringIO()
         w = csv.writer(buf)
@@ -137,7 +144,8 @@ def _send(fmt, name, headers, rows, title=""):
     if title:
         sh.line(title, bold=True, size=13)
     numeric = [any(isinstance(r[j], float) for r in rows) for j in range(len(headers))]
-    sh.table([(h, MONEY if numeric[j] else None) for j, h in enumerate(headers)], rows)
+    sh.table([(h, MONEY if j in money else ("#,##0.0#" if numeric[j] else None))
+              for j, h in enumerate(headers)], rows)
     return send_file(io.BytesIO(sh.save()), mimetype=MIME, as_attachment=True,
                      download_name=name + ".xlsx")
 
@@ -149,6 +157,20 @@ def _err(code, lang):
 # --------------------------------------------------------------------------
 # the dashboard (served by approvals.analytics, the original URL)
 # --------------------------------------------------------------------------
+def _filters_summary(f, lang):
+    """A saved report's own period and filters, as one readable line."""
+    T = _T(lang)
+    if f["period"] == "custom":
+        parts = [(f.get("from") or "…") + " → " + (f.get("to") or "…")]
+    else:
+        parts = [T("proc.analytics.p." + f["period"])]
+    for key in an.FILTER_KEYS:
+        if f.get(key):
+            val = an.label("status", f[key], lang) if key == "status" else f[key]
+            parts.append(T("proc.analytics.f." + key) + ": " + val)
+    return T("proc.analytics.pin_own") + " " + " · ".join(parts)
+
+
 def dashboard_page():
     user, lang, full = _u(), _lang(), _full()
     f = an.parse_filters(request.args)
@@ -159,42 +181,63 @@ def dashboard_page():
     rise = max(0.0, min(1000.0, rise))
     m = "spend" if full else "requests"
     T = _T(lang)
+    charts = [
+        ("trend", "proc.analytics.c.trend", {"d1": "month", "m": m, "chart": "line", "top": 24}, True),
+        ("supplier", "proc.analytics.c.supplier", {"d1": "supplier", "m": m, "chart": "hbar", "top": 10}, True),
+        ("dept", "proc.analytics.c.dept", {"d1": "department", "m": m, "chart": "bar", "top": 12}, True),
+        ("cat", "proc.analytics.c.cat", {"d1": "category", "m": m, "chart": "doughnut", "top": 8}, True),
+        ("kind", "proc.analytics.c.kind", {"d1": "kind", "m": m, "chart": "doughnut", "top": 4}, False),
+        ("status", "proc.analytics.c.status", {"d1": "status", "m": "requests", "chart": "doughnut", "top": 12}, False),
+    ]
+    reports = [r for r in an.visible_reports(user, full) if r.get("pinned")]
     from app.db import get_db
     conn = get_db()
     try:
-        k = an.kpis(f, conn=conn)
-        sfx = "" if full else "_n"
-        charts = [
-            ("trend", T("proc.analytics.c.trend" + sfx), {"d1": "month", "m": m, "chart": "line", "top": 24}),
-            ("supplier", T("proc.analytics.c.supplier" + sfx), {"d1": "supplier", "m": m, "chart": "hbar", "top": 10}),
-            ("dept", T("proc.analytics.c.dept" + sfx), {"d1": "department", "m": m, "chart": "bar", "top": 12}),
-            ("cat", T("proc.analytics.c.cat" + sfx), {"d1": "category", "m": m, "chart": "doughnut", "top": 8}),
-            ("kind", T("proc.analytics.c.kind"), {"d1": "kind", "m": m, "chart": "doughnut", "top": 4}),
-            ("status", T("proc.analytics.c.status"), {"d1": "status", "m": "requests", "chart": "doughnut", "top": 12}),
-        ]
-        specs = []
-        for key, title, raw in charts:
-            cfg, _e = an.parse_config(raw, money=full)
-            spec = _run(cfg, f, lang, title, conn)
-            spec["key"] = key
-            spec["qs"] = dict(an.config_args(cfg), **an.filter_args(f))
-            specs.append(spec)
-        stages = an.stage_times(f, conn=conn)
-        suppliers = an.supplier_performance(f, conn=conn)
-        savings = an.savings_totals(f, conn=conn) if full else None
+        # S is built ONCE for the page's filters; every KPI / chart / table
+        # statement below reads it (analytics.facts).
+        with an.facts(f, conn):
+            k = an.kpis(f, conn=conn)
+            cfgs = [an.parse_config(raw, money=full)[0] for _k, _t, raw, _c in charts]
+            specs = []
+            for (key, tkey, _raw, counted), cfg, rows in zip(charts, cfgs, an.query_many(cfgs, f, conn=conn)):
+                spec = _spec(cfg, rows, f, lang, T(tkey + ("" if full or not counted else "_n")))
+                spec["key"] = key
+                spec["qs"] = dict(an.config_args(cfg), **an.filter_args(f))
+                specs.append(spec)
+            stages = an.stage_times(f, conn=conn)
+            suppliers = an.supplier_performance(f, conn=conn, money=full)
+        savings = k["quotes"] if full else None
         year, budget = an.budget_vs_actual(f, conn=conn) if full else (None, [])
         prices = an.price_history(f, rise, request.args.get("item", "")[:200], conn=conn) if full else None
         options = an.filter_options(conn)
+        # Pinned reports keep their OWN saved filters (shown on each card).
+        pinned = []
+        for r in reports:
+            cfg, e = an.parse_config((r["config"] or {}).get("cfg") or {}, money=full)
+            if e:
+                continue
+            if len(pinned) >= PIN_LIMIT:
+                pinned.append(None)          # counted, not run: see pin_over below
+                continue
+            rf = an.parse_filters((r["config"] or {}).get("filters") or {})
+            spec = _run(cfg, rf, lang, r["name"], conn)
+            spec["rid"] = r["id"]
+            spec["qs"] = dict(an.config_args(cfg), **an.filter_args(rf))
+            spec["sub"] = _filters_summary(rf, lang)
+            pinned.append(spec)
     finally:
         conn.close()
+    pin_over = sum(1 for p in pinned if p is None)
+    pinned = [p for p in pinned if p is not None]
     for s in stages:
         s["label"] = an.stage_name(s["stage"], lang)
     base = _list_base(f)
+    base_c = _list_base(f, "1")
 
-    def mini(key, title, labels, series, chart, unit="", dp=None, money=False, colors=None):
+    def mini(key, title, labels, series, chart, unit="", dp=None, money=False, colors=None, b=None):
         return {"key": key, "title": title, "labels": labels, "chart": chart, "unit": unit,
                 "series": series, "n": None, "two": len(series) > 1, "dp": dp, "sp": None,
-                "base": base, "money": money, "colors": colors, "cols": None}
+                "base": b or base, "money": money, "colors": colors, "cols": None}
     timed = [s for s in stages if s["hours"] is not None]     # a stage nobody signed yet has no time
     extra = {"stages": mini("stages", T("proc.analytics.c.stages"), [s["label"] for s in timed],
                             [{"label": T("proc.analytics.col.hours"), "data": [s["hours"] for s in timed]}],
@@ -213,32 +256,22 @@ def dashboard_page():
                                [{"label": T("proc.analytics.budget"), "data": [r["budget"] for r in budget]},
                                 {"label": T("proc.analytics.committed"), "data": [r["actual"] for r in budget]}],
                                "bar", "EGP", dp=[{"dept": r["dept"]} if r["dept"] else None for r in budget],
-                               money=True, colors=["muted", "base"])
+                               money=True, colors=["muted", "base"], b=base_c)
         extra["price"] = mini("price", prices["item"] or T("proc.analytics.c.price"),
                               [p["month"] for p in prices["points"]],
                               [{"label": T("proc.analytics.col.price"), "data": [p["price"] for p in prices["points"]]}],
-                              "line", "EGP", dp=[{"q": prices["item"][:100]} if prices["item"] else None
-                                                 for _p in prices["points"]], money=True)
-    pinned = []
-    for r in an.visible_reports(user, full):
-        if not r.get("pinned") or len(pinned) >= PIN_LIMIT:
-            continue
-        cfg, e = an.parse_config((r["config"] or {}).get("cfg") or {}, money=full)
-        if e:
-            continue
-        rf = an.parse_filters((r["config"] or {}).get("filters") or {})
-        spec = _run(cfg, rf, lang, r["name"])
-        spec["rid"] = r["id"]
-        pinned.append(spec)
+                              "line", "EGP", dp=[{"q": prices["item_name"][:100]} if prices["item_name"] else None
+                                                 for _p in prices["points"]], money=True, b=base_c)
     if not full:
-        k = {key: v for key, v in k.items() if key not in ("spend", "open_commit", "savings", "missed", "vs_first")}
+        k = {key: v for key, v in k.items() if key not in ("spend", "open_commit", "savings", "missed", "vs_first", "quotes")}
     return render_template(
         "approvals/analytics.html", active="proc_analytics", T=T, lang=lang,
         f=f, fargs=an.filter_args(f), rng=an.date_range(f), options=options,
         statuses=an.STATUSES, periods=an.PERIODS, show_money=full,
         k=k, specs=specs, stages=stages, suppliers=suppliers, savings=savings,
-        year=year, budget=budget, prices=prices, rise=rise, pinned=pinned, extra=extra,
-        list_base=_list_base(f), an=an,
+        year=year, budget=budget, prices=prices, rise=rise, pinned=pinned, pin_over=pin_over,
+        pin_limit=PIN_LIMIT, extra=extra, list_base=base, list_committed=base_c,
+        list_open=_list_base(f, "open"), an=an,
         reset_url=url_for("approvals.analytics"), keep_extra={"rise": request.args.get("rise")} if request.args.get("rise") else {})
 
 
@@ -309,7 +342,8 @@ def analytics_run(fmt):
         return jsonify(spec)
     title = an.t("proc.analytics.m." + cfg["m"], lang) + " — " + " / ".join(
         an.t("proc.analytics.dim." + d, lang) for d in (cfg["d1"], cfg.get("d2")) if d)
-    return _send(fmt, "procurement_%s_by_%s" % (cfg["m"], cfg["d1"]), spec["cols"], _flat(spec), title)
+    money = {2 if spec["two"] else 1} if spec["money"] else ()
+    return _send(fmt, "procurement_%s_by_%s" % (cfg["m"], cfg["d1"]), spec["cols"], _flat(spec), title, money)
 
 
 _DATASETS = ("stages", "suppliers", "savings", "budget", "price_alerts")
@@ -327,13 +361,15 @@ def analytics_data(key, fmt):
     if key in ("savings", "budget", "price_alerts") and not full:
         abort(403)
     f = an.parse_filters(request.args)
+    money = ()
     if key == "stages":
         rows = an.stage_times(f)
         heads = [T("proc.analytics.col.stage"), T("proc.analytics.col.hours"), T("proc.analytics.col.steps"),
                  T("proc.analytics.col.rejected"), T("proc.analytics.col.waiting")]
         body = [[an.stage_name(r["stage"], lang), r["hours"], r["steps"], r["rejected"], r["waiting"]] for r in rows]
     elif key == "suppliers":
-        rows = an.supplier_performance(f, top=500)
+        rows = an.supplier_performance(f, top=500, money=full)
+        money = {1} if full else ()
         heads = ([T("proc.analytics.col.supplier")] + ([T("proc.analytics.col.spend")] if full else [])
                  + [T("proc.analytics.col.pos"), T("proc.analytics.col.lead"), T("proc.analytics.col.ontime") + " %",
                     T("proc.analytics.col.overdue"), T("proc.analytics.col.reject") + " %",
@@ -345,12 +381,16 @@ def analytics_data(key, fmt):
         heads = [T("proc.analytics.col.value"), "EGP"]
         body = [[T("proc.analytics.q.first"), s["firstq"]], [T("proc.analytics.q.hi"), s["hi"]],
                 [T("proc.analytics.q.lo"), s["lo"]], [T("proc.analytics.q.chosen"), s["chosen"]],
-                [T("proc.analytics.k.savings"), round(s["hi"] - s["chosen"], 2)]]
+                [T("proc.analytics.k.savings"), round(s["firstq"] - s["chosen"], 2)],
+                [T("proc.analytics.k.vs_hi"), round(s["hi"] - s["chosen"], 2)],
+                [T("proc.analytics.k.missed"), round(s["chosen"] - s["lo"], 2)]]
+        money = {1}
     elif key == "budget":
         year, rows = an.budget_vs_actual(f)
         heads = [T("proc.analytics.f.dept"), T("proc.analytics.year"), T("proc.analytics.budget") + " (EGP)",
                  T("proc.analytics.committed") + " (EGP)", T("proc.analytics.used") + " %"]
         body = [[r["dept"] or "—", year, r["budget"], r["actual"], r["pct"]] for r in rows]
+        money = {2, 3}
     else:
         try:
             rise = float(request.args.get("rise") or 10)
@@ -360,7 +400,8 @@ def analytics_data(key, fmt):
         heads = [T("proc.analytics.col.item"), T("proc.analytics.col.month"), T("proc.analytics.col.prev"),
                  T("proc.analytics.col.month"), T("proc.analytics.col.last"), T("proc.analytics.col.rise") + " %"]
         body = [[r["item"], r["prev_month"], r["prev"], r["month"], r["last"], r["rise"]] for r in rows]
-    return _send(fmt, "procurement_" + key, heads, body, T("proc.analytics.title"))
+        money = {2, 4}
+    return _send(fmt, "procurement_" + key, heads, body, T("proc.analytics.title"), money)
 
 
 # --------------------------------------------------------------------------

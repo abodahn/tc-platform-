@@ -40,10 +40,10 @@
       {% if mine %}<input type="hidden" name="mine" value="1">{% endif %}
       {#- Drill-down filters from the analytics charts: kept by Apply, shown as
           removable chips so the reader knows why the list is short. -#}
-      {% for k, lbl in [('vendor', 'Supplier'), ('cat', 'Item category'), ('cc', 'Cost centre'), ('kind', 'OPEX / CAPEX')] %}{% if f[k] %}
+      {% for k, lbl in [('vendor', 'Supplier'), ('cat', 'Item category'), ('cc', 'Cost centre'), ('kind', 'OPEX / CAPEX'), ('committed', ''), ('cur', '')] %}{% if f[k] %}
       <input type="hidden" name="{{ k }}" value="{{ f[k] }}">
       {% endif %}{% endfor %}
-      {% if f.vendor or f.cat or f.cc or f.kind %}
+      {% if f.vendor or f.cat or f.cc or f.kind or f.committed or f.cur %}
       <div class="pl-drill" style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
         {% for k, key, lbl in [('vendor', 'proc.analytics.f.vendor', 'Supplier'), ('cat', 'proc.analytics.f.cat', 'Item category'), ('cc', 'proc.analytics.f.cc', 'Cost centre'), ('kind', 'proc.analytics.dim.kind', 'OPEX / CAPEX')] %}{% if f[k] %}
         <a class="chip" style="position:relative" href="{{ url_for('approvals.listing', **dict(keep, **{k: None})) }}">
@@ -51,6 +51,18 @@
           <span aria-hidden="true">×</span><span class="sr-only" data-i18n="proc.analytics.remove">Remove filter</span>
         </a>
         {% endif %}{% endfor %}
+        {% if f.committed %}
+        <a class="chip" style="position:relative" href="{{ url_for('approvals.listing', **dict(keep, committed=None)) }}">
+          {% if f.committed == 'open' %}<span data-i18n="proc.analytics.list.open">Open commitments only</span>{% else %}<span data-i18n="proc.analytics.list.committed">Approved and later only (committed)</span>{% endif %}
+          <span aria-hidden="true">×</span><span class="sr-only" data-i18n="proc.analytics.remove">Remove filter</span>
+        </a>
+        {% endif %}
+        {% if f.cur %}
+        <a class="chip" style="position:relative" href="{{ url_for('approvals.listing', **dict(keep, cur=None)) }}">
+          <span data-i18n="proc.analytics.f.cur">Currency</span>: <b>{{ f.cur }}</b>
+          <span aria-hidden="true">×</span><span class="sr-only" data-i18n="proc.analytics.remove">Remove filter</span>
+        </a>
+        {% endif %}
       </div>
       {% endif %}
       <div class="pl-q">

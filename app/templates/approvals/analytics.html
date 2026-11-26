@@ -32,9 +32,13 @@
 {#- KPI strip. Each figure is computed by ONE statement over the same fact set
     the charts below use, so a tile and the chart beside it cannot disagree. -#}
 {% set lst = url_for('approvals.listing', **list_base) %}
+{#- Money tiles count approved-or-later (open: not yet received) requests only,
+    so their list carries the same restriction. -#}
+{% set lst_c = url_for('approvals.listing', **list_committed) %}
+{% set lst_o = url_for('approvals.listing', **list_open) %}
 <section class="an-kpis" aria-label="KPI">
   {% if show_money %}
-  <a class="kpi kpi-link an-kpi good" id="committed_spend" href="{{ lst }}">
+  <a class="kpi kpi-link an-kpi good" id="committed_spend" href="{{ lst_c }}">
     <div class="klabel" data-i18n="proc.analytics.k.spend">{{ T('proc.analytics.k.spend') }}</div>
     <div class="kval" data-num="{{ k.spend|round|int }}">{{ '{:,.0f}'.format(k.spend) }}</div></a>
   {% endif %}
@@ -53,14 +57,15 @@
   {% if show_money %}
   <div class="kpi an-kpi good">
     <div class="klabel" data-i18n="proc.analytics.k.savings">{{ T('proc.analytics.k.savings') }}</div>
-    <div class="kval" data-num="{{ k.savings|round|int }}">{{ '{:,.0f}'.format(k.savings) }}</div>
+    <div class="kval" data-num="{{ k.vs_first|round|int }}">{{ '{:,.0f}'.format(k.vs_first) }}</div>
+    <div class="an-ksub"><span data-i18n="proc.analytics.k.vs_hi">{{ T('proc.analytics.k.vs_hi') }}</span>: {{ '{:,.0f}'.format(k.savings) }}</div>
     {% if k.missed > 0 %}<div class="an-ksub"><span data-i18n="proc.analytics.k.missed">{{ T('proc.analytics.k.missed') }}</span>: {{ '{:,.0f}'.format(k.missed) }}</div>{% endif %}</div>
   {% endif %}
   <div class="kpi an-kpi {{ 'good' if (k.ontime or 0) >= 90 else 'warn' }}">
     <div class="klabel" data-i18n="proc.analytics.k.ontime">{{ T('proc.analytics.k.ontime') }}</div>
     <div class="kval">{{ (k.ontime|string + '%') if k.ontime is not none else '—' }}</div></div>
   {% if show_money %}
-  <a class="kpi kpi-link an-kpi" href="{{ lst }}">
+  <a class="kpi kpi-link an-kpi" href="{{ lst_o }}">
     <div class="klabel" data-i18n="proc.analytics.k.open">{{ T('proc.analytics.k.open') }}</div>
     <div class="kval" data-num="{{ k.open_commit|round|int }}">{{ '{:,.0f}'.format(k.open_commit) }}</div></a>
   {% endif %}
@@ -74,9 +79,10 @@
 <div class="an-grid">
   {% for p in pinned %}
   {% set _ = p.update({'key': 'pin' ~ p.rid}) %}
-  {{ card(p, T, sub='', extra_head=('<a class="btn btn-ghost btn-sm" href="' ~ url_for('approvals.analytics_builder', rid=p.rid) ~ '" data-i18n="proc.analytics.open_builder">' ~ (T('proc.analytics.open_builder')|e) ~ '</a>')|safe) }}
+  {{ card(p, T, sub=p.sub, xlsx=url_for('approvals.analytics_run', fmt='xlsx', **p.qs), csv=url_for('approvals.analytics_run', fmt='csv', **p.qs), extra_head=('<a class="btn btn-ghost btn-sm" href="' ~ url_for('approvals.analytics_builder', rid=p.rid) ~ '" data-i18n="proc.analytics.open_builder">' ~ (T('proc.analytics.open_builder')|e) ~ '</a>')|safe) }}
   {% endfor %}
 </div>
+{% if pin_over %}<p class="an-note"><span data-i18n="proc.analytics.pin_cap">{{ T('proc.analytics.pin_cap') }}</span> ({{ pin_limit }})</p>{% endif %}
 {% endif %}
 
 <p class="an-hint muted" data-i18n="proc.analytics.drill_hint">{{ T('proc.analytics.drill_hint') }}</p>
@@ -106,7 +112,8 @@
         {% for q, v in [('first', savings.firstq), ('hi', savings.hi), ('lo', savings.lo), ('chosen', savings.chosen)] %}
         <tr><th scope="row" data-i18n="proc.analytics.q.{{ q }}">{{ T('proc.analytics.q.' + q) }}</th><td class="num">{{ '{:,.0f}'.format(v) }}</td></tr>
         {% endfor %}
-        <tr class="an-total"><th scope="row" data-i18n="proc.analytics.k.savings">{{ T('proc.analytics.k.savings') }}</th><td class="num">{{ '{:,.0f}'.format(savings.hi - savings.chosen) }}</td></tr>
+        <tr class="an-total"><th scope="row" data-i18n="proc.analytics.k.savings">{{ T('proc.analytics.k.savings') }}</th><td class="num">{{ '{:,.0f}'.format(savings.firstq - savings.chosen) }}</td></tr>
+        <tr><th scope="row" data-i18n="proc.analytics.k.vs_hi">{{ T('proc.analytics.k.vs_hi') }}</th><td class="num">{{ '{:,.0f}'.format(savings.hi - savings.chosen) }}</td></tr>
         <tr><th scope="row" data-i18n="proc.analytics.k.missed">{{ T('proc.analytics.k.missed') }}</th><td class="num">{{ '{:,.0f}'.format(savings.chosen - savings.lo) }}</td></tr>
       </tbody>
     </table>
@@ -131,7 +138,7 @@
   {% endif %}
 </div>
 
-{% call card(extra.ontime, T, xlsx=url_for('approvals.analytics_data', key='suppliers', fmt='xlsx', **fx), csv=url_for('approvals.analytics_data', key='suppliers', fmt='csv', **fx), sub=T('proc.analytics.c.suppliers_sub'), server_table=True, wide=True, view='table') %}
+{% call card(extra.ontime, T, xlsx=url_for('approvals.analytics_data', key='suppliers', fmt='xlsx', **fx), csv=url_for('approvals.analytics_data', key='suppliers', fmt='csv', **fx), sub=T('proc.analytics.c.suppliers_sub' if show_money else 'proc.analytics.c.suppliers_sub_n'), server_table=True, wide=True, view='table') %}
   <table class="tbl an-tbl">
     <thead><tr><th scope="col" data-i18n="proc.analytics.col.supplier">{{ T('proc.analytics.col.supplier') }}</th>
       {% if show_money %}<th scope="col" class="num" data-i18n="proc.analytics.col.spend">{{ T('proc.analytics.col.spend') }}</th>{% endif %}

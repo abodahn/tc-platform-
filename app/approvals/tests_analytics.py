@@ -4,11 +4,13 @@ saved reports (owner / share / pin), list drill-down filters, EN/AR/TR keys.
 
     python -m app.approvals.tests_analytics
 """
+import io
 import json
 import os
 import re
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -167,10 +169,122 @@ def run():
         print("\nlist drill-down filters")
         def nos(**kw):
             return {r["pr_no"] for r in svc.list_prs(**kw)}
-        chk("vendor matches header, PO or line", nos(vendor="Fake Supplier B") == {"AN-2"}, nos(vendor="Fake Supplier B"))
+        chk("vendor matches a live PO (the spend rule)", nos(vendor="Fake Supplier B") == {"AN-2"}, nos(vendor="Fake Supplier B"))
         chk("category matches a line", nos(cat="Fake Cat One") == {"AN-2"}, nos(cat="Fake Cat One"))
         chk("cost centre", nos(cc="CC-10") == {"AN-1", "AN-3"}, nos(cc="CC-10"))
         chk("OPEX / CAPEX", nos(kind="capex") == {"AN-2"}, nos(kind="capex"))
+        chk("committed=1 drops pending / draft requests", "AN-3" not in nos(committed="1")
+            and {"AN-1", "AN-2", "AN-4"} <= nos(committed="1"), nos(committed="1"))
+        chk("committed=open = approved but not received", nos(committed="open") >= {"AN-2", "AN-4"}
+            and "AN-1" not in nos(committed="open"), nos(committed="open"))
+        chk("cur filter", nos(cur="USD") == {"AN-2"}, nos(cur="USD"))
+
+        print("\nreview fixes")
+        # one statement per page piece, S built once: same numbers either way
+        inline_k = an.kpis(f, conn=c)
+        cfgs = [an.parse_config({"d1": d, "m": "spend"})[0] for d in ("supplier", "category", "month")]
+        cfgs.append(an.parse_config({"d1": "category", "m": "requests"})[0])
+        inline_q = [an.query(x, f, conn=c) for x in cfgs]
+        with an.facts(f, c):
+            mat_k = an.kpis(f, conn=c)
+            mat_q = an.query_many(cfgs, f, conn=c)
+            used = an._with("S", f, an.date_range(f), date.today().isoformat(), c)[0]
+        chk("facts(): KPIs identical to the inline build", mat_k == inline_k, (mat_k, inline_k))
+        chk("query_many == query one by one", [sorted(x) for x in mat_q] == [sorted(x) for x in inline_q])
+        chk("inside facts() S is read from the temp table", an._MAT_TABLE in used, used[:80])
+        chk("outside facts() S is inline again", an._MAT_TABLE not in an._with("S", f, ("", ""), "x", c)[0])
+        chk("the temp table is dropped afterwards",
+            not c.execute("SELECT name FROM sqlite_temp_master WHERE name=?", (an._MAT_TABLE,)).fetchall())
+
+        # partial quotes do not compete; full ones do
+        c.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency, is_chosen) VALUES (?, 'Fake Supplier A', 120, 'EGP', 1)",
+                  (pid["AN-2"],))
+        q_part = c.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency, is_chosen) VALUES (?, 'Fake Supplier B', 20, 'EGP', 0)",
+                           (pid["AN-2"],)).lastrowid
+        q_full = c.execute("INSERT INTO pr_quotes (pr_id, vendor, amount, currency, is_chosen) VALUES (?, 'Fake Supplier D', 150, 'EGP', 0)",
+                           (pid["AN-2"],)).lastrowid
+        lines2 = [x["id"] for x in c.execute("SELECT id FROM pr_items WHERE pr_id=? ORDER BY id", (pid["AN-2"],))]
+        c.execute("INSERT INTO pr_quote_lines (quote_id, pr_item_id, unit_price, qty, line_total) VALUES (?, ?, 20, 1, 20)",
+                  (q_part, lines2[0]))
+        for li, amt in zip(lines2, (100, 50)):
+            c.execute("INSERT INTO pr_quote_lines (quote_id, pr_item_id, unit_price, qty, line_total) VALUES (?, ?, ?, 1, ?)",
+                      (q_full, li, amt, amt))
+        c.commit()
+        k2 = an.kpis(f)
+        chk("a one-line partial quote is not the 'lowest'", near(k2["missed"], 0), k2["missed"])
+        chk("savings vs highest counts the full competing quote", near(k2["savings"], 300 + 30), k2["savings"])
+        chk("savings vs first quote is computed", near(k2["vs_first"], 0) and near(k2["quotes"]["firstq"], 1120), k2)
+        cfg, _ = an.parse_config({"d1": "supplier", "m": "savings"})
+        chk("builder savings = first quote - chosen", near(sum(v or 0 for _a, _b, v, _n in an.query(cfg, f)), 0))
+
+        # a hand-typed request date falls back to created_at (PostgreSQL-safe CASTs)
+        extra_cols = ("AN-5", "t5", " IT ", "Fake Supplier A", "approved", 10, 0, "EGP", 1, 0, "5/11/2026",
+                      "2026-06-03 08:00:00", "2026-06-03 08:00:00", "2026-06-04 08:00:00", 1, None, None, "", "opex")
+        c.execute("INSERT INTO pr_requests (%s) VALUES (%s)" % (cols, ph), extra_cols)
+        pid["AN-5"] = c.execute("SELECT id FROM pr_requests WHERE pr_no='AN-5'").fetchone()["id"]
+        # AN-6: three small POs to one supplier; AN-7: no PO; AN-8: one PO whose
+        # vendor differs from the header and the line.
+        for row in (("AN-6", "t6", "QA", "Fake Supplier E", "po_issued", 30, 0, "EGP", 1, 0, "2026-09-15",
+                     "2026-09-15 08:00:00", "2026-09-15 08:00:00", "2026-09-16 08:00:00", 1, None, None, "", "opex"),
+                    ("AN-7", "t7", "QA", "Fake Supplier E", "approved", 10, 0, "EGP", 1, 0, "2026-10-15",
+                     "2026-10-15 08:00:00", "2026-10-15 08:00:00", "2026-10-16 08:00:00", 1, None, None, "", "opex"),
+                    ("AN-8", "t8", "QA", "Fake Supplier F", "po_issued", 20, 0, "EGP", 1, 0, "2026-10-20",
+                     "2026-10-20 08:00:00", "2026-10-20 08:00:00", "2026-10-21 08:00:00", 1, None, None, "", "opex")):
+            c.execute("INSERT INTO pr_requests (%s) VALUES (%s)" % (cols, ph), row)
+            pid[row[0]] = c.execute("SELECT id FROM pr_requests WHERE pr_no=?", (row[0],)).fetchone()["id"]
+        for n in range(3):
+            c.execute("INSERT INTO pr_purchase_orders (pr_id, po_no, vendor, grand, status, issued_at) "
+                      "VALUES (?, ?, 'Fake Supplier E', 10, 'issued', '2026-09-17 09:00:00')", (pid["AN-6"], "PO-AN-6-%d" % n))
+        c.execute("INSERT INTO pr_purchase_orders (pr_id, po_no, vendor, grand, status, issued_at) "
+                  "VALUES (?, 'PO-AN-8', 'Fake Supplier G', 20, 'issued', '2026-10-22 09:00:00')", (pid["AN-8"],))
+        c.execute("INSERT INTO pr_items (pr_id, item, unit, qty, unit_price) VALUES (?, 'Fake Bolt', 'Pcs', 5, 2)", (pid["AN-6"],))
+        c.execute("INSERT INTO pr_items (pr_id, item, unit, qty, unit_price) VALUES (?, 'Fake Bolt', 'Box', 1, 100)", (pid["AN-7"],))
+        c.execute("INSERT INTO pr_items (pr_id, item, unit, qty, unit_price, vendor) VALUES (?, 'Fake Nut', 'Pcs', 4, 5, 'Fake Supplier F')",
+                  (pid["AN-8"],))
+        c.commit()
+        cfg, _ = an.parse_config({"d1": "month", "m": "requests"})
+        months = {r[0] for r in an.query(cfg, f)}
+        chk("a non-ISO request_date is dated by created_at", "2026-06" in months and not any("/" in m for m in months), months)
+        cfg, _ = an.parse_config({"d1": "quarter", "m": "requests"})
+        chk("quarters stay readable", all(re.match(r"^\d{4}-Q[1-4]$", r[0]) for r in an.query(cfg, f)), an.query(cfg, f))
+        chk("list dept filter is trimmed like analytics", "AN-5" in nos(dept="IT"), nos(dept="IT"))
+
+        # price history: one series per item AND unit -> no fake 4900% rise
+        ph_ = an.price_history(f, 10.0)
+        chk("Box and Pcs are separate series", {"Fake Bolt (Pcs)", "Fake Bolt (Box)"} <= set(ph_["items"]), ph_["items"])
+        chk("no price alert across units", not [a for a in ph_["alerts"] if a["name"] == "Fake Bolt"], ph_["alerts"])
+        pick = an.price_history(f, 10.0, "Fake Bolt (Box)")
+        chk("picking a series by its label", pick["item"] == "Fake Bolt (Box)" and pick["item_name"] == "Fake Bolt"
+            and [p["price"] for p in pick["points"]] == [100.0], pick)
+
+        # line facts use the PO supplier, as spend does
+        cfg, _ = an.parse_config({"d1": "supplier", "m": "qty"})
+        qty = {r[0]: r[2] for r in an.query(cfg, f)}
+        chk("qty of a one-PO request lands on the PO supplier", near(qty.get("Fake Supplier G"), 4)
+            and "Fake Supplier F" not in qty, qty)
+        chk("list vendor = PO rule (header vendor with another PO supplier is not listed)",
+            "AN-8" in nos(vendor="Fake Supplier G") and "AN-8" not in nos(vendor="Fake Supplier F"))
+
+        # supplier ranking without money does not follow spend
+        money_rank = [x["supplier"] for x in an.supplier_performance(f)]
+        count_rank = [x["supplier"] for x in an.supplier_performance(f, money=False)]
+        chk("money users: ranked by spend", money_rank[0] == "Fake Supplier A", money_rank)
+        chk("counts-only: ranked by orders", count_rank[0] == "Fake Supplier E", count_rank)
+        from app.approvals import vendor_score
+        from app.approvals.constants import vendor_key
+        cards = vendor_score.scorecards(months=120, conn=c)
+        chk("on-time is the vendor scorecard's figure", all(
+            x["ontime"] == ((cards.get(vendor_key(x["supplier"])) or {}).get("on_time") or {}).get("pct")
+            for x in an.supplier_performance(f)))
+
+        # spend over time: months with no spend are on the axis at 0
+        cfg, _ = an.parse_config({"d1": "month", "m": "spend"})
+        fr = an.parse_filters({"period": "custom", "from": "2026-05-01", "to": "2026-10-31"})
+        sh = an.shape(cfg, an.query(cfg, fr), an.date_range(fr))
+        chk("every calendar month is on the axis", sh["keys"] == ["2026-%02d" % m for m in range(5, 11)], sh["keys"])
+        chk("an empty month is 0, not skipped", sh["data"][0][sh["keys"].index("2026-07")] == 0.0, sh["data"])
+        cfg, _ = an.parse_config({"d1": "quarter", "m": "spend"})
+        chk("quarters fill too", an.shape(cfg, an.query(cfg, fr), an.date_range(fr))["keys"] == ["2026-Q2", "2026-Q3", "2026-Q4"])
         c.close()
 
     def client(uid):
@@ -204,7 +318,41 @@ def run():
         r = adm.get(url)
         chk("200 " + url, r.status_code == 200, r.status_code)
     csv = adm.get("/procurement/analytics/run.csv?d1=supplier&m=spend&period=all").get_data(as_text=True)
-    chk("CSV carries the same total", "4140" in csv, csv[:200])
+    chk("CSV carries the same total", "4150" in csv, csv[:200])   # 4140 + AN-5 (10, added above)
+
+    print("\ndrill-down and exports")
+    spec = adm.get("/procurement/analytics/run.json?d1=supplier&m=spend&period=all&cur=EGP").get_json()
+    chk("a money chart drills into committed requests in its currency",
+        spec["base"].get("committed") == "1" and spec["base"].get("cur") == "EGP", spec["base"])
+    spec = adm.get("/procurement/analytics/run.json?d1=supplier&m=requests&period=all").get_json()
+    chk("a count chart drills into every status", "committed" not in spec["base"], spec["base"])
+    body = adm.get("/procurement/analytics?period=all").get_data(as_text=True)
+    chk("the spend tile links to the committed list", "committed=1" in body)
+    chk("the open-commitment tile links to the open list", "committed=open" in body)
+    r = adm.get("/procurement/list?committed=1&cur=USD")
+    lb = r.get_data(as_text=True)
+    chk("the list shows the committed / currency chips", r.status_code == 200 and "proc.analytics.list.committed" in lb
+        and "AN-2" in lb and "AN-3" not in lb, r.status_code)
+    import openpyxl
+    from app.approvals.xlsx import MONEY
+
+    def formats(url):
+        wb = openpyxl.load_workbook(io.BytesIO(adm.get(url).data))
+        ws = wb.active
+        # {column: {formats of its numeric cells}} (openpyxl reads 4150.0 back as int)
+        out = {}
+        for row in ws.iter_rows():
+            for c in row:
+                if isinstance(c.value, (int, float)) and not isinstance(c.value, bool):
+                    out.setdefault(c.column, set()).add(c.number_format)
+        return {col: (v.pop() if len(v) == 1 else v) for col, v in out.items()}
+    fm = formats("/procurement/analytics/run.xlsx?d1=supplier&m=spend&period=all")
+    chk("Excel: spend is money, the request count is not", fm.get(2) == MONEY and fm.get(3) != MONEY, fm)
+    fm = formats("/procurement/analytics/run.xlsx?d1=department&m=cycle&period=all")
+    chk("Excel: days are not money", fm and MONEY not in fm.values(), fm)
+    fm = formats("/procurement/analytics/data/budget.xlsx?period=all")
+    chk("Excel: budget % column is not money", all(v == MONEY for col, v in fm.items() if col in (3, 4))
+        and all(v != MONEY for col, v in fm.items() if col == 5), fm)
 
     print("\nsaved reports")
     def save(cli, **data):
@@ -240,8 +388,20 @@ def run():
     save(adm, name="Admin spend v2", qs="d1=supplier&m=spend&period=all", rid=str(rid), mode="update", shared="1")
     chk("owner updates", reps(admin["username"])[0]["name"] == "Admin spend v2")
     adm.post("/procurement/analytics/reports/%d/pin" % rid, data={"_csrf": "tok"})
-    body = adm.get("/procurement/analytics?period=all").get_data(as_text=True)
+    body = adm.get("/procurement/analytics?period=m3&vendor=Fake+Supplier+B").get_data(as_text=True)
     chk("a pinned report shows on the dashboard", "Admin spend v2" in body)
+    chk("a pinned card exports with its own filters", re.search(r'run\.xlsx\?[^"]*period=all', body))
+    chk("a pinned card states its own saved filters", "Saved filters:" in body)
+    chk("no cap note under the limit", 'data-i18n="proc.analytics.pin_cap"' not in body)
+    extra_ids = []
+    for n in range(7):
+        save(adm, name="Fake pin %d" % n, qs="d1=department&m=requests&period=all")
+        extra_ids.append(reps(admin["username"])[-1]["id"])
+        adm.post("/procurement/analytics/reports/%d/pin" % extra_ids[-1], data={"_csrf": "tok"})
+    body = adm.get("/procurement/analytics?period=all").get_data(as_text=True)
+    chk("over the pin limit the page says so", 'data-i18n="proc.analytics.pin_cap"' in body)
+    for x in extra_ids:
+        adm.post("/procurement/analytics/reports/%d/delete" % x, data={"_csrf": "tok"})
     adm.post("/procurement/analytics/reports/%d/pin" % rid, data={"_csrf": "tok"})
     chk("unpin removes it", "Admin spend v2" not in adm.get("/procurement/analytics?period=all").get_data(as_text=True))
     staff.post("/procurement/analytics/reports/%d/delete" % rid, data={"_csrf": "tok"})

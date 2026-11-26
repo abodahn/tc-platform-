@@ -267,7 +267,9 @@ def _list_filters(user):
             # analytics drill-down (a chart bar -> the requests behind it)
             "vendor": a.get("vendor", "").strip()[:120], "cat": a.get("cat", "").strip()[:120],
             "cc": a.get("cc", "").strip()[:120],
-            "kind": a.get("kind", "") if a.get("kind") in ("opex", "capex") else ""}
+            "kind": a.get("kind", "") if a.get("kind") in ("opex", "capex") else "",
+            "committed": a.get("committed", "") if a.get("committed") in ("1", "open") else "",
+            "cur": a.get("cur", "").strip().upper() if re.match(r"^[A-Za-z]{3}$", a.get("cur", "").strip()) else ""}
 
 
 @bp.route("/list")
@@ -283,7 +285,7 @@ def listing():
     keep = {k: v for k, v in (("q", f["q"]), ("dept", f["dept"]), ("priority", f["priority"]),
                               ("from", f["date_from"]), ("to", f["date_to"]),
                               ("vendor", f["vendor"]), ("cat", f["cat"]), ("cc", f["cc"]),
-                              ("kind", f["kind"]),
+                              ("kind", f["kind"]), ("committed", f["committed"]), ("cur", f["cur"]),
                               ("sort", f["sort"] if f["sort"] != "new" else ""),
                               ("status", status if status != "all" else ""),
                               ("mine", "1" if mine else "")) if v}
@@ -291,7 +293,7 @@ def listing():
                            f=f, keep=keep, depts=svc.list_departments(),
                            value_sort=svc.money_view(user) == "full",
                            filtered=any(f[k] for k in ("q", "dept", "priority", "date_from", "date_to",
-                                                       "vendor", "cat", "cc", "kind")),
+                                                       "vendor", "cat", "cc", "kind", "committed", "cur")),
                            prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES,
                            money=svc.money_views(user, prs),
                            items=svc.items_preview(prs),

@@ -34,6 +34,8 @@ difference, which _days() writes for each.
 import json
 import math
 import re
+import threading
+from contextlib import contextmanager
 from datetime import date
 
 from app.db import get_db, _is_pg
@@ -120,7 +122,10 @@ def date_range(f, today=None):
 # --------------------------------------------------------------------------
 # SQL fragments (module-authored; user input never reaches these strings)
 # --------------------------------------------------------------------------
-_DATE = "COALESCE(NULLIF(p.request_date, ''), SUBSTR(p.created_at, 1, 10))"
+# A request_date that is not ISO (typed by hand) falls back to created_at, so the
+# month / quarter CASTs below never see '5/11/2026' (PostgreSQL would refuse it).
+_DATE = ("(CASE WHEN SUBSTR(COALESCE(p.request_date, ''), 1, 10) LIKE '____-__-__' "
+         "THEN SUBSTR(p.request_date, 1, 10) ELSE SUBSTR(p.created_at, 1, 10) END)")
 _FX = ("(CASE WHEN UPPER(TRIM(COALESCE(NULLIF(p.currency, ''), 'EGP'))) = 'EGP' THEN 1 "
        "WHEN COALESCE(p.fx_rate, 0) > 0 THEN p.fx_rate ELSE 1 END)")
 # services.egp_commitment() on (total - budget_released): gross, EGP.
@@ -138,19 +143,34 @@ _PR_COLS = (
     "LOWER(COALESCE(NULLIF(TRIM(p.expenditure_kind), ''), 'opex')) AS kind" % {"d": _DATE})
 
 # Every non-cancelled purchase order is one share; a request with none is one
-# share under its header supplier (services._committed_rows, in SQL).
+# share under its header supplier (services._committed_rows, in SQL). P is the
+# CTE of the filtered request ids, pushed into every sub-select.
 _SHARES = (
     "SELECT o.pr_id AS pr_id, COALESCE(NULLIF(TRIM(o.vendor), ''), '%(u)s') AS supplier, "
     "'po' || CAST(o.id AS TEXT) AS po_key, o.issued_at AS issued_at, "
     "CASE WHEN t.g > 0 THEN COALESCE(o.grand, 0) / t.g ELSE 1.0 / t.n END AS frac "
     "FROM pr_purchase_orders o JOIN (SELECT pr_id, SUM(COALESCE(grand, 0)) AS g, COUNT(*) AS n "
-    "FROM pr_purchase_orders WHERE COALESCE(status, 'issued') <> 'cancelled' GROUP BY pr_id) t "
+    "FROM pr_purchase_orders WHERE COALESCE(status, 'issued') <> 'cancelled' "
+    "AND pr_id IN (SELECT id FROM P) GROUP BY pr_id) t "
     "ON t.pr_id = o.pr_id WHERE COALESCE(o.status, 'issued') <> 'cancelled' "
+    "AND o.pr_id IN (SELECT id FROM P) "
     "UNION ALL "
     "SELECT r.id, COALESCE(NULLIF(TRIM(r.vendor), ''), '%(u)s'), "
     "CASE WHEN COALESCE(TRIM(r.po_no), '') <> '' THEN 'pr' || CAST(r.id AS TEXT) END, NULL, 1.0 "
-    "FROM pr_requests r WHERE NOT EXISTS (SELECT 1 FROM pr_purchase_orders o2 "
+    "FROM pr_requests r WHERE r.id IN (SELECT id FROM P) AND NOT EXISTS (SELECT 1 FROM pr_purchase_orders o2 "
     "WHERE o2.pr_id = r.id AND COALESCE(o2.status, 'issued') <> 'cancelled')" % {"u": UNASSIGNED})
+
+# A line's supplier, the way spend sees it: the order's vendor when the request
+# has exactly one live purchase order, else the line's own vendor, else the
+# header's. Needs `LEFT JOIN _PO1 po1 ON po1.pr_id = <request id>`.
+_PO1 = ("(SELECT pr_id, MIN(COALESCE(NULLIF(TRIM(vendor), ''), '%s')) AS v, COUNT(*) AS n "
+        "FROM pr_purchase_orders WHERE COALESCE(status, 'issued') <> 'cancelled' GROUP BY pr_id)" % UNASSIGNED)
+
+
+def _lsup(head):
+    return ("(CASE WHEN po1.n = 1 THEN po1.v ELSE COALESCE(NULLIF(TRIM(i.vendor), ''), "
+            "NULLIF(TRIM(%s.vendor), ''), '%s') END)" % (head, UNASSIGNED))
+
 
 # A quotation's real cost (services.quote_after_vat), in EGP. A foreign quote
 # with no usable rate (NULL / <= 0 / the unset 1) has no EGP cost: NULL, so it
@@ -159,14 +179,21 @@ _QA = ("COALESCE(q.amount, 0) * (CASE WHEN COALESCE(q.vat_applies, 0) = 1 "
        "THEN 1 + COALESCE(q.vat_rate, 0.14) ELSE 1 END) * "
        "(CASE WHEN UPPER(TRIM(COALESCE(NULLIF(q.currency, ''), 'EGP'))) = 'EGP' THEN 1 "
        "WHEN COALESCE(q.fx_rate, 0) > 0 AND q.fx_rate <> 1 THEN q.fx_rate ELSE NULL END)")
+# Only quotes that price EVERY line of the request are compared: a partial
+# quote (pr_quote_lines rows for some lines only) is not a competing offer for
+# the whole request. A quote with no line rows is a total-only quote (full).
 _QUOTES = (
-    "SELECT x.pr_id AS pr_id, COUNT(x.qa) AS n, MIN(x.qa) AS lo, MAX(x.qa) AS hi, "
+    "QX AS (SELECT q.pr_id AS pr_id, q.id AS id, q.is_chosen AS is_chosen, %s AS qa "
+    "FROM pr_quotes q LEFT JOIN (SELECT quote_id, COUNT(DISTINCT pr_item_id) AS nl FROM pr_quote_lines "
+    "WHERE quote_id IN (SELECT id FROM pr_quotes WHERE pr_id IN (SELECT id FROM P)) GROUP BY quote_id) ql "
+    "ON ql.quote_id = q.id "
+    "WHERE COALESCE(q.amount, 0) > 0 AND q.pr_id IN (SELECT id FROM P) "
+    "AND (ql.quote_id IS NULL OR ql.nl >= (SELECT COUNT(*) FROM pr_items li WHERE li.pr_id = q.pr_id))), "
+    "QS AS (SELECT x.pr_id AS pr_id, COUNT(x.qa) AS n, MIN(x.qa) AS lo, MAX(x.qa) AS hi, "
     "MAX(CASE WHEN x.is_chosen = 1 THEN x.qa END) AS chosen, "
     "MAX(CASE WHEN x.id = fq.first_id THEN x.qa END) AS firstq "
-    "FROM (SELECT q.pr_id AS pr_id, q.id AS id, q.is_chosen AS is_chosen, %s AS qa "
-    "FROM pr_quotes q WHERE COALESCE(q.amount, 0) > 0) x "
-    "JOIN (SELECT pr_id, MIN(id) AS first_id FROM pr_quotes WHERE COALESCE(amount, 0) > 0 "
-    "GROUP BY pr_id) fq ON fq.pr_id = x.pr_id GROUP BY x.pr_id" % _QA)
+    "FROM QX x JOIN (SELECT pr_id, MIN(id) AS first_id FROM QX GROUP BY pr_id) fq "
+    "ON fq.pr_id = x.pr_id GROUP BY x.pr_id)" % _QA)
 _QOK = "(p.status IN (%s) AND qs.n >= 2 AND qs.chosen IS NOT NULL)" % _COMMITTED_SQL
 
 _CAT_EXISTS = ("EXISTS (SELECT 1 FROM pr_items ci LEFT JOIN proc_items cp ON cp.id = ci.item_id "
@@ -207,9 +234,21 @@ def _pr_where(f, rng, with_cat):
     return " AND ".join(w), a
 
 
+# The P look-ups inside _SHARES / _QUOTES. With no filter beyond is_active, P
+# is every request and the look-ups only cost time, so they are dropped.
+_P_SCOPES = (" AND pr_id IN (SELECT id FROM P)", " AND o.pr_id IN (SELECT id FROM P)",
+             "r.id IN (SELECT id FROM P) AND ", " AND q.pr_id IN (SELECT id FROM P)",
+             "WHERE quote_id IN (SELECT id FROM pr_quotes WHERE pr_id IN (SELECT id FROM P)) ")
+
+
 def _cte_s(f, rng, today):
     where, a = _pr_where(f, rng, with_cat=True)
+    shares, quotes = _SHARES, _QUOTES
+    if not a:
+        for frag in _P_SCOPES:
+            shares, quotes = shares.replace(frag, ""), quotes.replace(frag, "")
     sql = (
+        "P AS (SELECT p.id AS id FROM pr_requests p WHERE %(where)s), %(quotes)s, "
         "S AS (SELECT %(cols)s, sh.supplier AS supplier, sh.po_key AS po_key, sh.frac AS frac, "
         "%(v)s * sh.frac AS v, "
         "CASE WHEN p.status IN (%(open)s) THEN %(v)s * sh.frac ELSE 0 END AS v_open, "
@@ -225,12 +264,12 @@ def _cte_s(f, rng, today):
         "CASE WHEN p.status IN (%(deliv)s) AND COALESCE(p.req_del_date, '') <> '' "
         "AND SUBSTR(p.req_del_date, 1, 10) < ? THEN 1 ELSE 0 END AS overdue "
         "FROM pr_requests p JOIN (%(shares)s) sh ON sh.pr_id = p.id "
-        "LEFT JOIN (%(quotes)s) qs ON qs.pr_id = p.id WHERE %(where)s)"
+        "LEFT JOIN QS qs ON qs.pr_id = p.id WHERE p.id IN (SELECT id FROM P))"
     ) % {"cols": _PR_COLS, "v": _VALUE, "open": _OPEN_SQL, "deliv": _DELIV_SQL,
          "cyc": _days("p.submitted_at", "p.approved_at"), "qok": _QOK,
          "lead": _days("COALESCE(sh.issued_at, p.po_sent_at)", "p.received_at"),
-         "shares": _SHARES, "quotes": _QUOTES, "where": where}
-    return sql, [today] + a
+         "shares": shares, "quotes": quotes, "where": where}
+    return sql, a + [today]
 
 
 def _cte_a():
@@ -258,23 +297,71 @@ def _cte_a():
 
 def _cte_l(f, rng):
     where, a = _pr_where(f, rng, with_cat=False)
-    lsup = "COALESCE(NULLIF(TRIM(i.vendor), ''), NULLIF(TRIM(p.vendor), ''), '%s')" % UNASSIGNED
     sql = ("L AS (SELECT %s, %s AS supplier, %s AS category, %s AS item, COALESCE(i.qty, 0) AS qty, "
-           "COALESCE(NULLIF(i.net_price, 0), i.unit_price, 0) * %s AS price "
-           "FROM pr_items i JOIN pr_requests p ON p.id = i.pr_id "
+           "COALESCE(NULLIF(i.net_price, 0), i.unit_price, 0) * %s AS price, "
+           "COALESCE(CAST(i.item_id AS TEXT), '') AS item_ref, COALESCE(TRIM(i.unit), '') AS unit "
+           "FROM pr_items i JOIN pr_requests p ON p.id = i.pr_id LEFT JOIN %s po1 ON po1.pr_id = p.id "
            "LEFT JOIN proc_items pi ON pi.id = i.item_id WHERE %s)"
-           % (_PR_COLS, lsup, _LINE_CAT, _LINE_ITEM, _FX, where))
+           % (_PR_COLS, _lsup("p"), _LINE_CAT, _LINE_ITEM, _FX, _PO1, where))
     return sql, a
 
 
-def _with(fact, f, rng, today):
-    if fact == "L":
-        sql, a = _cte_l(f, rng)
-        return "WITH " + sql + " ", a
-    sql, a = _cte_s(f, rng, today)
-    if fact == "A":
-        sql += ", " + _cte_a()
-    return "WITH " + sql + " ", a
+# The dashboard runs a dozen statements over the same S. facts() builds S once
+# into a TEMP table on the page's connection; every S / A statement on that
+# connection with the same filters then reads the table instead of rebuilding S.
+_MAT = threading.local()
+_MAT_TABLE = "an_facts_s"
+
+
+def _fkey(f, rng, today):
+    return (tuple((k, f.get(k) or "") for k in FILTER_KEYS), tuple(rng), today)
+
+
+@contextmanager
+def facts(f, conn, today=None):
+    today_s = (today or date.today()).isoformat()
+    rng = date_range(f, today)
+    sql, a = _cte_s(f, rng, today_s)
+    prev = getattr(_MAT, "v", None)
+    try:
+        conn.execute("DROP TABLE IF EXISTS " + _MAT_TABLE)
+        conn.execute("CREATE TEMP TABLE %s AS WITH %s SELECT * FROM S" % (_MAT_TABLE, sql), a)
+        _MAT.v = (conn, _fkey(f, rng, today_s))
+    except Exception as exc:                                      # noqa: BLE001
+        # No TEMP privilege (or similar): every statement builds S inline, as before.
+        import logging
+        logging.getLogger(__name__).warning("analytics facts table not built: %s", exc)
+    try:
+        yield
+    finally:
+        _MAT.v = prev
+        try:
+            conn.execute("DROP TABLE IF EXISTS " + _MAT_TABLE)
+        except Exception:                                         # noqa: BLE001
+            pass                    # a temp table dies with its connection anyway
+
+
+def _with(fact, f, rng, today, conn=None):
+    return _with_many({fact}, f, rng, today, conn)
+
+
+def _with_many(facts_needed, f, rng, today, conn=None):
+    """One WITH clause defining every fact set in `facts_needed` (S, A, L)."""
+    parts, a = [], []
+    if facts_needed & {"S", "A"}:
+        m = getattr(_MAT, "v", None)
+        if conn is not None and m and m[0] is conn and m[1] == _fkey(f, rng, today):
+            parts.append("S AS (SELECT * FROM %s)" % _MAT_TABLE)
+        else:
+            sql, a = _cte_s(f, rng, today)
+            parts.append(sql)
+        if "A" in facts_needed:
+            parts.append(_cte_a())
+    if "L" in facts_needed:
+        sql, la = _cte_l(f, rng)
+        parts.append(sql)
+        a = a + la
+    return "WITH " + ", ".join(parts) + " ", a
 
 
 def _fact_where(fact, f, extra=()):
@@ -371,12 +458,45 @@ def _fact_for(measure, dims, f):
 def query(cfg, f, today=None, conn=None):
     """Run a builder definition. Returns raw grouped rows
     [(d1, d2 or None, value, n)] — one aggregate statement, no per-row work."""
+    return query_many([cfg], f, today, conn)[0]
+
+
+def query_many(cfgs, f, today=None, conn=None):
+    """Several builder definitions over the same filters in ONE statement
+    (UNION ALL, one round trip): a list of query() results, in order."""
     today_s = (today or date.today()).isoformat()
     rng = date_range(f, today)
+    bodies, b_args, facts_needed = [], [], set()
+    for qn, cfg in enumerate(cfgs):
+        fact, body, args = _query_body(cfg, f)
+        facts_needed.add(fact)
+        d1 = "w.d1" if cfg.get("d2") else "NULL"
+        bodies.append("SELECT %d AS qn, w.d0 AS d0, %s AS d1, w.val AS val, w.n AS n FROM (%s) w"
+                      % (qn, d1, body))
+        b_args += args
+    w_sql, w_args = _with_many(facts_needed, f, rng, today_s, conn)
+    own = conn is None
+    conn = conn or get_db()
+    try:
+        rows = conn.execute(w_sql + " UNION ALL ".join(bodies), w_args + b_args).fetchall()
+    finally:
+        if own:
+            conn.close()
+    out = [[] for _ in cfgs]
+    for r in rows:
+        two = bool(cfgs[int(r["qn"])].get("d2"))
+        out[int(r["qn"])].append((r["d0"] if r["d0"] is not None else "",
+                                  (r["d1"] if r["d1"] is not None else "") if two else None,
+                                  round(float(r["val"]), 2) if r["val"] is not None else None,
+                                  int(r["n"] or 0)))
+    return out
+
+
+def _query_body(cfg, f):
+    """(fact, SELECT ... over that fact, args) for one builder definition."""
     dims = [d for d in (cfg["d1"], cfg.get("d2")) if d]
     measure, agg = cfg["m"], cfg["agg"]
     fact = _fact_for(measure, dims, f)
-    w_sql, w_args = _with(fact, f, rng, today_s)
     extra = ["f.status IN (%s)" % _COMMITTED_SQL] if measure in ("spend", "qty", "price", "savings") else []
     where, f_args = _fact_where(fact, f, extra)
     dsel = ", ".join("f.%s AS d%d" % (d, i) for i, d in enumerate(dims))
@@ -384,41 +504,65 @@ def query(cfg, f, today=None, conn=None):
     xs = ", ".join("x.d%d" % i for i in range(len(dims)))
     per_pr = {"spend": "SUM(f.va)" if fact == "A" else "SUM(f.v)",
               "qty": "SUM(f.qty)", "cycle": "MAX(f.cyc)",
-              "savings": "SUM(f.q_hi - f.q_chosen)"}
+              "savings": "SUM(f.q_first - f.q_chosen)"}
     if measure in per_pr:
-        sql = ("%sSELECT %s, %s AS val, COUNT(x.v) AS n FROM (SELECT %s, f.pr_id AS pr_id, %s AS v "
+        sql = ("SELECT %s, %s AS val, COUNT(x.v) AS n FROM (SELECT %s, f.pr_id AS pr_id, %s AS v "
                "FROM %s f%s GROUP BY %s, f.pr_id) x GROUP BY %s"
-               % (w_sql, xs, _AGG_SQL[agg], dsel, per_pr[measure], fact, where, dgrp, xs))
+               % (xs, _AGG_SQL[agg], dsel, per_pr[measure], fact, where, dgrp, xs))
     elif measure == "price":
-        sql = ("%sSELECT %s, SUM(CASE WHEN f.price > 0 AND f.qty > 0 THEN f.price * f.qty ELSE 0 END) / "
+        sql = ("SELECT %s, SUM(CASE WHEN f.price > 0 AND f.qty > 0 THEN f.price * f.qty ELSE 0 END) / "
                "NULLIF(SUM(CASE WHEN f.price > 0 AND f.qty > 0 THEN f.qty ELSE 0 END), 0) AS val, "
-               "COUNT(DISTINCT f.pr_id) AS n FROM L f%s GROUP BY %s" % (w_sql, dsel, where, dgrp))
+               "COUNT(DISTINCT f.pr_id) AS n FROM L f%s GROUP BY %s" % (dsel, where, dgrp))
     else:
         key = "f.po_key" if measure == "pos" else "f.pr_id"
-        sql = ("%sSELECT %s, COUNT(DISTINCT %s) AS val, COUNT(DISTINCT f.pr_id) AS n FROM %s f%s "
-               "GROUP BY %s" % (w_sql, dsel, key, fact, where, dgrp))
-    own = conn is None
-    conn = conn or get_db()
+        sql = ("SELECT %s, COUNT(DISTINCT %s) AS val, COUNT(DISTINCT f.pr_id) AS n FROM %s f%s "
+               "GROUP BY %s" % (dsel, key, fact, where, dgrp))
+    return fact, sql, f_args
+
+
+def _ym(k):
+    """(year, month) of a month / quarter label or an ISO date, else None."""
     try:
-        rows = conn.execute(sql, w_args + f_args).fetchall()
-    finally:
-        if own:
-            conn.close()
-    k = len(dims)
-    return [(r[0] if r[0] is not None else "",
-             (r[1] if r[1] is not None else "") if k > 1 else None,
-             round(float(r[k]), 2) if r[k] is not None else None, int(r[k + 1] or 0)) for r in rows]
+        k = str(k)
+        m = int(k[-1]) * 3 - 2 if k[5:6] == "Q" else int(k[5:7])
+        return (int(k[:4]), m) if 1 <= m <= 12 else None
+    except (TypeError, ValueError):
+        return None
 
 
-def shape(cfg, rows):
+def _periods(dim, rng, keys):
+    """Every month / quarter label from the filter's start (or the first data
+    period) to its end (or the last one), so a period with no buying shows."""
+    seen = [x for x in (_ym(k) for k in keys) if x]
+    if not seen:
+        return []
+    lo = _ym(rng[0]) if rng and rng[0] else min(seen)
+    hi = _ym(rng[1]) if rng and rng[1] else max(seen)
+    out = []
+    y, m = lo or min(seen)
+    while (y, m) <= (hi or max(seen)) and len(out) < 600:
+        lab = "%04d-%02d" % (y, m) if dim == "month" else "%04d-Q%d" % (y, (m + 2) // 3)
+        if not out or out[-1] != lab:
+            out.append(lab)
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def shape(cfg, rows, rng=None):
     """Sort, cut to top-N (+ 'Others' when the measure adds up) and pivot the
     rows of query() into chart-ready series. Labels stay RAW here; the caller
-    translates them (label())."""
+    translates them (label()). A month / quarter axis gets every calendar
+    period of `rng` (date_range), empty ones at 0 for sums and counts."""
     measure, agg, two = cfg["m"], cfg["agg"], bool(cfg.get("d2"))
     additive = measure in _ADDITIVE and agg == "sum"
     totals = {}
     for d1, _d2, v, _n in rows:
         totals[d1] = totals.get(d1, 0.0) + (v or 0.0)
+    timed = cfg["d1"] in TIME_DIMS
+    fill = 0.0 if timed and agg in ("sum", "count") else None
+    if timed:
+        for k in _periods(cfg["d1"], rng, list(totals)):
+            totals.setdefault(k, 0.0)
     sort = cfg.get("sort") or "auto"
     if sort == "auto":
         sort = "label_asc" if cfg["d1"] in TIME_DIMS else "value_desc"
@@ -439,12 +583,12 @@ def shape(cfg, rows):
     others = bool(rest) and additive
     if not two:
         vals = {d1: (v, n) for d1, _d2, v, n in rows}
-        data = [vals[k][0] for k in keys]
-        ns = [vals[k][1] for k in keys]
+        data = [vals.get(k, (fill, 0))[0] for k in keys]
+        ns = [vals.get(k, (fill, 0))[1] for k in keys]
         if others:
             keys.append(None)
             data.append(round(sum(totals[k] for k in rest), 2))
-            ns.append(sum(vals[k][1] for k in rest))
+            ns.append(sum(vals.get(k, (0, 0))[1] for k in rest))
         return {"keys": keys, "series_keys": [None], "data": [data], "n": ns, "others": others}
     stot = {}
     for d1, d2, v, _n in rows:
@@ -454,7 +598,7 @@ def shape(cfg, rows):
     srest = skeys[MAX_SERIES:] if additive else []
     skeys = skeys[:MAX_SERIES]
     cell = {(d1, d2): v for d1, d2, v, _n in rows}
-    data = [[cell.get((k, s)) for k in keys] for s in skeys]
+    data = [[cell.get((k, s), fill) for k in keys] for s in skeys]
     if srest:
         skeys.append(None)
         data.append([round(sum(cell.get((k, s)) or 0 for s in srest), 2) for k in keys])
@@ -477,14 +621,15 @@ def kpis(f, today=None, conn=None):
     the value a share of the request's lines)."""
     today_s = (today or date.today()).isoformat()
     rng = date_range(f, today)
-    w_sql, w_args = _with("S", f, rng, today_s)
+    w_sql, w_args = _with("S", f, rng, today_s, conn)
     where, f_args = _fact_where("S", f)
     wavg = ("SUM(CASE WHEN f.%(c)s IS NOT NULL THEN f.%(c)s * f.frac END) / "
             "NULLIF(SUM(CASE WHEN f.%(c)s IS NOT NULL THEN f.frac END), 0)")
     sql = (w_sql + "SELECT COUNT(DISTINCT f.pr_id) AS requests, COUNT(DISTINCT f.po_key) AS pos, "
            "SUM(f.v) AS spend, SUM(f.v_open) AS open_commit, "
            "SUM(f.q_hi - f.q_chosen) AS savings, SUM(f.q_chosen - f.q_lo) AS missed, "
-           "SUM(f.q_first - f.q_chosen) AS vs_first, "
+           "SUM(f.q_first - f.q_chosen) AS vs_first, SUM(f.q_first) AS q_first, SUM(f.q_hi) AS q_hi, "
+           "SUM(f.q_lo) AS q_lo, SUM(f.q_chosen) AS q_chosen, "
            + wavg % {"c": "cyc"} + " AS cyc, " + wavg % {"c": "lead_d"} + " AS lead_d, "
            + wavg % {"c": "ontime"} + " AS ontime, "
            "COUNT(DISTINCT CASE WHEN f.overdue = 1 THEN COALESCE(f.po_key, 'pr' || CAST(f.pr_id AS TEXT)) END) "
@@ -494,7 +639,7 @@ def kpis(f, today=None, conn=None):
     try:
         r = dict(conn.execute(sql, w_args + f_args).fetchone() or {})
         if f.get("cat"):
-            aw, aa = _with("A", f, rng, today_s)
+            aw, aa = _with("A", f, rng, today_s, conn)
             awhere, af = _fact_where("A", f)
             r2 = conn.execute(aw + "SELECT SUM(f.va) AS spend, SUM(CASE WHEN f.status IN (%s) THEN f.va "
                               "ELSE 0 END) AS open_commit FROM A f%s" % (_OPEN_SQL, awhere),
@@ -507,6 +652,8 @@ def kpis(f, today=None, conn=None):
             "spend": _num(r.get("spend")) or 0.0, "open_commit": _num(r.get("open_commit")) or 0.0,
             "savings": _num(r.get("savings")) or 0.0, "missed": _num(r.get("missed")) or 0.0,
             "vs_first": _num(r.get("vs_first")) or 0.0,
+            "quotes": {"firstq": _num(r.get("q_first")) or 0.0, "hi": _num(r.get("q_hi")) or 0.0,
+                       "lo": _num(r.get("q_lo")) or 0.0, "chosen": _num(r.get("q_chosen")) or 0.0},
             "cycle": _num(r.get("cyc"), 1), "lead": _num(r.get("lead_d"), 1),
             "ontime": _num((r.get("ontime") or 0) * 100, 1) if r.get("ontime") is not None else None,
             "overdue": int(r.get("overdue") or 0)}
@@ -516,7 +663,7 @@ def stage_times(f, today=None, conn=None):
     """Per approval stage: average hours from activation to signature,
     rejections and steps waiting now — slowest first (the bottleneck)."""
     today_s = (today or date.today()).isoformat()
-    w_sql, w_args = _with("S", f, date_range(f, today), today_s)
+    w_sql, w_args = _with("S", f, date_range(f, today), today_s, conn)
     where, f_args = _fact_where("S", f)
     sql = (w_sql + "SELECT st.stage AS stage, COUNT(*) AS steps, "
            "AVG(CASE WHEN st.status IN ('approved', 'rejected') THEN %s END) * 24 AS hours, "
@@ -541,7 +688,7 @@ def stage_times(f, today=None, conn=None):
 
 def savings_totals(f, today=None, conn=None):
     today_s = (today or date.today()).isoformat()
-    w_sql, w_args = _with("S", f, date_range(f, today), today_s)
+    w_sql, w_args = _with("S", f, date_range(f, today), today_s, conn)
     where, f_args = _fact_where("S", f)
     sql = (w_sql + "SELECT SUM(f.q_first) AS firstq, SUM(f.q_hi) AS hi, SUM(f.q_lo) AS lo, "
            "SUM(f.q_chosen) AS chosen, COUNT(DISTINCT CASE WHEN f.q_chosen IS NOT NULL THEN f.pr_id END) AS n "
@@ -578,8 +725,17 @@ def budget_vs_actual(f, today=None, conn=None):
             args.append(f["dept"])
         budgets = {r["d"]: float(r["a"] or 0) for r in conn.execute(
             sql + " GROUP BY COALESCE(TRIM(department), '')", args).fetchall()}
-        spent = {d1: v or 0.0 for d1, _d2, v, _n in query(
-            {"d1": "department", "d2": "", "m": "spend", "agg": "sum"}, fy, today, conn)}
+        if f.get("vendor") or f.get("cat"):
+            spent = {d1: v or 0.0 for d1, _d2, v, _n in query(
+                {"d1": "department", "d2": "", "m": "spend", "agg": "sum"}, fy, today, conn)}
+        else:
+            # A request's supplier shares add up to the request, so without a
+            # supplier / category filter its value per department is _VALUE
+            # itself: the same figure as query(), with no share or quote work.
+            where, a = _pr_where(fy, date_range(fy, today), with_cat=False)
+            spent = {r["d"]: float(r["v"] or 0) for r in conn.execute(
+                "SELECT COALESCE(TRIM(p.department), '') AS d, SUM(%s) AS v FROM pr_requests p "
+                "WHERE %s GROUP BY COALESCE(TRIM(p.department), '')" % (_VALUE, where), a).fetchall()}
     finally:
         if own:
             conn.close()
@@ -591,21 +747,22 @@ def budget_vs_actual(f, today=None, conn=None):
                   for d in depts]
 
 
-def supplier_performance(f, today=None, conn=None, top=10):
-    """Top suppliers by committed spend with their delivery record: orders,
-    average PO->receipt days and on-time % from S, plus the measured
-    rejection and price-variance figures from vendor_score."""
+def supplier_performance(f, today=None, conn=None, top=10, money=True):
+    """Top suppliers with their delivery record: orders and average
+    PO->receipt days from S, plus on-time, rejection and price variance from
+    vendor_score (the same figures /procurement/vendors shows). Ranked by
+    committed spend only for a reader who sees money (`money`); otherwise by
+    orders and requests, so the order cannot leak the spend ranking."""
     from app.approvals import vendor_score
     from app.approvals.constants import vendor_key
     today_s = (today or date.today()).isoformat()
-    w_sql, w_args = _with("S", f, date_range(f, today), today_s)
+    w_sql, w_args = _with("S", f, date_range(f, today), today_s, conn)
     where, f_args = _fact_where("S", f)
     wavg = ("SUM(CASE WHEN f.%(c)s IS NOT NULL THEN f.%(c)s * f.frac END) / "
             "NULLIF(SUM(CASE WHEN f.%(c)s IS NOT NULL THEN f.frac END), 0)")
     sql = (w_sql + "SELECT f.supplier AS supplier, SUM(f.v) AS spend, COUNT(DISTINCT f.po_key) AS pos, "
            "COUNT(DISTINCT f.pr_id) AS requests, " + wavg % {"c": "lead_d"} + " AS lead_d, "
-           + wavg % {"c": "ontime"} + " AS ontime, SUM(CASE WHEN f.ontime IS NOT NULL THEN 1 ELSE 0 END) "
-           "AS ontime_n, SUM(f.overdue) AS overdue FROM S f" + where + " GROUP BY f.supplier")
+           "SUM(f.overdue) AS overdue FROM S f" + where + " GROUP BY f.supplier")
     own = conn is None
     conn = conn or get_db()
     try:
@@ -618,15 +775,19 @@ def supplier_performance(f, today=None, conn=None, top=10):
         if own:
             conn.close()
     rows = [r for r in rows if r["supplier"] != UNASSIGNED and (r["spend"] or r["pos"])]
-    rows.sort(key=lambda r: (-(r["spend"] or 0), -(r["pos"] or 0)))
+    if money:
+        rows.sort(key=lambda r: (-(r["spend"] or 0), -(r["pos"] or 0)))
+    else:
+        rows.sort(key=lambda r: (-(r["pos"] or 0), -(r["requests"] or 0), r["supplier"].lower()))
     out = []
     for r in rows[:top]:
         card = cards.get(vendor_key(r["supplier"])) or {}
+        ot = card.get("on_time") or {}
         out.append({"supplier": r["supplier"], "spend": _num(r["spend"]) or 0.0,
                     "pos": int(r["pos"] or 0), "requests": int(r["requests"] or 0),
                     "lead": _num(r["lead_d"], 1),
-                    "ontime": _num((r["ontime"] or 0) * 100, 1) if r["ontime"] is not None else None,
-                    "ontime_n": int(r["ontime_n"] or 0), "overdue": int(r["overdue"] or 0),
+                    "ontime": ot.get("pct"), "ontime_n": int(ot.get("n") or 0),
+                    "overdue": int(r["overdue"] or 0),
                     "reject": (card.get("rejection") or {}).get("pct"),
                     "price_var": (card.get("price_variance") or {}).get("pct")})
     return out
@@ -640,9 +801,9 @@ def price_history(f, rise_pct=10.0, item="", today=None, conn=None, limit=25):
     w_sql, w_args = _with("L", f, date_range(f, today), today_s)
     where, f_args = _fact_where("L", f, ["f.status IN (%s)" % _COMMITTED_SQL, "f.price > 0",
                                          "f.qty > 0", "f.item <> ''"])
-    sql = (w_sql + "SELECT f.item AS item, f.month AS month, SUM(f.price * f.qty) AS amt, "
-           "SUM(f.qty) AS qty, COUNT(DISTINCT f.pr_id) AS n FROM L f" + where
-           + " GROUP BY f.item, f.month")
+    sql = (w_sql + "SELECT f.item AS item, f.item_ref AS ref, f.unit AS unit, f.month AS month, "
+           "SUM(f.price * f.qty) AS amt, SUM(f.qty) AS qty, COUNT(DISTINCT f.pr_id) AS n FROM L f" + where
+           + " GROUP BY f.item_ref, f.item, f.unit, f.month")
     own = conn is None
     conn = conn or get_db()
     try:
@@ -650,26 +811,41 @@ def price_history(f, rise_pct=10.0, item="", today=None, conn=None, limit=25):
     finally:
         if own:
             conn.close()
-    series = {}
+    # A box and a piece are different prices, and two catalogue items may share
+    # a name: one series per (catalogue id or name, unit), labelled with both.
+    series, names, units = {}, {}, {}
     for r in rows:
         q = float(r["qty"] or 0)
         if q > 0:
-            series.setdefault(r["item"], []).append((r["month"], float(r["amt"] or 0) / q, int(r["n"] or 0)))
+            key = (r["ref"] or "", r["item"], r["unit"] or "")
+            series.setdefault(key, []).append((r["month"], float(r["amt"] or 0) / q, int(r["n"] or 0)))
+    labels = {}
+    for key in series:
+        lab = key[1] + (" (%s)" % key[2] if key[2] else "")
+        labels.setdefault(lab, []).append(key)
+    for lab, keys in labels.items():
+        for key in keys:
+            names[key] = lab if len(keys) == 1 else "%s #%s" % (lab, key[0] or "-")
+            units[key] = key[2]
     alerts = []
-    for name, pts in series.items():
+    for key, pts in series.items():
         pts.sort()
         if len(pts) < 2 or pts[-2][1] <= 0:
             continue
         prev, last = pts[-2], pts[-1]
         rise = 100.0 * (last[1] - prev[1]) / prev[1]
         if rise > rise_pct:
-            alerts.append({"item": name, "prev_month": prev[0], "prev": round(prev[1], 2),
+            alerts.append({"item": names[key], "name": key[1], "unit": units[key],
+                           "prev_month": prev[0], "prev": round(prev[1], 2),
                            "month": last[0], "last": round(last[1], 2), "rise": round(rise, 1)})
     alerts.sort(key=lambda a: -a["rise"])
-    items = sorted(series, key=lambda k: (-len(series[k]), k.lower()))
-    pick = item if item in series else (alerts[0]["item"] if alerts else (items[0] if items else ""))
+    by_label = {names[k]: k for k in series}
+    items = sorted(by_label, key=lambda lab: (-len(series[by_label[lab]]), lab.lower()))
+    pick = item if item in by_label else (alerts[0]["item"] if alerts else (items[0] if items else ""))
+    key = by_label.get(pick)
     return {"alerts": alerts[:limit], "items": items[:300], "item": pick,
-            "points": [{"month": m, "price": round(p, 2), "n": n} for m, p, n in series.get(pick, [])]}
+            "item_name": key[1] if key else "",
+            "points": [{"month": m, "price": round(p, 2), "n": n} for m, p, n in series.get(key, [])]}
 
 
 def filter_options(conn=None):
@@ -907,8 +1083,10 @@ I18N = {
     "proc.analytics.k.pos": ("Purchase orders", "أوامر الشراء", "Satın alma siparişleri"),
     "proc.analytics.k.cycle": ("Avg approval time (days)", "متوسط مدة الاعتماد (يوم)", "Ort. onay süresi (gün)"),
     "proc.analytics.k.lead": ("Avg PO → receipt (days)", "متوسط أمر الشراء ← الاستلام (يوم)", "Ort. sipariş → teslim (gün)"),
-    "proc.analytics.k.savings": ("Savings from quotations (EGP)", "التوفير من عروض الأسعار (ج.م)", "Tekliflerden tasarruf (EGP)"),
-    "proc.analytics.k.ontime": ("On-time deliveries", "التسليم في الميعاد", "Zamanında teslimat"),
+    "proc.analytics.k.savings": ("Savings vs the first quote (EGP)",
+                                 "التوفير مقارنة بأول عرض (ج.م)",
+                                 "İlk teklife göre tasarruf (EGP)"),
+    "proc.analytics.k.ontime": ("Received in full on time", "اتستلم كامل في الميعاد", "Zamanında tam teslim"),
     "proc.analytics.k.open": ("Open commitments (EGP)", "الارتباطات المفتوحة (ج.م)", "Açık taahhütler (EGP)"),
     "proc.analytics.k.overdue": ("Overdue POs", "أوامر شراء متأخرة", "Geciken siparişler"),
     "proc.analytics.k.missed": ("Paid above the lowest quote", "مدفوع زيادة عن أقل عرض", "En düşük tekliften fazla ödenen"),
@@ -943,9 +1121,9 @@ I18N = {
     "proc.analytics.used": ("Used", "المستخدم", "Kullanılan"),
     "proc.analytics.year": ("Year", "السنة", "Yıl"),
     "proc.analytics.c.suppliers": ("Supplier performance", "أداء الموردين", "Tedarikçi performansı"),
-    "proc.analytics.c.suppliers_sub": ("Top suppliers by committed spend. On-time compares full receipt with the required delivery date; rejection and price variance come from goods receipts and invoices.",
-                                       "أكبر الموردين حسب الإنفاق المرتبط. الالتزام بالميعاد بيقارن الاستلام الكامل بتاريخ التسليم المطلوب؛ نسبة الرفض وفرق السعر من أذون الاستلام والفواتير.",
-                                       "Taahhüt edilen harcamaya göre en büyük tedarikçiler. Zamanında teslim, tam teslimi istenen teslim tarihiyle karşılaştırır; ret ve fiyat sapması mal kabul ve faturalardan gelir."),
+    "proc.analytics.c.suppliers_sub": ("Top suppliers by committed spend. On-time and rejection come from the vendor scorecard (each goods receipt against the required delivery date); price variance from invoices.",
+                                       "أكبر الموردين حسب الإنفاق المرتبط. الالتزام بالميعاد ونسبة الرفض من تقييم الموردين (كل إذن استلام مقارنة بتاريخ التسليم المطلوب)؛ فرق السعر من الفواتير.",
+                                       "Taahhüt edilen harcamaya göre en büyük tedarikçiler. Zamanında teslim ve ret, tedarikçi karnesinden gelir (her mal kabul, istenen teslim tarihiyle karşılaştırılır); fiyat sapması faturalardan."),
     "proc.analytics.col.supplier": ("Supplier", "المورد", "Tedarikçi"),
     "proc.analytics.col.spend": ("Spend (EGP)", "الإنفاق (ج.م)", "Harcama (EGP)"),
     "proc.analytics.col.pos": ("POs", "أوامر الشراء", "Sipariş"),
@@ -991,18 +1169,30 @@ I18N = {
     "proc.analytics.def.spend": ("Spend = committed value of approved-or-later requests, in EGP, VAT included (net + tax, then × exchange rate), less any budget released on short-close. A request split across suppliers is shared by each purchase order's value. The same figure is used by the budget check, the exports and the report builder.",
                                  "الإنفاق = القيمة المرتبطة للطلبات المعتمدة وما بعدها، بالجنيه المصري، شاملة الضريبة (الصافي + الضريبة ثم × سعر الصرف)، ناقص أي موازنة اتفكت عند الإقفال الجزئي. الطلب اللي متقسم على كذا مورد بيتوزع حسب قيمة كل أمر شراء. نفس الرقم ده بيستخدمه فحص الموازنة والتصدير ومنشئ التقارير.",
                                  "Harcama = onaylanmış veya sonraki aşamadaki taleplerin taahhüt edilen değeri, EGP, KDV dahil (net + vergi, sonra × kur), kısmi kapanışta serbest bırakılan bütçe düşülerek. Birden çok tedarikçiye bölünen talep, her siparişin değerine göre paylaştırılır. Aynı rakam bütçe kontrolü, dışa aktarımlar ve rapor oluşturucu tarafından kullanılır."),
-    "proc.analytics.def.cycle": ("Approval time = submitted to fully approved. PO → receipt = order issued to goods fully received. On time = fully received on or before the required delivery date. Overdue = still on order after that date.",
-                                 "مدة الاعتماد = من الإرسال لحد الاعتماد الكامل. أمر الشراء ← الاستلام = من إصدار الأمر لحد استلام البضاعة كاملة. في الميعاد = اتستلمت كاملة في أو قبل تاريخ التسليم المطلوب. متأخر = لسه تحت التوريد بعد التاريخ ده.",
-                                 "Onay süresi = gönderimden tam onaya kadar. Sipariş → teslim = siparişin verilmesinden malların tamamen teslim alınmasına kadar. Zamanında = istenen teslim tarihinde veya öncesinde tamamen teslim alındı. Geciken = bu tarihten sonra hâlâ siparişte."),
-    "proc.analytics.def.savings": ("Savings = highest quote minus the chosen quote, on requests with two or more quotations (EGP, VAT included).",
-                                   "التوفير = أعلى عرض ناقص العرض المختار، على الطلبات اللي عليها عرضين أو أكتر (ج.م شامل الضريبة).",
-                                   "Tasarruf = en yüksek teklif eksi seçilen teklif; iki veya daha fazla teklifi olan taleplerde (EGP, KDV dahil)."),
+    "proc.analytics.def.cycle": ("Approval time = submitted to fully approved. PO → receipt = order issued to goods fully received. Received in full on time (the tile) = the whole request received on or before the required delivery date; the supplier table uses the vendor scorecard instead, which judges each goods receipt, partial ones included. Overdue = still on order after that date.",
+                                 "مدة الاعتماد = من الإرسال لحد الاعتماد الكامل. أمر الشراء ← الاستلام = من إصدار الأمر لحد استلام البضاعة كاملة. اتستلم كامل في الميعاد (المربع) = الطلب كله اتستلم في أو قبل تاريخ التسليم المطلوب؛ أما جدول الموردين فبياخد رقم تقييم الموردين، اللي بيحكم على كل إذن استلام لوحده حتى الجزئي. متأخر = لسه تحت التوريد بعد التاريخ ده.",
+                                 "Onay süresi = gönderimden tam onaya kadar. Sipariş → teslim = siparişin verilmesinden malların tamamen teslim alınmasına kadar. Zamanında tam teslim (kutucuk) = talebin tamamı istenen teslim tarihinde veya öncesinde teslim alındı; tedarikçi tablosu bunun yerine tedarikçi karnesini kullanır, kısmi olanlar dahil her mal kabulü ayrı değerlendirir. Geciken = bu tarihten sonra hâlâ siparişte."),
+    "proc.analytics.def.savings": ("Savings = the first quote minus the chosen quote; the saving against the highest quote is shown beside it. Only requests with a chosen quote and two or more quotations that each price every line count (EGP, VAT included). Partial quotes and requests awarded line by line are left out.",
+                                   "التوفير = أول عرض ناقص العرض المختار، وجنبه التوفير مقارنة بأعلى عرض. بيتحسب بس على الطلبات اللي فيها عرض مختار وعرضين أو أكتر كل واحد فيهم مسعّر كل البنود (ج.م شامل الضريبة). العروض الجزئية والطلبات اللي اترست بند بند مش داخلة في الحساب.",
+                                   "Tasarruf = ilk teklif eksi seçilen teklif; en yüksek teklife göre tasarruf yanında gösterilir. Yalnızca seçilmiş bir teklifi ve her biri tüm kalemleri fiyatlayan iki veya daha fazla teklifi olan talepler sayılır (EGP, KDV dahil). Kısmi teklifler ve kalem kalem verilen talepler hariçtir."),
     "proc.analytics.counts_only": ("You see counts and times only. Money figures are shown to Purchasing, Finance and procurement admins.",
                                    "انت شايف الأعداد والمدد بس. الأرقام المالية بتظهر للمشتريات والمالية ومديري المشتريات.",
                                    "Yalnızca sayıları ve süreleri görüyorsunuz. Parasal rakamlar Satın Alma, Finans ve satın alma yöneticilerine gösterilir."),
     "proc.analytics.pinned": ("Pinned reports", "التقارير المثبّتة", "Sabitlenmiş raporlar"),
     "proc.analytics.open_builder": ("Open in builder", "افتح في المنشئ", "Oluşturucuda aç"),
     "proc.analytics.exports": ("Exports", "التصدير", "Dışa aktarımlar"),
+    "proc.analytics.k.vs_hi": ("Vs the highest quote", "مقارنة بأعلى عرض", "En yüksek teklife göre"),
+    "proc.analytics.c.suppliers_sub_n": ("Suppliers with the most purchase orders. On-time and rejection come from the vendor scorecard (each goods receipt against the required delivery date); price variance from invoices.",
+                                         "الموردين اللي عليهم أكتر أوامر شراء. الالتزام بالميعاد ونسبة الرفض من تقييم الموردين (كل إذن استلام مقارنة بتاريخ التسليم المطلوب)؛ فرق السعر من الفواتير.",
+                                         "En çok satın alma siparişi olan tedarikçiler. Zamanında teslim ve ret, tedarikçi karnesinden gelir (her mal kabul, istenen teslim tarihiyle karşılaştırılır); fiyat sapması faturalardan."),
+    "proc.analytics.pin_own": ("Saved filters:", "الفلاتر المحفوظة:", "Kayıtlı filtreler:"),
+    "proc.analytics.pin_cap": ("Only the first pinned reports are shown here. Unpin one in the report builder to make room.",
+                               "بيظهر هنا أول التقارير المثبّتة بس. شيل التثبيت من تقرير في منشئ التقارير عشان تفضّي مكان.",
+                               "Burada yalnızca ilk sabitlenmiş raporlar gösterilir. Yer açmak için rapor oluşturucuda birinin sabitlemesini kaldırın."),
+    "proc.analytics.list.committed": ("Approved and later only (committed)",
+                                      "المعتمد وما بعده بس (مرتبط)",
+                                      "Yalnızca onaylanmış ve sonrası (taahhüt)"),
+    "proc.analytics.list.open": ("Open commitments only", "الارتباطات المفتوحة بس", "Yalnızca açık taahhütler"),
     "proc.analytics.exports_sub": ("Live CSV reports, Excel-ready (UTF-8). All time.", "تقارير CSV مباشرة جاهزة للإكسل (UTF-8). كل الفترات.", "Canlı CSV raporları, Excel'e hazır (UTF-8). Tüm zamanlar."),
     # --- builder ---
     "proc.analytics.b.sub": ("Pick what to group by and what to measure. The result updates as you change it; save it to come back, share it or pin it to the dashboard.",
@@ -1059,7 +1249,9 @@ I18N = {
     "proc.analytics.m.qty": ("Quantity", "الكمية", "Miktar"),
     "proc.analytics.m.price": ("Average unit price (EGP)", "متوسط سعر الوحدة (ج.م)", "Ortalama birim fiyat (EGP)"),
     "proc.analytics.m.cycle": ("Approval time (days)", "مدة الاعتماد (يوم)", "Onay süresi (gün)"),
-    "proc.analytics.m.savings": ("Savings from quotations (EGP)", "التوفير من العروض (ج.م)", "Tekliflerden tasarruf (EGP)"),
+    "proc.analytics.m.savings": ("Savings vs the first quote (EGP)",
+                                 "التوفير مقارنة بأول عرض (ج.م)",
+                                 "İlk teklife göre tasarruf (EGP)"),
     "proc.analytics.agg.sum": ("Total", "الإجمالي", "Toplam"),
     "proc.analytics.agg.avg": ("Average per request", "المتوسط لكل طلب", "Talep başına ortalama"),
     "proc.analytics.agg.max": ("Largest request", "أكبر طلب", "En büyük talep"),

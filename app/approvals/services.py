@@ -1331,12 +1331,16 @@ LIST_SORTS = {
 
 
 def list_prs(status=None, requester=None, limit=500, q="", dept="", priority="",
-             date_from="", date_to="", sort="new", vendor="", cat="", cc="", kind=""):
+             date_from="", date_to="", sort="new", vendor="", cat="", cc="", kind="",
+             committed="", cur=""):
     """The request register. Every filter is optional; `sort` is a LIST_SORTS
     key (anything else = newest first). `q` matches the PR number, title,
     requester, department or any line's item / description. vendor / cat / cc /
-    kind are the analytics drill-down: a supplier on the header, a line or an
-    order; an item category on any line; the cost centre; OPEX / CAPEX."""
+    kind / committed / cur are the analytics drill-down and count a request
+    exactly as analytics.py does: a supplier = the vendor of a live purchase
+    order (the header vendor when there is none); an item category on any line;
+    the cost centre; OPEX / CAPEX; committed "1" = approved-or-later, "open" =
+    approved but not yet received; the request currency."""
     conn = get_db()
     try:
         sql = "SELECT * FROM pr_requests WHERE is_active=1"
@@ -1357,8 +1361,8 @@ def list_prs(status=None, requester=None, limit=500, q="", dept="", priority="",
                     " (LOWER(COALESCE(i.item, '')) LIKE ? OR LOWER(COALESCE(i.description, '')) LIKE ?)))")
             args += [like] * 7
         if dept:
-            sql += " AND department=?"
-            args.append(dept)
+            sql += " AND TRIM(COALESCE(department, ''))=?"
+            args.append(dept.strip())
         if priority in C.PRIORITY_LABELS:
             sql += " AND COALESCE(priority, 'normal')=?"
             args.append(priority)
@@ -1369,12 +1373,19 @@ def list_prs(status=None, requester=None, limit=500, q="", dept="", priority="",
             sql += " AND " + _PR_DATE + " <= ?"
             args.append(date_to)
         if vendor:
-            sql += (" AND (TRIM(COALESCE(vendor, '')) = ?"
-                    " OR EXISTS (SELECT 1 FROM pr_purchase_orders o WHERE o.pr_id = pr_requests.id"
+            sql += (" AND (EXISTS (SELECT 1 FROM pr_purchase_orders o WHERE o.pr_id = pr_requests.id"
                     " AND TRIM(COALESCE(o.vendor, '')) = ? AND COALESCE(o.status, 'issued') <> 'cancelled')"
-                    " OR EXISTS (SELECT 1 FROM pr_items i WHERE i.pr_id = pr_requests.id"
-                    " AND TRIM(COALESCE(i.vendor, '')) = ?))")
-            args += [vendor] * 3
+                    " OR (TRIM(COALESCE(vendor, '')) = ? AND NOT EXISTS (SELECT 1 FROM pr_purchase_orders o2"
+                    " WHERE o2.pr_id = pr_requests.id AND COALESCE(o2.status, 'issued') <> 'cancelled')))")
+            args += [vendor] * 2
+        if committed in ("1", "open"):
+            from app.approvals import analytics as _an
+            sts = _an.COMMITTED if committed == "1" else _an.OPEN
+            sql += " AND status IN (" + ",".join("?" for _ in sts) + ")"
+            args += list(sts)
+        if cur:
+            sql += " AND UPPER(TRIM(COALESCE(NULLIF(currency, ''), 'EGP'))) = ?"
+            args.append(cur.upper())
         if cat:
             sql += (" AND EXISTS (SELECT 1 FROM pr_items i JOIN proc_items pi ON pi.id = i.item_id"
                     " WHERE i.pr_id = pr_requests.id AND TRIM(COALESCE(pi.category_name, '')) = ?)")
