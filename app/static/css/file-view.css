@@ -38,7 +38,9 @@
 .fv-tab:focus-visible, .fv-grid:focus-visible, .fv-text:focus-visible { outline: 2px solid var(--tc-red); outline-offset: 2px; }
 .fv-grid { max-height: 75vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); -webkit-overflow-scrolling: touch; }
 .fv-grid table { border-collapse: separate; border-spacing: 0; font-size: var(--fs-sm); min-width: 100%; }
-.fv-grid th, .fv-grid td { padding: 7px 10px; border-bottom: 1px solid var(--line-2); border-inline-end: 1px solid var(--line-2); text-align: start; vertical-align: top; white-space: pre-wrap; max-width: 28em; overflow-wrap: anywhere; }
+.fv-grid th, .fv-grid td { padding: 7px 10px; border-bottom: 1px solid var(--line-2); border-inline-end: 1px solid var(--line-2); text-align: start; vertical-align: top; white-space: pre-wrap; max-width: 28em; overflow-wrap: break-word; }
+/* 'anywhere' let a phone squeeze every column to one letter wide; a filled cell keeps a readable width and the grid scrolls sideways instead. */
+.fv-grid :is(th, td):not(:empty) { min-width: 7em; }
 .fv-grid thead th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); font-weight: 600; color: var(--ink-2); }
 .fv-grid td.num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
 

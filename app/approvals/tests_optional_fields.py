@@ -90,6 +90,14 @@ def run():
     chk("and the others are untouched",
         all(('name="%s"' % n) in html2 for n in
             ("expenditure_kind", "forecast_ref", "cost_center", "delivery_condition")))
+    # The three the owner asked to keep in sight: switched off, they stay on the
+    # form greyed and disabled, and post nothing (no name) so hiding rules apply.
+    set_switch("show_cost_center", False)
+    html3 = c.get("/procurement/new").get_data(as_text=True)
+    chk("a switched-off cost centre is not posted", 'name="cost_center"' not in html3)
+    chk("but it stays on the form, greyed and disabled",
+        'is-off"><label data-i18n="proc.cc_l"' in html3)
+    set_switch("show_cost_center", True)
 
     # ---- 4. THE ONE THAT MATTERS: hiding does not erase ---------------------
     print("\nhiding a field does not erase what a request already carries")
