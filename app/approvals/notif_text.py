@@ -57,6 +57,8 @@ TITLES = [
     (r"Signing delegated to (.+)", r"تم تفويض التوقيع لـ \g<1>", r"İmza yetkisi \g<1> kişisine devredildi"),
     (r"Delegation revoked", "تم إلغاء التفويض", "Yetki devri iptal edildi"),
     (r"Pricing pending", "التسعير متأخر", "Fiyatlandırma bekliyor"),
+    (r"Quotes needed before the next signature", "محتاجين عروض أسعار قبل التوقيع اللي جاي",
+     "Sonraki imzadan önce teklif gerekli"),
     (r"Approval overdue \(level 2\)", "الموافقة متأخرة (المستوى 2)", "Onay gecikti (2. seviye)"),
     (r"Approval overdue", "الموافقة متأخرة", "Onay gecikti"),
     (r"Quantity corrected on (.+)", r"تم تصحيح الكمية في \g<1>", r"\g<1> üzerinde miktar düzeltildi"),
@@ -107,6 +109,21 @@ BODIES = [
     (r"(\S+) has waited (\d+)h without commercial pricing — enter the value so it can move on\.",
      r"\g<1> مستني \g<2> ساعة من غير تسعير — اكتب القيمة عشان يكمّل.",
      r"\g<1> \g<2> saattir fiyatlandırılmadan bekliyor — ilerlemesi için tutarı girin."),
+    # services._quote_wait_body — a rung past Purchasing waiting on quotes
+    (r"(\S+) cannot be signed at (.+?) until it has (\d+) quotes from different suppliers, "
+     r"each with its file \(it has (\d+)\)\. Add them or record a single-source justification\.",
+     r"\g<1> مش هيتوقّع عند \g<2> غير لما يبقى فيه \g<3> عروض أسعار من موردين مختلفين، "
+     r"كل عرض بملفه (موجود \g<4>). ضيفهم أو سجّل مبرر المورد الوحيد.",
+     r"\g<1>, \g<2> aşamasında imzalanamaz: her biri dosyasıyla farklı tedarikçilerden "
+     r"\g<3> teklif gerekli (\g<4> var). Ekleyin veya tek kaynak gerekçesi kaydedin."),
+    (r"(\S+) cannot be signed at (.+?): a quotation on file has no supplier document\. "
+     r"Attach the file to each quotation\.",
+     r"\g<1> مش هيتوقّع عند \g<2>: فيه عرض سعر متسجّل من غير مستند المورد. ارفع الملف لكل عرض.",
+     r"\g<1>, \g<2> aşamasında imzalanamaz: kayıtlı bir teklifin tedarikçi belgesi yok. "
+     r"Her teklife dosyasını ekleyin."),
+    (r"(\S+) cannot be signed at (.+?): the chosen quotation has no supplier file\. Attach it\.",
+     r"\g<1> مش هيتوقّع عند \g<2>: العرض المختار مالوش ملف من المورد. ارفعه.",
+     r"\g<1>, \g<2> aşamasında imzalanamaz: seçilen teklifin tedarikçi dosyası yok. Ekleyin."),
     (r"(\S+) was cancelled by (\S+)\.", r"\g<1> اتلغى بواسطة \g<2>.",
      r"\g<1>, \g<2> tarafından iptal edildi."),
     (r"(\S+) was closed before everything arrived; the rest will not be delivered\. "

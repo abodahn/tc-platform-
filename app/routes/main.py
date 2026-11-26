@@ -1306,6 +1306,7 @@ def my_work():
             from app.approvals import services as proc
             # The whole queue: the panel shows the first rows and the true count.
             data["sign_queue"] = proc.my_queue(user)
+            proc.mark_quote_wait(data["sign_queue"], cap=15)   # the rows the panel lists
             from app.approvals import porev
             data["rev_queue"] = porev.rev_queue(user)
             data["my_prs"] = [p for p in proc.list_prs(requester=user["username"], limit=10)

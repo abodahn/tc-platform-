@@ -30,7 +30,8 @@
             <td><div style="font-weight:600">{{ pr.pr_no }}</div>
                 <div class="muted" style="font-size:12px">{{ pr.title }}</div>
                 {{ items_line(items.get(pr.id)) }}</td>
-            <td><span class="badge b-pending">{{ pr._stage_label }}</span></td>
+            <td><span class="badge b-pending">{{ pr._stage_label }}</span>
+              {% if pr._quote_wait %}<span class="badge b-warning" data-i18n="proc.quotewait.badge">⏳ Waiting for Purchasing (quotes)</span>{% endif %}</td>
             <td style="font-variant-numeric:tabular-nums">{% if money.get(pr.id) %}{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}{% else %}—{% endif %}</td>
             <td style="text-align:end"><a class="btn btn-primary btn-sm" href="{{ url_for('approvals.detail', pr_id=pr.id) }}" data-i18n="proc.review">Review</a></td>
           </tr>

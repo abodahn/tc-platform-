@@ -22,7 +22,8 @@
           <span class="sr-only">{{ pr.pr_no }}</span></label>{% endif %}
         <a class="row-line porev-row" href="{{ url_for('approvals.detail', pr_id=pr.id) }}">
           <span><b>{{ pr.pr_no }}</b> · {{ pr.title or '' }}</span>
-          <span class="tag">{{ pr._stage_label }}</span>
+          <span><span class="tag">{{ pr._stage_label }}</span>
+            {% if pr._quote_wait %}<span class="badge b-warning" data-i18n="proc.quotewait.badge">⏳ Waiting for Purchasing (quotes)</span>{% endif %}</span>
         </a>
       </div>
       {% endfor %}

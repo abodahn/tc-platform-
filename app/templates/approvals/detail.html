@@ -194,6 +194,36 @@
   </div>
 </div>
 
+{#- Waiting for Purchasing (quotes): the current rung is past a signed Purchasing
+    rung and the quote rule fails. The numbers come from svc.quote_wait — the
+    same check act_on_step refuses on — so this and the refusal never disagree. -#}
+{% if quote_wait %}
+<div class="panel mt-2" id="prQuoteWait" role="status" style="border-color:var(--warn)">
+  <div class="panel-pad flex gap center wrap" style="gap:12px">
+    <span class="badge b-pending" data-i18n="proc.quotewait.badge">⏳ Waiting for Purchasing (quotes)</span>
+    <div style="flex:1 1 260px;min-width:0">
+      {% if quote_wait.msg == 'needs_quotes' %}
+      <div style="font-weight:600"><span data-i18n="proc.quotewait.needs_a">This request needs</span>
+        <bdi>{{ quote_wait.required }}</bdi>
+        <span data-i18n="proc.quotewait.needs_b">quotes from different suppliers, each with its file — it has</span>
+        <bdi>{{ quote_wait.have }}</bdi>.</div>
+      <div class="muted" style="font-size:12.5px" data-i18n="proc.quotewait.why_quotes">Approvers cannot sign until Purchasing adds them or records a single-source justification.</div>
+      {% else %}
+      {% if quote_wait.msg == 'chosen_quote_no_file' %}
+      <div style="font-weight:600" data-i18n="proc.quotewait.chosen_no_file">The chosen quotation has no supplier file.</div>
+      {% else %}
+      <div style="font-weight:600" data-i18n="proc.quotewait.no_file">A quotation on file has no supplier document attached.</div>
+      {% endif %}
+      <div class="muted" style="font-size:12.5px" data-i18n="proc.quotewait.why_file">Approvers cannot sign until Purchasing attaches the supplier's file.</div>
+      {% endif %}
+    </div>
+    {% if can_purchasing %}
+    <a class="btn btn-sm" href="#prQuotes" data-i18n="proc.quotewait.fix">Go to supplier quotes</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 {# Audit 3.4-b9b — retention as a DATE ON THE RECORD, not a sentence on a page.
    Stamped when the request was raised: 10 years for capital expenditure, 5 for
    everything else. Nothing is ever purged automatically; a record only leaves
@@ -403,10 +433,16 @@
       <div class="field"><label data-i18n="proc.comment">Comment (optional)</label>
         <input name="comment" autocomplete="off" placeholder="Add a note to your approval…"></div>
       <div class="flex gap wrap">
-        <button class="btn btn-primary" type="submit" data-advance>
+        {#- Waiting on Purchasing for quotes: say why instead of a refusal after
+            the press. act_on_step still refuses it — this is only the screen. -#}
+        <button class="btn btn-primary" type="submit" data-advance{% if quote_wait %} disabled aria-describedby="prQwNote"{% endif %}>
           <svg class="ico"><use href="#i-check"></use></svg>
           <span data-i18n="proc.act.{{ actionable.action }}_sign">{{ act_sign }}</span></button>
       </div>
+      {% if quote_wait %}
+      <div class="mt-2" id="prQwNote" style="font-size:12.5px;color:var(--warn)"
+           data-i18n="proc.quotewait.cant_sign">You cannot sign yet — this request is waiting for Purchasing to complete the quotes (see above).</div>
+      {% endif %}
     </form>
     {#- SEND BACK. Between holding and rejecting, because it is the move for
         "somebody below got this wrong" — which rejection answers far too

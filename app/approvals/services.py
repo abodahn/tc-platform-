@@ -3566,11 +3566,13 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         if decision == "approve" and _at_or_past_pricing_gate(conn, pr_id, step):
             ok_rfq, rfq_msg = rfq_gate_check(conn, pr)
             if not ok_rfq:
+                _quote_refusal_notice(conn, pr, step)
                 return False, rfq_msg
             # The chosen supplier's own quotation file is what the price rests
             # on. Only a quote recorded before files were required can be here.
             if conn.execute("SELECT 1 FROM pr_quotes WHERE pr_id=? AND is_chosen=1 AND NOT "
                             + _Q_HAS_FILE + " LIMIT 1", (pr_id,)).fetchone():
+                _quote_refusal_notice(conn, pr, step)
                 return False, "chosen_quote_no_file"
             # A chosen quotation in another currency than the request was never
             # applied (apply_chosen_quote refuses a foreign quote with no rate),
@@ -7713,6 +7715,111 @@ def rfq_requirement(conn, pr):
     return out
 
 
+# --------------------------------------------------------------------------
+# Waiting for Purchasing (quotes): a rung ABOVE a signed Purchasing rung that
+# the quote rule blocks. Only Purchasing can fix it (quotes with files from
+# distinct suppliers, or a single-source justification), so the page says so
+# up front and Purchasing — nobody else — is told. act_on_step stays the guard.
+# --------------------------------------------------------------------------
+QUOTE_WAIT_NOTICE = "quotes_needed_notice"
+
+
+def quote_wait(conn, pr):
+    """rfq_requirement()'s dict plus 'stage' (the blocked rung) when the CURRENT
+    rung sits past a signed Purchasing rung and the quote checks act_on_step
+    runs there would refuse it — same checks, same order, same numbers, msg in
+    needs_quotes / needs_quote_file / chosen_quote_no_file — else None. Read only."""
+    if _pr_field(pr, "status") != "pending":
+        return None
+    pr_id = _pr_field(pr, "id")
+    cur = conn.execute("SELECT stage FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+                       (pr_id, _pr_field(pr, "current_seq"))).fetchall()
+    if (not cur or any(s["stage"] == PRICING_GATE_STAGE for s in cur)
+            or not _at_or_past_pricing_gate(conn, pr_id, cur[0])):
+        return None
+    r = rfq_requirement(conn, pr)
+    if r["ok"]:
+        if not conn.execute("SELECT 1 FROM pr_quotes WHERE pr_id=? AND is_chosen=1 AND NOT "
+                            + _Q_HAS_FILE + " LIMIT 1", (pr_id,)).fetchone():
+            return None
+        r["msg"] = "chosen_quote_no_file"
+    r["stage"] = cur[0]["stage"]
+    return r
+
+
+def _quote_wait_body(pr, w):
+    # English source; notif_text.BODIES carries the AR / TR patterns.
+    where = "%s cannot be signed at %s" % (_pr_field(pr, "pr_no"), stage_label(w["stage"]))
+    if w["msg"] == "needs_quotes":
+        return ("%s until it has %d quotes from different suppliers, each with its file "
+                "(it has %d). Add them or record a single-source justification."
+                % (where, w["required"], w["have"]))
+    if w["msg"] == "needs_quote_file":
+        return ("%s: a quotation on file has no supplier document. "
+                "Attach the file to each quotation." % where)
+    return "%s: the chosen quotation has no supplier file. Attach it." % where
+
+
+def quotes_needed_notice(conn, pr, w):
+    """Tell Purchasing that the rung past theirs waits on quotes `w` (quote_wait):
+    the person who signed THIS request's Purchasing rung while their account is
+    active, else whoever may sign the Purchasing stage (never the requester).
+    At most once per request per 24h — the audit row is the stamp and names who
+    was told. Returns the usernames told. The caller commits."""
+    pr_id = _pr_field(pr, "id")
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    if conn.execute("SELECT 1 FROM pr_events WHERE pr_id=? AND action=? AND created_at>? LIMIT 1",
+                    (pr_id, QUOTE_WAIT_NOTICE, since)).fetchone():
+        return []
+    row = conn.execute(
+        "SELECT s.approver_user u FROM pr_steps s JOIN users x ON x.username=s.approver_user "
+        "WHERE s.pr_id=? AND s.stage=? AND s.status='approved' AND x.is_active=1 "
+        "AND COALESCE(x.account_status,'active')='active' ORDER BY s.id DESC LIMIT 1",
+        (pr_id, PRICING_GATE_STAGE)).fetchone()
+    told = ([row["u"]] if row else
+            sorted(set(eligible_approvers(conn, PRICING_GATE_STAGE)) - {_pr_field(pr, "requester")}))
+    if not told:
+        return []
+    notify_users(conn, told, "warning", "Quotes needed before the next signature",
+                 _quote_wait_body(pr, w), link=_pr_link(pr_id) + "#prQuotes")
+    audit(conn, pr_id, "system", QUOTE_WAIT_NOTICE,
+          "%s waits on quotes (%s) — Purchasing told: %s"
+          % (stage_label(w["stage"]), w["msg"], ", ".join(told)))
+    return told
+
+
+def _quote_refusal_notice(conn, pr, step):
+    """act_on_step refused a rung on the quote rule: when that rung is past
+    Purchasing, tell Purchasing (deduped). A notice failure never changes the refusal."""
+    if step["stage"] == PRICING_GATE_STAGE:
+        return
+    try:
+        w = quote_wait(conn, pr)
+        if w and quotes_needed_notice(conn, pr, w):
+            conn.commit()
+    except Exception:  # noqa: BLE001
+        log.warning("quotes-needed notice skipped", exc_info=True)
+
+
+def mark_quote_wait(rows, cap=30):
+    """Queue rows (my_queue dicts) stuck waiting on Purchasing for quotes get
+    pr['_quote_wait'] = the quote_wait() msg. Only the first `cap` rows — what a
+    screen lists — and only rungs past Purchasing are checked, on one connection."""
+    rows = [r for r in rows[:cap] if r.get("_stage") != PRICING_GATE_STAGE]
+    if not rows:
+        return
+    conn = get_db()
+    try:
+        for r in rows:
+            w = quote_wait(conn, r)
+            if w:
+                r["_quote_wait"] = w["msg"]
+    except Exception:  # noqa: BLE001 — a hint must never cost the queue
+        log.warning("quote-wait queue badge skipped", exc_info=True)
+    finally:
+        conn.close()
+
+
 def attach_ejr(pr_id, ejr_id, user, ip=None):
     """Cite an APPROVED Engineering Justification Report on a requisition.
 
@@ -8193,6 +8300,9 @@ def run_escalations():
                 "SELECT * FROM pr_steps WHERE status='pending' AND pr_id IN "
                 "(SELECT id FROM pr_requests WHERE status='pending') ORDER BY id"):
             pending_steps.setdefault((r["pr_id"], r["seq"]), r)
+        past_purchasing = {r["pr_id"] for r in conn.execute(
+            "SELECT DISTINCT pr_id FROM pr_steps WHERE stage=? AND status='approved' AND pr_id IN "
+            "(SELECT id FROM pr_requests WHERE status='pending')", (PRICING_GATE_STAGE,))}
         for pr in prs:
             # ---- pricing-stall reminder (independent of the ladder position) ----
             if (pr["pricing_status"] or "priced") == "unpriced":
@@ -8211,6 +8321,14 @@ def run_escalations():
             step = pending_steps.get((pr["id"], pr["current_seq"]))
             if not step:
                 continue
+            # ---- a rung past Purchasing waiting on quotes: tell Purchasing ----
+            if pr["id"] in past_purchasing and step["stage"] != PRICING_GATE_STAGE:
+                try:
+                    w = quote_wait(conn, pr)
+                    if w and quotes_needed_notice(conn, pr, w):
+                        n += 1
+                except Exception:  # noqa: BLE001 — never costs the escalations
+                    log.warning("quotes-needed sweep skipped %s", pr["id"], exc_info=True)
             hrs = _age_hours(step["activated_at"] or pr["submitted_at"])
             if hrs is None:
                 continue

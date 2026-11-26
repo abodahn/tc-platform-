@@ -122,6 +122,7 @@ def index():
     except Exception:
         pass
     queue = svc.my_queue(user)
+    svc.mark_quote_wait(queue)   # 'Waiting for Purchasing (quotes)' on the first rows
     recent = svc.list_prs(limit=12, requester=(None if svc.sees_all_prs(user) else user["username"]))
     return render_template(
         "approvals/index.html", active="procurement",
@@ -1429,6 +1430,8 @@ def detail(pr_id):
     _c = svc.get_db()   # detail() imports get_db locally further down
     try:
         rfq = svc.rfq_requirement(_c, pr)
+        # A rung past Purchasing that the quote rule blocks: banner + no Approve.
+        quote_wait = svc.quote_wait(_c, pr)
     finally:
         _c.close()
     return render_template("approvals/detail.html", active="proc_list",
@@ -1501,6 +1504,7 @@ def detail(pr_id):
                            wh_review=bool(actionable
                                           and actionable.get("stage") in C.WAREHOUSE_STAGES),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
+                           quote_wait=quote_wait,
                            rfq_min=rfq["required"], rfq_have=rfq["have"],
                            rfq_value=rfq["value"], rfq_threshold=C.RFQ_VALUE_THRESHOLD,
                            # Who to ask for a price, defaulted to the vendors the
