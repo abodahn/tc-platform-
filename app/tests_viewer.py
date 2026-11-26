@@ -246,12 +246,23 @@ def end_to_end(app):
         r = me.get("/procurement/pr/%d/pdf?view=1" % pid)
         assert r.status_code == 200 and 'id="fvPdf"' in r.get_data(as_text=True)
 
+        # PR / PO / RFQ Excel open inside the app too (same _xlsx helper for all three)
+        assert "/procurement/pr/%d/pr.xlsx?view=1" % pid in page
+        r = me.get("/procurement/pr/%d/pr.xlsx?view=1" % pid)
+        html = r.get_data(as_text=True)
+        assert r.status_code == 200 and 'fv-grid' in html and "Fake item" in html, r.status_code
+        assert "/procurement/pr/%d/pr.xlsx?download=1" % pid in html
+        r = me.get("/procurement/pr/%d/pr.xlsx" % pid)                                  # plain link: a file
+        assert r.headers["Content-Disposition"].startswith("attachment") and r.data[:2] == b"PK"
+
         # another plain requester: refused on every branch, the viewer included
         other = client(ids["fv.other"])
         for qs in ("?view=1", "?inline=1", "?download=1", ""):
             r = other.get("/procurement/attachment/%d%s" % (att["q.pdf"], qs))
             assert r.status_code in (403, 404), (qs, r.status_code)
             assert b"%PDF" not in r.data and b"fvPdf" not in r.data
+        r = other.get("/procurement/pr/%d/pr.xlsx?view=1" % pid)
+        assert r.status_code in (403, 404) and b"Fake item" not in r.data, r.status_code
         r = app.test_client().get("/procurement/attachment/%d?view=1" % att["q.pdf"])  # signed out
         assert r.status_code in (302, 401), r.status_code
     print("end to end ok")

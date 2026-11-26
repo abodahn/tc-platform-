@@ -1964,8 +1964,8 @@ def _rfq_doc(pr_id):
 
 
 def _xlsx(data, name):
-    return send_file(io.BytesIO(data), mimetype=xlsxgen.MIME, as_attachment=True,
-                     download_name=name)
+    # ?view=1 opens the sheet inside the app (file_view); a plain link still downloads.
+    return file_response(data, xlsxgen.MIME, name)
 
 
 @bp.route("/pr/<int:pr_id>/rfq.xlsx")

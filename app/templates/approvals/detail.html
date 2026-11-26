@@ -182,13 +182,13 @@
   <div class="flex gap center wrap">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_pdf', pr_id=pr.id, view=1) }}" data-file-view>
       <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.pdf">PR PDF</span></a>
-    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_xlsx', pr_id=pr.id) }}" download>
+    <a data-file-view class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_xlsx', pr_id=pr.id, view=1) }}">
       <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.pr_xlsx">PR Excel</span></a>
     {% include "approvals/_porev_copy_btn.html" %}
     {% if money and pr.status in ('approved','po_issued','closed') %}
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_pdf', pr_id=pr.id, view=1) }}" data-file-view>
       <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
-    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_xlsx', pr_id=pr.id) }}" download>
+    <a data-file-view class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_xlsx', pr_id=pr.id, view=1) }}">
       <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.po_xlsx">PO Excel</span></a>
     {% endif %}
   </div>
@@ -1646,8 +1646,8 @@
             <td>{% if money and p.status != 'cancelled' %}<div class="flex gap wrap"><a class="btn btn-ghost btn-sm"
                    href="{{ url_for('approvals.po_pdf', pr_id=pr.id, po=p.id, view=1) if p.id else url_for('approvals.po_pdf', pr_id=pr.id, view=1) }}" data-file-view>
               <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
-              <a data-file-download class="btn btn-ghost btn-sm" download
-                 href="{{ url_for('approvals.po_xlsx', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_xlsx', pr_id=pr.id) }}">
+              <a data-file-view class="btn btn-ghost btn-sm"
+                 href="{{ url_for('approvals.po_xlsx', pr_id=pr.id, po=p.id, view=1) if p.id else url_for('approvals.po_xlsx', pr_id=pr.id, view=1) }}">
               <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.po_xlsx">PO Excel</span></a></div>{% endif %}</td>
           </tr>
         {% endfor %}
@@ -1913,8 +1913,8 @@
                 <td><div class="flex gap wrap"><a class="btn btn-ghost btn-sm"
                        href="{{ url_for('approvals.rfq_pdf', pr_id=pr.id, rfq=r.id, view=1) }}" data-file-view>
                   <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rfq.pdf">RFQ PDF</span></a>
-                  <a data-file-download class="btn btn-ghost btn-sm" download
-                     href="{{ url_for('approvals.rfq_xlsx', pr_id=pr.id, rfq=r.id) }}">
+                  <a data-file-view class="btn btn-ghost btn-sm"
+                     href="{{ url_for('approvals.rfq_xlsx', pr_id=pr.id, rfq=r.id, view=1) }}">
                   <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.rfq.xlsx">RFQ Excel</span></a></div></td>
               </tr>
               {#- Correcting an RFQ, and choosing which lines it asks for. Offered

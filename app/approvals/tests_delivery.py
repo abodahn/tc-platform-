@@ -203,7 +203,8 @@ def run():
                  nut_mat["id"])[0]["stock_qty"] == nut_mat["stock_qty"], "stock booked"
         # The PO panel marks the cancelled order and offers no PDF for it.
         html = b_cli.get("/procurement/pr/%d" % pid).get_data(as_text=True)
-        assert ('po=%d"' % a["id"]) in html and ('po=%d"' % b["id"]) not in html
+        # PO document links end "po=<id>&amp;view=1" (they open in the in-app viewer)
+        assert ('po=%d&amp;view=1"' % a["id"]) in html and ('po=%d&amp;view=1"' % b["id"]) not in html
         ui = svc.labels("ar")["ui"]
         assert ui["po_cancelled_flash"] and ui["po_cancelled_flash"] != svc.labels("en")["ui"]["po_cancelled_flash"]
         # The rest of the order arrives: the cancelled lines do not hold it open.
