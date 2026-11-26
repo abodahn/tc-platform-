@@ -136,6 +136,10 @@
           <tr>
             <th style="width:40%" data-i18n="pwf.signed_by">Signed by</th>
             <td>
+              {% if s.stage == 'item_control' %}
+              <span data-i18n="proc.itemctl.wf_assigned">Assigned person:</span> <b>{{ s.assignee or '—' }}</b>
+              {% if can_edit %}<div class="mt-2"><a href="{{ url_for('approvals.itemctl_settings') }}" data-i18n="proc.itemctl.wf_change">Change on the Item control page</a></div>{% endif %}
+              {% endif %}
               {% for r in s.roles %}<span class="tag">{{ v.L.role.get(r, r) }}</span> {% endfor %}
               {% if s.role_override %}<div class="muted" style="font-size:11px">
                 <span data-i18n="pwf.default_is">Code default:</span>
@@ -174,6 +178,7 @@
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <input type="hidden" name="department" value="{{ v.department }}">
           <input type="hidden" name="stage" value="{{ s.stage }}">
+          {% if s.stage != 'item_control' %}
           <div class="field"><label data-i18n="pwf.roles_select">Roles that sign this stage</label>
             <select name="roles" multiple size="6">
               {% for rc in v.role_choices %}
@@ -183,11 +188,12 @@
             </select>
           </div>
           <div class="muted" style="font-size:11.5px" data-i18n="pwf.roles_hint">Hold Ctrl (or Cmd) to pick more than one. Selecting nothing leaves the roles unchanged — use Reset to go back to the code default.</div>
+          {% endif %}
           <div class="mt-2"><b style="font-size:12.5px" data-i18n="pwf.explanation">What happens here</b></div>
           {{ prose('explanation', s.edit, 6) }}
           <div class="flex gap wrap">
             <button class="btn btn-primary btn-sm" type="submit" data-i18n="pwf.save">Save</button>
-            <button class="btn btn-ghost btn-sm" type="submit" name="reset" value="role" data-i18n="pwf.reset_role">Reset roles</button>
+            {% if s.stage != 'item_control' %}<button class="btn btn-ghost btn-sm" type="submit" name="reset" value="role" data-i18n="pwf.reset_role">Reset roles</button>{% endif %}
             <button class="btn btn-ghost btn-sm" type="submit" name="reset" value="explanation" data-i18n="pwf.reset_text">Reset text</button>
           </div>
         </form>

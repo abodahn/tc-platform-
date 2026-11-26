@@ -106,7 +106,7 @@ I18N = {
 # for every rung ahead of the current one, and those have not started waiting.
 _PENDING_SQL = """
 SELECT s.id AS step_id, s.seq AS seq, s.stage AS stage, s.esc_role AS esc_role,
-       s.activated_at AS activated_at,
+       s.assignee AS assignee, s.activated_at AS activated_at,
        p.id AS pr_id, p.pr_no AS pr_no, p.title AS title,
        p.department AS department, p.requester AS requester,
        p.requester_name AS requester_name, p.currency AS currency,
@@ -163,19 +163,31 @@ def _signers(conn, rows, lang):
                  "SELECT username, full_name FROM users WHERE is_active=1").fetchall()}
     out = {}
     for row in rows:
-        key = (row["stage"], row.get("esc_role") or "")
+        key = _key(row)
         if key in out:
             continue
         esc = svc._csv_set(row.get("esc_role"))
         roles = sorted(svc.step_roles(row, roles_map))
-        who = sorted(svc.eligible_approvers(conn, row["stage"],
-                                            roles=esc or None))
+        who = sorted(_people(conn, row, esc))
         out[key] = {
             "roles": roles,
             "role_names": svc.role_names(",".join(roles), lang),
             "people": [names.get(u, u) for u in who],
         }
     return out
+
+
+def _key(row):
+    """Signer-cache key. An item-control rung is signed by its own assignee, so
+    two of them on different requests are different signers."""
+    return (row["stage"], row.get("esc_role") or "", row.get("assignee") or "")
+
+
+def _people(conn, row, esc):
+    if row["stage"] == C.ITEM_CONTROL_STAGE:
+        from app.approvals import item_control as IC
+        return IC.signers(conn, row.get("assignee"))
+    return svc.eligible_approvers(conn, row["stage"], roles=esc or None)
 
 
 def t(key, lang="en"):
@@ -203,11 +215,11 @@ def aging_view(department=None, stage=None, lang="en"):
         conn.close()
 
     for r in rows:
-        r["signers"] = signers[(r["stage"], r.get("esc_role") or "")]
+        r["signers"] = signers[_key(r)]
     rows.sort(key=lambda r: (-r["days_on_rung"], r["pr_no"] or ""))
 
     stage_labels = svc.labels(lang if lang in ("en", "ar", "tr") else "en")["stage"]
-    order = {s: i for i, s in enumerate([C.HR_HEAD_STAGE] + list(C.DOAM_LADDER))}
+    order = {s: i for i, s in enumerate(C.LADDER_RANK)}
     for r in rows:
         r["stage_label"] = stage_labels.get(r["stage"], svc.stage_label(r["stage"]))
     return {

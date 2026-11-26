@@ -80,6 +80,7 @@ NAV = [
         ("proc_workflow", "nav.proc_workflow", "map", "approvals.workflow", "proc_view", "nav.b_setup"),
         ("proc_guide", "nav.proc_guide", "book", "approvals.guide", "proc_view", "nav.b_setup"),
         ("proc_settings", "nav.proc_settings", "settings", "approvals.settings", "proc_admin", "nav.b_setup"),
+        ("proc_itemctl", "nav.proc_itemctl", "users", "approvals.itemctl_settings", "proc_admin", "nav.b_setup"),
     ]},
 
     # ---- Making it. Material in, then cut, sew, wash, inspect, ship ---

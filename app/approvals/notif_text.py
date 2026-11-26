@@ -74,6 +74,12 @@ TITLES = [
 ]
 
 BODIES = [
+    (r"(\S+) is waiting at Item control, but its assigned item controller cannot sign\. "
+     r"Assign another person under Procurement > Item control: the waiting requests move to them\.",
+     r"\g<1> مستني عند مراقبة الأصناف، بس المسؤول المعيّن مش قادر يوقّع. عيّن حد تاني من "
+     r"المشتريات > مراقبة الأصناف: الطلبات المستنية هتتنقل له.",
+     r"\g<1> Malzeme Kontrolünde bekliyor, ancak atanan malzeme kontrol sorumlusu imzalayamıyor. "
+     r"Satın Alma > Malzeme Kontrolü altında başka birini atayın: bekleyen talepler ona geçer."),
     (r"(\S+) is fully paid — close the request\.", r"\g<1> اتدفع بالكامل — اقفل الطلب.",
      r"\g<1> tamamen ödendi — talebi kapatın."),
     (r"(\S+) is fully paid\.", r"\g<1> اتدفع بالكامل.", r"\g<1> tamamen ödendi."),
