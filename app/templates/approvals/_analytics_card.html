@@ -15,8 +15,8 @@
         <button type="button" class="on" data-view="chart" aria-pressed="true" data-i18n="proc.analytics.view_chart">{{ T('proc.analytics.view_chart') }}</button>
         <button type="button" data-view="table" aria-pressed="false" data-i18n="proc.analytics.view_table">{{ T('proc.analytics.view_table') }}</button>
       </div>
-      {% if xlsx %}<a class="btn btn-ghost btn-sm an-dl" href="{{ xlsx }}" data-i18n="proc.analytics.export_xlsx">{{ T('proc.analytics.export_xlsx') }}</a>{% endif %}
-      {% if csv %}<a class="btn btn-ghost btn-sm an-dl" href="{{ csv }}" data-i18n="proc.analytics.export_csv">{{ T('proc.analytics.export_csv') }}</a>{% endif %}
+      {% if xlsx %}<a data-file-download class="btn btn-ghost btn-sm an-dl" href="{{ xlsx }}" data-i18n="proc.analytics.export_xlsx">{{ T('proc.analytics.export_xlsx') }}</a>{% endif %}
+      {% if csv %}<a data-file-download class="btn btn-ghost btn-sm an-dl" href="{{ csv }}" data-i18n="proc.analytics.export_csv">{{ T('proc.analytics.export_csv') }}</a>{% endif %}
     </div>
   </header>
   <div class="an-card-body">

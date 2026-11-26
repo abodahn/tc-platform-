@@ -24,9 +24,9 @@
         <option value="info" {{ 'selected' if severity=='info' }}>Info</option>
       </select></div>
     <span class="spacer" style="flex:1"></span>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='csv') }}">CSV</a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='xlsx') }}">Excel</a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='pdf') }}">PDF</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='csv') }}">CSV</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='xlsx') }}">Excel</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('intelligence.report_alerts', fmt='pdf') }}">PDF</a>
   </div>
 </form>
 

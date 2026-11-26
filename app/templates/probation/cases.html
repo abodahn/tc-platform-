@@ -26,7 +26,7 @@
       </select></div>
     <div class="field" style="display:flex;gap:8px">
       <button class="btn btn-primary" type="submit" data-i18n="prob.filter.apply">Filter</button>
-      {% if can('prob_reports') %}<a class="btn btn-ghost" href="{{ url_for('probation.reports_csv', **filters) }}" data-i18n="prob.action.export">Export</a>{% endif %}
+      {% if can('prob_reports') %}<a data-file-download class="btn btn-ghost" href="{{ url_for('probation.reports_csv', **filters) }}" data-i18n="prob.action.export">Export</a>{% endif %}
     </div>
   </form>
 </div>

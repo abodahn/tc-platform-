@@ -5241,5 +5241,11 @@
   "fv.big_title": "This file is too large to preview",
   "fv.big_sub": "Download it to open it on your device.",
   "fv.none_title": "This file type can't be previewed",
-  "fv.none_sub": "Download it to open it with an app on your device."
+  "fv.none_sub": "Download it to open it with an app on your device.",
+  "navback.back": "Back",
+  "navback.go_home": "Go to the home page",
+  "navback.preparing": "Preparing the file…",
+  "navback.file_ready": "Your file is ready.",
+  "navback.open_file": "Open file",
+  "navback.failed": "The file could not be opened. Check your connection and try again."
 }

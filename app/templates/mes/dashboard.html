@@ -13,7 +13,7 @@
     <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.board') }}" data-i18n="mes.action.board">Hourly board</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.bundles') }}" data-i18n="mes.action.bundles">Bundles &amp; WIP</a>
     <a class="btn btn-ghost btn-sm" href="/reporting/mes_line_day" data-i18n="reports.title">Reports</a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('mes.export_csv', key='oee-by-line') }}" data-i18n="mes.action.export">Export CSV</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('mes.export_csv', key='oee-by-line') }}" data-i18n="mes.action.export">Export CSV</a>
   </div>
 </div>
 

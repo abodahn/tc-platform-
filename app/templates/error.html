@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="{{ cu.lang_pref if cu else 'en' }}" dir="{{ 'rtl' if cu and cu.lang_pref == 'ar' else 'ltr' }}" data-theme="light">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ code }} · TC Platform</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/navback.css') }}">
+  <script>window.TC_CFG = { staticBase: "{{ url_for('static', filename='')|trim('/') }}", i18nV: {{ {'en': static_v('i18n/en.json'), 'ar': static_v('i18n/ar.json'), 'tr': static_v('i18n/tr.json')}|tojson }}, authed: {{ 'true' if cu else 'false' }}, lang: "{{ cu.lang_pref if cu else '' }}" };</script>
 </head>
 <body>
 <div style="min-height:100vh;display:grid;place-items:center;padding:24px">
@@ -12,8 +14,15 @@
     <div class="brand-logo" style="margin:0 auto 20px;width:54px;height:54px"><img src="{{ url_for('static', filename=brand_logo) }}" alt="T&amp;C"></div>
     <h1 style="font-size:48px;margin:0;color:var(--tc-red)">{{ code }}</h1>
     <p class="muted">{{ message }}</p>
-    <a class="btn btn-primary mt-4" href="{{ url_for('main.dashboard') }}">Back to Command Center</a>
+    {#- Back: the previous app page when there is one, else this page's parent (navback.js). #}
+    {% set _nb_parent = navback_target(nav) %}
+    <div class="err-actions mt-4">
+      {% if _nb_parent %}<a class="btn btn-primary" href="{{ _nb_parent }}" data-navback data-parent="{{ _nb_parent }}"><span class="navback-arrow" aria-hidden="true">&larr;</span> <span data-i18n="navback.back">Back</span></a>{% endif %}
+      <a class="btn {{ 'btn-ghost' if _nb_parent else 'btn-primary' }}" href="{{ url_for('main.dashboard') }}" data-i18n="navback.go_home">Go to the home page</a>
+    </div>
   </div>
 </div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/navback.js') }}"></script>
 </body>
 </html>

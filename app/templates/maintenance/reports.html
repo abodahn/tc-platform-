@@ -14,9 +14,9 @@
     <h3>{{ spec[0] }}</h3>
     <div class="ac-desc">{{ spec[1]|length }} columns · live from the maintenance database.</div>
     <div class="ac-actions">
-      <a class="btn btn-primary btn-sm" style="flex:1;justify-content:center" href="{{ url_for('maintenance.report_export', key=key) }}">
+      <a data-file-download class="btn btn-primary btn-sm" style="flex:1;justify-content:center" href="{{ url_for('maintenance.report_export', key=key) }}">
         <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.export">CSV</span></a>
-      <a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.report_pdf', key=key) }}">
+      <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.report_pdf', key=key) }}">
         <svg class="ico"><use href="#i-report"></use></svg> PDF</a>
     </div>
   </div>

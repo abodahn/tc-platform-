@@ -11,7 +11,7 @@
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.counts') }}" data-i18n="wh.counts.title">Stock counts</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.daily') }}" data-i18n="wh.daily.title">Daily report</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.index') }}" data-i18n="wh.nav.home">Warehouse</a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.export_csv', key='materials') }}" data-i18n="wh.action.export">Export CSV</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.export_csv', key='materials') }}" data-i18n="wh.action.export">Export CSV</a>
     {% if can('wh_manage') %}<a class="btn btn-primary btn-sm" href="{{ url_for('warehouse.receive') }}" data-i18n="wh.action.receive">Receive material</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.material_import') }}" data-i18n="wh.imp.title">Import materials</a>{% endif %}
   </div>

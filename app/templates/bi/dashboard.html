@@ -38,8 +38,8 @@
     <button class="btn btn-ghost btn-sm" id="biBtnSearch"><svg class="ico"><use href="#i-chart"></use></svg><span data-i18n="bi.ask">Ask</span></button>
     <button class="btn btn-ghost btn-sm" id="biBtnAlert" data-i18n="bi.alert">Alert</button>
     <button class="btn btn-ghost btn-sm" id="biBtnDigest" data-i18n="bi.digest">Digest</button>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('bi.export_xlsx', ds_id=dataset.id) }}">Excel</a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('bi.export_pdf', ds_id=dataset.id) }}">PDF</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('bi.export_xlsx', ds_id=dataset.id) }}">Excel</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('bi.export_pdf', ds_id=dataset.id) }}">PDF</a>
     <button class="btn btn-primary btn-sm" id="biBtnSave"><svg class="ico"><use href="#i-check"></use></svg><span data-i18n="bi.save">Save</span></button>
   </div>
 </div>

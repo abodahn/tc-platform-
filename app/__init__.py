@@ -299,6 +299,10 @@ def create_app():
     from app.approvals.aging import bp as proc_aging_bp
     app.register_blueprint(proc_aging_bp)
 
+    # Top-bar Back button: the parent-page fallback (app/navback.py).
+    from app.navback import register as _navback_register
+    _navback_register(app)
+
     # --- Error handlers ---
     from flask import render_template
 

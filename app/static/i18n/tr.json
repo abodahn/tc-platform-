@@ -5241,5 +5241,11 @@
   "fv.big_title": "Bu dosya önizleme için çok büyük",
   "fv.big_sub": "Cihazınızda açmak için indirin.",
   "fv.none_title": "Bu dosya türü önizlenemiyor",
-  "fv.none_sub": "Cihazınızdaki bir uygulamayla açmak için indirin."
+  "fv.none_sub": "Cihazınızdaki bir uygulamayla açmak için indirin.",
+  "navback.back": "Geri",
+  "navback.go_home": "Ana sayfaya git",
+  "navback.preparing": "Dosya hazırlanıyor…",
+  "navback.file_ready": "Dosyanız hazır.",
+  "navback.open_file": "Dosyayı aç",
+  "navback.failed": "Dosya açılamadı. Bağlantınızı kontrol edip tekrar deneyin."
 }

@@ -129,7 +129,7 @@
           sits beside them and carries the same arguments. The count is on the
           button so nobody sends a colleague a file they think is the whole
           register when it is one status. -#}
-      <a class="btn btn-sm btn-ghost"
+      <a data-file-download class="btn btn-sm btn-ghost"
          href="{{ url_for('approvals.listing_xlsx', **keep) }}">
         <svg class="ico"><use href="#i-report"></use></svg>
         <span data-i18n="proc.export_xlsx">Export to Excel</span>

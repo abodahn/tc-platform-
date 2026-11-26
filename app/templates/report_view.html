@@ -45,9 +45,9 @@
       <span class="muted">{{ count }} <span data-i18n="reports.rows">rows</span></span>
       {% if can_export %}
         {% set qs = request.query_string.decode() %}
-        <a class="btn btn-ghost btn-sm" href="{{ url_for('main.report_export', key=spec.key, fmt='csv') }}{% if qs %}?{{ qs }}{% endif %}">CSV</a>
-        <a class="btn btn-ghost btn-sm" href="{{ url_for('main.report_export', key=spec.key, fmt='xlsx') }}{% if qs %}?{{ qs }}{% endif %}">Excel</a>
-        <a class="btn btn-ghost btn-sm" href="{{ url_for('main.report_export', key=spec.key, fmt='pdf') }}{% if qs %}?{{ qs }}{% endif %}">PDF</a>
+        <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('main.report_export', key=spec.key, fmt='csv') }}{% if qs %}?{{ qs }}{% endif %}">CSV</a>
+        <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('main.report_export', key=spec.key, fmt='xlsx') }}{% if qs %}?{{ qs }}{% endif %}">Excel</a>
+        <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('main.report_export', key=spec.key, fmt='pdf') }}{% if qs %}?{{ qs }}{% endif %}">PDF</a>
       {% endif %}
     </div>
   </div>
