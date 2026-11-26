@@ -159,7 +159,12 @@ def inject_globals():
     notifs, unread = ([], 0)
     visible_nav = []
     if user:
-        notifs, unread = _unread_notifications(user)
+        try:
+            notifs, unread = _unread_notifications(user)
+        except Exception:   # the bell must never take a page down; log it and show none
+            from flask import current_app
+            current_app.logger.exception("bell query failed")
+            notifs, unread = ([], 0)
         from app.navigation import WIP_KEYS
         is_admin = user_has_permission(user, "access_admin")
         scope = system_scope(user)   # None = unrestricted; a set = only those keys
