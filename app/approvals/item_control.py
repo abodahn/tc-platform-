@@ -165,6 +165,9 @@ SKIP_NOTES = {
                 "account. A procurement admin can assign another person.",
     "requester": "Item control skipped: the requester is the item controller for %s — "
                  "raising the request is their signature.",
+    "dual_role": "Item control skipped (dual role): the item controller for %s is the only "
+                 "person who can sign an earlier step of this request, and one person may "
+                 "not sign two steps.",
 }
 
 
@@ -193,6 +196,22 @@ def delegates(conn, username):
         (username, today, today)).fetchall()}
 
 
+def delegators(username):
+    """Lower-cased usernames who delegated their signing to `username` today —
+    one query, so a queue can test every item-control rung without a lookup each."""
+    if not username:
+        return set()
+    today = _now()[:10]
+    conn = get_db()
+    try:
+        return {str(r["from_user"]).lower() for r in conn.execute(
+            "SELECT from_user FROM proc_delegations WHERE LOWER(to_user)=LOWER(?) "
+            "AND is_active=1 AND (from_date IS NULL OR from_date<=?) "
+            "AND (to_date IS NULL OR to_date>=?)", (username, today, today)).fetchall()}
+    finally:
+        conn.close()
+
+
 def signers(conn, assignee):
     """Who may sign a rung assigned to `assignee`: them (if active) + delegates."""
     if not assignee:
@@ -201,12 +220,13 @@ def signers(conn, assignee):
     return ({u["username"]} if u else set()) | delegates(conn, assignee)
 
 
-def can_sign(user, step, _deleg=None):
+def can_sign(user, step, _deleg=None, _ic_from=None):
     """May `user` sign this item-control step? The assignee, an active delegate
     of the assignee, or super_admin (in place, audited by act_on_step). Needs no
     proc_approve: the assignment IS the authority. `_deleg` is the caller's
     prefetched active_delegator_roles(user); an empty set means the user holds
-    no delegation at all, so the lookup is skipped."""
+    no delegation at all, so the lookup is skipped. `_ic_from` is a prefetched
+    delegators(user): when given, no query runs at all."""
     if not user or (user.get("account_status") or "active") != "active":
         return False
     if user.get("role") == "super_admin":
@@ -217,6 +237,8 @@ def can_sign(user, step, _deleg=None):
         return False
     if un.lower() == assignee.lower():
         return True
+    if _ic_from is not None:
+        return assignee.lower() in _ic_from
     if _deleg is not None and not _deleg:
         return False
     conn = get_db()
@@ -257,9 +279,13 @@ def _controllers():
     if time.monotonic() - _CTL_CACHE[0] > _CTL_TTL:
         conn = get_db()
         try:
+            # current group owners + whoever still holds a waiting rung (one kept
+            # on reassignment), so neither loses the request page.
             names = frozenset(str(r["username"]).lower() for r in conn.execute(
                 "SELECT username FROM proc_item_control WHERE active=1 "
-                "AND username IS NOT NULL").fetchall())
+                "AND username IS NOT NULL UNION SELECT assignee FROM pr_steps "
+                "WHERE stage=? AND status='pending' AND assignee IS NOT NULL",
+                (STAGE,)).fetchall())
         except Exception:                                    # noqa: BLE001
             conn.rollback()
             names = frozenset()
@@ -270,7 +296,8 @@ def _controllers():
 
 
 def is_controller(username):
-    """True when `username` is assigned to an active department group."""
+    """True when `username` is assigned to an active department group or holds a
+    waiting item-control rung."""
     return bool(username) and str(username).lower() in _controllers()
 
 
@@ -345,12 +372,19 @@ def save(group_key, username, aliases, active, actor, ip=None):
         taken = set().union(*[_names(r) for r in all_rows if r["group_key"] != group_key])
         if any(_norm(a) in taken for a in names):
             return False, "alias_taken"
-        if username:
+        before = g.get("username") or ""
+        if username and username.lower() == before.lower():
+            username = before          # unchanged: an alias-only save keeps even a disabled one
+        elif username:
             u = _active(conn, username)
             if not u:
                 return False, "bad_user"
             username = u["username"]
-        before = g.get("username") or ""
+        # Unassigning or switching off would strand the rungs already waiting on
+        # this person (nobody else may sign them): hand them over first.
+        if before and (not username or not active) and any(
+                str(p["assignee"] or "").lower() == before.lower() for p in _waiting(conn, g)):
+            return False, "pending_waiting"
         who = (actor or {}).get("username") or "system"
         conn.execute("UPDATE proc_item_control SET username=?, aliases=?, active=?, "
                      "updated_by=?, updated_at=? WHERE id=?",
@@ -368,19 +402,29 @@ def save(group_key, username, aliases, active, actor, ip=None):
         conn.close()
 
 
-def _repoint(conn, group, username, actor, ip=None):
-    """Move this group's waiting rungs to `username` (not on a request they raised)."""
-    from app.approvals import services as svc
-    pend = conn.execute(
+def _waiting(conn, group):
+    """Pending item-control rungs on pending requests of this group's departments."""
+    return [p for p in conn.execute(
         "SELECT s.id, s.seq, s.assignee, r.id AS pr_id, r.pr_no, r.title, r.requester, "
         "r.department, r.current_seq FROM pr_steps s JOIN pr_requests r ON r.id=s.pr_id "
         "WHERE s.stage=? AND s.status='pending' AND r.status='pending'", (STAGE,)).fetchall()
-    for p in pend:
-        if not group_for(conn, p["department"], _rows=[group]):
-            continue
+        if group_for(conn, p["department"], _rows=[group])]
+
+
+def _repoint(conn, group, username, actor, ip=None):
+    """Move this group's waiting rungs to `username` (not on a request they raised)."""
+    from app.approvals import services as svc
+    for p in _waiting(conn, group):
         if str(p["requester"] or "").lower() == username.lower():
             svc.audit(conn, p["pr_id"], actor, "item_control_kept",
                       "Item control not moved to %s: they raised this request." % username, ip)
+            continue
+        if conn.execute("SELECT 1 FROM pr_steps WHERE pr_id=? AND LOWER(COALESCE(approver_user,''))"
+                        "=LOWER(?) AND status IN ('approved','rejected') LIMIT 1",
+                        (p["pr_id"], username)).fetchone():
+            svc.audit(conn, p["pr_id"], actor, "item_control_kept",
+                      "Item control not moved to %s: they already signed another step of this "
+                      "request, and one person may not sign two steps." % username, ip)
             continue
         conn.execute("UPDATE pr_steps SET assignee=? WHERE id=?", (username, p["id"]))
         svc.audit(conn, p["pr_id"], actor, "item_control_reassigned",
@@ -408,6 +452,29 @@ def preview_names(username=None):
         return out
     finally:
         conn.close()
+
+
+def picker_users():
+    """(username, name) of every account that may be assigned (active, not suspended)."""
+    conn = get_db()
+    try:
+        return [(r["username"], r["full_name"] or r["username"]) for r in conn.execute(
+            "SELECT username, full_name FROM users WHERE " + _ACTIVE_USER +
+            " ORDER BY LOWER(COALESCE(full_name, username))").fetchall()]
+    finally:
+        conn.close()
+
+
+def alert_no_signer(conn, pr):
+    """Proc admins: this request waits at Item control and its assignee cannot sign
+    (account disabled). The fix is a new assignee on the settings page, which moves
+    the waiting rungs — not a role holder or a delegation."""
+    from app.approvals import services as svc
+    svc.notify_users(conn, svc._proc_admins(conn), "critical", "Approval rung has no signer",
+                     "%s is waiting at Item control, but its assigned item controller cannot "
+                     "sign. Assign another person under Procurement > Item control: the "
+                     "waiting requests move to them." % pr["pr_no"],
+                     link="/procurement/item-control")
 
 
 def assignee_name(username):
@@ -457,6 +524,12 @@ MESSAGES = {
     "Up to 20 extra department names per group.": {
         "ar": "أقصى حاجة 20 اسم قسم إضافي لكل مجموعة.",
         "tr": "Grup başına en fazla 20 ek departman adı."},
+    "Requests are waiting on this person at Item control. Pick another person to take them over first.": {
+        "ar": "فيه طلبات مستنية الشخص ده في مراقبة الأصناف. اختار حد تاني ياخدها الأول.",
+        "tr": "Malzeme kontrolünde bu kişiyi bekleyen talepler var. Önce bunları devralacak başka birini seçin."},
+    "That user is the Item control signer of this request, so they cannot become its requester.": {
+        "ar": "المستخدم ده هو اللي هيوقّع مراقبة الأصناف على الطلب ده، فمينفعش يبقى مقدّم الطلب.",
+        "tr": "Bu kullanıcı bu talebin Malzeme Kontrolü imzacısı, bu yüzden talep sahibi olamaz."},
     "That department group does not exist.": {
         "ar": "مجموعة الأقسام دي مش موجودة.",
         "tr": "Bu departman grubu yok."},

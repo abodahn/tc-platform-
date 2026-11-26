@@ -3305,6 +3305,7 @@ _REQUESTER_ERRORS = {
     "inactive": "That user is not active.",
     "same": "That user is already the requester.",
     "signed_own": "That user already signed this request, so they cannot become its requester.",
+    "item_controller": "That user is the Item control signer of this request, so they cannot become its requester.",
     "not_found": "Request not found.",
 }
 

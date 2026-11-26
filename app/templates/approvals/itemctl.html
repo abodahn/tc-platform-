@@ -25,7 +25,7 @@
     </div>
     <div class="panel-pad">
       {% if g.user_inactive %}
-      <p class="ictl-warn" role="status" data-i18n="proc.itemctl.inactive_user">This account is disabled — requests skip the step until you pick someone else.</p>
+      <p class="ictl-warn" role="status"><bdi>{{ g.username }}</bdi>: <span data-i18n="proc.itemctl.inactive_user">This account is disabled — new requests skip the step, and the ones already waiting here need another person: pick one below.</span></p>
       {% elif not g.username %}
       <p class="ictl-warn" role="status" data-i18n="proc.itemctl.unassigned">Nobody assigned — requests from this department skip the step.</p>
       {% endif %}
@@ -38,6 +38,7 @@
           <label for="u-{{ g.group_key }}" data-i18n="proc.itemctl.who">Item controller</label>
           <select id="u-{{ g.group_key }}" name="username">
             <option value="" data-i18n="proc.itemctl.none">— Nobody (step skipped) —</option>
+            {% if g.user_inactive %}<option value="{{ g.username }}" selected data-i18n="proc.itemctl.keep_inactive">Current person (disabled account)</option>{% endif %}
             {% for un, name in users %}
             <option value="{{ un }}" {{ 'selected' if g.username and g.username|lower == un|lower }}>{{ name }} ({{ un }})</option>
             {% endfor %}

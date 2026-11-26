@@ -393,6 +393,10 @@ def _prompt_rung(conn, pr, rows, message, exclude=(), alerted=()):
 
 
 def _alert_no_signer(conn, pr, stages):
+    if C.ITEM_CONTROL_STAGE in stages:      # signed by assignment: the fix is a new assignee
+        from app.approvals import item_control as IC
+        IC.alert_no_signer(conn, pr)
+        stages = [s for s in stages if s != C.ITEM_CONTROL_STAGE]
     if not stages:
         return
     labels = " + ".join(stage_label(s) for s in stages)
@@ -672,13 +676,13 @@ def step_roles(step, _roles=None):
     return set((_roles if _roles is not None else stage_roles_map()).get(stage) or ())
 
 
-def can_act_step(user, step, _deleg=None, _roles=None):
+def can_act_step(user, step, _deleg=None, _roles=None, _ic_from=None):
     """can_act for a CONCRETE ladder step — identical to can_act except that an
     escalated rung is signed by the superior role instead of the stage's own."""
     stage = _pr_field(step, "stage")
     if stage == C.ITEM_CONTROL_STAGE:        # signed by assignment, not by role
         from app.approvals import item_control as IC
-        return IC.can_sign(user, step, _deleg=_deleg)
+        return IC.can_sign(user, step, _deleg=_deleg, _ic_from=_ic_from)
     esc = _csv_set(_pr_field(step, "esc_role"))
     if not esc:
         return can_act(user, stage, _deleg=_deleg, _roles=_roles)
@@ -1545,11 +1549,13 @@ def my_queue(user, own_only=False):
         by_pr.setdefault(s["pr_id"], []).append(s)
     # own_only: the user's own rungs, not ones they hold only through someone's delegation
     deleg = set() if own_only else active_delegator_roles(user.get("username"))
+    from app.approvals import item_control as IC     # item-control delegations, one query
+    ic_from = IC.delegators(user.get("username")) if deleg else set()
     out = []
     for pr in prs:
         cur = [s for s in by_pr.get(pr["id"], []) if s["seq"] == pr["current_seq"]]
         mine = next((s for s in cur if can_act_step(user, s, _deleg=deleg,
-                                                    _roles=roles_map)), None)
+                                                    _roles=roles_map, _ic_from=ic_from)), None)
         if mine:
             pr = dict(pr)
             pr["_stage"] = mine["stage"]
@@ -2433,6 +2439,11 @@ def submit_pr(pr_id, user, ip=None):
         esc, blocked = {}, []
         _committed = set()
         for stage in flat_stages:
+            if stage == C.ITEM_CONTROL_STAGE and _ic_who in _committed:
+                # the controller is the only signer of an earlier rung: one person
+                # may not sign two, and nobody else may sign this one
+                _ic_who, _ic_why = None, "dual_role"
+                continue
             _free = _holders[stage] - {pr["requester"]}
             e_role, e_from, why = _esc_columns(conn, stage, pr["requester"], _roles,
                                                _chain, _holders=_holders,
@@ -2443,6 +2454,9 @@ def submit_pr(pr_id, user, ip=None):
                 esc[stage] = (e_role, e_from)
             elif why == "no_superior":
                 blocked.append(stage)
+        if _ic_group and not _ic_who and C.ITEM_CONTROL_STAGE in flat_stages:
+            rungs = [r for r in ([s for s in rung if s != C.ITEM_CONTROL_STAGE]
+                                 for rung in rungs) if r]
         if blocked:
             # A rung the climb cannot resolve is PARKED, not a reason to refuse the
             # whole submit. Refusing looked tidy but was far worse in practice: on a
@@ -2489,6 +2503,8 @@ def submit_pr(pr_id, user, ip=None):
         # the second rung exists.
         _absorbed, _prev = set(), None
         for _st in flat_stages:
+            if _st == C.ITEM_CONTROL_STAGE:     # never escalated; must not split the pair
+                continue
             _e = esc.get(_st)
             if _e and _prev and _e[0] and _e[0] == _prev[0]:
                 _absorbed.add(_st)
@@ -8876,7 +8892,8 @@ def workflow_view(department=None, lang="en"):
     from app.approvals import item_control as IC
     _icc = get_db()
     try:
-        if IC.resolve(_icc, department, None)[1]:   # submit_pr puts it after the store
+        _ic_who = IC.resolve(_icc, department, None)[1]
+        if _ic_who:                                 # submit_pr puts it after the store
             _thr = dict(matrix)
             matrix = [(s, _thr.get(s, 0.0)) for s in IC.insert_stage([s for s, _ in matrix])]
     finally:
@@ -8907,6 +8924,9 @@ def workflow_view(department=None, lang="en"):
             "explanation": txt, "explanation_custom": custom,
             "edit": p["edit"],
             "updated_by": by, "updated_at": at,
+            # signed by the person assigned on /procurement/item-control, not a role
+            "assignee": (IC.assignee_name(_ic_who) if stage == C.ITEM_CONTROL_STAGE
+                         else None),
         })
 
     role_keys = set(C.ROLE_EXPLAIN)          # documented even if no stage points at one
@@ -9844,6 +9864,11 @@ def change_requester(pr_id, username, actor, reason="", ip=None):
                         "LOWER(COALESCE(approver_user,''))=LOWER(?)",
                         (pr_id, u["username"])).fetchone():
             return False, "signed_own"
+        # ...or hold its waiting Item control rung, which nobody else may sign.
+        if conn.execute("SELECT 1 FROM pr_steps WHERE pr_id=? AND stage=? AND status='pending' "
+                        "AND LOWER(COALESCE(assignee,''))=LOWER(?)",
+                        (pr_id, C.ITEM_CONTROL_STAGE, u["username"])).fetchone():
+            return False, "item_controller"
         conn.execute("UPDATE pr_requests SET requester=?, requester_name=?, requester_user_id=? "
                      "WHERE id=?", (u["username"], u["full_name"] or u["username"], u["id"], pr_id))
         audit(conn, pr_id, (actor or {}).get("username") or "system", "requester_changed",

@@ -13,7 +13,6 @@ from flask import render_template, request, redirect, url_for
 from app.auth import login_required, permission_required, current_user
 from app.security import user_permissions
 from app.approvals import item_control as IC
-from app.approvals import services as svc
 from app.routes.approvals import bp, flash, _u, _ip
 
 # The signing actions an item controller may need even without proc_approve.
@@ -26,6 +25,8 @@ _SAVE_MSG = {
     "alias_taken": "One of those department names already belongs to another group.",
     "too_many_aliases": "Up to 20 extra department names per group.",
     "unknown_group": "That department group does not exist.",
+    "pending_waiting": "Requests are waiting on this person at Item control. "
+                       "Pick another person to take them over first.",
 }
 
 
@@ -58,7 +59,10 @@ def _itemctl_access():
     if "*" in perms:
         return None
     add = set()
-    if "proc_view" not in perms and IC.is_controller(user.get("username")):
+    # Procurement's own pages (scoped by can_view_pr) and the dashboard / my-work /
+    # search, never company-wide lists elsewhere (aging, lookup, reports).
+    if ("proc_view" not in perms and request.blueprint in ("approvals", "main")
+            and IC.is_controller(user.get("username"))):
         add.add("proc_view")
     if (request.method == "POST" and ep in _SIGN_ENDPOINTS
             and not perms & {"proc_approve", "proc_admin"}):
@@ -103,7 +107,7 @@ def itemctl_preview():
 @permission_required("proc_admin")
 def itemctl_settings():
     return render_template("approvals/itemctl.html", active="proc_itemctl",
-                           groups=IC.view(), users=svc.active_users_brief(),
+                           groups=IC.view(), users=IC.picker_users(),
                            alias_max=IC.ALIAS_MAX)
 
 

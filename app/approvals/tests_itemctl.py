@@ -18,7 +18,16 @@ Proves:
   * one person cannot sign both Item control and Warehouse Manager;
   * requests already in the ladder keep their ladder; re-pricing keeps the rung
     in place; reassigning moves the waiting rungs to the new person;
-  * the settings page is proc_admin only and CSRF protected.
+  * the settings page is proc_admin only and CSRF protected;
+  * review fixes: a lone warehouse person's request is absorbed as before (no
+    deadlock at Warehouse Manager); a group with waiting rungs cannot be
+    unassigned or switched off; a rung is not moved to someone who already
+    signed that request, and a controller who is the only signer of an earlier
+    rung is skipped at submit; the controller of a waiting rung cannot become
+    its requester; a disabled controller alerts admins to the settings page;
+    the workflow page names the assigned person; the assignment does not open
+    the aging page; suspended accounts are not offered; a delegate's queue is
+    built from one delegation query.
 """
 import os
 import sys
@@ -260,6 +269,8 @@ with app.app_context():
     r = cc.post("/procurement/bulk-sign", data={"_csrf": "tok", "pr_id": str(pc)})
     ok("controller bulk-signs it (200)", r.status_code == 200
        and next(s for s in steps(pc) if s["stage"] == "item_control")["status"] == "approved")
+    ok("the assignment does not open the company-wide aging page (403)",
+       cc.get("/procurement/aging").status_code == 403)
 
     print("\n--- skipped: inactive controller, requester is the controller ------------")
     conn.execute("UPDATE users SET is_active=0 WHERE username='ic.ctl_c'")
@@ -301,6 +312,16 @@ with app.app_context():
        svc.add_delegation("ic.ctl_m", "ic.deleg", None, None, "leave", user=padmin)[0])
     ok("the controller's delegate signs item_control",
        svc.act_on_step(pg, deleg, "approve") == (True, "advanced"))
+    pq = raise_pr(req, "General Maintenance", "dq")
+    svc.act_on_step(pq, store, "approve")
+    ok("delegators() is one lookup naming the controller", IC.delegators("ic.deleg") == {"ic.ctl_m"})
+    ok("the delegate's queue (prefetched delegations) lists it",
+       pq in [p["id"] for p in svc.my_queue(deleg)]
+       and pq not in [p["id"] for p in svc.my_queue(deleg, own_only=True)])
+    ok("can_sign with a prefetched set needs no query and agrees",
+       IC.can_sign(deleg, current(pq), _ic_from={"ic.ctl_m"})
+       and not IC.can_sign(deleg, current(pq), _ic_from=set()))
+    svc.act_on_step(pq, deleg, "approve")
 
     pa = raise_pr(req, "General Maintenance", "root")
     svc.act_on_step(pa, store, "approve")
@@ -331,6 +352,107 @@ with app.app_context():
     ok("stage label in all three languages", svc.labels("ar")["stage"]["item_control"] == "مراقبة الأصناف"
        and svc.labels("tr")["stage"]["item_control"] == "Malzeme Kontrolü"
        and C.stage_label("item_control") == "Item control")
+
+    print("\n--- review fixes ----------------------------------------------------------")
+
+    def active(names, on):
+        for n in names:
+            conn.execute("UPDATE users SET is_active=? WHERE username=?", (1 if on else 0, n))
+        conn.commit()
+
+    # (blocker) a lone warehouse person raises: warehouse and warehouse_manager both
+    # escalate to the factory manager and must still be absorbed into one rung.
+    fm = mk("ic.fm", "factory_manager")
+    sole = mk("ic.sole", "warehouse_manager")
+    active(("ic.store", "ic.whm", "ic.whm2", "store", "warehouse"), False)   # + the seeded demo store
+    p_prod = raise_pr(sole, "Production", "solep")
+    p_gm = raise_pr(sole, "General Maintenance", "soleg")
+    ok("lone warehouse person: Production ladder absorbs warehouse_manager",
+       "warehouse_manager" not in stages(p_prod))
+    ok("...General Maintenance = the same ladder + item_control (no stuck rung)",
+       stages(p_gm) == IC.insert_stage(stages(p_prod)))
+    ok("factory manager signs warehouse, controller signs item_control",
+       svc.act_on_step(p_gm, fm, "approve") == (True, "advanced")
+       and svc.act_on_step(p_gm, ctl_x, "approve") == (True, "advanced"))
+    ok("...and the next rung is not one the factory manager is refused",
+       current(p_gm)["stage"] != "warehouse_manager"
+       and svc.act_on_step(p_gm, fm, "approve")[1] != "dual_role")
+
+    # (submit) the controller is the only signer of the store rung -> skipped
+    IC.save("general_maintenance", "ic.sole", "Mech. Workshop", True, padmin)
+    p_dr = raise_pr(req, "General Maintenance", "dualsubmit")
+    ok("controller who is the store's only signer -> no item_control rung",
+       "item_control" not in stages(p_dr)
+       and any("(dual role)" in d for d in events(p_dr, "item_control_skipped")))
+    ok("...and the request page explains it", "proc.itemctl.skip.dual_role"
+       in client(root).get("/procurement/pr/%d" % p_dr).get_data(as_text=True))
+    active(("ic.store", "ic.whm", "ic.whm2", "store", "warehouse"), True)
+    IC.save("general_maintenance", "ic.ctl_x", "Mech. Workshop", True, padmin)
+
+    # waiting rungs block unassign / switch-off; reassignment skips a past signer
+    pw = raise_pr(req, "General Maintenance", "wait")
+    svc.act_on_step(pw, store, "approve")
+    ok("unassigning with a rung waiting is refused",
+       IC.save("general_maintenance", "", "Mech. Workshop", True, padmin) == (False, "pending_waiting"))
+    ok("switching off with a rung waiting is refused",
+       IC.save("general_maintenance", "ic.ctl_x", "Mech. Workshop", False, padmin)
+       == (False, "pending_waiting"))
+    r = client(padmin).post("/procurement/item-control/general_maintenance",
+                            data={"_csrf": "tok", "username": "", "active": "1",
+                                  "aliases": "Mech. Workshop"})
+    ok("...through the page too (flash, still assigned)", r.status_code == 302
+       and IC.group_for(conn, "General Maintenance")["username"] == "ic.ctl_x")
+    ok("reassigning to the store who signed it", IC.save(
+        "general_maintenance", "ic.store", "Mech. Workshop", True, padmin) == (True, "saved"))
+    ok("...keeps the rung with its signer (no dual-role trap), audited",
+       current(pw)["assignee"] == "ic.ctl_x"
+       and any("already signed another step" in d for d in events(pw, "item_control_kept")))
+    ok("...the kept signer still counts as a controller (keeps the page)",
+       IC.is_controller("ic.ctl_x"))
+    ok("the controller of a waiting rung cannot become its requester",
+       svc.change_requester(pw, "ic.ctl_x", root, "typed for them") == (False, "item_controller"))
+    ok("...and the refusals are translated", all(
+        M.translate(m, lg) != m for m in (
+            "That user is the Item control signer of this request, so they cannot become its requester.",
+            "Requests are waiting on this person at Item control. Pick another person to take them over first.")
+        for lg in ("ar", "tr")))
+    ok("kept signer signs", svc.act_on_step(pw, ctl_x, "approve") == (True, "advanced"))
+    IC.save("general_maintenance", "ic.ctl_x", "Mech. Workshop", True, padmin)
+
+    # disabled controller: the admin alert points at the settings page
+    pz = raise_pr(req, "General Maintenance", "disabled")
+    active(("ic.ctl_x",), False)
+    svc.act_on_step(pz, store, "approve")
+    pz_no = conn.execute("SELECT pr_no FROM pr_requests WHERE id=?", (pz,)).fetchone()[0]
+    al = conn.execute("SELECT * FROM notifications WHERE target_user='ic.padmin' AND "
+                      "link='/procurement/item-control' AND message LIKE ?",
+                      (pz_no + " is waiting at Item control%",)).fetchone()
+    ok("disabled controller -> admins told to reassign on the Item control page", al is not None)
+    from app.approvals import notif_text as NT
+    ok("...in Arabic and Turkish too", al is not None and all(
+        NT.localise(al["title"], al["message"], lg)[1] != al["message"] for lg in ("ar", "tr")))
+    page = client(padmin).get("/procurement/item-control").get_data(as_text=True)
+    ok("settings page keeps the disabled assignee selected (alias-only save safe)",
+       'value="ic.ctl_x" selected data-i18n="proc.itemctl.keep_inactive"' in page)
+    ok("...and an alias-only save keeps them", IC.save(
+        "general_maintenance", "ic.ctl_x", "Mech. Workshop, Boiler Room", True, padmin) == (True, "saved")
+       and IC.group_for(conn, "General Maintenance")["username"] == "ic.ctl_x")
+    active(("ic.ctl_x",), True)
+    svc.act_on_step(pz, ctl_x, "approve")
+    conn.execute("UPDATE users SET account_status='suspended' WHERE username='ic.other'")
+    conn.commit()
+    ok("suspended accounts are not offered in the picker",
+       'value="ic.other"' not in client(padmin).get("/procurement/item-control").get_data(as_text=True)
+       and "ic.other" not in [u for u, _ in IC.picker_users()])
+
+    # workflow page: the rung is signed by a person, not a role
+    wf = svc.workflow_view("General Maintenance")
+    ic_card = next(s for s in wf["stages"] if s["stage"] == "item_control")
+    ok("workflow view names the assigned person", ic_card["assignee"] == "Test ic.ctl_x")
+    page = client(padmin).get("/procurement/workflow?department=General+Maintenance").get_data(as_text=True)
+    ok("workflow page shows it with a link to the settings, no role editor for it",
+       "proc.itemctl.wf_assigned" in page and "/procurement/item-control" in page
+       and page.count('name="roles"') == len(wf["stages"]) - 1)
 
 conn.close()
 print("\n%d checks, %d passed, %d failed" % (len(PASS), sum(PASS), len(PASS) - sum(PASS)))
