@@ -1153,6 +1153,11 @@ def catalogue_import():
 @login_required
 @permission_required("proc_create")
 def create():
+    from app.approvals import english_only
+    bad_lang = english_only.arabic_in_form(request.form)
+    if bad_lang:
+        flash(english_only.REFUSAL + ", ".join(bad_lang) + ".", "error")
+        return redirect(url_for("approvals.new"))
     can_price = _can_price()
     header = _parse_header(request.form, can_price)
     # Nobody states unit, stock or supplier on a REQUEST form.
@@ -1260,6 +1265,11 @@ def edit_save(pr_id):
     if bundle["pr"]["requester"] != (_u() or {}).get("username") and not user_can("proc_admin"):
         abort(403)
     can_price = _can_price()
+    from app.approvals import english_only
+    bad_lang = english_only.arabic_in_form(request.form)
+    if bad_lang:
+        flash(english_only.REFUSAL + ", ".join(bad_lang) + ".", "error")
+        return redirect(url_for("approvals.edit", pr_id=pr_id))
     header = _parse_header(request.form, can_price, existing=bundle["pr"])
     # Nobody states unit, stock or supplier on a REQUEST form.
     items = _parse_items(request.form, can_price, can_buy=False)

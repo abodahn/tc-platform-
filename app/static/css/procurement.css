@@ -465,3 +465,8 @@
   .porev-bulkbar > .btn { flex: 1 1 100%; min-height: 44px; }
   .porev .grid.cols-2 { grid-template-columns: 1fr; }
 }
+/* English-only request form */
+.content.proc .en-only-note{display:flex;gap:10px;align-items:center;margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:13.5px;font-weight:600;color:var(--ink,inherit);background:var(--panel-2,transparent)}
+.content.proc .en-only-note::before{content:"EN";flex:none;display:inline-grid;place-items:center;width:30px;height:22px;border-radius:6px;font-size:11px;letter-spacing:.04em;background:var(--tc-red,#c8102e);color:#fff}
+.content.proc .en-only-bad{border-color:var(--crit)!important;outline:1px solid var(--crit)}
+.content.proc .en-only-tip{color:var(--crit);font-size:12px;margin-top:4px}
