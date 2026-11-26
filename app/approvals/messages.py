@@ -1083,6 +1083,28 @@ MESSAGES = {
         "ar": "أحد بنود هذا الطلب مُسند إلى هذا العرض. اختر موردًا آخر لهذا البند أولًا، ثم احذف هذا العرض.",
         "tr": "Bu talebin bir kalemi bu teklife verilmiş. Önce o kalem için başka bir tedarikçi seçin, sonra bunu kaldırın.",
     },
+    # --- Delivery follow-up (app/approvals/delivery.py) ---
+    "Enter the required-by date as a valid date.": {"ar": "اكتب تاريخ \"مطلوب قبل يوم\" بشكل صحيح.", "tr": "Gerekli tarihi geçerli bir tarih olarak girin."},
+    "The required-by date cannot be in the past.": {"ar": "تاريخ \"مطلوب قبل يوم\" مينفعش يكون فات.", "tr": "Gerekli tarih geçmişte olamaz."},
+    "That supplier's purchase order was cancelled — its lines cannot be received.": {"ar": "أمر الشراء بتاع المورد ده اتلغى — بنوده مينفعش تتستلم.", "tr": "Bu tedarikçinin satın alma siparişi iptal edildi — kalemleri teslim alınamaz."},
+    "Enter the promised delivery date as a valid date.": {"ar": "اكتب ميعاد التوريد المتفق عليه بشكل صحيح.", "tr": "Söz verilen teslimat tarihini geçerli bir tarih olarak girin."},
+    "That purchase order no longer exists.": {"ar": "أمر الشراء ده مبقاش موجود.", "tr": "Bu satın alma siparişi artık yok."},
+    "That purchase order is cancelled.": {"ar": "أمر الشراء ده ملغي.", "tr": "Bu satın alma siparişi iptal edildi."},
+    "This request is no longer waiting for delivery.": {"ar": "الطلب ده مبقاش مستني توريد.", "tr": "Bu talep artık teslimat beklemiyor."},
+    "Write why this purchase order is being cancelled.": {"ar": "اكتب سبب إلغاء أمر الشراء ده.", "tr": "Bu satın alma siparişinin neden iptal edildiğini yazın."},
+    "This request has only one purchase order — cancel the request itself instead.": {"ar": "الطلب ده ليه أمر شراء واحد بس — ألغي الطلب نفسه بدل كده.", "tr": "Bu talebin tek bir satın alma siparişi var — bunun yerine talebin kendisini iptal edin."},
+    "This purchase order is already cancelled.": {"ar": "أمر الشراء ده ملغي بالفعل.", "tr": "Bu satın alma siparişi zaten iptal edildi."},
+    "Only an order that is still waiting for delivery can be cancelled.": {"ar": "مينفعش تلغي غير أمر لسه مستني توريد.", "tr": "Yalnızca hâlâ teslimat bekleyen bir sipariş iptal edilebilir."},
+    "Goods were already received or returned against this order, so it cannot be cancelled. Close the request short instead.": {"ar": "في بضاعة اتستلمت أو اترجعت على الأمر ده، فمينفعش يتلغي. اقفل الطلب على الكمية اللي وصلت بدل كده.", "tr": "Bu siparişe karşı zaten mal teslim alındı veya iade edildi, bu yüzden iptal edilemez. Bunun yerine talebi eksik kapatın."},
+    "Money was already invoiced or paid against this order, so it cannot be cancelled.": {"ar": "في فاتورة أو دفعة اتسجلت على الأمر ده، فمينفعش يتلغي.", "tr": "Bu siparişe karşı zaten fatura kesildi veya ödeme yapıldı, bu yüzden iptal edilemez."},
+    "Purchase order cancelled.": {"ar": "تم إلغاء أمر الشراء.", "tr": "Satın alma siparişi iptal edildi."},
+    "Purchase order cancelled and the cancellation emailed to the supplier.": {"ar": "تم إلغاء أمر الشراء واتبعت الإلغاء للمورد على الإيميل.", "tr": "Satın alma siparişi iptal edildi ve iptal tedarikçiye e-postayla gönderildi."},
+    "Purchase order cancelled. The cancellation email was not sent — email (SMTP) is not set up on this server, so tell the supplier yourself.": {"ar": "تم إلغاء أمر الشراء. إيميل الإلغاء متبعتش — الإيميل (SMTP) مش متظبط على السيرفر ده، فبلّغ المورد بنفسك.", "tr": "Satın alma siparişi iptal edildi. İptal e-postası gönderilmedi — bu sunucuda e-posta (SMTP) ayarlı değil, tedarikçiye kendiniz bildirin."},
+    "Purchase order cancelled. The supplier has no email address on file, so tell them yourself.": {"ar": "تم إلغاء أمر الشراء. المورد مالوش إيميل مسجل، فبلّغه بنفسك.", "tr": "Satın alma siparişi iptal edildi. Tedarikçinin kayıtlı e-posta adresi yok, kendiniz bildirin."},
+    "Promised delivery date saved.": {"ar": "تم حفظ ميعاد التوريد المتفق عليه.", "tr": "Söz verilen teslimat tarihi kaydedildi."},
+    "This is the last open order on the request, so cancelling it cancels the whole request — only an administrator can do that.": {"ar": "ده آخر أمر شراء مفتوح على الطلب، فإلغاؤه هيلغي الطلب كله — وده مينفعش يعمله غير الأدمن.", "tr": "Bu, talepteki son açık sipariş; iptal etmek talebin tamamını iptal eder — bunu yalnızca bir yönetici yapabilir."},
+    "Purchase order cancelled, but the cancellation email could not be sent — tell the supplier yourself.": {"ar": "تم إلغاء أمر الشراء، بس إيميل الإلغاء معرفش يتبعت — بلّغ المورد بنفسك.", "tr": "Satın alma siparişi iptal edildi, ancak iptal e-postası gönderilemedi — tedarikçiye kendiniz bildirin."},
+    "That purchase order was cancelled. Nothing can be received against it - receive here without the reference.": {"ar": "أمر الشراء ده اتلغى. مينفعش يتسجل عليه أي استلام - سجّل الاستلام هنا من غير المرجع.", "tr": "Bu satın alma siparişi iptal edildi. Bu siparişe karşı teslim alınamaz - burada referans olmadan teslim alın."},
 }
 
 

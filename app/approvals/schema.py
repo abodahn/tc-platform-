@@ -725,6 +725,17 @@ _CORRECTION_MIGRATIONS = [
     ("settle_amount", "ALTER TABLE pr_returns ADD COLUMN settle_amount REAL"),
 ]
 
+# Delivery follow-up (app/approvals/delivery.py), per purchase order. NULL on
+# every order issued before: no promise recorded, so never overdue until the
+# buyer sets one; status stays 'issued' unless one order is cancelled alone.
+_DELIVERY_MIGRATIONS = [
+    ("promised_date", "ALTER TABLE pr_purchase_orders ADD COLUMN promised_date TEXT"),
+    ("overdue_notified_at", "ALTER TABLE pr_purchase_orders ADD COLUMN overdue_notified_at TEXT"),
+    ("cancelled_at", "ALTER TABLE pr_purchase_orders ADD COLUMN cancelled_at TEXT"),
+    ("cancelled_by", "ALTER TABLE pr_purchase_orders ADD COLUMN cancelled_by TEXT"),
+    ("cancel_reason", "ALTER TABLE pr_purchase_orders ADD COLUMN cancel_reason TEXT"),
+]
+
 # Columns added to pr_items after first release (line-level receiving).
 _ITEM_MIGRATIONS = [
     # The warehouse rung's own figures (spec §1 and §3). services.py computes
@@ -1025,7 +1036,7 @@ def create_and_seed(conn):
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS
                        + _QUOTE_MIGRATIONS + _MONEY_MIGRATIONS + _PROSE_MIGRATIONS
-                       + _CORRECTION_MIGRATIONS + _IMPORTS_MIGRATIONS):
+                       + _CORRECTION_MIGRATIONS + _IMPORTS_MIGRATIONS + _DELIVERY_MIGRATIONS):
         try:
             conn.execute(_ddl)
             conn.commit()

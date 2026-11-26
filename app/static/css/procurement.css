@@ -432,3 +432,11 @@
   .content.proc .imp-line .field:nth-child(2){grid-column:1/-1;order:-1}
   .content.proc .span-2{grid-column:auto}
 }
+
+/* Delivery follow-up panel (approvals/_delivery_pos.html) */
+.content.proc .dl-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.content.proc .dl-row:last-child { border-bottom: 0; }
+.content.proc .dl-form { position: relative; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.content.proc .dl-form input[type="date"] { max-width: 100%; }
+.content.proc .dl-lbl { display: none; font-size: 12px; }
+@media (max-width: 767.98px) { .content.proc .dl-lbl { display: inline; } }

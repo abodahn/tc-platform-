@@ -62,6 +62,7 @@ NAV = [
         # Sits with the requests, not under Insight: "who is sitting on my PR" is
         # something a buyer acts on this morning, not something they report on.
         ("proc_aging", "aging.nav", "clock", "proc_aging.index", "proc_view", "nav.b_requests"),
+        ("proc_deliveries", "proc.delivery.late_nav", "clock", "approvals.deliveries", "proc_purchasing", "nav.b_requests"),
         # DOAM §3.4 — the register that makes "...or agreed forecast" real.
         ("proc_forecasts", "nav.proc_forecasts", "target", "approvals.forecasts", "proc_view", "nav.b_requests"),
         ("proc_item_requests", "nir.queue", "boxes", "approvals.item_requests", "proc_purchasing", "nav.b_requests"),

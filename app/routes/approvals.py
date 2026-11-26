@@ -55,6 +55,7 @@ from app.approvals import services as svc
 from app.approvals import pdf as pdfgen
 from app.approvals import xlsx as xlsxgen
 from app.approvals import constants as C
+from app.approvals.delivery import req_date_refusal as _req_date_refusal
 
 bp = Blueprint("approvals", __name__, url_prefix="/procurement")
 
@@ -115,6 +116,8 @@ def index():
         if now - _LAST_SWEEP[0] >= _SWEEP_INTERVAL:
             _LAST_SWEEP[0] = now
             svc.run_escalations()
+            # Overdue-delivery alerts are NOT run here: they may send email, so
+            # they ride the notification feed's background pass instead.
     except Exception:
         pass
     queue = svc.my_queue(user)
@@ -1148,7 +1151,7 @@ def create():
     items = _parse_items(request.form, can_price, can_buy=False)
     # Refused before anything is written: a request stored with a guessed
     # expenditure type is already on the wrong ladder.
-    bad_kind = _kind_refusal(header)
+    bad_kind = _kind_refusal(header) or _req_date_refusal(header["req_del_date"])
     if not header["title"] or not items or bad_kind:
         flash(bad_kind or "A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.new"))
@@ -1254,7 +1257,8 @@ def edit_save(pr_id):
     items = _parse_items(request.form, can_price, can_buy=False)
     # Same refusal on the re-file after a rejection, which is where a CAPEX
     # request would otherwise be downgraded on its way back through.
-    bad_kind = _kind_refusal(header)
+    bad_kind = _kind_refusal(header) or _req_date_refusal(header["req_del_date"],
+                                                          bundle["pr"].get("req_del_date"))
     if not header["title"] or not items or bad_kind:
         flash(bad_kind or "A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.edit", pr_id=pr_id))
@@ -2362,6 +2366,7 @@ _RECEIVE_ERR = {
                       "be booked once the purchase order has been issued.",
     "nothing_received": "Enter an accepted or a rejected quantity on at least one line.",
     "not_found": "That purchase request no longer exists.",
+    "po_cancelled": "That supplier's purchase order was cancelled — its lines cannot be received.",
 }
 
 
@@ -3277,6 +3282,7 @@ def change_requester(pr_id):
     else:
         flash(_REQUESTER_ERRORS.get(msg, "Request not found."), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
+from app.routes import approvals_delivery  # noqa: E402,F401  (delivery follow-up routes on bp)
 
 
 from app.routes import approvals_imports  # noqa: E402,F401  imports + framework agreements

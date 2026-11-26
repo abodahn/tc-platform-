@@ -1,0 +1,61 @@
+{#- Delivery follow-up, one row per supplier's order: the promised date (the
+    buyer may correct it), whether it is late, and — on a split request — the
+    per-order cancel. No money on this panel. -#}
+{% set dpos = delivery_pos(pr.id) if pr.status in ('po_issued','in_transit','partially_received','received','closed','cancelled') else [] %}
+{% if dpos %}
+{% set d_open = pr.status in ('po_issued','in_transit','partially_received') %}
+{% set d_buyer = can('proc_purchasing') %}
+<div class="panel mt-4" id="delivery">
+  <div class="panel-head"><h3 data-i18n="proc.delivery.title">Delivery follow-up</h3></div>
+  <div class="panel-pad">
+    {% for p in dpos %}
+    <div class="dl-row">
+      <div class="flex between center wrap" style="gap:6px 12px">
+        <div style="min-width:0">
+          <b>{{ p.vendor or pr.vendor or '—' }}</b>
+          <span class="muted nw" style="font-variant-numeric:tabular-nums">{{ p.po_no }}</span>
+        </div>
+        {% if p.cancelled %}<span class="badge b-cancelled" data-i18n="proc.delivery.cancelled">Cancelled</span>
+        {% elif p.delivered %}<span class="badge b-approved" data-i18n="proc.delivery.delivered">Delivered</span>
+        {% elif p.days_late %}<span class="badge b-rejected"><span data-i18n="proc.delivery.overdue">Overdue</span> {{ p.days_late }} <span data-i18n="proc.delivery.days">days</span></span>
+        {% endif %}
+      </div>
+      <div class="muted" style="font-size:12.5px;margin-top:4px">
+        <span data-i18n="proc.delivery.promised">Promised delivery</span>:
+        <b class="nw">{{ p.promised_date or '—' }}</b>
+        {% if not p.promised_date and not p.cancelled and not p.delivered %}· <span data-i18n="proc.delivery.no_date">No date yet — set the date the supplier promised.</span>{% endif %}
+      </div>
+      {% if p.cancelled and (p.cancelled_at or p.cancelled_by) %}
+      <div class="muted" style="font-size:12.5px;margin-top:4px;overflow-wrap:anywhere">
+        {{ (p.cancelled_at or '')[:16] }} · {{ p.cancelled_by or '' }}{% if p.cancel_reason %} · {{ p.cancel_reason }}{% endif %}
+      </div>
+      {% elif d_buyer and d_open and not p.delivered and not p.cancelled %}
+      <form method="post" action="{{ url_for('approvals.po_promised', po_id=p.id) }}" class="dl-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <label class="sr-only" for="dlDate{{ p.id }}" data-i18n="proc.delivery.promised">Promised delivery</label>
+        <input type="date" id="dlDate{{ p.id }}" name="promised_date" required value="{{ p.promised_date or '' }}">
+        <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.delivery.save_date">Save date</button>
+      </form>
+      {% if p.can_cancel %}
+      <details class="mt-2">
+        <summary style="cursor:pointer;font-weight:600;color:var(--tc-red)" data-i18n="proc.delivery.cancel_po">Cancel this supplier's order</summary>
+        <form method="post" action="{{ url_for('approvals.po_cancel', po_id=p.id) }}" class="mt-2" data-once>
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <div class="muted" style="font-size:12.5px;margin-bottom:8px" data-i18n="proc.delivery.cancel_hint">Only this supplier's order is cancelled; the other suppliers' orders stay as they are. Its lines can no longer be received and its value leaves the budget.</div>
+          <div class="field"><label for="dlWhy{{ p.id }}" data-i18n="proc.delivery.reason">Reason for cancelling *</label>
+            <textarea id="dlWhy{{ p.id }}" name="reason" rows="2" required maxlength="500"></textarea></div>
+          {% if pr.po_sent_at %}
+          <label class="flex gap center" style="font-size:13px;margin-bottom:8px">
+            <input type="checkbox" name="email_vendor" value="1" checked>
+            <span data-i18n="proc.delivery.email_cancel">Email the cancellation to the supplier</span></label>
+          {% endif %}
+          <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.delivery.cancel_btn">Cancel order</button>
+        </form>
+      </details>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
