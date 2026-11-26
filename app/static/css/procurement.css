@@ -510,3 +510,4 @@
 .content.proc .en-only-note::before{content:"EN";flex:none;display:inline-grid;place-items:center;width:30px;height:22px;border-radius:6px;font-size:11px;letter-spacing:.04em;background:var(--tc-red,#c8102e);color:#fff}
 .content.proc .en-only-bad{border-color:var(--crit)!important;outline:1px solid var(--crit)}
 .content.proc .en-only-tip{color:var(--crit);font-size:12px;margin-top:4px}
+.content.proc .li-row > .en-only-tip{grid-column:1/-1;margin-top:-2px}
