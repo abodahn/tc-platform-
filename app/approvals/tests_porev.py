@@ -171,6 +171,8 @@ def run():
         stages = q("SELECT stage FROM pr_po_rev_steps WHERE rev_id=? ORDER BY seq", pend["id"])
         want = [s for s in svc.dept_ladder(get_db(), "Maintenance", 1, "opex") if s in C.VALUE_STAGES]
         assert [s["stage"] for s in stages] and set(s["stage"] for s in stages) <= set(want), stages
+        # every value rung already signed the original: only the tier's top authority re-signs
+        assert [s["stage"] for s in stages] == want[-1:], (stages, want)
         assert porev.propose_revision(one, None, {l1: {"qty": "9"}}, "", "again", buyer) == \
             (False, "rev_pending")
         assert porev.sign_revision(pend["id"], buyer, "approve")[1] == "forbidden"   # not the rung's role
@@ -193,7 +195,14 @@ def run():
         assert (po["rev"], pr["po_rev"], pr["total"], po["grand"], po["approved_grand"]) == \
             (3, 3, 1200.0, 1368.0, 1368.0), (po, pr["total"])
         assert q("SELECT status FROM pr_po_revisions WHERE id=?", pend["id"])[0]["status"] == "applied"
-        assert q("SELECT 1 FROM pr_sign_events WHERE pr_id=? AND seq>=1000", one), "no signature events"
+        ev = q("SELECT * FROM pr_sign_events WHERE pr_id=? AND seq>=1000 ORDER BY id DESC", one)
+        assert ev, "no signature events"
+        import hashlib
+        payload = "|".join(str(x) for x in (pr["pr_no"], ev[0]["seq"], ev[0]["stage"], "approve",
+                                            ev[0]["signer"], "%.2f" % pend["new_grand"],
+                                            pr["currency"] or "", ev[0]["created_at"]))
+        assert ev[0]["doc_hash"] == hashlib.sha256(payload.encode("utf-8")).hexdigest(), \
+            "revision signature does not anchor the revised value"
         assert q("SELECT 1 FROM pr_events WHERE pr_id=? AND action='po_emailed'", one), "PO not emailed"
 
         # a rejected increase leaves the order alone
@@ -210,6 +219,40 @@ def run():
         rid = q("SELECT id FROM pr_po_revisions WHERE pr_id=? AND status='pending'", one)[0]["id"]
         assert porev.cancel_revision(rid, buyer) == (True, "cancelled")
         assert porev.cancel_revision(rid, buyer) == (False, "not_pending")
+
+        # the request's own value controls are asked again at the revised value
+        ex("UPDATE pr_requests SET single_source_reason=NULL WHERE id=?", one)
+        assert porev.propose_revision(one, None, {l1: {"unit_price": "160"}}, "", "rise",
+                                      buyer) == (False, "needs_quotes")
+        ex("UPDATE pr_requests SET single_source_reason='Sole supplier' WHERE id=?", one)
+        ok, res = porev.propose_revision(one, None, {l1: {"unit_price": "2000000"}}, "", "rise", buyer)
+        assert (ok, res) == (False, "business_case_required"), res
+        assert q("SELECT unit_price FROM pr_items WHERE id=?", l1)[0]["unit_price"] == 150
+        # ... and again at the final signature (the waiver was withdrawn meanwhile)
+        assert porev.propose_revision(one, None, {l1: {"unit_price": "160"}}, "", "rise", buyer)[1] == "pending"
+        rid = q("SELECT id FROM pr_po_revisions WHERE pr_id=? AND status='pending'", one)[0]["id"]
+        # one pending revision per request, whatever races past the check
+        dup = True
+        try:
+            ex("INSERT INTO pr_po_revisions (pr_id, rev_no, status) VALUES (?, 99, 'pending')", one)
+        except Exception:                                   # noqa: BLE001 — unique index
+            dup = False
+        assert not dup, "a second pending revision was accepted"
+        cur = q("SELECT * FROM pr_po_rev_steps WHERE rev_id=? AND status='pending'", rid)[0]
+        role = sorted(C.STAGE_ROLES[cur["stage"]])[0]
+        dual = signer(role, "dual2")
+        ex("INSERT INTO pr_po_rev_steps (rev_id, pr_id, seq, stage, status, approver_user) "
+           "VALUES (?, ?, 0, 'factory_manager', 'approved', ?)", rid, one, dual["username"])
+        assert not any(r["id"] == rid for r in porev.rev_queue(dual)), "dual signer offered"
+        assert not porev.revision_view(one, dual)["pending"]["can_sign"]
+        assert porev.sign_revision(rid, dual, "approve") == (False, "dual_role")
+        ex("DELETE FROM pr_po_rev_steps WHERE rev_id=? AND seq=0", rid)
+        assert any(r["id"] == rid for r in porev.rev_queue(dual))
+        ex("UPDATE pr_requests SET single_source_reason=NULL WHERE id=?", one)
+        assert porev.sign_revision(rid, signer(role, "gate"), "approve") == (False, "needs_quotes")
+        assert q("SELECT status FROM pr_po_rev_steps WHERE id=?", cur["id"])[0]["status"] == "pending"
+        ex("UPDATE pr_requests SET single_source_reason='Sole supplier' WHERE id=?", one)
+        assert porev.cancel_revision(rid, buyer)[0]
 
         # ==============================================================
         # (A3) tolerance setting: small raises apply, and cannot creep
@@ -255,12 +298,24 @@ def run():
         finally:
             conn.close()
 
+        ex("UPDATE pr_requests SET disc_amount=10 WHERE id=?", two)
+        assert porev.propose_revision(two, pa["id"], {a1: {"qty": "9"}}, "", "x", buyer) == \
+            (False, "split_discount")
+        ex("UPDATE pr_requests SET disc_amount=NULL WHERE id=?", two)
+
         # (A5) a request issued before per-vendor orders still revises
         old, (o1,) = make("Gloves", [("Glove", 20, 10, "Fake Gloves Co")], tax=0)
         approve_and_issue(old)
         ex("DELETE FROM pr_purchase_orders WHERE pr_id=?", old)
         assert porev.propose_revision(old, None, {o1: {"qty": "15"}}, "", "less", buyer)[1] == "applied"
         assert (po_rows(old)[0]["rev"], po_rows(old)[0]["grand"]) == (1, 150.0)
+        # cutting a short-shipped line to what arrived completes the receipt
+        ok, msg = svc.receive_items(old, {o1: 10}, buyer)
+        assert ok, msg
+        assert q("SELECT status FROM pr_requests WHERE id=?", old)[0]["status"] == "partially_received"
+        assert porev.propose_revision(old, None, {o1: {"qty": "10"}}, "", "short shipped",
+                                      buyer)[1] == "applied"
+        assert q("SELECT status FROM pr_requests WHERE id=?", old)[0]["status"] == "received"
 
         # ==============================================================
         # HTTP: permissions, bulk signing, queue count, copy, low stock
@@ -294,6 +349,9 @@ def run():
                                       data={"_csrf": "tok", "po_id": str(pb["id"]),
                                             "qty_%d" % b1: "2", "reason": "two only"})
         assert r.status_code == 302 and po_rows(two)[1]["rev"] == 2, po_rows(two)
+        ex("UPDATE pr_requests SET po_rev=5 WHERE id=?", two)       # revised the old way before
+        assert porev.propose_revision(two, pa["id"], {a1: {"qty": "9"}}, "", "less", buyer)[1] == "applied"
+        assert [p["rev"] for p in po_rows(two)] == [6, 5], po_rows(two)
         page = client(admin["id"]).get("/procurement/pr/%d" % two).get_data(as_text=True)
         assert 'id="porev"' in page and "proc.porev.history" in page and "two only" in page
         # a pending revision renders its rungs and the sign form for a signer
@@ -332,6 +390,8 @@ def run():
         # no saved signature -> refused, sent to the profile
         r = client(ids["w.buy"]).post("/procurement/bulk-sign", data={"_csrf": "tok", "pr_id": "1"})
         assert r.status_code == 302 and "/profile" in r.headers["Location"], r.headers.get("Location")
+        assert len(porev.bulk_sign(list(range(900000, 900060)), {"username": "w.store",
+                                                                 "role": "storekeeper"})) == 50
         # the landing page carries the bulk form
         assert "data-porev-bulk" in client(ids["w.store"]).get("/procurement/").get_data(as_text=True)
 
@@ -351,19 +411,46 @@ def run():
            "100, 1, '2026-01-01')")
         mid = q("SELECT id FROM wh_materials WHERE code='FAKE-TAPE-01'")[0]["id"]
         row = next(r for r in porev.low_stock() if r["id"] == mid)
-        assert (row["on_order"], row["suggested"], row["open_prs"]) == (0, 90, []), row
+        assert (row["on_order"], row["suggested"], row["open_prs"]) == (0, 190, []), row  # 2 x 100 - 10
         body = client(ids["w.req"]).get("/procurement/new?stock=%d" % mid).get_data(as_text=True)
-        assert "FAKE-TAPE-01" in body and '"qty": 90' in body.replace("90.0", "90"), "stock prefill"
+        assert "FAKE-TAPE-01" in body and '"qty": 190' in body.replace("190.0", "190"), "stock prefill"
         tape, _ = svc.create_pr({"title": "Tape", "department": "Production"},
                                 [{"item": "fake-tape-01", "qty": 30}], req, priced=False)
         row = next(r for r in porev.low_stock() if r["id"] == mid)
-        assert (row["on_order"], row["suggested"]) == (30, 60) and row["open_prs"][0]["id"] == tape, row
-        r = client(ids["w.req"]).get("/procurement/new?stock=%d" % mid)
-        assert r.status_code == 302 and "/procurement/pr/%d" % tape in r.headers["Location"]
+        assert (row["on_order"], row["suggested"]) == (30, 160) and row["open_prs"][0]["id"] == tape, row
+        r = client(ids["w.req"]).get("/procurement/new?stock=%d" % mid)     # warned, not blocked
+        assert r.status_code == 200 and "FAKE-TAPE-01" in r.get_data(as_text=True), r.status_code
+        # a request whose line for it has fully arrived is no longer 'on order' for it
+        both, _ = svc.create_pr({"title": "Tape and thread", "department": "Production"},
+                                [{"item": "FAKE-TAPE-01", "qty": 5}, {"item": "Thread", "qty": 2}],
+                                req, priced=False)
+        ex("UPDATE pr_items SET received_qty=qty WHERE pr_id=? AND item='FAKE-TAPE-01'", both)
+        ex("UPDATE pr_requests SET status='partially_received' WHERE id=?", both)
+        row = next(r for r in porev.low_stock() if r["id"] == mid)
+        assert row["on_order"] == 30 and [p["id"] for p in row["open_prs"]] == [tape], row
         dash = client(admin["id"]).get("/warehouse/").get_data(as_text=True)
         assert "low-to-pr" in dash and "FAKE-TAPE-01" in dash, "low stock panel missing"
         ex("UPDATE pr_requests SET status='cancelled' WHERE id=?", tape)
         assert next(r for r in porev.low_stock() if r["id"] == mid)["on_order"] == 0
+
+        # (D2) maintenance spares: on order by spare_id, refill to max level
+        ex("INSERT INTO mnt_spare_parts (code, name, uom, stock_qty, reorder_level, max_level, "
+           "is_active, created_at) VALUES ('FAKE-SP-01', 'Fake belt', 'pcs', 0, 5, 12, 1, '2026-01-01')")
+        sid = q("SELECT id FROM mnt_spare_parts WHERE code='FAKE-SP-01'")[0]["id"]
+        s = porev.spare_low(sid)
+        assert (s["on_order"], s["suggested"], s["open_prs"]) == (0, 12, []), s
+        sp_pr, _ = svc.create_pr({"title": "Belts", "department": "Maintenance"},
+                                 [{"item": "Belt", "qty": 4, "spare_id": sid}], req, priced=False)
+        s = porev.spare_low(sid)
+        assert (s["on_order"], s["suggested"]) == (4, 8) and s["open_prs"][0]["id"] == sp_pr, s
+        r = client(ids["w.req"]).get("/procurement/new?spare=%d" % sid)
+        body = r.get_data(as_text=True)
+        m = re.search(r"var EDIT_ITEMS = (\[.*?\]);", body)
+        assert r.status_code == 200 and m and '"spare_id": %d' % sid in m.group(1) \
+            and "FAKE-SP-01" in m.group(1), m and m.group(1)
+        assert client(ids["w.req"]).get("/procurement/new?spare=99999").status_code == 404
+        dash = client(admin["id"]).get("/maintenance/").get_data(as_text=True)
+        assert "porev-spare" in dash and "spare=%d" % sid in dash, "maintenance low stock lacks PR link"
 
         # every message the routes flash exists in Arabic and Turkish
         import ast

@@ -1,6 +1,6 @@
 {#- Short materials -> procurement (porev lane): what is already on order or
     requested, and a pre-filled purchase request (proc_create). An item with an
-    open request gets a link to it instead of a second request. -#}
+    open request also lists it (a link only for proc_view); the form then warns. -#}
 {% set lows = porev_low_stock() %}
 {% if lows %}
 <div class="panel mt-4" id="low-to-pr">
@@ -28,8 +28,9 @@
           <td style="text-align:end">
             {% if r.open_prs %}
               <span class="muted" style="font-size:12px" data-i18n="proc.porev.open_exists">Already requested:</span>
-              {% for p in r.open_prs %}<a class="tag" href="{{ url_for('approvals.detail', pr_id=p.id) }}">{{ p.pr_no }}</a>{% endfor %}
-            {% elif can('proc_create') %}
+              {% for p in r.open_prs %}{% if can('proc_view') %}<a class="tag" href="{{ url_for('approvals.detail', pr_id=p.id) }}">{{ p.pr_no }}</a>{% else %}<span class="tag">{{ p.pr_no }}</span>{% endif %}{% endfor %}
+            {% endif %}
+            {% if can('proc_create') %}
               <a class="btn btn-primary btn-sm" href="{{ url_for('approvals.new', stock=r.id) }}" data-i18n="proc.porev.raise">Raise purchase request</a>
             {% endif %}
           </td>

@@ -8,7 +8,7 @@ from flask import abort, redirect, render_template, request, url_for
 from app.auth import current_user, login_required, permission_required, user_can
 from app.approvals import porev
 from app.approvals.messages import translate as _translate_msg
-from app.routes.approvals import _code, _ip, _u, bp, flash
+from app.routes.approvals import APPROVE_REFUSALS, _code, _ip, _u, bp, flash
 
 # Refusals of a revision, keyed by porev's codes. English is the MESSAGES key.
 _REV_ERR = {
@@ -25,6 +25,9 @@ _REV_ERR = {
     "below_billed": "The revised order would be worth less than what has already been "
                     "invoiced or paid against it.",
     "self_revise": "You raised this request, so you cannot revise its purchase order.",
+    "split_discount": "This request's header discount is shared by several suppliers' "
+                      "orders, so one order cannot be revised on its own — it would "
+                      "change the others' money.",
     "not_found": "Request not found.",
 }
 _REV_OK = {
@@ -50,29 +53,12 @@ _SIGN_OK = {
     "applied": "Final approval complete — the PO revision is now live.",
     "rejected": "Revision rejected — the purchase order is unchanged.",
 }
-# act_on_step's codes for the bulk summary. The English is the approve route's
-# own wording, so its Arabic and Turkish already exist in MESSAGES.
-_BULK_ERR = {
-    "forbidden": "You are not authorised for this approval stage.",
-    "not_pending": "This request is not awaiting approval.",
-    "needs_pricing": "Enter the pricing before approving the Purchasing stage — "
-                     "the request has no commercial value yet.",
-    "self_approval": "You cannot approve your own request — raising it is your signature.",
-    "dual_role": "You already signed another stage of this request — a different "
-                 "approver must take this one.",
-    "no_active_step": "No active approval step.",
+# act_on_step's codes for the bulk summary: the approve route's own sentences
+# (APPROVE_REFUSALS), so its Arabic and Turkish already exist in MESSAGES.
+_BULK_ERR = dict(APPROVE_REFUSALS, **{
     "on_hold": "This request is on hold. Open it and resume it before signing.",
-    "deviation_memo_required": "This order is off plan (over target price, over the "
-                               "stock ceiling, or above the net requirement after "
-                               "inventory netting — §3.4). DOAM §4.4 requires a written "
-                               "justification memo before it is signed — record it in "
-                               "the Coverage check / Deviation from plan panel.",
-    "business_case_required": "Above 10,000,000 EGP the DOAM requires a written business "
-                              "case before this request is signed. Record it first.",
-    "chosen_quote_no_file": "The chosen quotation has no supplier file. Attach it in the "
-                            "Vendor quotes panel before approving.",
     "not_found": "Request not found.",
-}
+})
 _BULK_OK = {
     "advanced": "Approved — routed to the next approver.",
     "partial": "Approved & signed. Waiting on the co-approver at this stage.",
@@ -103,7 +89,8 @@ def porev_propose(pr_id):
                                      f.get("reason"), _u(), ip=_ip(),
                                      email=f.get("email") == "1")
     flash(_REV_OK.get(res, "PO revised.") if ok else
-          _REV_ERR.get(_code(res), f"Could not revise the PO ({res})."),
+          _REV_ERR.get(_code(res)) or APPROVE_REFUSALS.get(_code(res),
+                                                       f"Could not revise the PO ({res})."),
           "success" if ok else "error")
     return _back(pr_id)
 
@@ -123,7 +110,8 @@ def porev_sign(rev_id):
     decision = "reject" if request.form.get("decision") == "reject" else "approve"
     ok, res = porev.sign_revision(rev_id, _u(), decision, request.form.get("comment"), ip=_ip())
     flash(_SIGN_OK.get(res, "Signed.") if ok else
-          _SIGN_ERR.get(_code(res), f"Could not sign the revision ({res})."),
+          _SIGN_ERR.get(_code(res)) or APPROVE_REFUSALS.get(
+              _code(res), f"Could not sign the revision ({res})."),
           ("warning" if res == "rejected" else "success") if ok else "error")
     return _back(pr_id)
 
@@ -155,6 +143,9 @@ def bulk_sign():
     if not ids:
         flash("Tick at least one request to sign.", "error")
         return redirect(url_for("approvals.index") + "#my-queue")
+    if len(set(ids)) > porev.BULK_MAX:
+        flash("Up to 50 requests are signed at a time — only the first 50 ticked were "
+              "signed. Sign the rest from the queue again.", "warning")
     lang = _lang()
     results = porev.bulk_sign(ids, user, comment=request.form.get("comment", "").strip() or None,
                               ip=_ip())
@@ -166,9 +157,10 @@ def bulk_sign():
                            results=results, signed=sum(1 for r in results if r["ok"]))
 
 
-def form_prefill(copy_id, stock_id):
-    """(response, header, lines) for /new?copy=<pr id> or /new?stock=<material
-    id>. `response` is set when the form must not open (redirect / 404)."""
+def form_prefill(copy_id, stock_id, spare_id=""):
+    """(response, header, lines) for /new?copy=<pr id>, /new?stock=<material id>
+    or /new?spare=<maintenance spare id>. `response` is never set today (a
+    missing record is a 404); kept so the caller can still refuse the form."""
     if copy_id.isdigit():
         if not user_can("proc_view"):
             abort(403)
@@ -176,14 +168,16 @@ def form_prefill(copy_id, stock_id):
         if head is None:
             abort(404)
         return None, head, lines
-    head, lines, open_prs = porev.stock_prefill(int(stock_id))
+    head, lines, open_prs = (porev.spare_prefill(int(spare_id)) if spare_id.isdigit()
+                             else porev.stock_prefill(int(stock_id)))
     if head is None:
         abort(404)
     if open_prs:
-        flash("An open purchase request for this item already exists, so a second one "
-              "was not raised: " + ", ".join(p["pr_no"] or "#%s" % p["id"] for p in open_prs),
-              "warning")
-        return redirect(url_for("approvals.detail", pr_id=open_prs[0]["id"])), None, []
+        # A warning, not a block: the open request may be a stale draft, or not
+        # enough. The reader decides; the numbers are plain text (no proc_view needed).
+        flash("An open purchase request for this item already exists — check it before "
+              "raising another one: "
+              + ", ".join(p["pr_no"] or "#%s" % p["id"] for p in open_prs), "warning")
     return None, head, lines
 
 
@@ -209,3 +203,8 @@ def porev_stage(stage):
 @bp.app_template_global()
 def porev_low_stock():
     return porev.low_stock()
+
+
+@bp.app_template_global()
+def porev_spare(spare_id):
+    return porev.spare_low(spare_id)

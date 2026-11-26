@@ -510,6 +510,10 @@ _PO_REV_MIGRATIONS = [
     # NULL = the order's grand total as issued (grandfathered on first revision).
     ("approved_grand", "ALTER TABLE pr_purchase_orders ADD COLUMN approved_grand REAL"),
     ("delivery_date", "ALTER TABLE pr_purchase_orders ADD COLUMN delivery_date TEXT"),
+    # One pending revision per request, even when two buyers save at once
+    # (partial index: SQLite and PostgreSQL both). Fails harmlessly if old rows clash.
+    ("ux_po_rev_pending", "CREATE UNIQUE INDEX IF NOT EXISTS ux_po_rev_pending "
+                          "ON pr_po_revisions(pr_id) WHERE status='pending'"),
 ]
 
 # Goods Received Notes. A GRN is a CONTROLLED, PRE-NUMBERED document: one row per

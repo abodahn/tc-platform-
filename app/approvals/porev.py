@@ -3,9 +3,10 @@
 (A) A REAL PO revision: a buyer changes line quantities, unit prices and the
     delivery date of ONE supplier's order, with a reason. A decrease or a date
     change applies at once; an increase beyond the 'po_rev_tolerance_pct'
-    setting is parked until the value ladder dept_ladder() gives the new total
-    has signed it (pr_po_rev_steps), the same authority and refusals as the
-    request's own rungs. Applying writes the live rows (pr_items,
+    setting is parked until the rungs the increase triggers have signed it
+    (pr_po_rev_steps, _increase_stages), the same authority and refusals as
+    the request's own rungs; the quote and business-case gates are asked again
+    at the new value. Applying writes the live rows (pr_items,
     pr_requests.total and that order's pr_purchase_orders row), so the budget,
     receiving caps, three-way match and payment caps read the revised numbers
     without a change of their own.
@@ -63,10 +64,9 @@ def _po_lines(items, pr, po, pos):
 
 def _order_figures(conn, pr_id, po, pos):
     """(subtotal, tax, grand) of ONE order from the lines as they stand, with
-    the arithmetic _issue_po_rows used to write it.
-    shortcut: on a split request with a header discount, changing one order
-    moves the discount share of the others, whose rows stay as issued;
-    re-derive every order if that combination is ever used."""
+    the arithmetic _issue_po_rows used to write it. A split request with a
+    fixed header discount is refused before this (split_discount): changing one
+    order would move the discount share of the others."""
     pr = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
     rate = _f(pr["tax_rate"])
     head_sub = round(_f(pr["total"]), 2)
@@ -159,7 +159,14 @@ def _rev_link(pr_id):
     return svc._pr_link(pr_id) + "#porev"
 
 
-def _finish(conn, pr, po, pos, rev_no, changes, approved_grand=None):
+def _rev_no(pr, po):
+    """The next revision number of `po`. pr_requests.po_rev counts revisions
+    made the old way (one number per request), so it is the floor for every
+    order, split or not — the numbering never goes backwards."""
+    return max(int(po.get("rev") or 0), int(pr["po_rev"] or 0)) + 1
+
+
+def _finish(conn, pr, po, pos, rev_no, changes, approved_grand=None, uname=None, ip=None):
     """Make a revision live on ONE order: its row is re-derived from the lines
     and numbered; on a single-order request pr_requests.po_rev follows.
     `approved_grand` None = the new total was signed, so it becomes the value
@@ -168,12 +175,30 @@ def _finish(conn, pr, po, pos, rev_no, changes, approved_grand=None):
     sub, tax, grand = _order_figures(conn, pr["id"], po, pos)
     if approved_grand is None:
         approved_grand = grand
+    old_rev = int(pr["po_rev"] or 0)
+    if len(pos) > 1 and old_rev:
+        # First per-order revision of a split request revised the old way: every
+        # order keeps the number it printed (pdf.py prints each row's own once one has it).
+        conn.execute("UPDATE pr_purchase_orders SET rev=? WHERE pr_id=? AND COALESCE(rev,0)<?",
+                     (old_rev, pr["id"], old_rev))
     conn.execute(
         "UPDATE pr_purchase_orders SET subtotal=?, tax=?, grand=?, rev=?, "
         "approved_grand=?, delivery_date=COALESCE(?, delivery_date) WHERE id=?",
         (sub, tax, grand, rev_no, approved_grand, changes.get("delivery_date"), po["id"]))
     if len(pos) == 1:
         conn.execute("UPDATE pr_requests SET po_rev=? WHERE id=?", (rev_no, pr["id"]))
+    # Cutting a short-shipped line to what arrived can leave nothing to receive,
+    # and no further GRN will come to say so: the request is received now.
+    items = conn.execute("SELECT qty, received_qty FROM pr_items WHERE pr_id=?",
+                         (pr["id"],)).fetchall()
+    if pr["status"] == "partially_received" and items and all(
+            _f(i["received_qty"]) + 1e-9 >= _f(i["qty"]) for i in items):
+        conn.execute("UPDATE pr_requests SET status='received', received_at=?, received_by=? "
+                     "WHERE id=? AND status='partially_received'",
+                     (svc._now(), uname or "system", pr["id"]))
+        svc.audit(conn, pr["id"], uname or "system", "goods_received",
+                  f"Fully received — {po['po_no']} Rev {rev_no} cut the open quantity to "
+                  "what has already arrived.", ip)
     return grand
 
 
@@ -185,6 +210,39 @@ def _announce(conn, pr, po, rev_no, old_grand, new_grand, cur, reason, uname, ip
                      | set(svc._perm_holders(conn, "proc_receive")), "info", "PO revised",
                      f"{po['po_no']} (ref {pr['pr_no']}) revised — Rev {rev_no}: {reason}",
                      link=_rev_link(pr["id"]))
+
+
+def _gate_refusal(conn, pr):
+    """The value controls the request itself had to pass, asked again at the
+    revised value (`pr` = the row with the revised total): competitive quotes
+    (DOAM §4.3) and the business case above 10M EGP. A code, or None."""
+    ok, msg = svc.rfq_gate_check(conn, pr)
+    if not ok:
+        return msg
+    ok, msg = svc.business_case_gate(pr)
+    return None if ok else msg
+
+
+def _increase_stages(conn, pr, after):
+    """The rungs an increase needs: the value rungs the new total adds that did
+    not sign the original (at least the value tier's top authority, so a raise
+    beyond the tolerance is never unsigned), plus the DOAM Table 4 L1 rung when
+    the new commitment is unbudgeted — what apply_budget_state would add."""
+    kind = pr["expenditure_kind"] or "opex"
+    new = [s for s in svc.dept_ladder(conn, pr["department"], svc.egp_commitment(dict(after)),
+                                      kind, pr_id=pr["id"]) if s in C.VALUE_STAGES]
+    signed = {r["stage"] for r in conn.execute(
+        "SELECT stage FROM pr_steps WHERE pr_id=? AND status='approved'", (pr["id"],)).fetchall()}
+    stages = [s for s in new if s not in signed] or new[-1:]
+    # extra=0: this request's revised total is already in 'spent' on this connection.
+    if svc.budget_check(conn, pr["department"], 0, pr_id=pr["id"])["unbudgeted"]:
+        want = C.LEVEL_ORDER.index(C.UNBUDGETED_LEVEL)
+        l1 = C.unbudgeted_stage(new, kind) or next(
+            (s for s in reversed(new)
+             if C.LEVEL_ORDER.index(C.DOAM_LEVEL.get(s, "L4")) >= want), None)
+        if l1 and l1 not in stages:
+            stages.append(l1)
+    return stages
 
 
 def propose_revision(pr_id, po_id, posted_lines, delivery_date, reason, user,
@@ -218,6 +276,8 @@ def propose_revision(pr_id, po_id, posted_lines, delivery_date, reason, user,
               else (pos[0] if len(pos) == 1 else None))
         if not po:
             return False, "po_required"
+        if len(pos) > 1 and _f(pr["disc_amount"]):
+            return False, "split_discount"
         items = conn.execute("SELECT * FROM pr_items WHERE pr_id=? ORDER BY seq, id",
                              (pr_id,)).fetchall()
         mine = _po_lines(items, pr, po, pos)
@@ -267,13 +327,12 @@ def propose_revision(pr_id, po_id, posted_lines, delivery_date, reason, user,
         stages = []
         if new_grand > approved * (1 + tol / 100.0) + 0.005:
             after = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
-            stages = [s for s in svc.dept_ladder(conn, pr["department"],
-                                                 svc.egp_commitment(dict(after)),
-                                                 pr["expenditure_kind"] or "opex",
-                                                 pr_id=pr_id)
-                      if s in C.VALUE_STAGES]
-        rev_no = (max(int(po.get("rev") or 0), int(pr["po_rev"] or 0)) if len(pos) == 1
-                  else int(po.get("rev") or 0)) + 1
+            bad = _gate_refusal(conn, after)
+            if bad:
+                conn.rollback()
+                return False, bad
+            stages = _increase_stages(conn, pr, after)
+        rev_no = _rev_no(pr, po)
         snapshot = svc._json_dumps({
             "items": [{k: it[k] for k in ("id", "item", "qty", "unit_price", "est_cost")}
                       for it in mine],
@@ -283,13 +342,22 @@ def propose_revision(pr_id, po_id, posted_lines, delivery_date, reason, user,
         cur = po.get("currency") or pr["currency"] or "EGP"
         if stages:
             conn.rollback()          # nothing changes until the increase is signed
-            c = conn.execute(
-                """INSERT INTO pr_po_revisions (pr_id, rev_no, reason, po_no, snapshot_json,
-                   created_by, created_at, po_id, status, changes_json, old_grand,
-                   new_grand, stages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (pr_id, rev_no, reason, po["po_no"], snapshot, uname, now, po["id"],
-                 "pending", svc._json_dumps(changes), old_grand, new_grand,
-                 ",".join(stages)))
+            # Asked again right before the write, and ux_po_rev_pending (schema.py)
+            # refuses a second pending row if two buyers still race past this.
+            if conn.execute("SELECT 1 FROM pr_po_revisions WHERE pr_id=? AND status='pending'",
+                            (pr_id,)).fetchone():
+                return False, "rev_pending"
+            try:
+                c = conn.execute(
+                    """INSERT INTO pr_po_revisions (pr_id, rev_no, reason, po_no, snapshot_json,
+                       created_by, created_at, po_id, status, changes_json, old_grand,
+                       new_grand, stages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (pr_id, rev_no, reason, po["po_no"], snapshot, uname, now, po["id"],
+                     "pending", svc._json_dumps(changes), old_grand, new_grand,
+                     ",".join(stages)))
+            except Exception:      # noqa: BLE001 — the unique index: another pending row won
+                conn.rollback()
+                return False, "rev_pending"
             rev_id = c.lastrowid
             roles, chain = svc.stage_roles_map(conn), svc.escalation_map(conn)
             for n, s in enumerate(stages, start=1):
@@ -317,7 +385,7 @@ def propose_revision(pr_id, po_id, posted_lines, delivery_date, reason, user,
                decided_by, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (pr_id, rev_no, reason, po["po_no"], snapshot, uname, now, po["id"], "applied",
              svc._json_dumps(changes), old_grand, new_grand, uname, now))
-        _finish(conn, pr, po, pos, rev_no, changes, approved)
+        _finish(conn, pr, po, pos, rev_no, changes, approved, uname, ip)
         _announce(conn, pr, po, rev_no, old_grand, new_grand, cur, reason, uname, ip)
         conn.commit()
         po_id = po["id"]
@@ -370,8 +438,10 @@ def sign_revision(rev_id, user, decision, comment=None, ip=None):
         if cur.rowcount == 0:
             conn.rollback()
             return False, "not_pending"
-        svc._record_sign_event(conn, pr, {"seq": _SIGN_SEQ_BASE * int(rev["rev_no"] or 0)
-                                          + step["seq"], "stage": step["stage"]},
+        # The hash anchors what this signer approved: the revised order's value.
+        svc._record_sign_event(conn, dict(pr, total=_f(rev["new_grand"])),
+                               {"seq": _SIGN_SEQ_BASE * int(rev["rev_no"] or 0)
+                                + step["seq"], "stage": step["stage"]},
                                decision, uname, signer, now, ip)
         label = C.stage_label(step["stage"])
         if decision == "reject":
@@ -416,7 +486,12 @@ def sign_revision(rev_id, user, decision, comment=None, ip=None):
             conn.rollback()
             return False, "po_required"
         _apply_lines(conn, pr["id"], lines)
-        grand = _finish(conn, pr, po, pos, int(rev["rev_no"]), changes)
+        bad = _gate_refusal(conn, conn.execute("SELECT * FROM pr_requests WHERE id=?",
+                                               (pr["id"],)).fetchone())
+        if bad:
+            conn.rollback()
+            return False, bad
+        grand = _finish(conn, pr, po, pos, int(rev["rev_no"]), changes, None, uname, ip)
         conn.execute("UPDATE pr_po_revisions SET status='applied', new_grand=?, decided_by=?, "
                      "decided_at=? WHERE id=?", (grand, uname, now, rev_id))
         _announce(conn, pr, po, int(rev["rev_no"]), _f(rev["old_grand"]), grand,
@@ -463,6 +538,14 @@ def revision_pr(rev_id):
         conn.close()
 
 
+def _signed_other(user, steps, cur):
+    """sign_revision's dual_role rule: one rung of a revision per person."""
+    uname = (user or {}).get("username")
+    return (user or {}).get("role") != "super_admin" and any(
+        s["id"] != cur["id"] and s["approver_user"] == uname
+        and s["status"] in ("approved", "rejected") for s in steps)
+
+
 def revision_view(pr_id, user):
     """What the request page's PO panel needs: the orders with their lines, the
     revision history (newest first, with before/after) and any pending one."""
@@ -498,7 +581,8 @@ def revision_view(pr_id, user):
             cur = next((s for s in r["steps"] if s["status"] == "pending"), None)
             r["current"] = cur
             r["can_sign"] = bool(cur and svc.can_act_step(user, cur)
-                                 and uname not in (r["created_by"], pr["requester"]))
+                                 and uname not in (r["created_by"], pr["requester"])
+                                 and not _signed_other(user, r["steps"], cur))
             pending = r
     return {"pos": pos, "revs": revs, "pending": pending, "tolerance": tol,
             "revisable": pr["status"] in REVISABLE}
@@ -519,19 +603,22 @@ def rev_queue(user):
             return []
         ph = ",".join("?" for _ in revs)
         steps = conn.execute(
-            f"SELECT * FROM pr_po_rev_steps WHERE status='pending' AND rev_id IN ({ph}) "
+            f"SELECT * FROM pr_po_rev_steps WHERE rev_id IN ({ph}) "
             "ORDER BY seq", tuple(r["id"] for r in revs)).fetchall()
         roles = svc.stage_roles_map(conn)
     finally:
         conn.close()
-    first = {}
+    first, by_rev = {}, {}
     for s in steps:
-        first.setdefault(s["rev_id"], s)
+        by_rev.setdefault(s["rev_id"], []).append(s)
+        if s["status"] == "pending":
+            first.setdefault(s["rev_id"], s)
     uname = user.get("username")
     out = []
     for r in revs:
         s = first.get(r["id"])
         if s and uname not in (r["created_by"], r["requester"]) \
+                and not _signed_other(user, by_rev[r["id"]], s) \
                 and svc.can_act_step(user, s, _roles=roles):
             r["_stage"] = s["stage"]
             out.append(r)
@@ -541,6 +628,10 @@ def rev_queue(user):
 # --------------------------------------------------------------------------
 # (B) Bulk signing
 # --------------------------------------------------------------------------
+BULK_MAX = 50
+
+
+
 def bulk_sign(pr_ids, user, comment=None, ip=None):
     """Approve several requests, each through act_on_step exactly as if it had
     been signed on its own page. Returns [{id, pr_no, ok, code}] in the order
@@ -553,6 +644,9 @@ def bulk_sign(pr_ids, user, comment=None, ip=None):
             continue
         if pid not in ids:
             ids.append(pid)
+    # Each one is a full act_on_step (gates, notices, maybe an email): a capped
+    # batch finishes inside a web worker's timeout. The route says when it capped.
+    ids = ids[:BULK_MAX]
     if not ids:
         return []
     conn = get_db()
@@ -599,24 +693,38 @@ def _open_lines(conn):
         f"WHERE r.is_active=1 AND r.status IN ({ph})", OPEN_STATUSES).fetchall()
 
 
-def _on_order(lines, code):
-    """(quantity still to come, [open requests]) for one material code — a line
-    matches on its typed code or on the code of the catalogue item it links."""
-    key = (code or "").strip().lower()
+def _tally(lines):
+    """(quantity still to come, [open requests]) over matching open lines. A
+    request counts only while it still has some of it to come: one whose line
+    has fully arrived is not 'on order' for it, whatever else it waits for."""
     qty, prs = 0.0, {}
     for ln in lines:
-        if key and key in ((ln["item"] or "").strip().lower(),
-                           (ln["cat_code"] or "").strip().lower()):
-            qty += max(_f(ln["qty"]) - _f(ln["received_qty"]), 0.0)
+        left = max(_f(ln["qty"]) - _f(ln["received_qty"]), 0.0)
+        if left > 1e-9:
+            qty += left
             prs[ln["pr_id"]] = {"id": ln["pr_id"], "pr_no": ln["pr_no"], "status": ln["status"]}
     return round(qty, 3), list(prs.values())
+
+
+def _on_order(lines, code):
+    """_tally for one material code — a line matches on its typed code or on
+    the code of the catalogue item it links."""
+    key = (code or "").strip().lower()
+    return _tally([ln for ln in lines if key and key in (
+        (ln["item"] or "").strip().lower(), (ln["cat_code"] or "").strip().lower())])
+
+
+def _suggest(target, have, on_order):
+    """Refill to above the trigger, the procure_bridge._suggested_qty rule:
+    the max level when set, else twice the reorder level."""
+    return round(max(target - have - on_order, 0.0), 3)
 
 
 def _with_orders(rows, lines):
     for r in rows:
         r["on_order"], r["open_prs"] = _on_order(lines, r["code"])
-        r["suggested"] = round(max(_f(r["reorder_level"]) - _f(r["available"])
-                                   - r["on_order"], 0.0), 3)
+        target = _f(r.get("max_level")) or _f(r["reorder_level"]) * 2
+        r["suggested"] = _suggest(target, _f(r["available"]), r["on_order"])
     return rows
 
 
@@ -657,3 +765,51 @@ def stock_prefill(material_id):
             "unit": row.get("uom") if row.get("uom") in C.PR_UNITS else None,
             "qty": row["suggested"] or 1, "item_id": cat["id"] if cat else None}
     return head, [line], row["open_prs"]
+
+
+def _unit(uom):
+    """The form's spelling of a unit, or None (the form then asks)."""
+    return next((u for u in C.PR_UNITS if u.lower() == (uom or "").strip().lower()), None)
+
+
+def _spare_row(conn, spare_id):
+    """A maintenance spare with what is on order for it: open lines linked by
+    spare_id (manual, ticket or procure_bridge requests alike)."""
+    s = conn.execute("SELECT * FROM mnt_spare_parts WHERE id=? AND is_active=1",
+                     (spare_id,)).fetchone()
+    if not s:
+        return None
+    s = dict(s)
+    ph = ",".join("?" for _ in OPEN_STATUSES)
+    s["on_order"], s["open_prs"] = _tally(conn.execute(
+        "SELECT i.qty, i.received_qty, r.id AS pr_id, r.pr_no, r.status FROM pr_items i "
+        "JOIN pr_requests r ON r.id=i.pr_id "
+        f"WHERE i.spare_id=? AND r.is_active=1 AND r.status IN ({ph})",
+        (spare_id,) + OPEN_STATUSES).fetchall())
+    target = _f(s["max_level"]) or _f(s["reorder_level"]) * 2 or 10
+    s["suggested"] = _suggest(target, _f(s["stock_qty"]), s["on_order"])
+    return s
+
+
+def spare_low(spare_id):
+    """For the maintenance dashboard's Low Stock panel: one spare's on-order
+    quantity, suggested quantity and open requests (None when it is gone)."""
+    conn = get_db()
+    try:
+        return _spare_row(conn, spare_id)
+    finally:
+        conn.close()
+
+
+def spare_prefill(spare_id):
+    """(header, lines, open_requests) for a request raised from one spare. The
+    line keeps spare_id, so its goods receipt posts straight into that stock."""
+    s = spare_low(spare_id)
+    if s is None:
+        return None, [], []
+    head = {"title": ("%s — %s" % (s["code"], s["name"] or "")).strip(" —")[:120],
+            "department": "Maintenance"}
+    line = {"item": ("%s — %s" % (s["code"], s["name"] or "")).strip(" —"),
+            "description": s["spec"] or s["description"] or "", "unit": _unit(s["uom"]),
+            "qty": s["suggested"] or 1, "item_id": None, "spare_id": s["id"]}
+    return head, [line], s["open_prs"]

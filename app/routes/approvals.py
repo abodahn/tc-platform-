@@ -355,10 +355,11 @@ def new():
     ticket_id = request.args.get("from_ticket")
     if ticket_id and ticket_id.isdigit():
         prefill = svc.ticket_prefill(int(ticket_id)) or {}
-    elif request.args.get("copy", "").isdigit() or request.args.get("stock", "").isdigit():
+    elif any(request.args.get(k, "").isdigit() for k in ("copy", "stock", "spare")):
         from app.routes.approvals_porev import form_prefill    # copy a request / low stock
         resp, prefill, copy_items = form_prefill(request.args.get("copy", ""),
-                                                 request.args.get("stock", ""))
+                                                 request.args.get("stock", ""),
+                                                 request.args.get("spare", ""))
         if resp is not None:
             return resp
     return render_template("approvals/new.html", active="proc_new", edit_items=copy_items,
@@ -2127,6 +2128,72 @@ def escalate_now():
     return redirect(url_for("approvals.index"))
 
 
+# act_on_step's refusals, in the words the approve route flashes. Shared with
+# the bulk-sign summary (approvals_porev.py) so both read the same sentence.
+APPROVE_REFUSALS = {
+    "forbidden": "You are not authorised for this approval stage.",
+    "not_pending": "This request is not awaiting approval.",
+    "needs_pricing": "Enter the pricing before approving the Purchasing stage — "
+                     "the request has no commercial value yet.",
+    "needs_quotes": "Competitive quotes required — this order value needs more "
+                    "quotations than are on file. The Vendor quotes panel shows "
+                    "how many: each must come from a different supplier with "
+                    "its file attached. Or record a single-source justification "
+                    "there.",
+    "needs_quote_file": "The quotation on file has no supplier document. "
+                        "Attach the supplier's quotation file before "
+                        "approving.",
+    "chosen_quote_no_file": "The chosen quotation has no supplier file. "
+                            "Attach it in the Vendor quotes panel before "
+                            "approving.",
+    "chosen_quote_not_applied": "The chosen quotation's prices are not on the "
+                                "request: it is in another currency. Edit the "
+                                "chosen quotation, check its currency and FX "
+                                "rate to EGP, and save it — then approve.",
+    "self_approval": "You cannot approve your own request — raising it is "
+                     "your signature.",
+    "dual_role": "You already signed another stage of this request — a "
+                 "different approver must take this one.",
+    "deviation_memo_required": "This order is off plan (over target price, over "
+                               "the stock ceiling, or above the net requirement "
+                               "after inventory netting — §3.4). DOAM §4.4 "
+                               "requires a written justification memo before it "
+                               "is signed — record it in the Coverage check / "
+                               "Deviation from plan panel.",
+    "business_case_required": "Above 10,000,000 EGP the DOAM requires a written "
+                              "business case before this request is signed. "
+                              "Record it first.",
+    "no_active_step": "No active approval step.",
+    # The DOAM §6 gate answers with the maintenance module's codes.
+    # Without these three they reached the buyer raw, inside an
+    # otherwise translated sentence: "Could not approve
+    # (ejr_incomplete:root cause, criticality)."
+    "ejr_missing": "This request has no signed engineering justification. "
+                   "Cite an Engineering-Head-approved report before "
+                   "approving.",
+    "ejr_not_approved": "That report is not signed yet. Engineering must "
+                        "approve it before Procurement can accept the "
+                        "request.",
+    # Fail-closed: the gate could not be evaluated, so nothing is
+    # approved. The exception class rides along in the generic tail for
+    # IT; the sentence tells the buyer what to do about it.
+    "ejr_check_failed": "The engineering justification could not be checked, "
+                        "so this request cannot be approved yet. Report this "
+                        "to IT.",
+    "ejr_rejected": "Engineering rejected the justification report for this "
+                    "request. It has to be corrected and signed before "
+                    "Procurement can accept the request.",
+    # No field list here on purpose: the report page already names the
+    # blank fields, in the reader's language, and a list assembled here
+    # would have to be translated AFTER the %s substitution — which is
+    # the one thing the flash shim cannot do.
+    "ejr_incomplete": "The engineering justification report is not finished, "
+                      "so it cannot be relied on. Open the report to see "
+                      "what is still needed.",
+    "retired": "This record has already been retired.",
+}
+
+
 @bp.route("/pr/<int:pr_id>/approve", methods=["POST"])
 @login_required
 @permission_required("proc_approve", "proc_admin")
@@ -2135,66 +2202,7 @@ def approve(pr_id):
                               comment=request.form.get("comment", "").strip() or None,
                               ip=_ip())
     if not ok:
-        flash({"forbidden": "You are not authorised for this approval stage.",
-               "not_pending": "This request is not awaiting approval.",
-               "needs_pricing": "Enter the pricing before approving the Purchasing stage — "
-                                "the request has no commercial value yet.",
-               "needs_quotes": "Competitive quotes required — this order value needs more "
-                               "quotations than are on file. The Vendor quotes panel shows "
-                               "how many: each must come from a different supplier with "
-                               "its file attached. Or record a single-source justification "
-                               "there.",
-               "needs_quote_file": "The quotation on file has no supplier document. "
-                                   "Attach the supplier's quotation file before "
-                                   "approving.",
-               "chosen_quote_no_file": "The chosen quotation has no supplier file. "
-                                       "Attach it in the Vendor quotes panel before "
-                                       "approving.",
-               "chosen_quote_not_applied": "The chosen quotation's prices are not on the "
-                                           "request: it is in another currency. Edit the "
-                                           "chosen quotation, check its currency and FX "
-                                           "rate to EGP, and save it — then approve.",
-               "self_approval": "You cannot approve your own request — raising it is "
-                                "your signature.",
-               "dual_role": "You already signed another stage of this request — a "
-                            "different approver must take this one.",
-               "deviation_memo_required": "This order is off plan (over target price, over "
-                                          "the stock ceiling, or above the net requirement "
-                                          "after inventory netting — §3.4). DOAM §4.4 "
-                                          "requires a written justification memo before it "
-                                          "is signed — record it in the Coverage check / "
-                                          "Deviation from plan panel.",
-               "business_case_required": "Above 10,000,000 EGP the DOAM requires a written "
-                                         "business case before this request is signed. "
-                                         "Record it first.",
-               "no_active_step": "No active approval step.",
-               # The DOAM §6 gate answers with the maintenance module's codes.
-               # Without these three they reached the buyer raw, inside an
-               # otherwise translated sentence: "Could not approve
-               # (ejr_incomplete:root cause, criticality)."
-               "ejr_missing": "This request has no signed engineering justification. "
-                              "Cite an Engineering-Head-approved report before "
-                              "approving.",
-               "ejr_not_approved": "That report is not signed yet. Engineering must "
-                                   "approve it before Procurement can accept the "
-                                   "request.",
-               # Fail-closed: the gate could not be evaluated, so nothing is
-               # approved. The exception class rides along in the generic tail for
-               # IT; the sentence tells the buyer what to do about it.
-               "ejr_check_failed": "The engineering justification could not be checked, "
-                                   "so this request cannot be approved yet. Report this "
-                                   "to IT.",
-               "ejr_rejected": "Engineering rejected the justification report for this "
-                               "request. It has to be corrected and signed before "
-                               "Procurement can accept the request.",
-               # No field list here on purpose: the report page already names the
-               # blank fields, in the reader's language, and a list assembled here
-               # would have to be translated AFTER the %s substitution — which is
-               # the one thing the flash shim cannot do.
-               "ejr_incomplete": "The engineering justification report is not finished, "
-                                 "so it cannot be relied on. Open the report to see "
-                                 "what is still needed.",
-               }.get(_code(msg), f"Could not approve ({msg})."),
+        flash(APPROVE_REFUSALS.get(_code(msg), f"Could not approve ({msg})."),
               "error")
     else:
         flash({"advanced": "Approved — routed to the next approver.",
