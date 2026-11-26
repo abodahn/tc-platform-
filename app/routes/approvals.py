@@ -121,7 +121,7 @@ def index():
     except Exception:
         pass
     queue = svc.my_queue(user)
-    recent = svc.list_prs(limit=12)
+    recent = svc.list_prs(limit=12, requester=(None if svc.sees_all_prs(user) else user["username"]))
     return render_template(
         "approvals/index.html", active="procurement",
         kpi=svc.counts(user), queue=queue, recent=recent,
@@ -195,8 +195,8 @@ def listing_xlsx():
     from openpyxl.utils import get_column_letter
 
     status = request.args.get("status", "all")
-    mine = request.args.get("mine") == "1"
     user = _u()
+    mine = request.args.get("mine") == "1" or not svc.sees_all_prs(user)
     f = _list_filters(user)
     prs = svc.list_prs(status=status,
                        requester=(user["username"] if mine else None), **f)
@@ -280,8 +280,9 @@ def _list_filters(user):
 @permission_required("proc_view")
 def listing():
     status = request.args.get("status", "all")
-    mine = request.args.get("mine") == "1"
     user = _u()
+    own_only = not svc.sees_all_prs(user)
+    mine = request.args.get("mine") == "1" or own_only
     f = _list_filters(user)
     prs = svc.list_prs(status=status, requester=(user["username"] if mine else None), **f)
     # Every link on the page (status chips, Mine, headers, Excel) keeps the rest.
@@ -297,7 +298,7 @@ def listing():
                            value_sort=svc.money_view(user) == "full",
                            filtered=any(f[k] for k in ("q", "dept", "priority", "date_from", "date_to",
                                                        "vendor", "cat", "cc", "kind", "committed", "cur")),
-                           prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES,
+                           prs=prs, status=status, mine=mine, own_only=own_only, statuses=C.PR_STATUSES,
                            money=svc.money_views(user, prs),
                            items=svc.items_preview(prs),
                            waiting=svc.waiting_on(prs))
@@ -3314,3 +3315,24 @@ from app.routes import approvals_porev as _porev  # noqa: E402,F401  PO lane rou
 
 
 from app.routes import approvals_analytics  # noqa: E402,F401  (analytics routes on bp)
+
+
+# Requesters see only their own requests. One guard for every procurement URL
+# that points at a request (page, edit, PDFs, Excel, quote/invoice/attachment
+# files), and the company-wide pages a plain requester has no business in.
+_ALL_ONLY_ENDPOINTS = {"approvals.export_csv", "approvals.agreements", "approvals.agreements_xlsx",
+                       "approvals.agreement_detail"}
+
+
+@bp.before_request
+def _requester_scope():
+    user = _u()
+    if not user or svc.sees_all_prs(user):
+        return None
+    ep = request.endpoint or ""
+    if ep in _ALL_ONLY_ENDPOINTS or ep.startswith("approvals.analytics"):
+        abort(403)
+    pr = svc.pr_for_args(request.view_args)
+    if pr is not None and not svc.can_view_pr(user, pr):
+        abort(404)
+    return None

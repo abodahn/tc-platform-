@@ -123,7 +123,7 @@
       <a class="btn btn-sm {{ 'btn-primary' if status==s else 'btn-ghost' }}" href="{{ url_for('approvals.listing', **dict(keep, status=s)) }}">{{ s|replace('_',' ')|title }}</a>
       {% endfor %}
       <span style="flex:1"></span>
-      <a class="btn btn-sm {{ 'btn-primary' if mine else 'btn-ghost' }}" href="{{ url_for('approvals.listing', **dict(keep, mine=(None if mine else 1))) }}" data-i18n="proc.mine">Mine only</a>
+      {% if not own_only %}<a class="btn btn-sm {{ 'btn-primary' if mine else 'btn-ghost' }}" href="{{ url_for('approvals.listing', **dict(keep, mine=(None if mine else 1))) }}" data-i18n="proc.mine">Mine only</a>{% endif %}
       {% if can('proc_purchasing') %}<a class="btn btn-sm btn-ghost" href="{{ url_for('approvals.deliveries', late=1) }}" data-i18n="proc.delivery.late_nav">Late deliveries</a>{% endif %}
       {#- Exports exactly what the filters above are showing, which is why it
           sits beside them and carries the same arguments. The count is on the

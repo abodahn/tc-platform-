@@ -161,9 +161,13 @@ def inject_globals():
             # Scope-locked users only see bell alerts for their own system(s).
             notifs = [n for n in notifs if not n["module"] or n["module"] in scope]
             unread = sum(1 for n in notifs if not n["is_read"])
+        # Company-wide procurement pages are not for a plain requester.
+        from app.approvals.services import sees_all_prs
+        _hide = () if sees_all_prs(user) else ("proc_analytics", "proc_agreements")
         for section in NAV:
             items = [it for it in section["items"]
                      if user_has_permission(user, it[4]) and it[0] not in WIP_KEYS
+                     and it[0] not in _hide
                      and (scope is None or it[0] in scope)]
             if items:
                 visible_nav.append({"section": section["section"], "items": items})
@@ -1199,15 +1203,19 @@ def search():
                                 "sub": _gt(lg, "nav.proc_home"),
                                 "url": url_for("approvals.guide")})
         if user_has_permission(user, "proc_view"):
+            from app.approvals import services as _proc_svc
+            _all_prs = _proc_svc.sees_all_prs(user)   # a requester finds only their own
             for pr in conn.execute(
                     "SELECT id,pr_no,title,status FROM pr_requests WHERE is_active=1 "
-                    "ORDER BY id DESC LIMIT 300"):
+                    + ("" if _all_prs else "AND LOWER(requester)=LOWER(?) ")
+                    + "ORDER BY id DESC LIMIT 300", (() if _all_prs else (user["username"],))):
                 if fuzzy(f"{pr['pr_no']} {pr['title']}"):
                     results.append({"type": "pr", "name": f"{pr['pr_no']} · {pr['title'] or ''}",
                                     "sub": "Purchase request",
                                     "url": url_for("approvals.detail", pr_id=pr["id"])})
             from app.approvals import imports as _proc_imp
-            results.extend(_proc_imp.search(conn, fuzzy))
+            if _all_prs:
+                results.extend(_proc_imp.search(conn, fuzzy))
         if user_has_permission(user, "proc_catalogue"):
             # The item master, searched in the database rather than pulled into
             # memory: it holds five figures of rows, and the fuzzy() helper above

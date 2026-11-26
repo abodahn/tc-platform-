@@ -856,6 +856,10 @@ PROC_PERMISSIONS = [
 # money-bearing reports gate on this one tuple.
 MONEY_PERMS = ("proc_purchasing", "proc_pay", "proc_admin")
 
+# Who sees EVERY purchase request. Anyone else (a plain requester: proc_view /
+# proc_create only) sees just the requests they raised.
+ALL_PR_PERMS = ("proc_approve", "proc_purchasing", "proc_receive", "proc_pay", "proc_admin")
+
 # New roles introduced by this module -> the procurement permissions they hold.
 PROC_ROLE_PERMS = {
     "purchasing_manager": ["proc_view", "proc_create", "proc_approve", "proc_purchasing",

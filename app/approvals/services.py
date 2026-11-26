@@ -1537,10 +1537,14 @@ def my_queue(user, own_only=False):
 
 
 def counts(user=None):
-    """Small KPI bundle for the module landing page."""
+    """Small KPI bundle for the module landing page (a requester's own only)."""
+    own = user is not None and not sees_all_prs(user)
     conn = get_db()
     try:
         def c(sql, a=()):
+            if own:
+                sql += (" AND " if " WHERE " in sql else " WHERE ") + "LOWER(requester)=LOWER(?)"
+                a = tuple(a) + (user.get("username") or "",)
             return conn.execute(sql, a).fetchone()["c"]
         data = {
             "total": c("SELECT COUNT(*) c FROM pr_requests WHERE is_active=1"),
@@ -9777,3 +9781,56 @@ def _money(raw):
     except (TypeError, ValueError):
         return None
     return v if math.isfinite(v) and v >= 0 else None
+
+
+def sees_all_prs(user):
+    """True for admins and anyone with a working procurement role; a plain
+    requester (proc_view / proc_create only) sees only the requests they raised."""
+    if not user:
+        return False
+    if user.get("role") == "super_admin":
+        return True
+    return any(user_has_permission(user, p) for p in C.ALL_PR_PERMS)
+
+
+def can_view_pr(user, pr):
+    """May this user open this request (page, PDFs, files)?"""
+    if sees_all_prs(user):
+        return True
+    if not user or not pr:
+        return False
+    un = (user.get("username") or "").lower()
+    return bool(un) and ((_pr_field(pr, "requester") or "").lower() == un
+                         or (_pr_field(pr, "requester_user_id") is not None
+                             and _pr_field(pr, "requester_user_id") == user.get("id")))
+
+
+# Route argument -> the table whose pr_id says which request a file/document belongs to.
+_PR_OF_ARG = {"quote_id": "pr_quotes", "inv_id": "pr_invoices", "ret_id": "pr_returns",
+              "att_id": "pr_attachments", "charge_id": "pr_landed_charges",
+              "rev_id": "pr_po_revisions"}
+
+
+def pr_for_args(view_args):
+    """The pr_requests row a procurement URL points at, or None."""
+    view_args = view_args or {}
+    conn = get_db()
+    try:
+        pid = view_args.get("pr_id")
+        if pid is None:
+            for arg, table in _PR_OF_ARG.items():
+                if arg in view_args:
+                    try:
+                        r = conn.execute("SELECT pr_id FROM %s WHERE id=?" % table,
+                                         (view_args[arg],)).fetchone()
+                    except Exception:
+                        conn.rollback()
+                        r = None
+                    pid = r["pr_id"] if r else None
+                    break
+        if pid is None:
+            return None
+        return conn.execute("SELECT id, requester, requester_user_id FROM pr_requests WHERE id=?",
+                            (pid,)).fetchone()
+    finally:
+        conn.close()
