@@ -17,6 +17,7 @@ from app.db import get_db
 from app.tabular import read_grid, TableError, ACCEPT, to_number
 from app.auth import login_required, current_user
 from app.security import user_has_permission, system_scope
+from app.services import file_view
 from app.maintenance import services as svc
 from app.maintenance import constants as C
 from app.maintenance import ai as ai_engine
@@ -756,6 +757,8 @@ def attachment(aid):
     # rendering inline (the ticket photos are <img> tags); everything else, SVG and
     # PDF included, is downloaded rather than rendered.
     ct = (a["content_type"] or "").split(";")[0].strip().lower()
+    if file_view.wanted():   # in-app viewer / sniffed inline / download (same gate as above)
+        return file_view.file_response(path.read_bytes(), ct, a["original_name"] or a["filename"])
     inline = ct in INLINE_ATTACHMENT_TYPES
     return send_file(str(path),
                      mimetype=ct if inline else "application/octet-stream",

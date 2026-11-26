@@ -84,7 +84,7 @@
     {% if attachments %}
     <div class="mphotos">
       {% for a in attachments %}
-      <a href="{{ url_for('maintenance.attachment', aid=a.id) }}" target="_blank" class="mphoto">
+      <a href="{{ url_for('maintenance.attachment', aid=a.id, view=1) }}" class="mphoto" data-file-view>
         {% if (a.content_type or '').startswith('image') %}<img src="{{ url_for('maintenance.attachment', aid=a.id) }}" alt="doc">
         {% else %}<div class="mphoto-file"><svg class="ico"><use href="#i-report"></use></svg></div>{% endif %}
         <span class="mphoto-tag">{{ a.kind|mhuman }}</span></a>

@@ -198,7 +198,7 @@
                   {% if v.docs %}
                   <ul class="vnd-docs">
                     {% for d in v.docs %}
-                    <li><a href="{{ url_for('approvals.vendor_doc', doc_id=d.id) }}"><bdi>{{ d.filename }}</bdi></a>
+                    <li><a href="{{ url_for('approvals.vendor_doc', doc_id=d.id, view=1) }}" data-file-view><bdi>{{ d.filename }}</bdi></a>
                       <span class="tag" data-i18n="proc.vendors.dt_{{ d.doc_type or 'other' }}">{{ (d.doc_type or 'other')|replace('_',' ') }}</span>
                       <span class="muted" style="font-size:12px">{{ d.uploaded_by }} · {{ (d.created_at or '')[:10] }}</span></li>
                     {% endfor %}

@@ -16,6 +16,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
                    abort, jsonify, send_file, current_app)
 from flask import flash as _flask_flash
 
+from app.services.file_view import file_response
 from app.auth import login_required, permission_required, current_user, user_can
 # Module scope on purpose. This module used to import get_db inside each
 # function that needed it, and twice a helper called it without that line: the
@@ -1988,9 +1989,8 @@ def rfq_pdf(pr_id):
         data = pdfgen.rfq_pdf(bundle, rfq)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False,
-                     download_name=f"{rfq.get('rfq_no') or 'RFQ'}.pdf")
+    return file_response(data, "application/pdf", f"{rfq.get('rfq_no') or 'RFQ'}.pdf",
+                         as_attachment=False)
 
 
 @bp.route("/quote/<int:quote_id>/file")
@@ -2009,8 +2009,7 @@ def quote_file(quote_id):
         raw = base64.b64decode(q["content_b64"])
     except Exception:
         abort(404)
-    return send_file(io.BytesIO(raw), mimetype=q["content_type"] or "application/octet-stream",
-                     as_attachment=True, download_name=q["filename"] or "quote")
+    return file_response(raw, q["content_type"], q["filename"] or "quote")
 
 
 # --------------------------------------------------------------------------
@@ -2501,8 +2500,7 @@ def invoice_file(inv_id):
         raw = base64.b64decode(iv["content_b64"])
     except Exception:
         abort(404)
-    return send_file(io.BytesIO(raw), mimetype=iv["content_type"] or "application/octet-stream",
-                     as_attachment=True, download_name=iv["filename"] or "invoice")
+    return file_response(raw, iv["content_type"], iv["filename"] or "invoice")
 
 
 @bp.route("/pr/<int:pr_id>/payment", methods=["POST"])
@@ -2691,9 +2689,8 @@ def pr_pdf(pr_id):
         data = pdfgen.pr_pdf(bundle, money=money)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False,
-                     download_name=f"{bundle['pr'].get('pr_no', 'PR')}.pdf")
+    return file_response(data, "application/pdf", f"{bundle['pr'].get('pr_no', 'PR')}.pdf",
+                         as_attachment=False)
 
 
 @bp.route("/pr/<int:pr_id>/po.pdf")
@@ -2714,8 +2711,7 @@ def po_pdf(pr_id):
         data = pdfgen.po_pdf(bundle, po)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False, download_name=_po_name(bundle, po, "pdf"))
+    return file_response(data, "application/pdf", _po_name(bundle, po, "pdf"), as_attachment=False)
 
 
 @bp.route("/pr/<int:pr_id>/grn.pdf")
@@ -2740,8 +2736,7 @@ def grn_pdf(pr_id):
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
     name = (grn or {}).get("grn_no") or pdfgen.grn_doc_no(bundle["pr"].get("pr_no"))
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False, download_name=f"{name}.pdf")
+    return file_response(data, "application/pdf", f"{name}.pdf", as_attachment=False)
 
 
 @bp.route("/return/<int:ret_id>/debit-note.pdf")
@@ -2761,9 +2756,8 @@ def debit_note_pdf(ret_id):
         data = pdfgen.debit_note_pdf(bundle, ret)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False,
-                     download_name=f"{ret.get('dn_no') or 'DN'}.pdf")
+    return file_response(data, "application/pdf", f"{ret.get('dn_no') or 'DN'}.pdf",
+                         as_attachment=False)
 
 
 @bp.route("/return/<int:ret_id>/settle", methods=["POST"])
@@ -2932,8 +2926,7 @@ def download_attachment(att_id):
         raw = base64.b64decode(row["content_b64"])
     except Exception:
         abort(404)
-    return send_file(io.BytesIO(raw), mimetype=row["content_type"] or "application/octet-stream",
-                     as_attachment=True, download_name=row["filename"] or "attachment")
+    return file_response(raw, row["content_type"], row["filename"] or "attachment")
 
 
 # --------------------------------------------------------------------------

@@ -180,13 +180,13 @@
       {% if source_link %} · <a href="{{ source_link.url }}" class="tag" style="text-decoration:none">🔗 {{ source_link.label }}</a>{% endif %}</div>
   </div>
   <div class="flex gap center wrap">
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_pdf', pr_id=pr.id, view=1) }}" data-file-view>
       <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.pdf">PR PDF</span></a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.pr_xlsx', pr_id=pr.id) }}" download>
       <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.pr_xlsx">PR Excel</span></a>
     {% include "approvals/_porev_copy_btn.html" %}
     {% if money and pr.status in ('approved','po_issued','closed') %}
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_pdf', pr_id=pr.id, view=1) }}" data-file-view>
       <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.po_xlsx', pr_id=pr.id) }}" download>
       <svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="proc.po_xlsx">PO Excel</span></a>
@@ -1254,15 +1254,15 @@
           <td>{{ '%g'|format(g.accepted_qty or 0) }}</td>
           <td style="{{ 'color:var(--crit);font-weight:600' if (g.quarantined_qty or 0) > 0 }}">{{ '%g'|format(g.quarantined_qty or 0) }}</td>
           <td class="muted">{{ g.received_by }}</td>
-          <td><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
-                 href="{{ url_for('approvals.grn_pdf', pr_id=pr.id, grn=g.id) }}">
+          <td><a class="btn btn-ghost btn-sm"
+                 href="{{ url_for('approvals.grn_pdf', pr_id=pr.id, grn=g.id, view=1) }}" data-file-view>
             <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.grn.pdf">GRN PDF</span></a></td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
     {% elif pr.status in ('partially_received','received','closed') %}
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.grn_pdf', pr_id=pr.id) }}" target="_blank" rel="noopener" style="margin-top:6px">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.grn_pdf', pr_id=pr.id, view=1) }}" style="margin-top:6px" data-file-view>
       <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.grn.pdf">GRN PDF</span></a>
     {% endif %}
 
@@ -1395,8 +1395,8 @@
               <span class="muted" style="font-size:11px">{{ r.settled_by }} · {{ (r.settled_at or '')[:16] }}
                 {% if r.settle_ref %}<br><span data-i18n="proc.rtv.st_{{ r.settle_type }}">{{ r.settle_type }}</span>: {{ r.settle_ref }}{% if r.settle_amount and money_full %} · {{ '{:,.2f}'.format(r.settle_amount) }}{% endif %}{% endif %}</span>{% endif %}</td>
           <td class="flex gap center wrap">
-            {% if money_full %}<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
-               href="{{ url_for('approvals.debit_note_pdf', ret_id=r.id) }}">
+            {% if money_full %}<a class="btn btn-ghost btn-sm"
+               href="{{ url_for('approvals.debit_note_pdf', ret_id=r.id, view=1) }}" data-file-view>
               <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rtv.pdf">Debit note PDF</span></a>{% endif %}
             {% if r.status == 'open' and can_pay %}
             <details class="rtv-settle">
@@ -1461,7 +1461,7 @@
           <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format((iv.amount or 0)+(iv.tax or 0)) }} {{ iv.currency }}</td>
           <td><span class="badge {{ 'b-approved' if iv.status=='matched' else ('b-rejected' if iv.status=='disputed' else 'b-pending') }}">{% if iv.status == 'void' %}<span data-i18n="proc.corr.void">Void</span>{% else %}{{ iv.status|title }}{% endif %}</span>
             {% if iv.reversal_of %}<span class="muted" data-i18n="proc.corr.reversal">reversal</span>{% endif %}</td>
-          <td style="text-align:end">{% if iv.filename %}<a class="tag" href="{{ url_for('approvals.invoice_file', inv_id=iv.id) }}">📎</a>{% endif %}
+          <td style="text-align:end">{% if iv.filename %}<a class="tag" href="{{ url_for('approvals.invoice_file', inv_id=iv.id, view=1) }}" data-file-view>📎</a>{% endif %}
             {% if iv.status != 'void' and not iv.reversal_of and (can_purchasing or can_pay) %}
             <form method="post" style="display:inline" action="{{ url_for('approvals.void_invoice', inv_id=iv.id) }}">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -1643,8 +1643,8 @@
             {% if show_commercial %}
             <td style="font-variant-numeric:tabular-nums">{{ '{:,.2f}'.format(p.grand or 0) }} {{ p.currency or pr.currency }}</td>
             {% endif %}
-            <td>{% if money and p.status != 'cancelled' %}<div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
-                   href="{{ url_for('approvals.po_pdf', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_pdf', pr_id=pr.id) }}">
+            <td>{% if money and p.status != 'cancelled' %}<div class="flex gap wrap"><a class="btn btn-ghost btn-sm"
+                   href="{{ url_for('approvals.po_pdf', pr_id=pr.id, po=p.id, view=1) if p.id else url_for('approvals.po_pdf', pr_id=pr.id, view=1) }}" data-file-view>
               <svg class="ico"><use href="#i-cart"></use></svg><span data-i18n="proc.po_pdf">PO PDF</span></a>
               <a class="btn btn-ghost btn-sm" download
                  href="{{ url_for('approvals.po_xlsx', pr_id=pr.id, po=p.id) if p.id else url_for('approvals.po_xlsx', pr_id=pr.id) }}">
@@ -1910,8 +1910,8 @@
                 <td>{% if r.status == 'answered' %}
                     <span class="badge b-approved" data-i18n="proc.rfq.answered">Answered</span>
                     {% else %}<span class="badge b-pending" data-i18n="proc.rfq.sent">Sent</span>{% endif %}</td>
-                <td><div class="flex gap wrap"><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
-                       href="{{ url_for('approvals.rfq_pdf', pr_id=pr.id, rfq=r.id) }}">
+                <td><div class="flex gap wrap"><a class="btn btn-ghost btn-sm"
+                       href="{{ url_for('approvals.rfq_pdf', pr_id=pr.id, rfq=r.id, view=1) }}" data-file-view>
                   <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.rfq.pdf">RFQ PDF</span></a>
                   <a class="btn btn-ghost btn-sm" download
                      href="{{ url_for('approvals.rfq_xlsx', pr_id=pr.id, rfq=r.id) }}">
@@ -2010,7 +2010,7 @@
         {% if b.attachments %}
         <div class="flex gap wrap" style="margin-bottom:12px">
           {% for a in b.attachments %}
-          {% if money %}<a class="tag" href="{{ url_for('approvals.download_attachment', att_id=a.id) }}">📎 {{ a.filename }}</a>{% else %}<span class="tag">📎 {{ a.filename }}</span>{% endif %}
+          {% if money %}<a class="tag" href="{{ url_for('approvals.download_attachment', att_id=a.id, view=1) }}" data-file-view>📎 {{ a.filename }}</a>{% else %}<span class="tag">📎 {{ a.filename }}</span>{% endif %}
           {% endfor %}
         </div>
         {% endif %}
@@ -2085,7 +2085,7 @@
               {% if q.warranty %}<div class="qt-sub">{{ q.warranty }}</div>{% endif %}
               {% if q.rfq_id %}<div class="qt-sub">↩ {{ b.rfqs|selectattr('id','equalto',q.rfq_id)|map(attribute='rfq_no')|first }}</div>{% endif %}
               {% if not q.has_file %}<div><span class="badge b-warning" data-i18n="proc.quote.no_file">No attachment</span></div>
-              {% elif money %}<a class="tag" style="overflow-wrap:anywhere" href="{{ url_for('approvals.quote_file', quote_id=q.id) }}">📎 {{ q.filename or 'quote' }}</a>{% endif %}</td>
+              {% elif money %}<a class="tag" style="overflow-wrap:anywhere" href="{{ url_for('approvals.quote_file', quote_id=q.id, view=1) }}" data-file-view>📎 {{ q.filename or 'quote' }}</a>{% endif %}</td>
           <td class="qt-num"><span class="qt-lbl" data-i18n="proc.quote.before_vat">Before VAT</span>
             {%- if money %}<bdi>{{ fmt.format(q.amount) }} {{ q.currency }}</bdi>
             {%- if q.disc_total %}<div class="qt-sub"><span data-i18n="proc.disc.label">Discount</span> <bdi dir="ltr">−{{ '{:,.2f}'.format(q.disc_total) }}

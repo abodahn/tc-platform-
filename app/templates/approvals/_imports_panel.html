@@ -143,7 +143,7 @@
               <td class="num">{{ '%g'|format(c.fx_rate or 1) }}</td>
               <td class="nw num">{{ '{:,.2f}'.format(c.amount_egp or 0) }}</td>
               <td>{{ c.reference or '' }}{% if c.filename %}
-                <a href="{{ url_for('approvals.imp_charge_file', charge_id=c.id) }}" data-i18n="proc.imports.doc">Document</a>{% endif %}
+                <a href="{{ url_for('approvals.imp_charge_file', charge_id=c.id, view=1) }}" data-i18n="proc.imports.doc" data-file-view>Document</a>{% endif %}
                 {% if c.void_reason %}<div class="muted imp-small">{{ c.void_reason }}</div>{% endif %}</td>
               <td>{% if ix.can_correct and c.status == 'active' %}
                 <details class="imp-fix">
