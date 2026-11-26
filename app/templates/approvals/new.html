@@ -137,31 +137,31 @@
             <option value="top_urgent" {{ 'selected' if prefill.priority == 'top_urgent' }}
                     data-i18n="proc.prio_top">🔴 Top urgent</option>
           </select>
-          <span class="muted" style="font-size:12px" data-i18n="proc.prio_hint">Priority tells the buyer how to sequence their work. It does not change who approves the request or how much authority it needs.</span></div>
-        {#- These three stay on the form when switched off in Settings, greyed
-            and unposted (no name), so the layout does not jump; the server
-            treats an unposted switched-off field as hidden (stored value wins). -#}
-        {% set on = fields.show_expenditure_kind %}
-        <div class="field{{ '' if on else ' is-off' }}"><label data-i18n="proc.kind_l">Expenditure type</label>
-          <select {% if on %}name="expenditure_kind"{% else %}disabled{% endif %} id="expKind">
+          <span class="muted" style="font-size:12px" data-i18n="proc.prio_hint">Sets the order Purchasing works in. It does not change who approves.</span></div>
+        {% if fields.show_expenditure_kind %}
+        <div class="field"><label data-i18n="proc.kind_l">Expenditure type</label>
+          <select name="expenditure_kind" id="expKind">
             <option value="opex" {{ 'selected' if (prefill.expenditure_kind or 'opex') != 'capex' }} data-i18n="proc.kind_opex">Operating (OPEX) — consumables, spares, services</option>
             <option value="capex" {{ 'selected' if prefill.expenditure_kind == 'capex' }} data-i18n="proc.kind_capex">Capital (CAPEX) — machinery, vehicles, buildings, IT assets</option>
           </select>
-          {% if on %}<span class="muted" style="font-size:12px" data-i18n="proc.kind_hint">Capital purchases follow the DOAM capital authority ladder — every level signs, and the Managing Director signs above 250,000 EGP.</span>{% endif %}</div>
+          <span class="muted" style="font-size:12px" data-i18n="proc.kind_hint">Capital purchases follow the DOAM capital authority ladder — every level signs, and the Managing Director signs above 250,000 EGP.</span></div>
+        {% endif %}
         {% if fields.show_sales_order %}
         <div class="field"><label data-i18n="proc.so_l">Sales order</label>
           <input name="so_no" list="soList" autocomplete="off" value="{{ prefill.so_no or '' }}" placeholder="SO / order number">
           <datalist id="soList">{% for o in sales_orders %}<option value="{{ o }}"></option>{% endfor %}</datalist>
-          <span class="muted" style="font-size:12px" data-i18n="proc.so_hint">Required for fabric, yarn, trims, chemicals, packaging, subcontract and wash — that is the order this spend is costed against.</span></div>
+          <span class="muted" style="font-size:12px" data-i18n="proc.so_hint">Only for direct material for a client order (fabric, trims, chemicals, packaging, wash, subcontract). Pick an open order from the list.</span></div>
         {% endif %}
-        {% set on = fields.show_forecast_ref %}
-        <div class="field{{ '' if on else ' is-off' }}"><label data-i18n="proc.fc_l">Agreed forecast</label>
-          <input {% if on %}name="forecast_ref"{% else %}disabled{% endif %} list="fcList" autocomplete="off" value="{{ prefill.forecast_ref or '' }}" placeholder="Only if there is no sales order yet">
+        {% if fields.show_forecast_ref %}
+        <div class="field"><label data-i18n="proc.fc_l">Agreed forecast</label>
+          <input name="forecast_ref" list="fcList" autocomplete="off" value="{{ prefill.forecast_ref or '' }}" placeholder="Only if there is no sales order yet">
           <datalist id="fcList">{% for f in forecasts %}<option value="{{ f.ref }}">{{ f.description or f.period or '' }}</option>{% endfor %}</datalist>
-          {% if on %}<span class="muted" style="font-size:12px" data-i18n="proc.fc_hint">Buying ahead of a confirmed client order? Cite an agreed forecast instead of a sales order (DOAM §3.4). Only forecasts the Supply Chain Director has agreed, and that are still in date, are listed. Fill in one or the other, not both.</span>{% endif %}</div>
-        {% set on = fields.show_cost_center %}
-        <div class="field{{ '' if on else ' is-off' }}"><label data-i18n="proc.cc_l">Cost centre</label>
-          <input {% if on %}name="cost_center"{% else %}disabled{% endif %} autocomplete="off" value="{{ prefill.cost_center or '' }}" placeholder="For MRO, facility, IT and utilities"></div>
+          <span class="muted" style="font-size:12px" data-i18n="proc.fc_hint">Buying ahead of a confirmed client order? Cite an agreed forecast instead of a sales order (DOAM §3.4). Only forecasts the Supply Chain Director has agreed, and that are still in date, are listed. Fill in one or the other, not both.</span></div>
+        {% endif %}
+        {% if fields.show_cost_center %}
+        <div class="field"><label data-i18n="proc.cc_l">Cost centre</label>
+          <input name="cost_center" autocomplete="off" value="{{ prefill.cost_center or '' }}" placeholder="For MRO, facility, IT and utilities"></div>
+        {% endif %}
         <div class="field"><label data-i18n="proc.dept_l">Department</label>
           <select name="department" id="deptSel">
             <option value=""></option>
