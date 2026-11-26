@@ -511,6 +511,3 @@
 .content.proc .en-only-bad{border-color:var(--crit)!important;outline:1px solid var(--crit)}
 .content.proc .en-only-tip{color:var(--crit);font-size:12px;margin-top:4px}
 .content.proc .li-row > .en-only-tip{grid-column:1/-1;margin-top:-2px}
-/* A request field switched off in Settings: kept in place, greyed, not posted. */
-.content.proc .field.is-off{opacity:.5}
-.content.proc .field.is-off :is(input,select){cursor:not-allowed;background:transparent}
