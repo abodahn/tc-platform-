@@ -342,7 +342,7 @@
           {% if s.esc_from %}
           <span class="tag" title="{{ s.esc_why }}">{{ L.ui.esc_tag if s.esc_role else L.ui.esc_stuck }}</span>
           {% endif %}
-          <span class="sname">{{ s.approver_name or ('…' if s.status=='pending' else '—') }}</span>
+          <span class="sname">{{ s.approver_name or ((itemctl_assignee(s) or '…') if s.stage == 'item_control' and s.status == 'pending' else ('…' if s.status=='pending' else '—')) }}</span>
           {% if s.in_place_of %}
           <span class="badge b-pending" title="{{ s.in_place_of }}">&#9888;
             <span data-i18n="proc.in_place_tag">Super admin signed in place of</span>: {{ s.in_place_of }}</span>
@@ -372,6 +372,7 @@
       </ul>
     </div>
     {% endif %}
+    {% include "approvals/_itemctl_note.html" %}
   </div>
 </div>
 
@@ -1902,6 +1903,7 @@
               {% else %}<span class="waiting">{{ s.approver_name or '—' }}</span>{% endif %}
             </div>
             <div class="smeta">{{ s.approver_name or '' }}{% if s.acted_at %} · {{ s.acted_at[:16] }}{% endif %}</div>
+            {% if s.stage == 'item_control' and s.status == 'pending' and s.assignee %}<div class="smeta"><span data-i18n="proc.itemctl.assigned">Assigned to</span>: {{ itemctl_assignee(s) }}</div>{% endif %}
             {% if s.esc_from %}<div class="smeta" style="color:var(--warn)">{{ s.esc_why }}</div>{% endif %}
             {% if s.in_place_of %}<div class="smeta" style="color:var(--warn);font-weight:600">&#9888;
               <span data-i18n="proc.in_place_tag">Super admin signed in place of</span>: {{ s.in_place_of }}</div>{% endif %}

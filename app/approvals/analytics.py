@@ -1283,6 +1283,7 @@ I18N = {
     "proc.analytics.stg.requester": ("Requester", "مقدّم الطلب", "Talep eden"),
     "proc.analytics.stg.hr_head": ("HR Director", "مدير الموارد البشرية", "İK Direktörü"),
     "proc.analytics.stg.warehouse": ("Warehouse", "المخازن", "Depo"),
+    "proc.analytics.stg.item_control": ("Item control", "مراقبة الأصناف", "Malzeme Kontrolü"),
     "proc.analytics.stg.warehouse_manager": ("Warehouse Manager", "مدير المخازن", "Depo Müdürü"),
     "proc.analytics.stg.purchasing": ("Procurement Manager", "مدير المشتريات", "Satın Alma Müdürü"),
     "proc.analytics.stg.factory_manager": ("Plant Director", "مدير المصنع", "Fabrika Direktörü"),

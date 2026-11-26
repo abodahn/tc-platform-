@@ -1192,3 +1192,6 @@ def translate(text, lang):
 # Vendors lane: the two new quote-route refusals (vendor pending / blocked).
 from app.approvals.vendors_text import MESSAGES as _VMSG  # noqa: E402
 MESSAGES.update(_VMSG)
+# Item control lane: the settings page messages.
+from app.approvals.item_control import MESSAGES as _ICMSG  # noqa: E402
+MESSAGES.update(_ICMSG)

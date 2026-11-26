@@ -17,6 +17,12 @@ Acronyms stay acronyms inside the sentence: PR, PO, RFQ, EGP, FX, OEM, CFO, CEO.
 
 # --- Ladder stages (proc_stage_meta.explanation_ar / _tr) ------------------
 STAGE_AR = {
+    "item_control": (
+        "لطلبات الصيانة العامة والكيماويات والأحجار والخياطة والقص فقط. بعد ما المخزن "
+        "يراجع الرصيد، مسؤول مراقبة الأصناف بتاع القسم يتأكد إن الأصناف والكميات "
+        "صحيحة قبل توقيع مدير المخزن. بيوقّعها الشخص المعيّن للقسم ده في إعدادات "
+        "المشتريات، مش دور وظيفي. بتتشال المرحلة — مع ملاحظة على الطلب — لو مفيش حد "
+        "معيّن أو لو المسؤول نفسه هو مقدّم الطلب."),
     "hr_head": (
         "لطلبات الموارد البشرية فقط. مدير الموارد البشرية يؤكّد أن القسم يحتاج فعلًا "
         "ما طُلب قبل أن يصل الطلب إلى المخزن، ثم يكمل الطلب سلسلة الموافقات المعتادة. "
@@ -90,6 +96,13 @@ STAGE_AR = {
 }
 
 STAGE_TR = {
+    "item_control": (
+        "Yalnızca Genel Bakım, Kimyasallar ve Taşlar ile Dikim ve Kesim talepleri. "
+        "Depo stoğu kontrol ettikten sonra departmanın malzeme kontrol sorumlusu, "
+        "Depo Müdürü imzalamadan önce kalemlerin ve miktarların doğru olduğunu teyit "
+        "eder. Bir rol değil, Satın Alma ayarlarında o departmana atanan kişi imzalar. "
+        "Kimse atanmamışsa veya talebi sorumlunun kendisi açtıysa aşama talep üzerinde "
+        "bir notla atlanır."),
     "hr_head": (
         "Yalnızca İnsan Kaynakları talepleri. İK Direktörü, talep depoya ulaşmadan "
         "önce departmanın istenen şeye gerçekten ihtiyacı olduğunu teyit eder; talep "
@@ -557,12 +570,14 @@ DOC = {
 
 STAGE_LABEL = {
     "en": {"requester": "Requester", "hr_head": "HR Director", "warehouse": "Warehouse",
+           "item_control": "Item control",
            "warehouse_manager": "Warehouse Manager",
            "control": "Financial Control",
            "factory_manager": "Factory Manager", "purchasing": "Purchasing",
            "finance": "Finance", "cfo": "CFO", "ceo": "CEO",
            "scd": "Supply Chain Director", "bod": "Board of Directors"},
     "ar": {"requester": "مقدّم الطلب", "hr_head": "مدير الموارد البشرية", "warehouse": "المخزن",
+           "item_control": "مراقبة الأصناف",
            "warehouse_manager": "مدير المخزن",
            "control": "الكنترول المالي",
            "factory_manager": "مدير المصنع", "purchasing": "المشتريات",
@@ -570,6 +585,7 @@ STAGE_LABEL = {
            "ceo": "الرئيس التنفيذي (CEO)",
            "scd": "مدير سلسلة الإمداد", "bod": "مجلس الإدارة"},
     "tr": {"requester": "Talep eden", "hr_head": "İK Direktörü", "warehouse": "Depo",
+           "item_control": "Malzeme Kontrolü",
            "warehouse_manager": "Depo Müdürü",
            "control": "Finansal Kontrol",
            "factory_manager": "Fabrika Müdürü", "purchasing": "Satın Alma",

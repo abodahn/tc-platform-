@@ -327,6 +327,18 @@
   var LADDER = {{ ladder|tojson }};               // ordered stage keys
   var LABELS = {{ stage_labels|tojson }};         // stage -> label
   var HR_DEPTS = {{ (hr_depts or [])|tojson }};   // departments the HR Director signs first
+  var ITEMCTL = {{ itemctl_preview()|tojson }};   // departments signed by an item controller after the store
+  // Same folding as item_control._norm on the server.
+  function icNorm(t){
+    t = String(t||'').toLowerCase().replace(/[\u064B-\u0652\u0640]/g,'')
+      .replace(/[أإآ]/g,'ا').replace(/ة/g,'ه').replace(/ى/g,'ي')
+      .replace(/[&+]/g,' and ');
+    return t.replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+  }
+  function icChip(stage, dept){
+    return (stage === 'warehouse' && ITEMCTL.indexOf(icNorm(dept)) >= 0)
+      ? '<span class="arrow">›</span><span class="lc">'+(LABELS.item_control||'Item control')+'</span>' : '';
+  }
   var DEPT_MATRICES = {{ dept_matrices|tojson }}; // department -> {stage: threshold} (custom matrices)
   var rows = document.getElementById('rows');
   var totalVal = document.getElementById('totalVal');   // absent in requester view
@@ -418,7 +430,7 @@
       LADDER.forEach(function(stage){
         var eligible = custom ? (stage in m) : true;
         if (eligible && (m[stage]||0) <= 0) {
-          chips.push('<span class="arrow">›</span><span class="lc">'+(LABELS[stage]||stage)+'</span>');
+          chips.push('<span class="arrow">›</span><span class="lc">'+(LABELS[stage]||stage)+'</span>' + icChip(stage, dept));
         }
       });
       chips.push('<span class="arrow">›</span><span class="lc" style="border-style:dashed;opacity:.7" data-i18n="proc.after_pricing">Finance approvals after pricing</span>');
@@ -429,7 +441,7 @@
     LADDER.forEach(function(stage){
       var eligible = custom ? (stage in m) : true;
       if (eligible && total >= (m[stage]||0)) {
-        chips.push('<span class="arrow">›</span><span class="lc">'+(LABELS[stage]||stage)+'</span>');
+        chips.push('<span class="arrow">›</span><span class="lc">'+(LABELS[stage]||stage)+'</span>' + icChip(stage, dept));
       }
     });
     ladderPrev.innerHTML = chips.join(' ');
