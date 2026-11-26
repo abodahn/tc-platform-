@@ -243,7 +243,10 @@ def run():
             tags = [t for t in re.findall(r"<a\b[^>]*>", html) if needle in t or
                     (needle == "listing_xlsx" and "/list.xlsx" in t)]
             assert tags, (path, needle)
-            assert all("data-file-download" in t for t in tags), (path, tags)
+            # an export either downloads (data-file-download) or opens in the in-app viewer
+            # (data-file-view, e.g. PR/PO/RFQ Excel) - never a bare link that strands iOS
+            assert all("data-file-download" in t or ("data-file-view" in t and "view=1" in t)
+                       for t in tags), (path, tags)
         print("ok  export links carry data-file-download")
 
         # -- static scan: every template link to a file-export endpoint is marked
