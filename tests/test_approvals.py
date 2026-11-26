@@ -384,8 +384,9 @@ def test_bell_is_per_user(app_client):
         rows_other, _ = _unread_notifications("nobody_xyz")
         assert not any(r["title"] == "New request to sign" and r["target_user"]
                        for r in rows_other)
-        # a warehouse approver SHOULD see it
-        rows_wh, _ = _unread_notifications("warehouse")
+        # the store-rung signer SHOULD see it (the warehouse MANAGER is told at their
+        # own, later rung while a storekeeper can sign this one — lane notifown)
+        rows_wh, _ = _unread_notifications("store")
         assert any(r["title"] == "New request to sign" for r in rows_wh)
 
 

@@ -374,13 +374,52 @@ def _step_signers(conn, pr, step):
     return set(people) - {pr["requester"]}
 
 
+def _step_notify(conn, pr, step):
+    """Who to TELL that this pending step is on their desk — a subset of
+    _step_signers (who MAY sign; can_act and SoD are untouched).
+
+    A role that is also the dedicated signer of a LATER pending rung of the same
+    request (warehouse_manager on the 'warehouse' rung) is left out while anybody
+    else can sign this one, so the manager hears about the request when it reaches
+    THEIR rung. Nobody else (a site with no storekeeper, or the requester is the
+    only one) -> the full set, so the request still moves. An escalated step is
+    already pointed at its signers and is not narrowed. A signer with an active
+    delegation to someone in the set is replaced by that delegate."""
+    signers = _step_signers(conn, pr, step)
+    people = signers
+    if signers and not _pr_field(step, "esc_role"):
+        rmap = stage_roles_map(conn)
+        roles = set(rmap.get(step["stage"]) or ())
+        pending = conn.execute("SELECT stage, seq, esc_role FROM pr_steps WHERE pr_id=? "
+                               "AND status='pending'", (pr["id"],)).fetchall()
+        seq = _pr_field(step, "seq")
+        if seq is None:   # a rung described by stage only (the submit prompt)
+            seq = min((r["seq"] for r in pending if r["stage"] == step["stage"]), default=None)
+        later = set()
+        for r in pending:
+            if seq is not None and r["seq"] > seq:
+                later |= step_roles(r, rmap)
+        if roles & later:
+            people = (set(stage_signers(conn, step["stage"], roles - later))
+                      - {pr["requester"]}) or signers
+    if len(people) > 1:
+        today = _now()[:10]
+        ph = ",".join("?" * len(people))
+        away = {r["from_user"] for r in conn.execute(
+            f"SELECT from_user FROM proc_delegations WHERE is_active=1 AND to_user IN ({ph}) "
+            f"AND from_user <> to_user AND (from_date IS NULL OR from_date<=?) "
+            f"AND (to_date IS NULL OR to_date>=?)", tuple(people) + (today, today)).fetchall()}
+        people = (people - away) or people
+    return set(people)
+
+
 def _prompt_rung(conn, pr, rows, message, exclude=(), alerted=()):
-    """'New request to sign' to everyone who may sign `rows` (the rung that just
-    became current). A step nobody may sign sends the proc admins one critical
-    alert instead, unless its stage is in `alerted` (already told this pass)."""
+    """'New request to sign' to the people whose turn `rows` (the rung that just
+    became current) is — _step_notify. A step nobody may sign sends the proc admins
+    one critical alert instead, unless its stage is in `alerted` (already told)."""
     targets, orphan = set(), []
     for r in rows:
-        people = _step_signers(conn, pr, r)
+        people = _step_notify(conn, pr, r)
         targets |= people
         if not people and r["stage"] not in alerted:
             orphan.append(r["stage"])
@@ -6096,7 +6135,7 @@ def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
                 "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
                 (pr_id, pr["current_seq"])).fetchall()
             for st in cur:
-                told |= _step_signers(conn, pr, st)
+                told |= _step_notify(conn, pr, st)   # the ones who were prompted
             _clear_sign_prompts(conn, pr, cur)
         on_order = pr["status"] in ("po_issued", "in_transit")
         if on_order:
@@ -8149,7 +8188,7 @@ def run_escalations():
                 audit(conn, pr["id"], "system", "escalated",
                       f"{stage_label(step['stage'])} overdue ({round(hrs)}h)")
                 # nobody may sign it (parked / unstaffed): the admins, never the requester
-                targets = _step_signers(conn, pr, step) or _proc_admins(conn)
+                targets = _step_notify(conn, pr, step) or _proc_admins(conn)
                 notify_users(conn, targets, "warning", "Approval overdue",
                              f"{pr['pr_no']} has waited {round(hrs)}h at {stage_label(step['stage'])}.",
                              link=_pr_link(pr["id"]))
@@ -8161,7 +8200,7 @@ def run_escalations():
                 audit(conn, pr["id"], "system", "escalated2",
                       f"{stage_label(step['stage'])} critically overdue ({round(hrs)}h, >2x SLA)")
                 # one set, so a signer who is also an admin gets one row
-                targets = _step_signers(conn, pr, step) | set(_proc_admins(conn))
+                targets = _step_notify(conn, pr, step) | set(_proc_admins(conn))
                 notify_users(conn, targets, "critical", "Approval overdue (level 2)",
                              f"{pr['pr_no']} has waited {round(hrs)}h at "
                              f"{stage_label(step['stage'])} — management attention needed.",

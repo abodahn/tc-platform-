@@ -69,17 +69,17 @@ def _system_by_key(key):
     return row
 
 
-def _unread_notifications(username=None):
-    """Bell feed: broadcast notifications (target_user IS NULL) plus any addressed
-    to this user. Older rows created before the target_user column are broadcast."""
+def _unread_notifications(user):
+    """Bell feed: rows addressed to this user, plus broadcasts of the modules they
+    own (app/services/bell_scope.py) — not every broadcast to everybody."""
+    from app.services import bell_scope
     conn = get_db()
     try:
-        rows = conn.execute(
-            "SELECT * FROM notifications WHERE target_user IS NULL OR target_user = ? "
-            "ORDER BY id DESC LIMIT 30", (username,)).fetchall()
-        unread = conn.execute(
-            "SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0 "
-            "AND (target_user IS NULL OR target_user = ?)", (username,)).fetchone()["c"]
+        if isinstance(user, str):   # older callers pass a bare username
+            row = conn.execute("SELECT * FROM users WHERE username = ?", (user,)).fetchone()
+            user = dict(row) if row else {"username": user}
+        rows = bell_scope.bell_rows(conn, user)
+        unread = bell_scope.unread_count(conn, user)
     finally:
         conn.close()
     # Procurement rows are stored in English; shown in the reader's language.
@@ -159,7 +159,7 @@ def inject_globals():
     notifs, unread = ([], 0)
     visible_nav = []
     if user:
-        notifs, unread = _unread_notifications(user["username"])
+        notifs, unread = _unread_notifications(user)
         from app.navigation import WIP_KEYS
         is_admin = user_has_permission(user, "access_admin")
         scope = system_scope(user)   # None = unrestricted; a set = only those keys
@@ -1042,17 +1042,13 @@ def mark_notifications_read():
         nid = int(nid) if nid not in (None, "") else None
     except (TypeError, ValueError):
         nid = None
+    from app.services import bell_scope
     conn = get_db()
     try:
-        me = (current_user() or {}).get("username")
-        if nid:
-            # Scoped to the reader. Without this any signed-in account could clear
-            # the CFO's "request to sign" by guessing an id.
-            conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ? "
-                         "AND (target_user IS NULL OR target_user = ?)", (nid, me))
-        else:
-            conn.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0 "
-                         "AND (target_user IS NULL OR target_user = ?)", (me,))
+        # Scoped to the reader: only rows they can see, and a broadcast is marked
+        # read for them alone. Without this any signed-in account could clear the
+        # CFO's "request to sign" by guessing an id.
+        bell_scope.mark_read(conn, current_user(), nid)
         conn.commit()
     finally:
         conn.close()
@@ -1137,7 +1133,7 @@ def notifications_feed():
     except Exception:
         pass
     user = current_user()
-    notifs, unread = _unread_notifications((user or {}).get("username"))
+    notifs, unread = _unread_notifications(user)
     scope = system_scope(user) if user else None
     if scope is not None:
         # same rule inject_globals applies to the bell: scope-locked users only
@@ -1481,7 +1477,7 @@ def my_work():
             pass
 
     try:
-        notifs, _unread = _unread_notifications(user["username"])
+        notifs, _unread = _unread_notifications(user)
         scope = system_scope(user)
         if scope is not None:
             notifs = [n for n in notifs if (n["module"] or "") in scope or not n["module"]]

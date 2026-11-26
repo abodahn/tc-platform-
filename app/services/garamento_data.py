@@ -80,7 +80,8 @@ def snapshot(user=None):
 
         # --- Notifications (for this user) ---
         if username:
-            unread = _scalar(conn, "SELECT COUNT(*) c FROM notifications WHERE is_read=0 AND (target_user IS NULL OR target_user=?)", (username,))
+            from app.services import bell_scope
+            unread = bell_scope.unread_count(conn, user)
             if unread:
                 lines.append(f"Unread notifications: {unread}.")
     except Exception:  # noqa: BLE001

@@ -213,6 +213,10 @@ def main():
         signers = set(svc.eligible_approvers(
             conn, step_a["stage"], roles=svc._csv_set(step_a["esc_role"]) or None))
         ok("the overdue rung has someone who can sign it", bool(signers), signers)
+        # ...but the bell goes to whose turn it is (lane notifown): the warehouse
+        # manager signs the NEXT rung, so a storekeeper on this one is enough.
+        pr_a_row = dict(conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr_a,)).fetchone())
+        signers = svc._step_notify(conn, pr_a_row, step_a)
         told = AG.run_aging_alerts()
         ok("the job reported telling %d people" % told, told == len(signers), signers)
         ok("exactly the eligible signers were belled, nobody else",
@@ -297,8 +301,7 @@ def main():
         print("\n--- 6. a signer who arrives LATER is told; the rest are not ---")
         newcomer = mkuser("ag_late_store", "storekeeper")
         del newcomer
-        fresh = set(svc.eligible_approvers(
-            conn, step_a["stage"], roles=svc._csv_set(step_a["esc_role"]) or None))
+        fresh = svc._step_notify(conn, pr_a_row, step_a)
         added = fresh - signers
         ok("the new role holder is now eligible for that rung", added == {"ag_late_store"},
            added)
