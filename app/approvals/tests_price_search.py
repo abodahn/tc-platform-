@@ -521,7 +521,7 @@ def saved_roles(app):
     old = json.dumps(["proc_view", "proc_create", "proc_approve", "proc_pay"])
     with app.app_context():
         c = get_db()
-        c.execute("DELETE FROM proc_settings WHERE key='perm_migr_price_search'")
+        c.execute("DELETE FROM proc_data_migrations WHERE key='perm_migr_price_search'")
         c.execute("DELETE FROM custom_roles WHERE role_key='cfo'")
         c.execute("INSERT INTO custom_roles (role_key,label,perms_json,is_builtin,created_at) "
                   "VALUES ('cfo','CFO',?,1,'2026-01-01')", (old,))

@@ -1089,13 +1089,16 @@ def grant_price_search_to_saved_roles(conn):
 
     A custom_roles row REPLACES the code permissions of its role, so a role an
     admin once re-saved in Admin -> Roles would never see the new permission
-    the code grants it. Runs once: a proc_settings marker records it, so an
-    admin who later removes the permission from a role is not overridden.
+    the code grants it. Runs once: a proc_data_migrations marker records it, so
+    an admin who later removes the permission from a role is not overridden.
+    (Not proc_settings: that table holds only admin overrides of real knobs.)
     """
     import json
     marker = "perm_migr_price_search"
     try:
-        if conn.execute("SELECT 1 FROM proc_settings WHERE key=?", (marker,)).fetchone():
+        conn.execute("CREATE TABLE IF NOT EXISTS proc_data_migrations "
+                     "(key TEXT PRIMARY KEY, applied_at TEXT)")
+        if conn.execute("SELECT 1 FROM proc_data_migrations WHERE key=?", (marker,)).fetchone():
             return 0
         n = 0
         rows = conn.execute(
@@ -1110,8 +1113,8 @@ def grant_price_search_to_saved_roles(conn):
                 conn.execute("UPDATE custom_roles SET perms_json=? WHERE role_key=?",
                              (json.dumps(perms + ["proc_price_search"]), r["role_key"]))
                 n += 1
-        conn.execute("INSERT INTO proc_settings (key, value, updated_by, updated_at) "
-                     "VALUES (?,?,?,?)", (marker, "1", "system", _now()))
+        conn.execute("INSERT INTO proc_data_migrations (key, applied_at) VALUES (?,?)",
+                     (marker, _now()))
         conn.commit()
     except Exception:
         conn.rollback()    # custom_roles not created yet: try again next boot
