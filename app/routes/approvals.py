@@ -55,6 +55,7 @@ from app.approvals import services as svc
 from app.approvals import pdf as pdfgen
 from app.approvals import xlsx as xlsxgen
 from app.approvals import constants as C
+from app.approvals.delivery import req_date_refusal as _req_date_refusal
 
 bp = Blueprint("approvals", __name__, url_prefix="/procurement")
 
@@ -115,10 +116,12 @@ def index():
         if now - _LAST_SWEEP[0] >= _SWEEP_INTERVAL:
             _LAST_SWEEP[0] = now
             svc.run_escalations()
+            # Overdue-delivery alerts are NOT run here: they may send email, so
+            # they ride the notification feed's background pass instead.
     except Exception:
         pass
     queue = svc.my_queue(user)
-    recent = svc.list_prs(limit=12)
+    recent = svc.list_prs(limit=12, requester=(None if svc.sees_all_prs(user) else user["username"]))
     return render_template(
         "approvals/index.html", active="procurement",
         kpi=svc.counts(user), queue=queue, recent=recent,
@@ -132,9 +135,8 @@ def index():
 @login_required
 @permission_required("proc_view")
 def analytics():
-    return render_template("approvals/analytics.html", active="proc_analytics",
-                           a=svc.analytics_summary(),
-                           show_money=(svc.money_view(_u()) == "full"))
+    from app.routes.approvals_analytics import dashboard_page
+    return dashboard_page()
 
 
 @bp.route("/export/<key>.csv")
@@ -193,8 +195,8 @@ def listing_xlsx():
     from openpyxl.utils import get_column_letter
 
     status = request.args.get("status", "all")
-    mine = request.args.get("mine") == "1"
     user = _u()
+    mine = request.args.get("mine") == "1" or not svc.sees_all_prs(user)
     f = _list_filters(user)
     prs = svc.list_prs(status=status,
                        requester=(user["username"] if mine else None), **f)
@@ -264,7 +266,13 @@ def _list_filters(user):
     day = lambda k: a.get(k, "") if _ISO_DAY.match(a.get(k, "")) else ""
     return {"q": a.get("q", "").strip()[:100], "dept": a.get("dept", "").strip(),
             "priority": a.get("priority", "") if a.get("priority") in C.PRIORITY_LABELS else "",
-            "date_from": day("from"), "date_to": day("to"), "sort": sort}
+            "date_from": day("from"), "date_to": day("to"), "sort": sort,
+            # analytics drill-down (a chart bar -> the requests behind it)
+            "vendor": a.get("vendor", "").strip()[:120], "cat": a.get("cat", "").strip()[:120],
+            "cc": a.get("cc", "").strip()[:120],
+            "kind": a.get("kind", "") if a.get("kind") in ("opex", "capex") else "",
+            "committed": a.get("committed", "") if a.get("committed") in ("1", "open") else "",
+            "cur": a.get("cur", "").strip().upper() if re.match(r"^[A-Za-z]{3}$", a.get("cur", "").strip()) else ""}
 
 
 @bp.route("/list")
@@ -272,21 +280,25 @@ def _list_filters(user):
 @permission_required("proc_view")
 def listing():
     status = request.args.get("status", "all")
-    mine = request.args.get("mine") == "1"
     user = _u()
+    own_only = not svc.sees_all_prs(user)
+    mine = request.args.get("mine") == "1" or own_only
     f = _list_filters(user)
     prs = svc.list_prs(status=status, requester=(user["username"] if mine else None), **f)
     # Every link on the page (status chips, Mine, headers, Excel) keeps the rest.
     keep = {k: v for k, v in (("q", f["q"]), ("dept", f["dept"]), ("priority", f["priority"]),
                               ("from", f["date_from"]), ("to", f["date_to"]),
+                              ("vendor", f["vendor"]), ("cat", f["cat"]), ("cc", f["cc"]),
+                              ("kind", f["kind"]), ("committed", f["committed"]), ("cur", f["cur"]),
                               ("sort", f["sort"] if f["sort"] != "new" else ""),
                               ("status", status if status != "all" else ""),
                               ("mine", "1" if mine else "")) if v}
     return render_template("approvals/list.html", active="proc_list",
                            f=f, keep=keep, depts=svc.list_departments(),
                            value_sort=svc.money_view(user) == "full",
-                           filtered=any(f[k] for k in ("q", "dept", "priority", "date_from", "date_to")),
-                           prs=prs, status=status, mine=mine, statuses=C.PR_STATUSES,
+                           filtered=any(f[k] for k in ("q", "dept", "priority", "date_from", "date_to",
+                                                       "vendor", "cat", "cc", "kind", "committed", "cur")),
+                           prs=prs, status=status, mine=mine, own_only=own_only, statuses=C.PR_STATUSES,
                            money=svc.money_views(user, prs),
                            items=svc.items_preview(prs),
                            waiting=svc.waiting_on(prs))
@@ -351,10 +363,18 @@ I18N = {
 @permission_required("proc_create")
 def new():
     prefill = {}
+    copy_items = []
     ticket_id = request.args.get("from_ticket")
     if ticket_id and ticket_id.isdigit():
         prefill = svc.ticket_prefill(int(ticket_id)) or {}
-    return render_template("approvals/new.html", active="proc_new",
+    elif any(request.args.get(k, "").isdigit() for k in ("copy", "stock", "spare")):
+        from app.routes.approvals_porev import form_prefill    # copy a request / low stock
+        resp, prefill, copy_items = form_prefill(request.args.get("copy", ""),
+                                                 request.args.get("stock", ""),
+                                                 request.args.get("spare", ""))
+        if resp is not None:
+            return resp
+    return render_template("approvals/new.html", active="proc_new", edit_items=copy_items,
                            lock_hint=_LOCK_HINT.get(_lang(), _LOCK_HINT["en"]),
                            desc_ph=_DESC_PH.get(_lang(), _DESC_PH["en"]),
                            can_buy=user_can("proc_purchasing") or user_can("proc_admin"),
@@ -1142,13 +1162,18 @@ def catalogue_import():
 @login_required
 @permission_required("proc_create")
 def create():
+    from app.approvals import english_only
+    bad_lang = english_only.arabic_in_form(request.form)
+    if bad_lang:
+        flash(english_only.REFUSAL + ", ".join(bad_lang) + ".", "error")
+        return redirect(url_for("approvals.new"))
     can_price = _can_price()
     header = _parse_header(request.form, can_price)
     # Nobody states unit, stock or supplier on a REQUEST form.
     items = _parse_items(request.form, can_price, can_buy=False)
     # Refused before anything is written: a request stored with a guessed
     # expenditure type is already on the wrong ladder.
-    bad_kind = _kind_refusal(header)
+    bad_kind = _kind_refusal(header) or _req_date_refusal(header["req_del_date"])
     if not header["title"] or not items or bad_kind:
         flash(bad_kind or "A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.new"))
@@ -1249,12 +1274,18 @@ def edit_save(pr_id):
     if bundle["pr"]["requester"] != (_u() or {}).get("username") and not user_can("proc_admin"):
         abort(403)
     can_price = _can_price()
+    from app.approvals import english_only
+    bad_lang = english_only.arabic_in_form(request.form)
+    if bad_lang:
+        flash(english_only.REFUSAL + ", ".join(bad_lang) + ".", "error")
+        return redirect(url_for("approvals.edit", pr_id=pr_id))
     header = _parse_header(request.form, can_price, existing=bundle["pr"])
     # Nobody states unit, stock or supplier on a REQUEST form.
     items = _parse_items(request.form, can_price, can_buy=False)
     # Same refusal on the re-file after a rejection, which is where a CAPEX
     # request would otherwise be downgraded on its way back through.
-    bad_kind = _kind_refusal(header)
+    bad_kind = _kind_refusal(header) or _req_date_refusal(header["req_del_date"],
+                                                          bundle["pr"].get("req_del_date"))
     if not header["title"] or not items or bad_kind:
         flash(bad_kind or "A title and at least one line item are required.", "error")
         return redirect(url_for("approvals.edit", pr_id=pr_id))
@@ -2122,6 +2153,72 @@ def escalate_now():
     return redirect(url_for("approvals.index"))
 
 
+# act_on_step's refusals, in the words the approve route flashes. Shared with
+# the bulk-sign summary (approvals_porev.py) so both read the same sentence.
+APPROVE_REFUSALS = {
+    "forbidden": "You are not authorised for this approval stage.",
+    "not_pending": "This request is not awaiting approval.",
+    "needs_pricing": "Enter the pricing before approving the Purchasing stage — "
+                     "the request has no commercial value yet.",
+    "needs_quotes": "Competitive quotes required — this order value needs more "
+                    "quotations than are on file. The Vendor quotes panel shows "
+                    "how many: each must come from a different supplier with "
+                    "its file attached. Or record a single-source justification "
+                    "there.",
+    "needs_quote_file": "The quotation on file has no supplier document. "
+                        "Attach the supplier's quotation file before "
+                        "approving.",
+    "chosen_quote_no_file": "The chosen quotation has no supplier file. "
+                            "Attach it in the Vendor quotes panel before "
+                            "approving.",
+    "chosen_quote_not_applied": "The chosen quotation's prices are not on the "
+                                "request: it is in another currency. Edit the "
+                                "chosen quotation, check its currency and FX "
+                                "rate to EGP, and save it — then approve.",
+    "self_approval": "You cannot approve your own request — raising it is "
+                     "your signature.",
+    "dual_role": "You already signed another stage of this request — a "
+                 "different approver must take this one.",
+    "deviation_memo_required": "This order is off plan (over target price, over "
+                               "the stock ceiling, or above the net requirement "
+                               "after inventory netting — §3.4). DOAM §4.4 "
+                               "requires a written justification memo before it "
+                               "is signed — record it in the Coverage check / "
+                               "Deviation from plan panel.",
+    "business_case_required": "Above 10,000,000 EGP the DOAM requires a written "
+                              "business case before this request is signed. "
+                              "Record it first.",
+    "no_active_step": "No active approval step.",
+    # The DOAM §6 gate answers with the maintenance module's codes.
+    # Without these three they reached the buyer raw, inside an
+    # otherwise translated sentence: "Could not approve
+    # (ejr_incomplete:root cause, criticality)."
+    "ejr_missing": "This request has no signed engineering justification. "
+                   "Cite an Engineering-Head-approved report before "
+                   "approving.",
+    "ejr_not_approved": "That report is not signed yet. Engineering must "
+                        "approve it before Procurement can accept the "
+                        "request.",
+    # Fail-closed: the gate could not be evaluated, so nothing is
+    # approved. The exception class rides along in the generic tail for
+    # IT; the sentence tells the buyer what to do about it.
+    "ejr_check_failed": "The engineering justification could not be checked, "
+                        "so this request cannot be approved yet. Report this "
+                        "to IT.",
+    "ejr_rejected": "Engineering rejected the justification report for this "
+                    "request. It has to be corrected and signed before "
+                    "Procurement can accept the request.",
+    # No field list here on purpose: the report page already names the
+    # blank fields, in the reader's language, and a list assembled here
+    # would have to be translated AFTER the %s substitution — which is
+    # the one thing the flash shim cannot do.
+    "ejr_incomplete": "The engineering justification report is not finished, "
+                      "so it cannot be relied on. Open the report to see "
+                      "what is still needed.",
+    "retired": "This record has already been retired.",
+}
+
+
 @bp.route("/pr/<int:pr_id>/approve", methods=["POST"])
 @login_required
 @permission_required("proc_approve", "proc_admin")
@@ -2130,66 +2227,7 @@ def approve(pr_id):
                               comment=request.form.get("comment", "").strip() or None,
                               ip=_ip())
     if not ok:
-        flash({"forbidden": "You are not authorised for this approval stage.",
-               "not_pending": "This request is not awaiting approval.",
-               "needs_pricing": "Enter the pricing before approving the Purchasing stage — "
-                                "the request has no commercial value yet.",
-               "needs_quotes": "Competitive quotes required — this order value needs more "
-                               "quotations than are on file. The Vendor quotes panel shows "
-                               "how many: each must come from a different supplier with "
-                               "its file attached. Or record a single-source justification "
-                               "there.",
-               "needs_quote_file": "The quotation on file has no supplier document. "
-                                   "Attach the supplier's quotation file before "
-                                   "approving.",
-               "chosen_quote_no_file": "The chosen quotation has no supplier file. "
-                                       "Attach it in the Vendor quotes panel before "
-                                       "approving.",
-               "chosen_quote_not_applied": "The chosen quotation's prices are not on the "
-                                           "request: it is in another currency. Edit the "
-                                           "chosen quotation, check its currency and FX "
-                                           "rate to EGP, and save it — then approve.",
-               "self_approval": "You cannot approve your own request — raising it is "
-                                "your signature.",
-               "dual_role": "You already signed another stage of this request — a "
-                            "different approver must take this one.",
-               "deviation_memo_required": "This order is off plan (over target price, over "
-                                          "the stock ceiling, or above the net requirement "
-                                          "after inventory netting — §3.4). DOAM §4.4 "
-                                          "requires a written justification memo before it "
-                                          "is signed — record it in the Coverage check / "
-                                          "Deviation from plan panel.",
-               "business_case_required": "Above 10,000,000 EGP the DOAM requires a written "
-                                         "business case before this request is signed. "
-                                         "Record it first.",
-               "no_active_step": "No active approval step.",
-               # The DOAM §6 gate answers with the maintenance module's codes.
-               # Without these three they reached the buyer raw, inside an
-               # otherwise translated sentence: "Could not approve
-               # (ejr_incomplete:root cause, criticality)."
-               "ejr_missing": "This request has no signed engineering justification. "
-                              "Cite an Engineering-Head-approved report before "
-                              "approving.",
-               "ejr_not_approved": "That report is not signed yet. Engineering must "
-                                   "approve it before Procurement can accept the "
-                                   "request.",
-               # Fail-closed: the gate could not be evaluated, so nothing is
-               # approved. The exception class rides along in the generic tail for
-               # IT; the sentence tells the buyer what to do about it.
-               "ejr_check_failed": "The engineering justification could not be checked, "
-                                   "so this request cannot be approved yet. Report this "
-                                   "to IT.",
-               "ejr_rejected": "Engineering rejected the justification report for this "
-                               "request. It has to be corrected and signed before "
-                               "Procurement can accept the request.",
-               # No field list here on purpose: the report page already names the
-               # blank fields, in the reader's language, and a list assembled here
-               # would have to be translated AFTER the %s substitution — which is
-               # the one thing the flash shim cannot do.
-               "ejr_incomplete": "The engineering justification report is not finished, "
-                                 "so it cannot be relied on. Open the report to see "
-                                 "what is still needed.",
-               }.get(_code(msg), f"Could not approve ({msg})."),
+        flash(APPROVE_REFUSALS.get(_code(msg), f"Could not approve ({msg})."),
               "error")
     else:
         flash({"advanced": "Approved — routed to the next approver.",
@@ -2364,6 +2402,7 @@ _RECEIVE_ERR = {
                       "be booked once the purchase order has been issued.",
     "nothing_received": "Enter an accepted or a rejected quantity on at least one line.",
     "not_found": "That purchase request no longer exists.",
+    "po_cancelled": "That supplier's purchase order was cancelled — its lines cannot be received.",
 }
 
 
@@ -3286,3 +3325,37 @@ def change_requester(pr_id):
 
 # Vendor approval / supplier documents / request comments (registers on bp).
 from app.routes import approvals_vendors as _approvals_vendors  # noqa: E402,F401
+from app.routes import approvals_delivery  # noqa: E402,F401  (delivery follow-up routes on bp)
+
+
+from app.routes import approvals_imports  # noqa: E402,F401  imports + framework agreements
+
+from app.routes import approvals_porev as _porev  # noqa: E402,F401  PO lane routes
+
+
+from app.routes import approvals_analytics  # noqa: E402,F401  (analytics routes on bp)
+
+
+# Requesters see only their own requests. One guard for every procurement URL
+# that points at a request (page, edit, PDFs, Excel, quote/invoice/attachment
+# files), and the company-wide pages a plain requester has no business in.
+_ALL_ONLY_ENDPOINTS = {"approvals.export_csv", "approvals.agreements", "approvals.agreements_xlsx",
+                       "approvals.agreement_detail"}
+
+
+@bp.before_request
+def _requester_scope():
+    user = _u()
+    if not user or svc.sees_all_prs(user):
+        return None
+    ep = request.endpoint or ""
+    if ep in _ALL_ONLY_ENDPOINTS or ep.startswith("approvals.analytics"):
+        abort(403)
+    # Viewing only: every action (POST) keeps its own permission check and its
+    # own refusal, which already stops a requester acting on someone else's request.
+    if request.method not in ("GET", "HEAD"):
+        return None
+    pr = svc.pr_for_args(request.view_args)
+    if pr is not None and not svc.can_view_pr(user, pr):
+        abort(404)
+    return None

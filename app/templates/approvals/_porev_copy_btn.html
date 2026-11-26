@@ -1,0 +1,6 @@
+{#- "Copy request": a new form pre-filled with what this request asked for
+    (porev lane). Needs proc_create; the copy carries no prices or vendors. -#}
+{% if can('proc_create') %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.new', copy=pr.id) }}">
+  <svg class="ico"><use href="#i-report"></use></svg><span data-i18n="proc.porev.copy">Copy request</span></a>
+{% endif %}

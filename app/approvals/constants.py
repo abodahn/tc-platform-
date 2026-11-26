@@ -856,6 +856,10 @@ PROC_PERMISSIONS = [
 # money-bearing reports gate on this one tuple.
 MONEY_PERMS = ("proc_purchasing", "proc_pay", "proc_admin")
 
+# Who sees EVERY purchase request. Anyone else (a plain requester: proc_view /
+# proc_create only) sees just the requests they raised.
+ALL_PR_PERMS = ("proc_approve", "proc_purchasing", "proc_receive", "proc_pay", "proc_admin")
+
 # New roles introduced by this module -> the procurement permissions they hold.
 PROC_ROLE_PERMS = {
     "purchasing_manager": ["proc_view", "proc_create", "proc_approve", "proc_purchasing",
@@ -1500,6 +1504,9 @@ WORKFLOW_SETTINGS = {
     # Capped at 100%: a fat-fingered 5000 would let someone pay 51x the PO.
     "payment_tolerance_pct": {"kind": "num", "min": 0, "max": 100,
                               "default": PAYMENT_TOLERANCE_PCT},
+    # How far a PO revision may RAISE an order above its approved value before
+    # it needs the value ladder's signatures again (porev.py). 0 = any increase.
+    "po_rev_tolerance_pct": {"kind": "num", "min": 0, "max": 100, "default": 0.0},
     # --- optional fields on the request form and the request page ------------
     # Not every plant uses all of these, and a field nobody fills is a field
     # people learn to skip past. Each defaults to VISIBLE, so a database with no
@@ -1529,6 +1536,10 @@ WORKFLOW_SETTINGS = {
     # in the plant on the first run and teach them to ignore it.
     "aging_warn_days": {"kind": "int", "min": 1, "default": 2},
     "aging_overdue_days": {"kind": "int", "min": 1, "default": 4},
+    # Imports (app/approvals/imports.py): when ON, a receipt is valued in stock at
+    # its LANDED unit cost (price + its share of freight, duty, clearance ...)
+    # instead of the purchase price. OFF by default: stock valuation is unchanged.
+    "landed_cost_to_stock": {"kind": "bool", "default": False},
 }
 
 # All rungs are always required; governance offers no amount-threshold knobs.

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content_class %}proc{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
+{% block title %}{{ page_title }}{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <div class="eyebrow" data-i18n="proc.settings_eyebrow">Procurement</div>
+    <h1 data-i18n="proc.delivery.list_title">Open orders &amp; late deliveries</h1>
+    <div class="sub" data-i18n="proc.delivery.list_sub">Every purchase order still waiting for goods, the most overdue first, with the date the supplier promised.</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-pad flex gap center wrap">
+    <a class="btn btn-sm {{ 'btn-ghost' if late_only else 'btn-primary' }}" href="{{ url_for('approvals.deliveries') }}" data-i18n="proc.delivery.all_open">All open orders</a>
+    <a class="btn btn-sm {{ 'btn-primary' if late_only else 'btn-ghost' }}" href="{{ url_for('approvals.deliveries', late=1) }}">
+      <span data-i18n="proc.delivery.late_only">Late only</span> <span class="muted">({{ n_late }})</span></a>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-pad">
+    {% if rows %}
+    <div class="tbl-wrap">
+    <table class="tbl tbl-stack">
+      <thead><tr>
+        <th data-i18n="proc.pr">Request</th>
+        <th data-i18n="proc.vendor_l">Vendor</th>
+        <th data-i18n="proc.delivery.promised">Promised delivery</th>
+        <th data-i18n="proc.status">Status</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><a href="{{ url_for('approvals.detail', pr_id=r.pr_id) }}#delivery" style="font-weight:600">{{ r.pr_no }}</a>
+            <span class="muted nw" style="font-variant-numeric:tabular-nums">{{ r.po_no }}</span>
+            <div class="muted" style="font-size:12px;overflow-wrap:anywhere">{{ r.title or '' }}</div></td>
+          <td><span class="muted dl-lbl" data-i18n="proc.vendor_l">Vendor</span> {{ r.vendor or r.head_vendor or '—' }}</td>
+          <td class="nw"><span class="muted dl-lbl" data-i18n="proc.delivery.promised">Promised delivery</span> {{ r.promised_date or '—' }}</td>
+          <td>
+            {% if r.days_late %}<span class="badge b-rejected nw"><span data-i18n="proc.delivery.overdue">Overdue</span> {{ r.days_late }} <span data-i18n="proc.delivery.days">days</span></span>
+            {% elif r.days_left is not none %}<span class="badge b-pending nw"><span data-i18n="proc.delivery.due_in">Due in</span> {{ r.days_left }} <span data-i18n="proc.delivery.days">days</span></span>
+            {% else %}<span class="muted" data-i18n="proc.delivery.no_date_short">No date</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="muted" data-i18n="proc.delivery.none">Nothing is waiting for delivery.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

@@ -54,6 +54,11 @@ def run():
                         (username, generate_password_hash("x"), username, role))
                     users[name] = dict(conn.execute("SELECT * FROM users WHERE username=?",
                                                     (username,)).fetchone())
+                # plain requesters see only their own requests (2026-11-26): B is the
+                # no-money outsider, so B may see every request (goods receipt only).
+                conn.execute("UPDATE users SET extra_perms='[\"proc_receive\"]' "
+                             "WHERE username='money_B'")
+                users["B"] = dict(conn.execute("SELECT * FROM users WHERE username='money_B'").fetchone())
                 users["admin"] = dict(conn.execute(
                     "SELECT * FROM users WHERE role='super_admin' AND is_active=1 "
                     "AND COALESCE(account_status,'active')='active' LIMIT 1").fetchone())
@@ -197,7 +202,8 @@ def run():
             r = cl.get("/procurement/attachment/%d" % att_id)
             chk(name + " PR document gate", r.status_code == (200 if level else 403), r.status_code)
             r = cl.get("/procurement/analytics")
-            chk(name + " analytics opens", r.status_code == 200, r.status_code)
+            # plain requesters see only their own requests (2026-11-26): A gets no analytics
+            chk(name + " analytics opens", r.status_code == (403 if name == "A" else 200), r.status_code)
             chk(name + " analytics hides money data", ("committed_spend" in r.get_data(as_text=True))
                 == (name in ("buyer", "finance", "admin")))
             r = cl.get("/procurement/list.xlsx")

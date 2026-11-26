@@ -54,39 +54,8 @@
 </div>
 
 <div class="grid cols-2 mt-4" style="align-items:start">
-  <!-- My approval queue -->
-  <div class="panel">
-    <div class="panel-head">
-      <h3 data-i18n="proc.my_queue">Waiting for my approval</h3>
-      <span class="badge b-warning">{{ queue|length }}</span>
-    </div>
-    <div class="panel-pad" style="overflow-x:auto">
-      {% if queue %}
-      <table class="tbl">
-        <thead><tr>
-          <th data-i18n="proc.pr">Request</th>
-          <th data-i18n="proc.stage">My stage</th>
-          <th data-i18n="proc.total">Total</th>
-          <th></th>
-        </tr></thead>
-        <tbody>
-        {% for pr in queue %}
-          <tr>
-            <td><div style="font-weight:600">{{ pr.pr_no }}</div>
-                <div class="muted" style="font-size:12px">{{ pr.title }}</div>
-                {{ items_line(items.get(pr.id)) }}</td>
-            <td><span class="badge b-pending">{{ pr._stage_label }}</span></td>
-            <td style="font-variant-numeric:tabular-nums">{% if money.get(pr.id) %}{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}{% else %}—{% endif %}</td>
-            <td style="text-align:end"><a class="btn btn-primary btn-sm" href="{{ url_for('approvals.detail', pr_id=pr.id) }}" data-i18n="proc.review">Review</a></td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% else %}
-      <div class="muted" data-i18n="proc.queue_empty">Nothing is waiting on you right now. 🎉</div>
-      {% endif %}
-    </div>
-  </div>
+  <!-- My approval queue (bulk signing + PO revisions to sign) -->
+  {% include "approvals/_porev_queue.html" %}
 
   <!-- Recent requests -->
   <div class="panel">

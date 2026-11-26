@@ -616,32 +616,38 @@ SETTING_LABEL = {
            "rfq_value_threshold": "Quotes required from (EGP)",
            "sod_admin_exempt": "Admins exempt from segregation of duties",
            "payment_tolerance_pct": "Payment tolerance (%)",
+           "po_rev_tolerance_pct": "PO revision increase allowed without re-approval (%)",
            "show_expenditure_kind": "Show ‘Expenditure type’ on requests",
            "show_sales_order": "Show ‘Sales order’ on requests",
            "show_forecast_ref": "Show ‘Agreed forecast’ on requests",
            "show_cost_center": "Show ‘Cost centre’ on requests",
            "show_delivery_condition": "Show ‘Delivery condition’ on requests",
-           "allow_self_approval": "Allow approving your own request (temporary)"},
+           "allow_self_approval": "Allow approving your own request (temporary)",
+           "landed_cost_to_stock": "Post landed cost into stock average cost"},
     "ar": {"rfq_quote_min": "عدد عروض الأسعار المتنافسة المطلوبة",
            "rfq_value_threshold": "عروض الأسعار مطلوبة من (EGP)",
            "sod_admin_exempt": "استثناء المسؤولين من الفصل بين المهام",
            "payment_tolerance_pct": "هامش تفاوت الدفع (%)",
+           "po_rev_tolerance_pct": "الزيادة المسموحة في تعديل أمر الشراء بدون اعتماد جديد (%)",
            "show_expenditure_kind": "إظهار «نوع الإنفاق» في الطلبات",
            "show_sales_order": "إظهار «أمر البيع» في الطلبات",
            "show_forecast_ref": "إظهار «التوقّع المعتمد» في الطلبات",
            "show_cost_center": "إظهار «مركز التكلفة» في الطلبات",
            "show_delivery_condition": "إظهار «شرط التسليم» في الطلبات",
-           "allow_self_approval": "السماح بالموافقة على طلبك الخاص (مؤقت)"},
+           "allow_self_approval": "السماح بالموافقة على طلبك الخاص (مؤقت)",
+           "landed_cost_to_stock": "تحميل التكلفة الكاملة للاستيراد على متوسط تكلفة المخزون"},
     "tr": {"rfq_quote_min": "Gereken rekabetçi teklif sayısı",
            "rfq_value_threshold": "Tekliflerin gerekli olduğu tutar (EGP)",
            "sod_admin_exempt": "Yöneticiler görevler ayrılığından muaf",
            "payment_tolerance_pct": "Ödeme toleransı (%)",
+           "po_rev_tolerance_pct": "Yeniden onay gerekmeden PO revizyon artışı (%)",
            "show_expenditure_kind": "Taleplerde ‘Harcama türü’ göster",
            "show_sales_order": "Taleplerde ‘Satış siparişi’ göster",
            "show_forecast_ref": "Taleplerde ‘Onaylı tahmin’ göster",
            "show_cost_center": "Taleplerde ‘Masraf merkezi’ göster",
            "show_delivery_condition": "Taleplerde ‘Teslim koşulu’ göster",
-           "allow_self_approval": "Kendi talebini onaylamaya izin ver (geçici)"}
+           "allow_self_approval": "Kendi talebini onaylamaya izin ver (geçici)",
+           "landed_cost_to_stock": "Varış maliyetini stok ortalama maliyetine yansıt"}
 }
 
 
@@ -656,6 +662,7 @@ SETTING_WARN = {
         "show_cost_center": "The route maintenance and facility spend uses to answer DOAM 3.4 instead of a sales order. Hiding it does not stop spare-part requests, which are recognised from the parts master.",
         "show_delivery_condition": "Prints on the purchase order. Nothing routes on it.",
         "allow_self_approval": "On: the person who raised a request can also approve it, so one account can authorise its own purchase. Use only while there are not enough staff, then switch it off.",
+        "landed_cost_to_stock": "On: goods received on an import order enter stock at their landed unit cost (price plus their share of freight, insurance, duty, clearance and port charges recorded BEFORE the receipt). Off: stock is valued at the purchase price only, as today.",
     },
     "ar": {
         "show_expenditure_kind": "عندئذٍ يُعامَل كل طلب على أنه مصروف تشغيلي. أما المصروف الرأسمالي فيمرّ بسلسلة موافقات أشدّ (البند 4.2)، لذا فإخفاء هذا الحقل يمنح الإنفاق الرأسمالي السلسلة الأضعف.",
@@ -664,6 +671,7 @@ SETTING_WARN = {
         "show_cost_center": "الطريق الذي تستخدمه مصروفات الصيانة والمرافق للإجابة على البند 3.4 بدلاً من أمر البيع. إخفاؤه لا يوقف طلبات قطع الغيار، فهي تُعرَف من دليل قطع الغيار.",
         "show_delivery_condition": "يُطبع على أمر الشراء. ولا يُبنى عليه أي توجيه للموافقات.",
         "allow_self_approval": "عند التشغيل: من قدّم الطلب يمكنه أيضًا الموافقة عليه، أي أن حسابًا واحدًا يعتمد مشترياته بنفسه. استخدمه فقط مؤقتًا لحين توفر عدد كافٍ من الموظفين، ثم أوقفه.",
+        "landed_cost_to_stock": "عند التشغيل: البضاعة المستلمة على أمر استيراد تدخل المخزن بتكلفة الوحدة الكاملة (السعر + نصيبها من الشحن والتأمين والجمارك والتخليص ورسوم الميناء المسجلة قبل الاستلام). عند الإيقاف: المخزون يتقيّم بسعر الشراء فقط زي دلوقتي.",
     },
     "tr": {
         "show_expenditure_kind": "O zaman her talep işletme gideri sayılır. Sermaye harcaması daha katı bir onay zincirinden geçer (DOAM 4.2); bunu gizlemek sermaye harcamasına zayıf olanı verir.",
@@ -672,6 +680,7 @@ SETTING_WARN = {
         "show_cost_center": "Bakım ve tesis harcamalarının satış siparişi yerine DOAM 3.4'e cevap verirken kullandığı yol. Gizlemek yedek parça taleplerini durdurmaz; onlar parça ana verisinden tanınır.",
         "show_delivery_condition": "Satın alma emrinde yazdırılır. Hiçbir yönlendirme buna bağlı değildir.",
         "allow_self_approval": "Açıkken talebi açan kişi onu onaylayabilir de; tek bir hesap kendi satın almasını yetkilendirebilir. Yalnızca yeterli personel yokken kullanın, sonra kapatın.",
+        "landed_cost_to_stock": "Açıkken ithalat siparişiyle teslim alınan mal stoğa varış birim maliyetiyle girer (fiyat + teslim almadan ÖNCE kaydedilen navlun, sigorta, gümrük, gümrükleme ve liman masraflarından payı). Kapalıyken stok bugünkü gibi yalnızca alış fiyatıyla değerlenir.",
     },
 }
 
@@ -947,6 +956,7 @@ UI = {
             "actually received. Pay for what was received, book the rest once it "
             "arrives — or ask an administrator to override.",
         # --- a requisition buying from several suppliers ---
+        "po_cancelled_flash": "That supplier's purchase order was cancelled, so nothing can be invoiced or paid against it.",
         "po_required_flash":
             "This request buys from several suppliers, so it has one purchase "
             "order per supplier. Choose which order this belongs to.",
@@ -1082,6 +1092,7 @@ UI = {
             "مقابل ما تم استلامه وسجّل الباقي عند وصوله — أو اطلب من مسؤول النظام "
             "التجاوز.",
         # --- a requisition buying from several suppliers ---
+        "po_cancelled_flash": "أمر الشراء بتاع المورد ده اتلغى، فمينفعش تتسجل عليه فاتورة أو دفعة.",
         "po_required_flash":
             "هذا الطلب يشتري من أكثر من مورد، ولكل مورد أمر شراء خاص به. اختر أمر "
             "الشراء الذي يخص هذه العملية.",
@@ -1214,6 +1225,7 @@ UI = {
             "Teslim alınan kadarını ödeyin, kalanı geldiğinde kaydedin — ya da bir "
             "yöneticiden geçersiz kılmasını isteyin.",
         # --- a requisition buying from several suppliers ---
+        "po_cancelled_flash": "Bu tedarikçinin satın alma siparişi iptal edildi; ona karşı fatura veya ödeme kaydedilemez.",
         "po_required_flash":
             "Bu talep birden fazla tedarikçiden alım yapıyor ve her tedarikçinin "
             "kendi siparişi var. Bunun hangi siparişe ait olduğunu seçin.",

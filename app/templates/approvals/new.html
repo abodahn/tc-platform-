@@ -29,7 +29,9 @@
 </div>
 {% endif %}
 
+<p class="en-only-note" data-i18n="proc.en_only.note">Write the request in English. Arabic text is not accepted.</p>
 <form method="post" enctype="multipart/form-data" action="{{ url_for('approvals.edit_save', pr_id=editing.id) if editing else url_for('approvals.create') }}" id="prForm">
+<span id="enOnlyMsg" hidden data-i18n="proc.en_only.msg">English only, please. Arabic is not accepted.</span>
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
   {% if prefill.ticket_id %}{# mesh: persist the maintenance-ticket origin #}
   <input type="hidden" name="from_ticket" value="{{ prefill.ticket_id }}">{% endif %}
@@ -187,6 +189,7 @@
             {% if prefill.delivery_condition and prefill.delivery_condition not in deliveries %}<option value="{{ prefill.delivery_condition }}" selected>{{ prefill.delivery_condition }}</option>{% endif %}
           </select></div>
         {% endif %}
+        {% include "approvals/_delivery_req_date.html" %}
       </div>
     </div>
   </div>
@@ -939,4 +942,5 @@
 })();
 </script>
 
+<script src="{{ url_for('static', filename='js/english-only.js') }}"></script>
 {% endblock %}

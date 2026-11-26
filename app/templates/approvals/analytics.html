@@ -1,64 +1,238 @@
 {% extends "base.html" %}
+{% from "approvals/_analytics_card.html" import card %}
 {% block content_class %}proc{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
-{% block title %}Spend Analytics{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/proc-analytics.css') }}">{% endblock %}
+{% block title %}{{ T('proc.analytics.title') }}{% endblock %}
 {% block content %}
+{% set fx = dict(fargs) %}
 
-<div class="page-head">
+<div class="page-head an-head">
   <div>
-    <h1 data-i18n="proc.analytics_title">Spend Analytics</h1>
-    <div class="sub" data-i18n="proc.analytics_sub">Where the money goes, how fast approvals move, and where they get stuck.</div>
+    <h1 data-i18n="proc.analytics.title">{{ T('proc.analytics.title') }}</h1>
+    <div class="sub" data-i18n="proc.analytics.sub">{{ T('proc.analytics.sub') }}</div>
   </div>
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.index') }}" data-i18n="proc.back">Back</a>
+  <div class="an-head-act">
+    <a class="btn btn-primary btn-sm" href="{{ url_for('approvals.analytics_builder', **fx) }}">
+      <svg class="ico" aria-hidden="true"><use href="#i-chart"></use></svg>
+      <span data-i18n="proc.analytics.builder">{{ T('proc.analytics.builder') }}</span></a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.index') }}" data-i18n="proc.analytics.back">{{ T('proc.analytics.back') }}</a>
+  </div>
 </div>
 
-<div class="grid cols-4">
+<form method="get" action="{{ url_for('approvals.analytics') }}" class="an-filters" data-an-filters role="search">
+  {% if rise != 10 %}<input type="hidden" name="rise" value="{{ rise|round(1) }}">{% endif %}
+  {% include "approvals/_analytics_filters.html" %}
+</form>
+
+{% if not show_money %}
+<p class="an-note" data-i18n="proc.analytics.counts_only">{{ T('proc.analytics.counts_only') }}</p>
+{% endif %}
+
+{#- KPI strip. Each figure is computed by ONE statement over the same fact set
+    the charts below use, so a tile and the chart beside it cannot disagree. -#}
+{% set lst = url_for('approvals.listing', **list_base) %}
+{#- Money tiles count approved-or-later (open: not yet received) requests only,
+    so their list carries the same restriction. -#}
+{% set lst_c = url_for('approvals.listing', **list_committed) %}
+{% set lst_o = url_for('approvals.listing', **list_open) %}
+<section class="an-kpis" aria-label="KPI">
   {% if show_money %}
-  <div class="kpi good"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-wallet"></use></svg></div></div>
-    <div class="kval">{{ '{:,.0f}'.format(a.committed_spend or 0) }}</div>
-    <div class="klabel" data-i18n="proc.committed">Committed spend (EGP)</div></div>
-  <div class="kpi"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-kanban"></use></svg></div></div>
-    <div class="kval">{{ '{:,.0f}'.format(a.pending_value or 0) }}</div>
-    <div class="klabel" data-i18n="proc.k_value">Pending value (EGP)</div></div>
+  <a class="kpi kpi-link an-kpi good" id="committed_spend" href="{{ lst_c }}">
+    <div class="klabel" data-i18n="proc.analytics.k.spend">{{ T('proc.analytics.k.spend') }}</div>
+    <div class="kval" data-num="{{ k.spend|round|int }}">{{ '{:,.0f}'.format(k.spend) }}</div></a>
   {% endif %}
-  <div class="kpi info"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-clock"></use></svg></div></div>
-    <div class="kval">{{ a.avg_cycle_days }}</div>
-    <div class="klabel" data-i18n="proc.avg_cycle">Avg approval time (days)</div></div>
-  <div class="kpi warn"><div class="ktop"><div class="kicon"><svg class="ico"><use href="#i-alert"></use></svg></div></div>
-    <div class="kval" style="font-size:20px;margin-top:20px">{{ a.bottleneck or '—' }}</div>
-    <div class="klabel" data-i18n="proc.bottleneck">Slowest stage</div></div>
-</div>
-
-<div class="grid cols-2 mt-4" style="align-items:start">
+  <a class="kpi kpi-link an-kpi" href="{{ lst }}">
+    <div class="klabel" data-i18n="proc.analytics.k.requests">{{ T('proc.analytics.k.requests') }}</div>
+    <div class="kval" data-num="{{ k.requests }}">{{ '{:,}'.format(k.requests) }}</div></a>
+  <div class="kpi an-kpi">
+    <div class="klabel" data-i18n="proc.analytics.k.pos">{{ T('proc.analytics.k.pos') }}</div>
+    <div class="kval" data-num="{{ k.pos }}">{{ '{:,}'.format(k.pos) }}</div></div>
+  <div class="kpi an-kpi info">
+    <div class="klabel" data-i18n="proc.analytics.k.cycle">{{ T('proc.analytics.k.cycle') }}</div>
+    <div class="kval">{{ k.cycle if k.cycle is not none else '—' }}</div></div>
+  <div class="kpi an-kpi info">
+    <div class="klabel" data-i18n="proc.analytics.k.lead">{{ T('proc.analytics.k.lead') }}</div>
+    <div class="kval">{{ k.lead if k.lead is not none else '—' }}</div></div>
   {% if show_money %}
-  <div class="panel"><div class="panel-head"><h3 data-i18n="proc.by_dept">Spend by department</h3></div>
-    <div class="panel-pad"><canvas id="chDept" height="200"></canvas></div></div>
-  <div class="panel"><div class="panel-head"><h3 data-i18n="proc.by_vendor">Spend by vendor</h3></div>
-    <div class="panel-pad"><canvas id="chVendor" height="200"></canvas></div></div>
-  <div class="panel"><div class="panel-head"><h3 data-i18n="proc.monthly">Monthly committed spend</h3></div>
-    <div class="panel-pad"><canvas id="chMonth" height="200"></canvas></div></div>
+  <div class="kpi an-kpi good">
+    <div class="klabel" data-i18n="proc.analytics.k.savings">{{ T('proc.analytics.k.savings') }}</div>
+    <div class="kval" data-num="{{ k.vs_first|round|int }}">{{ '{:,.0f}'.format(k.vs_first) }}</div>
+    <div class="an-ksub"><span data-i18n="proc.analytics.k.vs_hi">{{ T('proc.analytics.k.vs_hi') }}</span>: {{ '{:,.0f}'.format(k.savings) }}</div>
+    {% if k.missed > 0 %}<div class="an-ksub"><span data-i18n="proc.analytics.k.missed">{{ T('proc.analytics.k.missed') }}</span>: {{ '{:,.0f}'.format(k.missed) }}</div>{% endif %}</div>
   {% endif %}
-  <div class="panel"><div class="panel-head"><h3 data-i18n="proc.by_status">Requests by status</h3></div>
-    <div class="panel-pad"><canvas id="chStatus" height="200"></canvas></div></div>
-</div>
+  <div class="kpi an-kpi {{ 'good' if (k.ontime or 0) >= 90 else 'warn' }}">
+    <div class="klabel" data-i18n="proc.analytics.k.ontime">{{ T('proc.analytics.k.ontime') }}</div>
+    <div class="kval">{{ (k.ontime|string + '%') if k.ontime is not none else '—' }}</div></div>
+  {% if show_money %}
+  <a class="kpi kpi-link an-kpi" href="{{ lst_o }}">
+    <div class="klabel" data-i18n="proc.analytics.k.open">{{ T('proc.analytics.k.open') }}</div>
+    <div class="kval" data-num="{{ k.open_commit|round|int }}">{{ '{:,.0f}'.format(k.open_commit) }}</div></a>
+  {% endif %}
+  <div class="kpi an-kpi {{ 'warn' if k.overdue else '' }}">
+    <div class="klabel" data-i18n="proc.analytics.k.overdue">{{ T('proc.analytics.k.overdue') }}</div>
+    <div class="kval" data-num="{{ k.overdue }}">{{ k.overdue }}</div></div>
+</section>
 
-<div class="panel mt-4"><div class="panel-head"><h3 data-i18n="proc.stage_perf">Stage performance</h3></div>
-  <div class="panel-pad" style="overflow-x:auto">
-    <table class="tbl">
-      <thead><tr><th data-i18n="proc.stage2">Stage</th>
-        <th data-i18n="proc.avg_hours">Avg hours to act</th>
-        <th data-i18n="proc.rejections">Rejections</th></tr></thead>
-      <tbody id="stageRows"></tbody>
+{% if pinned %}
+<h2 class="an-section" data-i18n="proc.analytics.pinned">{{ T('proc.analytics.pinned') }}</h2>
+<div class="an-grid">
+  {% for p in pinned %}
+  {% set _ = p.update({'key': 'pin' ~ p.rid}) %}
+  {{ card(p, T, sub=p.sub, xlsx=url_for('approvals.analytics_run', fmt='xlsx', **p.qs), csv=url_for('approvals.analytics_run', fmt='csv', **p.qs), extra_head=('<a class="btn btn-ghost btn-sm" href="' ~ url_for('approvals.analytics_builder', rid=p.rid) ~ '" data-i18n="proc.analytics.open_builder">' ~ (T('proc.analytics.open_builder')|e) ~ '</a>')|safe) }}
+  {% endfor %}
+</div>
+{% if pin_over %}<p class="an-note"><span data-i18n="proc.analytics.pin_cap">{{ T('proc.analytics.pin_cap') }}</span> ({{ pin_limit }})</p>{% endif %}
+{% endif %}
+
+<p class="an-hint muted" data-i18n="proc.analytics.drill_hint">{{ T('proc.analytics.drill_hint') }}</p>
+<div class="an-grid">
+  {% for s in specs %}
+  {{ card(s, T, xlsx=url_for('approvals.analytics_run', fmt='xlsx', **s.qs), csv=url_for('approvals.analytics_run', fmt='csv', **s.qs), wide=(s.key == 'trend')) }}
+  {% endfor %}
+  {% call card(extra.stages, T, xlsx=url_for('approvals.analytics_data', key='stages', fmt='xlsx', **fx), csv=url_for('approvals.analytics_data', key='stages', fmt='csv', **fx), sub=T('proc.analytics.c.stages_sub'), server_table=True) %}
+    <table class="tbl an-tbl">
+      <thead><tr><th scope="col" data-i18n="proc.analytics.col.stage">{{ T('proc.analytics.col.stage') }}</th>
+        <th scope="col" class="num" data-i18n="proc.analytics.col.hours">{{ T('proc.analytics.col.hours') }}</th>
+        <th scope="col" class="num" data-i18n="proc.analytics.col.rejected">{{ T('proc.analytics.col.rejected') }}</th>
+        <th scope="col" class="num" data-i18n="proc.analytics.col.waiting">{{ T('proc.analytics.col.waiting') }}</th></tr></thead>
+      <tbody>
+      {% for s in stages %}
+        <tr><th scope="row">{{ s.label }}</th><td class="num">{{ s.hours if s.hours is not none else '—' }}</td>
+          <td class="num">{{ s.rejected }}</td><td class="num">{{ s.waiting }}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted" data-i18n="proc.analytics.empty">{{ T('proc.analytics.empty') }}</td></tr>{% endfor %}
+      </tbody>
     </table>
-  </div>
+  {% endcall %}
+
+  {% if show_money %}
+  {% call card(extra.savings, T, xlsx=url_for('approvals.analytics_data', key='savings', fmt='xlsx', **fx), csv=url_for('approvals.analytics_data', key='savings', fmt='csv', **fx), sub=T('proc.analytics.c.savings_sub'), server_table=True) %}
+    <table class="tbl an-tbl">
+      <tbody>
+        {% for q, v in [('first', savings.firstq), ('hi', savings.hi), ('lo', savings.lo), ('chosen', savings.chosen)] %}
+        <tr><th scope="row" data-i18n="proc.analytics.q.{{ q }}">{{ T('proc.analytics.q.' + q) }}</th><td class="num">{{ '{:,.0f}'.format(v) }}</td></tr>
+        {% endfor %}
+        <tr class="an-total"><th scope="row" data-i18n="proc.analytics.k.savings">{{ T('proc.analytics.k.savings') }}</th><td class="num">{{ '{:,.0f}'.format(savings.firstq - savings.chosen) }}</td></tr>
+        <tr><th scope="row" data-i18n="proc.analytics.k.vs_hi">{{ T('proc.analytics.k.vs_hi') }}</th><td class="num">{{ '{:,.0f}'.format(savings.hi - savings.chosen) }}</td></tr>
+        <tr><th scope="row" data-i18n="proc.analytics.k.missed">{{ T('proc.analytics.k.missed') }}</th><td class="num">{{ '{:,.0f}'.format(savings.chosen - savings.lo) }}</td></tr>
+      </tbody>
+    </table>
+  {% endcall %}
+
+  {% call card(extra.budget, T, xlsx=url_for('approvals.analytics_data', key='budget', fmt='xlsx', **fx), csv=url_for('approvals.analytics_data', key='budget', fmt='csv', **fx), sub=T('proc.analytics.c.budget_sub'), server_table=True, wide=True) %}
+    <table class="tbl an-tbl">
+      <thead><tr><th scope="col" data-i18n="proc.analytics.f.dept">{{ T('proc.analytics.f.dept') }}</th>
+        <th scope="col" class="num"><span data-i18n="proc.analytics.budget">{{ T('proc.analytics.budget') }}</span> (EGP)</th>
+        <th scope="col" class="num"><span data-i18n="proc.analytics.committed">{{ T('proc.analytics.committed') }}</span> (EGP)</th>
+        <th scope="col" data-i18n="proc.analytics.used">{{ T('proc.analytics.used') }}</th></tr></thead>
+      <tbody>
+      {% for b in budget %}
+        <tr><th scope="row">{% if b.dept %}<a href="{{ url_for('approvals.listing', **dict(list_base, dept=b.dept)) }}">{{ b.dept }}</a>{% else %}{{ T('proc.analytics.none') }}{% endif %}</th>
+          <td class="num">{{ '{:,.0f}'.format(b.budget) if b.budget else '—' }}</td>
+          <td class="num">{{ '{:,.0f}'.format(b.actual) }}</td>
+          <td>{% if b.pct is not none %}<div class="eff {{ 'warn' if b.pct > 100 else ('good' if b.pct < 80 else '') }}"><div class="track"><div class="fill" style="width:{{ [b.pct, 100]|min }}%"></div></div><span class="an-pct">{{ b.pct }}%</span></div>{% else %}—{% endif %}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted" data-i18n="proc.analytics.empty">{{ T('proc.analytics.empty') }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  {% endcall %}
+  {% endif %}
 </div>
+
+{% call card(extra.ontime, T, xlsx=url_for('approvals.analytics_data', key='suppliers', fmt='xlsx', **fx), csv=url_for('approvals.analytics_data', key='suppliers', fmt='csv', **fx), sub=T('proc.analytics.c.suppliers_sub' if show_money else 'proc.analytics.c.suppliers_sub_n'), server_table=True, wide=True, view='table') %}
+  <table class="tbl an-tbl">
+    <thead><tr><th scope="col" data-i18n="proc.analytics.col.supplier">{{ T('proc.analytics.col.supplier') }}</th>
+      {% if show_money %}<th scope="col" class="num" data-i18n="proc.analytics.col.spend">{{ T('proc.analytics.col.spend') }}</th>{% endif %}
+      <th scope="col" class="num" data-i18n="proc.analytics.col.pos">{{ T('proc.analytics.col.pos') }}</th>
+      <th scope="col" class="num" data-i18n="proc.analytics.col.lead">{{ T('proc.analytics.col.lead') }}</th>
+      <th scope="col" class="num" data-i18n="proc.analytics.col.ontime">{{ T('proc.analytics.col.ontime') }}</th>
+      <th scope="col" class="num" data-i18n="proc.analytics.col.overdue">{{ T('proc.analytics.col.overdue') }}</th>
+      <th scope="col" class="num" data-i18n="proc.analytics.col.reject">{{ T('proc.analytics.col.reject') }}</th>
+      <th scope="col" class="num" data-i18n="proc.analytics.col.price_var">{{ T('proc.analytics.col.price_var') }}</th></tr></thead>
+    <tbody>
+    {% for r in suppliers %}
+      <tr><th scope="row"><a href="{{ url_for('approvals.listing', **dict(list_base, vendor=r.supplier)) }}">{{ r.supplier }}</a></th>
+        {% if show_money %}<td class="num">{{ '{:,.0f}'.format(r.spend) }}</td>{% endif %}
+        <td class="num">{{ r.pos }}</td>
+        <td class="num">{{ r.lead if r.lead is not none else '—' }}</td>
+        <td class="num">{{ (r.ontime|string + '% (' + r.ontime_n|string + ')') if r.ontime is not none else '—' }}</td>
+        <td class="num {{ 'an-bad' if r.overdue }}">{{ r.overdue }}</td>
+        <td class="num">{{ (r.reject|string + '%') if r.reject is not none else '—' }}</td>
+        <td class="num">{{ ('%+.1f'|format(r.price_var) + '%') if r.price_var is not none else '—' }}</td></tr>
+    {% else %}<tr><td colspan="8" class="muted" data-i18n="proc.analytics.empty">{{ T('proc.analytics.empty') }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+{% endcall %}
 
 {% if show_money %}
-<div class="panel mt-4">
-  <div class="panel-head"><h3 data-i18n="proc.export.title">Exports</h3></div>
+<div class="an-grid an-price">
+  {% set item_form %}
+  <form method="get" action="{{ url_for('approvals.analytics') }}" class="an-inline" role="search">
+    {% for kk, vv in fx.items() %}<input type="hidden" name="{{ kk }}" value="{{ vv }}">{% endfor %}
+    {% if rise != 10 %}<input type="hidden" name="rise" value="{{ rise|round(1) }}">{% endif %}
+    <label class="sr-only" for="an-item" data-i18n="proc.analytics.item_pick">{{ T('proc.analytics.item_pick') }}</label>
+    <select id="an-item" name="item" onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+      {% for it in prices['items'] %}<option value="{{ it }}" {{ 'selected' if it == prices['item'] }}>{{ it }}</option>{% endfor %}
+    </select>
+  </form>
+  {% endset %}
+  {{ card(extra.price, T, sub=T('proc.analytics.c.price_sub'), extra_head=item_form) }}
+
+  <article class="panel an-card" aria-labelledby="an-h-alerts">
+    <header class="an-card-head">
+      <div class="an-card-title">
+        <h3 id="an-h-alerts" data-i18n="proc.analytics.c.alerts">{{ T('proc.analytics.c.alerts') }}</h3>
+        <p class="an-card-sub" data-i18n="proc.analytics.alerts_sub">{{ T('proc.analytics.alerts_sub') }}</p>
+      </div>
+      <div class="an-card-tools">
+        <a class="btn btn-ghost btn-sm an-dl" href="{{ url_for('approvals.analytics_data', key='price_alerts', fmt='xlsx', rise=rise, **fx) }}" data-i18n="proc.analytics.export_xlsx">{{ T('proc.analytics.export_xlsx') }}</a>
+        <a class="btn btn-ghost btn-sm an-dl" href="{{ url_for('approvals.analytics_data', key='price_alerts', fmt='csv', rise=rise, **fx) }}" data-i18n="proc.analytics.export_csv">{{ T('proc.analytics.export_csv') }}</a>
+      </div>
+    </header>
+    <div class="an-card-body">
+      <form method="get" action="{{ url_for('approvals.analytics') }}" class="an-rise">
+        {% for kk, vv in fx.items() %}<input type="hidden" name="{{ kk }}" value="{{ vv }}">{% endfor %}
+        <div class="field">
+          <label for="an-rise" data-i18n="proc.analytics.rise_label">{{ T('proc.analytics.rise_label') }}</label>
+          <input id="an-rise" type="number" name="rise" min="0" max="1000" step="0.5" value="{{ rise|round(1) }}" inputmode="decimal">
+        </div>
+        <button class="btn btn-ghost" type="submit" data-i18n="proc.analytics.show">{{ T('proc.analytics.show') }}</button>
+      </form>
+      <div class="tbl-wrap">
+        <table class="tbl an-tbl">
+          <thead><tr><th scope="col" data-i18n="proc.analytics.col.item">{{ T('proc.analytics.col.item') }}</th>
+            <th scope="col" class="num" data-i18n="proc.analytics.col.prev">{{ T('proc.analytics.col.prev') }}</th>
+            <th scope="col" class="num" data-i18n="proc.analytics.col.last">{{ T('proc.analytics.col.last') }}</th>
+            <th scope="col" class="num" data-i18n="proc.analytics.col.rise">{{ T('proc.analytics.col.rise') }}</th></tr></thead>
+          <tbody>
+          {% for a in prices.alerts %}
+            <tr><th scope="row"><a href="{{ url_for('approvals.analytics', item=a['item'], rise=rise, **fx) }}">{{ a['item'] }}</a></th>
+              <td class="num">{{ '{:,.2f}'.format(a.prev) }}<div class="an-mut">{{ a.prev_month }}</div></td>
+              <td class="num">{{ '{:,.2f}'.format(a['last']) }}<div class="an-mut">{{ a.month }}</div></td>
+              <td class="num an-bad">+{{ a.rise }}%</td></tr>
+          {% else %}<tr><td colspan="4" class="muted" data-i18n="proc.analytics.no_alerts">{{ T('proc.analytics.no_alerts') }}</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </article>
+</div>
+{% endif %}
+
+<details class="panel an-defs">
+  <summary data-i18n="proc.analytics.define">{{ T('proc.analytics.define') }}</summary>
   <div class="panel-pad">
-    <div class="muted" style="margin-bottom:10px" data-i18n="proc.export.sub">Download live CSV reports — Excel-ready (UTF-8).</div>
-    <div style="display:flex;flex-wrap:wrap;gap:10px">
+    {% if show_money %}<p data-i18n="proc.analytics.def.spend">{{ T('proc.analytics.def.spend') }}</p>
+    <p data-i18n="proc.analytics.def.savings">{{ T('proc.analytics.def.savings') }}</p>{% endif %}
+    <p data-i18n="proc.analytics.def.cycle">{{ T('proc.analytics.def.cycle') }}</p>
+  </div>
+</details>
+
+{% if show_money %}
+<div class="panel an-exports">
+  <div class="panel-head"><h3 data-i18n="proc.analytics.exports">{{ T('proc.analytics.exports') }}</h3></div>
+  <div class="panel-pad">
+    <p class="muted" data-i18n="proc.analytics.exports_sub">{{ T('proc.analytics.exports_sub') }}</p>
+    <div class="an-chips">
       <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.export_csv', key='register') }}" data-i18n="proc.export.register">PR register</a>
       <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.export_csv', key='spend_dept') }}" data-i18n="proc.export.spend_dept">Spend by department</a>
       <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.export_csv', key='spend_vendor') }}" data-i18n="proc.export.spend_vendor">Spend by vendor</a>
@@ -67,59 +241,15 @@
     </div>
   </div>
 </div>
-
 {% endif %}
 
+{% set specmap = {} %}
+{% for s in specs %}{% set _ = specmap.update({s.key: s}) %}{% endfor %}
+{% for s in pinned %}{% set _ = specmap.update({s.key: s}) %}{% endfor %}
+{% for kk, s in extra.items() %}{% set _ = specmap.update({kk: s}) %}{% endfor %}
+<script type="application/json" id="an-data">{{ {'specs': specmap, 'list': url_for('approvals.listing'), 'lang': lang,
+  'L': {'others': T('proc.analytics.others'), 'n': T('proc.analytics.col.n'), 'empty': T('proc.analytics.empty'),
+        'days': T('proc.analytics.u.days'), 'h': T('proc.analytics.u.hours')}}|tojson }}</script>
 <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
-<script>
-(function () {
-  var A = {% if show_money %}{{ a|tojson }}{% else %}{{ dict(avg_cycle_days=a.avg_cycle_days, bottleneck=a.bottleneck, status_counts=a.status_counts, stage_avg_hours=a.stage_avg_hours, stage_rejections=a.stage_rejections)|tojson }}{% endif %};
-  var RED = '#ED1C24', MUT = '#94a3b8';
-  var css = getComputedStyle(document.body);
-  var ink = css.getPropertyValue('--ink') || '#101114';
-  Chart.defaults.color = MUT;
-  Chart.defaults.font.family = 'Segoe UI, Inter, sans-serif';
-
-  function bar(id, obj, color) {
-    var el = document.getElementById(id); if (!el) return;
-    var labels = Object.keys(obj||{}), data = labels.map(function(k){return obj[k];});
-    if (!labels.length) { el.parentNode.innerHTML = '<div class="muted">No data yet.</div>'; return; }
-    new Chart(el, {type:'bar', data:{labels:labels, datasets:[{data:data, backgroundColor:color, borderRadius:6}]},
-      options:{plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, grid:{color:'rgba(148,163,184,.15)'}}, x:{grid:{display:false}}}}});
-  }
-  bar('chDept', A.spend_by_dept, 'rgba(237,28,36,.75)');
-  bar('chVendor', A.spend_by_vendor, 'rgba(29,78,216,.7)');
-
-  // monthly line
-  (function(){
-    var el = document.getElementById('chMonth'); if (!el) return;
-    var m = A.monthly || [];
-    if (!m.length) { el.parentNode.innerHTML = '<div class="muted">No data yet.</div>'; return; }
-    new Chart(el, {type:'line', data:{labels:m.map(function(x){return x[0];}),
-      datasets:[{data:m.map(function(x){return x[1];}), borderColor:RED, backgroundColor:'rgba(237,28,36,.12)', fill:true, tension:.3, pointRadius:3}]},
-      options:{plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, grid:{color:'rgba(148,163,184,.15)'}}, x:{grid:{display:false}}}}});
-  })();
-
-  // status doughnut
-  (function(){
-    var el = document.getElementById('chStatus'); if (!el) return;
-    var sc = A.status_counts || {}, labels = Object.keys(sc);
-    if (!labels.length) { el.parentNode.innerHTML = '<div class="muted">No data yet.</div>'; return; }
-    var palette = {pending:'#b45309', approved:'#047857', po_issued:'#047857', closed:'#0f766e', rejected:'#be123c', draft:'#94a3b8', cancelled:'#94a3b8'};
-    new Chart(el, {type:'doughnut', data:{labels:labels.map(function(s){return s.replace('_',' ');}),
-      datasets:[{data:labels.map(function(k){return sc[k];}), backgroundColor:labels.map(function(k){return palette[k]||MUT;})}]},
-      options:{plugins:{legend:{position:'right'}}, cutout:'62%'}});
-  })();
-
-  // stage performance table
-  var sa = A.stage_avg_hours || {}, sr = A.stage_rejections || {};
-  var stages = Array.from(new Set(Object.keys(sa).concat(Object.keys(sr))));
-  document.getElementById('stageRows').innerHTML = stages.length
-    ? stages.map(function(s){ return '<tr><td style="font-weight:600">'+s.replace(/_/g,' ')+'</td>'
-        + '<td>'+ (sa[s]!=null ? sa[s]+'h' : '—') +'</td>'
-        + '<td>'+ (sr[s]||0) +'</td></tr>'; }).join('')
-    : '<tr><td colspan="3" class="muted">No completed approvals yet.</td></tr>';
-})();
-</script>
-
+<script src="{{ url_for('static', filename='js/proc-analytics.js') }}"></script>
 {% endblock %}

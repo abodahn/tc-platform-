@@ -1,0 +1,8 @@
+{#- "Required by": the requester's wish date. Optional; never in the past when
+    entered (checked again on the server). It becomes the purchase order's
+    promised date when no supplier quoted a lead time. A date already stored
+    and since passed keeps working, so no `min` then. -#}
+{% set _rd = (prefill.req_del_date or '')[:10] %}{% set _today = delivery_today() %}
+<div class="field"><label for="reqDelDate" data-i18n="proc.delivery.req_by">Required by</label>
+  <input type="date" id="reqDelDate" name="req_del_date" value="{{ _rd }}"
+         {% if not _rd or _rd >= _today %}min="{{ _today }}"{% endif %}></div>

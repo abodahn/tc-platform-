@@ -1,0 +1,124 @@
+{#- PO revisions on the request page (porev lane): revise one supplier's order,
+    sign a revision that raises it, and the history with before/after.
+    Context: pr, can_purchasing, show_commercial, has_sig, stage_label, csrf_token. -#}
+{% set rv = porev_rv if porev_rv is defined else porev_view(pr.id) %}
+{% if rv %}
+<div id="porev" class="porev">
+  {% set pend = rv.pending %}
+  {% if pend %}
+  {% set pmoney = show_commercial or pend.can_sign %}
+  <div class="porev-pending">
+    <div class="flex between center wrap gap">
+      <b>{{ pend.po_no }} · Rev {{ pend.rev_no }}</b>
+      <span class="badge b-pending" data-i18n="proc.porev.st_pending">Waiting for approval</span>
+    </div>
+    <div class="muted" style="font-size:12.5px;margin-top:4px" data-i18n="proc.porev.pending_hint">This revision raises the order above its approved value. Nothing on the PO changes until every approver below has signed.</div>
+    {% if pmoney %}
+    <div class="porev-grand"><span data-i18n="proc.grand_total">Grand total</span>:
+      <s>{{ '{:,.2f}'.format(pend.old_grand or 0) }}</s> <span class="porev-arr" aria-hidden="true">→</span> <b>{{ '{:,.2f}'.format(pend.new_grand or 0) }}</b> {{ pr.currency }}</div>
+    {% endif %}
+    {% set rev = pend %}{% include "approvals/_porev_diff.html" %}
+    <ol class="porev-steps">
+      {% for s in pend.steps %}
+      <li><span>{{ stage_label(s.stage) }}</span>
+        {% if s.status == 'approved' %}<span class="badge b-approved" data-i18n="proc.porev.signed">Signed</span> <span class="muted">{{ s.approver_name or '' }} · {{ (s.acted_at or '')[:16] }}</span>
+        {% elif s.status == 'rejected' %}<span class="badge b-rejected" data-i18n="proc.porev.st_rejected">Rejected</span>
+        {% elif pend.current and s.id == pend.current.id %}<span class="badge b-pending" data-i18n="proc.porev.now">Now</span>
+        {% else %}<span class="muted" data-i18n="proc.porev.waiting">Waiting</span>{% endif %}</li>
+      {% endfor %}
+    </ol>
+    {% if pend.can_sign %}
+    {% if not has_sig %}
+    <div class="muted" style="font-size:12.5px" data-i18n="proc.no_sig">You haven't set a digital signature yet — approving will still record your name, but no signature image will be stamped.</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('approvals.porev_sign', rev_id=pend.id) }}" class="porev-signf" data-once>
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="field"><label for="porevComment" data-i18n="proc.comment">Comment (optional)</label>
+        <input id="porevComment" name="comment" autocomplete="off" maxlength="300"></div>
+      <div class="flex gap wrap">
+        <button class="btn btn-primary btn-sm" type="submit" name="decision" value="approve" data-i18n="proc.porev.approve_rev">Approve revision &amp; sign</button>
+        <button class="btn btn-ghost btn-sm" type="submit" name="decision" value="reject" data-i18n="proc.porev.reject_rev">Reject revision</button>
+      </div>
+    </form>
+    {% endif %}
+    {% if can_purchasing %}
+    <form method="post" action="{{ url_for('approvals.porev_cancel', rev_id=pend.id) }}" class="mt-2">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.porev.withdraw">Withdraw this revision</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if can_purchasing and rv.revisable and not pend %}
+  {% for p in rv.pos if p.status != 'cancelled' %}
+  <details class="porev-form">
+    <summary><span data-i18n="proc.po.revise">Revise this PO</span> — {{ p.po_no }}{% if rv.pos|length > 1 %} · {{ p.vendor or '' }}{% endif %}</summary>
+    <form method="post" action="{{ url_for('approvals.porev_propose', pr_id=pr.id) }}" data-once>
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="po_id" value="{{ p.id or '' }}">
+      <div class="tbl-wrap">
+      <table class="tbl porev-lines">
+        <thead><tr>
+          <th data-i18n="proc.item">Item</th>
+          <th style="text-align:end" data-i18n="proc.porev.received">Received</th>
+          <th data-i18n="proc.qty">Qty</th>
+          <th data-i18n="proc.unit_price">Unit price</th>
+        </tr></thead>
+        <tbody>
+        {% for it in p.lines %}
+          <tr>
+            <td>{{ it.item or it.description or '' }}{% if it.unit %} <span class="muted">({{ it.unit }})</span>{% endif %}</td>
+            <td style="text-align:end;font-variant-numeric:tabular-nums">{{ '%g'|format(it.received_qty or 0) }}</td>
+            <td><input type="number" name="qty_{{ it.id }}" min="{{ it.received_qty or 0 }}" step="any" inputmode="decimal"
+                       value="{{ '%g'|format(it.qty or 0) }}" aria-label="{{ it.item or '' }}"></td>
+            <td><input type="number" name="price_{{ it.id }}" min="0" step="any" inputmode="decimal"
+                       value="{{ '%.15g'|format(it.unit_price or 0) }}" aria-label="{{ it.item or '' }}"></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <div class="grid cols-2" style="gap:10px;margin-top:8px">
+        <div class="field"><label for="porevDate{{ loop.index }}" data-i18n="proc.porev.delivery">Delivery date</label>
+          <input id="porevDate{{ loop.index }}" type="date" name="delivery_date" value="{{ p.delivery or '' }}"></div>
+        <div class="field"><label class="porev-chk"><input type="checkbox" name="email" value="1">
+          <span data-i18n="proc.porev.email">Email the revised PO to the supplier</span></label></div>
+      </div>
+      <div class="field"><label for="porevReason{{ loop.index }}" data-i18n="proc.po.reason">Reason for revision *</label>
+        <textarea id="porevReason{{ loop.index }}" name="reason" rows="2" required maxlength="500"
+                  placeholder="What changed and why?" data-i18n-ph="proc.po.reason_ph"></textarea></div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">
+        <span data-i18n="proc.porev.rule">Lower quantities or prices and a new date apply at once. A total above the approved value</span>
+        (+{{ '%g'|format(rv.tolerance) }}%)
+        <span data-i18n="proc.porev.rule2">goes to the approvers first.</span></div>
+      <button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.porev.save">Save revision</button>
+    </form>
+  </details>
+  {% endfor %}
+  {% endif %}
+
+  {% set hist = rv.revs|rejectattr('status', 'equalto', 'pending')|list %}
+  {% if hist %}
+  <h4 class="porev-h" data-i18n="proc.porev.history">Revision history</h4>
+  <div class="porev-hist">
+    {% for rev in hist %}
+    <div class="porev-rev">
+      <div class="flex between center wrap gap">
+        <b>{{ rev.po_no }} · Rev {{ rev.rev_no }}</b>
+        <span class="badge b-{{ 'approved' if rev.status == 'applied' else 'rejected' if rev.status == 'rejected' else 'draft' }}"
+              data-i18n="proc.porev.st_{{ rev.status }}">{{ rev.status|title }}</span>
+      </div>
+      <div class="muted" style="font-size:12px">{{ (rev.created_at or '')[:16] }} · {{ rev.created_by or '' }}</div>
+      <div style="margin-top:4px">{{ rev.reason or '' }}</div>
+      {% if show_commercial and rev.old_grand is not none and rev.new_grand is not none %}
+      <div class="porev-grand"><span data-i18n="proc.grand_total">Grand total</span>:
+        {{ '{:,.2f}'.format(rev.old_grand) }} <span class="porev-arr" aria-hidden="true">→</span> <b>{{ '{:,.2f}'.format(rev.new_grand) }}</b> {{ pr.currency }}</div>
+      {% endif %}
+      {% set pmoney = show_commercial %}{% include "approvals/_porev_diff.html" %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}

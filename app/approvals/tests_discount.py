@@ -86,6 +86,9 @@ def run():
                                          ("disc_" + name,)).fetchone())
         users["admin"] = dict(c.execute(
             "SELECT * FROM users WHERE role='super_admin' ORDER BY id LIMIT 1").fetchone())
+        # plain requesters see only their own requests (2026-11-26): the no-money viewer
+        # must be one who may open every request (goods receipt only, no money permission).
+        c.execute("UPDATE users SET extra_perms='[\"proc_receive\"]' WHERE username='disc_other'")
         c.commit()
         c.close()
         buyer = users["buyer"]
@@ -397,7 +400,7 @@ def run():
     r = client(users["other"]["id"]).get("/procurement/pr/%d" % vis)
     h2 = r.get_data(as_text=True)
     chk("a viewer without money visibility sees no discount figure (%s)" % r.status_code,
-        r.status_code in (200, 302, 403) and "432.10" not in h2 and "9,443.90" not in h2
+        r.status_code == 200 and "432.10" not in h2 and "9,443.90" not in h2
         and "9,876" not in h2)
     html = adm.get("/procurement/pr/%d" % pid).get_data(as_text=True)
     chk("line items panel: discount (10%) and the Net cost column",

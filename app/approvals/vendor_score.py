@@ -9,7 +9,8 @@ from documents the platform already books:
     pr_grn.lines_json   every receipt EVENT: when it arrived, and per line how
                         much was accepted, how much arrived over the order
                         (`quarantined`) and how much was refused (`rejected`).
-    pr_requests         `req_del_date` — the date the goods were promised.
+    pr_requests         `req_del_date` — the date the goods were wanted by; the
+                        order's own `promised_date` wins where it has one.
     pr_items            `qty` vs `received_qty` — ordered vs actually delivered,
                         and `vendor`, which is the SUPPLIER OF THE LINE. A
                         requisition may buy from three suppliers, so the header
@@ -93,6 +94,11 @@ def _delivery_metrics(conn, start, buckets):
         SELECT DISTINCT i.id, i.vendor
           FROM pr_items i JOIN pr_grn g ON g.pr_id = i.pr_id
          WHERE COALESCE(g.created_at,'') >= ?""", start)}
+    # The date the SUPPLIER agreed to (the order's promised date) beats the
+    # requester's wish date wherever the order carries one.
+    po_promise = {(r["pr_id"], vendor_key(r["vendor"])): r["promised_date"] for r in _rows(conn, """
+        SELECT pr_id, vendor, promised_date FROM pr_purchase_orders
+         WHERE COALESCE(promised_date,'') <> '' AND COALESCE(status,'issued') <> 'cancelled'""")}
 
     for g in grns:
         try:
@@ -121,12 +127,12 @@ def _delivery_metrics(conn, start, buckets):
             # quarantine. Both are the supplier sending the wrong quantity.
             b["reject"].append(100.0 * (over + rej) / delivered)
             on_this_grn.add(name)
-        # A promise nobody recorded cannot be scored, so the whole event drops
-        # out of the on-time sample rather than counting as a pass.
-        if not promised:
-            continue
+        # A promise nobody recorded cannot be scored, so the event drops out of
+        # that supplier's on-time sample rather than counting as a pass.
         for name in on_this_grn:
-            buckets(name)["on_time"].append(100.0 if arrived and arrived <= promised else 0.0)
+            due = (po_promise.get((g["pr_id"], vendor_key(name))) or promised)[:10]
+            if due:
+                buckets(name)["on_time"].append(100.0 if arrived and arrived <= due else 0.0)
 
 
 def _fill_metrics(conn, start, today, buckets):

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content_class %}proc{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
+{% block title %}Bulk signing{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.porev.bulk_title">Bulk signing — result</h1>
+    <div class="sub"><b>{{ signed }}</b> / {{ results|length }} <span data-i18n="proc.porev.bulk_signed">signed with your saved signature. Each request was checked on its own.</span></div>
+  </div>
+  <div class="flex gap center wrap">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.index') }}#my-queue" data-i18n="proc.porev.back_queue">Back to my queue</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('main.my_work') }}" data-i18n="mywork.title">My Work</a>
+  </div>
+</div>
+<div class="panel"><div class="panel-pad">
+  <div class="tbl-wrap">
+  <table class="tbl">
+    <thead><tr>
+      <th data-i18n="proc.pr">Request</th>
+      <th data-i18n="proc.porev.result">Result</th>
+      <th data-i18n="proc.porev.details">Details</th>
+    </tr></thead>
+    <tbody>
+    {% for r in results %}
+      <tr>
+        <td style="font-weight:600"><a href="{{ url_for('approvals.detail', pr_id=r.id) }}">{{ r.pr_no }}</a></td>
+        <td>{% if r.ok %}<span class="badge b-approved" data-i18n="proc.porev.signed">Signed</span>
+            {% else %}<span class="badge b-rejected" data-i18n="proc.porev.refused">Not signed</span>{% endif %}</td>
+        <td style="white-space:normal">{{ r.text }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div></div>
+{% endblock %}

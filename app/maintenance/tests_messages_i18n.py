@@ -207,8 +207,9 @@ def run():
     # keys — `accept`, `bad_field`, `already_priced` — so a future code that
     # happened to share one of those names would have passed with no sentence
     # anywhere, and the check would have read as coverage it did not have.
-    start = proc.index('flash({"forbidden"')
-    block = proc[start:proc.index('"error")', start)]
+    # (the dict is the module constant APPROVE_REFUSALS, shared with bulk sign)
+    start = proc.index('APPROVE_REFUSALS = {')
+    block = proc[start:proc.index('\n}\n', start)]
     proc_codes = set(re.findall(r'"([a-z_]+)":\s*"', block))
     chk("the procurement refusal dict was found and looks like itself",
         "forbidden" in proc_codes and "self_approval" in proc_codes and len(proc_codes) < 30,

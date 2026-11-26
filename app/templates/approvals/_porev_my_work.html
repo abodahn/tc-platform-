@@ -1,0 +1,85 @@
+{#- My Work: requests waiting for my signature, with bulk signing, plus the PO
+    revisions waiting for me (porev lane). sign_queue is the WHOLE queue; the
+    first rows are listed and the true count is shown with a "view all" link. -#}
+{% set can_bulk = cu and (cu.has_sig or cu.sig_png) %}
+{% if sign_queue or rev_queue %}
+<div class="panel">
+  <div class="panel-head">
+    <h3 data-i18n="mywork.sign_queue">Requests waiting for my signature</h3>
+    <span class="badge-count">{{ sign_queue|length + rev_queue|length }}</span>
+  </div>
+  <div class="panel-pad">
+    {% if sign_queue %}
+    <form method="post" action="{{ url_for('approvals.bulk_sign') }}" data-once data-porev-bulk>
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      {% if can_bulk %}
+      <label class="porev-chk porev-all"><input type="checkbox" data-porev-all>
+        <span data-i18n="proc.porev.select_all">Select all</span></label>
+      {% endif %}
+      {% for pr in sign_queue[:15] %}
+      <div class="porev-line">
+        {% if can_bulk %}<label class="porev-chk"><input type="checkbox" name="pr_id" value="{{ pr.id }}">
+          <span class="sr-only">{{ pr.pr_no }}</span></label>{% endif %}
+        <a class="row-line porev-row" href="{{ url_for('approvals.detail', pr_id=pr.id) }}">
+          <span><b>{{ pr.pr_no }}</b> · {{ pr.title or '' }}</span>
+          <span class="tag">{{ pr._stage_label }}</span>
+        </a>
+      </div>
+      {% endfor %}
+      {% if sign_queue|length > 15 %}
+      <a class="porev-more" href="{{ url_for('approvals.index') }}#my-queue">
+        <span data-i18n="proc.porev.view_all">View all</span> ({{ sign_queue|length }})</a>
+      {% endif %}
+      {% if can_bulk %}
+      <div class="porev-bulkbar">
+        <label class="sr-only" for="porevMwNote" data-i18n="proc.comment">Comment (optional)</label>
+        <input id="porevMwNote" name="comment" autocomplete="off" maxlength="300"
+               data-i18n-ph="proc.comment" placeholder="Comment (optional)" style="flex:1 1 200px">
+        <button class="btn btn-primary btn-sm" type="submit" data-porev-go disabled>
+          <span data-i18n="proc.porev.sign_selected">Sign selected</span>
+          (<span data-porev-n>0</span>)</button>
+      </div>
+      {% else %}
+      <div class="muted" style="font-size:12.5px;margin-top:8px">
+        <span data-i18n="proc.porev.bulk_needs_sig">To sign several requests at once, save your digital signature first.</span>
+        <a href="{{ url_for('main.profile') }}#signature" data-i18n="proc.set_sig">Set signature</a></div>
+      {% endif %}
+    </form>
+    {% endif %}
+    {% include "approvals/_porev_rev_list.html" %}
+  </div>
+</div>
+<script>
+(function () {
+  document.querySelectorAll('[data-porev-bulk]').forEach(function (f) {
+    var all = f.querySelector('[data-porev-all]'), go = f.querySelector('[data-porev-go]'),
+        n = f.querySelector('[data-porev-n]');
+    function boxes() { return f.querySelectorAll('input[name="pr_id"]'); }
+    function sync() {
+      var c = f.querySelectorAll('input[name="pr_id"]:checked').length;
+      if (n) n.textContent = c;
+      if (go) go.disabled = !c;
+      if (all) all.checked = c && c === boxes().length;
+    }
+    if (all) all.addEventListener('change', function () {
+      boxes().forEach(function (b) { b.checked = all.checked; }); sync();
+    });
+    f.addEventListener('change', function (e) { if (e.target.name === 'pr_id') sync(); });
+    sync();
+  });
+})();
+</script>
+<style>
+  .porev-line { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
+  .porev-line .row-line { flex: 1; min-width: 0; display: flex; justify-content: space-between; gap: 10px;
+    align-items: center; padding: 8px 4px; text-decoration: none; color: inherit; }
+  .porev-row { display: flex; justify-content: space-between; gap: 10px; align-items: center;
+    padding: 8px 4px; border-bottom: 1px solid var(--border); text-decoration: none; color: inherit; }
+  .porev-chk { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 32px; cursor: pointer; }
+  .porev-chk input { width: 20px; height: 20px; margin: 0; }
+  .porev-all { font-size: 13px; font-weight: 600; }
+  .porev-bulkbar { position: relative; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+  .porev-more { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; }
+  .porev-revq h4 { margin: 14px 0 4px; font-size: 13.5px; }
+</style>
+{% endif %}
