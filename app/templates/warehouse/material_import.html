@@ -12,8 +12,8 @@
   <p data-i18n="wh.imp.help">Code is required. Blank cells keep existing values. Opening stock is booked only for materials without stock history. Receive roll-tracked opening stock as individual rolls on the Receive page.</p>
   <p><span data-i18n="wh.imp.columns">Columns:</span> <code>{{ columns|join(', ') }}</code></p>
   <p class="flex gap">
-    <a class="btn btn-ghost" href="{{ url_for('warehouse.material_import_template') }}" data-i18n="wh.imp.xlsx">Download Excel template</a>
-    <a class="btn btn-ghost" href="{{ url_for('warehouse.material_import_template', fmt='csv') }}" data-i18n="wh.imp.csv">Download CSV template</a>
+    <a data-file-download class="btn btn-ghost" href="{{ url_for('warehouse.material_import_template') }}" data-i18n="wh.imp.xlsx">Download Excel template</a>
+    <a data-file-download class="btn btn-ghost" href="{{ url_for('warehouse.material_import_template', fmt='csv') }}" data-i18n="wh.imp.csv">Download CSV template</a>
   </p>
   <form method="post" action="{{ url_for('warehouse.material_import_run') }}" enctype="multipart/form-data">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">

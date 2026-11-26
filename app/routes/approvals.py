@@ -16,6 +16,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
                    abort, jsonify, send_file, current_app)
 from flask import flash as _flask_flash
 
+from app.services.file_view import file_response
 from app.auth import login_required, permission_required, current_user, user_can
 # Module scope on purpose. This module used to import get_db inside each
 # function that needed it, and twice a helper called it without that line: the
@@ -121,6 +122,7 @@ def index():
     except Exception:
         pass
     queue = svc.my_queue(user)
+    svc.mark_quote_wait(queue)   # 'Waiting for Purchasing (quotes)' badges (stamp-based, cheap)
     recent = svc.list_prs(limit=12, requester=(None if svc.sees_all_prs(user) else user["username"]))
     return render_template(
         "approvals/index.html", active="procurement",
@@ -1428,6 +1430,8 @@ def detail(pr_id):
     _c = svc.get_db()   # detail() imports get_db locally further down
     try:
         rfq = svc.rfq_requirement(_c, pr)
+        # A rung past Purchasing that the quote rule blocks: banner + no Approve.
+        quote_wait = svc.quote_wait(_c, pr)
     finally:
         _c.close()
     return render_template("approvals/detail.html", active="proc_list",
@@ -1500,6 +1504,7 @@ def detail(pr_id):
                            wh_review=bool(actionable
                                           and actionable.get("stage") in C.WAREHOUSE_STAGES),
                            currencies=C.CURRENCIES, payments=C.PAYMENT_CONDITIONS,
+                           quote_wait=quote_wait,
                            rfq_min=rfq["required"], rfq_have=rfq["have"],
                            rfq_value=rfq["value"], rfq_threshold=C.RFQ_VALUE_THRESHOLD,
                            # Who to ask for a price, defaulted to the vendors the
@@ -1963,8 +1968,8 @@ def _rfq_doc(pr_id):
 
 
 def _xlsx(data, name):
-    return send_file(io.BytesIO(data), mimetype=xlsxgen.MIME, as_attachment=True,
-                     download_name=name)
+    # ?view=1 opens the sheet inside the app (file_view); a plain link still downloads.
+    return file_response(data, xlsxgen.MIME, name)
 
 
 @bp.route("/pr/<int:pr_id>/rfq.xlsx")
@@ -1988,9 +1993,8 @@ def rfq_pdf(pr_id):
         data = pdfgen.rfq_pdf(bundle, rfq)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False,
-                     download_name=f"{rfq.get('rfq_no') or 'RFQ'}.pdf")
+    return file_response(data, "application/pdf", f"{rfq.get('rfq_no') or 'RFQ'}.pdf",
+                         as_attachment=False)
 
 
 @bp.route("/quote/<int:quote_id>/file")
@@ -2009,8 +2013,7 @@ def quote_file(quote_id):
         raw = base64.b64decode(q["content_b64"])
     except Exception:
         abort(404)
-    return send_file(io.BytesIO(raw), mimetype=q["content_type"] or "application/octet-stream",
-                     as_attachment=True, download_name=q["filename"] or "quote")
+    return file_response(raw, q["content_type"], q["filename"] or "quote")
 
 
 # --------------------------------------------------------------------------
@@ -2501,8 +2504,7 @@ def invoice_file(inv_id):
         raw = base64.b64decode(iv["content_b64"])
     except Exception:
         abort(404)
-    return send_file(io.BytesIO(raw), mimetype=iv["content_type"] or "application/octet-stream",
-                     as_attachment=True, download_name=iv["filename"] or "invoice")
+    return file_response(raw, iv["content_type"], iv["filename"] or "invoice")
 
 
 @bp.route("/pr/<int:pr_id>/payment", methods=["POST"])
@@ -2691,9 +2693,8 @@ def pr_pdf(pr_id):
         data = pdfgen.pr_pdf(bundle, money=money)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False,
-                     download_name=f"{bundle['pr'].get('pr_no', 'PR')}.pdf")
+    return file_response(data, "application/pdf", f"{bundle['pr'].get('pr_no', 'PR')}.pdf",
+                         as_attachment=False)
 
 
 @bp.route("/pr/<int:pr_id>/po.pdf")
@@ -2714,8 +2715,7 @@ def po_pdf(pr_id):
         data = pdfgen.po_pdf(bundle, po)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False, download_name=_po_name(bundle, po, "pdf"))
+    return file_response(data, "application/pdf", _po_name(bundle, po, "pdf"), as_attachment=False)
 
 
 @bp.route("/pr/<int:pr_id>/grn.pdf")
@@ -2740,8 +2740,7 @@ def grn_pdf(pr_id):
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
     name = (grn or {}).get("grn_no") or pdfgen.grn_doc_no(bundle["pr"].get("pr_no"))
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False, download_name=f"{name}.pdf")
+    return file_response(data, "application/pdf", f"{name}.pdf", as_attachment=False)
 
 
 @bp.route("/return/<int:ret_id>/debit-note.pdf")
@@ -2761,9 +2760,8 @@ def debit_note_pdf(ret_id):
         data = pdfgen.debit_note_pdf(bundle, ret)
     except Exception:
         return jsonify(error="PDF support unavailable."), 500
-    return send_file(io.BytesIO(data), mimetype="application/pdf",
-                     as_attachment=False,
-                     download_name=f"{ret.get('dn_no') or 'DN'}.pdf")
+    return file_response(data, "application/pdf", f"{ret.get('dn_no') or 'DN'}.pdf",
+                         as_attachment=False)
 
 
 @bp.route("/return/<int:ret_id>/settle", methods=["POST"])
@@ -2932,8 +2930,7 @@ def download_attachment(att_id):
         raw = base64.b64decode(row["content_b64"])
     except Exception:
         abort(404)
-    return send_file(io.BytesIO(raw), mimetype=row["content_type"] or "application/octet-stream",
-                     as_attachment=True, download_name=row["filename"] or "attachment")
+    return file_response(raw, row["content_type"], row["filename"] or "attachment")
 
 
 # --------------------------------------------------------------------------
@@ -3305,6 +3302,7 @@ _REQUESTER_ERRORS = {
     "inactive": "That user is not active.",
     "same": "That user is already the requester.",
     "signed_own": "That user already signed this request, so they cannot become its requester.",
+    "item_controller": "That user is the Item control signer of this request, so they cannot become its requester.",
     "not_found": "Request not found.",
 }
 
@@ -3334,6 +3332,7 @@ from app.routes import approvals_porev as _porev  # noqa: E402,F401  PO lane rou
 
 
 from app.routes import approvals_analytics  # noqa: E402,F401  (analytics routes on bp)
+from app.routes import approvals_itemctl  # noqa: E402,F401  Item control rung (settings + access)
 
 
 # Requesters see only their own requests. One guard for every procurement URL

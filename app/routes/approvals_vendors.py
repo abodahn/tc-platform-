@@ -4,11 +4,12 @@ documents, and the comments thread on a request. Registered on the existing
 approvals blueprint (imported once at the end of app/routes/approvals.py).
 """
 import base64
-import io
 import json
 import os
 
-from flask import abort, redirect, request, send_file, url_for
+from flask import abort, redirect, request, url_for
+
+from app.services.file_view import file_response
 
 from app.auth import login_required, permission_required
 from app.approvals import services as svc
@@ -77,8 +78,7 @@ def vendor_doc(doc_id):
         raw = base64.b64decode(row["content_b64"] or "")
     except Exception:
         abort(404)
-    return send_file(io.BytesIO(raw), mimetype=row["content_type"] or "application/octet-stream",
-                     as_attachment=True, download_name=row["filename"] or "document")
+    return file_response(raw, row["content_type"], row["filename"] or "document")
 
 
 @bp.route("/pr/<int:pr_id>/comment", methods=["POST"])

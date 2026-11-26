@@ -9,7 +9,7 @@
   </div>
   <div class="flex gap center">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.rolls') }}" data-i18n="wh.nav.rolls">Fabric rolls</a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.export_csv', key='issues-by-order') }}" data-i18n="wh.action.export_issues">Export issues CSV</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('warehouse.export_csv', key='issues-by-order') }}" data-i18n="wh.action.export_issues">Export issues CSV</a>
   </div>
 </div>
 

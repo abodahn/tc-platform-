@@ -325,7 +325,7 @@ def run():
         c.close()
         keepers = {r["username"] for r in q("SELECT username FROM users WHERE is_active=1 "
                                             "AND role='storekeeper'")}
-        maint = {"n2_mm", "n2_treq", "n2_tech"} | keepers
+        maint = {"n2_treq", "n2_tech"}   # the ticket's people only (lane notifown)
         m = mark()
         ok, msg = svc.act_on_step(pg, signer["warehouse"], "reject", comment="not needed")
         assert ok, msg

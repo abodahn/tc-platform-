@@ -69,27 +69,17 @@ def _system_by_key(key):
     return row
 
 
-def _proc_only_sql():
-    """Extra WHERE for notification queries: procurement-only users read and
-    clear procurement alerts only (bell, feed, My Work and mark-all-read)."""
-    from flask import has_request_context
-    from app.proc_scope import is_procurement_only
-    return (" AND module = 'procurement'"
-            if has_request_context() and is_procurement_only(current_user()) else "")
-
-
-def _unread_notifications(username=None):
-    """Bell feed: broadcast notifications (target_user IS NULL) plus any addressed
-    to this user. Older rows created before the target_user column are broadcast."""
-    only_proc = _proc_only_sql()
+def _unread_notifications(user):
+    """Bell feed: rows addressed to this user, plus broadcasts of the modules they
+    own (app/services/bell_scope.py) — not every broadcast to everybody."""
+    from app.services import bell_scope
     conn = get_db()
     try:
-        rows = conn.execute(
-            "SELECT * FROM notifications WHERE (target_user IS NULL OR target_user = ?)"
-            + only_proc + " ORDER BY id DESC LIMIT 30", (username,)).fetchall()
-        unread = conn.execute(
-            "SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0 "
-            "AND (target_user IS NULL OR target_user = ?)" + only_proc, (username,)).fetchone()["c"]
+        if isinstance(user, str):   # older callers pass a bare username
+            row = conn.execute("SELECT * FROM users WHERE username = ?", (user,)).fetchone()
+            user = dict(row) if row else {"username": user}
+        rows = bell_scope.bell_rows(conn, user)
+        unread = bell_scope.unread_count(conn, user)
     finally:
         conn.close()
     # Procurement rows are stored in English; shown in the reader's language.
@@ -169,14 +159,16 @@ def inject_globals():
     notifs, unread = ([], 0)
     visible_nav = []
     if user:
-        notifs, unread = _unread_notifications(user["username"])
+        try:
+            notifs, unread = _unread_notifications(user)
+        except Exception:   # the bell must never take a page down; log it and show none
+            from flask import current_app
+            current_app.logger.exception("bell query failed")
+            notifs, unread = ([], 0)
         from app.navigation import WIP_KEYS
         is_admin = user_has_permission(user, "access_admin")
         scope = system_scope(user)   # None = unrestricted; a set = only those keys
-        if scope is not None:
-            # Scope-locked users only see bell alerts for their own system(s).
-            notifs = [n for n in notifs if not n["module"] or n["module"] in scope]
-            unread = sum(1 for n in notifs if not n["is_read"])
+        # (scope-locked users' bell is narrowed in bell_scope.visible_where)
         # Company-wide procurement pages are not for a plain requester.
         from app.approvals.services import sees_all_prs
         _hide = () if sees_all_prs(user) else ("proc_analytics", "proc_agreements")
@@ -1055,17 +1047,13 @@ def mark_notifications_read():
         nid = int(nid) if nid not in (None, "") else None
     except (TypeError, ValueError):
         nid = None
+    from app.services import bell_scope
     conn = get_db()
     try:
-        me = (current_user() or {}).get("username")
-        if nid:
-            # Scoped to the reader. Without this any signed-in account could clear
-            # the CFO's "request to sign" by guessing an id.
-            conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ? "
-                         "AND (target_user IS NULL OR target_user = ?)", (nid, me))
-        else:
-            conn.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0 "
-                         "AND (target_user IS NULL OR target_user = ?)" + _proc_only_sql(), (me,))
+        # Scoped to the reader: only rows they can see, and a broadcast is marked
+        # read for them alone. Without this any signed-in account could clear the
+        # CFO's "request to sign" by guessing an id.
+        bell_scope.mark_read(conn, current_user(), nid)
         conn.commit()
     finally:
         conn.close()
@@ -1097,6 +1085,11 @@ def _notification_background_pass():
             # expensive half of this, not the four SELECTs.
             if has_targets and health_sync_due():
                 sync_health_notifications(systems, health_svc.check_all(systems))
+        except Exception:
+            pass
+        try:
+            from app.approvals.services import maybe_run_quote_wait_sweep
+            maybe_run_quote_wait_sweep()   # rungs past Purchasing waiting on quotes -> Purchasing (throttled)
         except Exception:
             pass
         try:
@@ -1150,13 +1143,7 @@ def notifications_feed():
     except Exception:
         pass
     user = current_user()
-    notifs, unread = _unread_notifications((user or {}).get("username"))
-    scope = system_scope(user) if user else None
-    if scope is not None:
-        # same rule inject_globals applies to the bell: scope-locked users only
-        # see alerts for their own system(s)
-        notifs = [n for n in notifs if not n["module"] or n["module"] in scope]
-        unread = sum(1 for n in notifs if not n["is_read"])
+    notifs, unread = _unread_notifications(user)   # scope applied in bell_scope
     items = [{
         "id": n["id"], "severity": n["severity"], "module": n["module"],
         "title": n["title"], "message": n["message"],
@@ -1329,6 +1316,7 @@ def my_work():
             from app.approvals import services as proc
             # The whole queue: the panel shows the first rows and the true count.
             data["sign_queue"] = proc.my_queue(user)
+            proc.mark_quote_wait(data["sign_queue"])   # 'Waiting for Purchasing (quotes)' badges
             from app.approvals import porev
             data["rev_queue"] = porev.rev_queue(user)
             data["my_prs"] = [p for p in proc.list_prs(requester=user["username"], limit=10)
@@ -1497,10 +1485,7 @@ def my_work():
             pass
 
     try:
-        notifs, _unread = _unread_notifications(user["username"])
-        scope = system_scope(user)
-        if scope is not None:
-            notifs = [n for n in notifs if (n["module"] or "") in scope or not n["module"]]
+        notifs, _unread = _unread_notifications(user)   # scope applied in bell_scope
         data["alerts"] = [n for n in notifs if not n["is_read"]][:8]
     except Exception:
         pass

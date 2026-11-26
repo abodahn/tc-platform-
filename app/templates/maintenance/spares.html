@@ -6,7 +6,7 @@
   <div><div class="eyebrow" data-i18n="nav.maintenance">Maintenance</div>
     <h1 data-i18n="nav.maint_spares">Spare Parts Inventory</h1></div>
   <div class="flex gap">
-    <a class="btn btn-ghost" href="{{ url_for('maintenance.report_export', key='inventory') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.export">Export</span></a>
+    <a data-file-download class="btn btn-ghost" href="{{ url_for('maintenance.report_export', key='inventory') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.export">Export</span></a>
     {% if mcan('maint_admin') %}<a class="btn btn-ghost" href="{{ url_for('maintenance.import_page', kind='spares') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.import">Import</span></a>{% endif %}
     {% if mcan('maint_store') or mcan('maint_manage') %}<button class="btn btn-primary" onclick="document.getElementById('sAdd').style.display='block'"><svg class="ico"><use href="#i-boxes"></use></svg><span data-i18n="m.add">Add</span></button>{% endif %}
   </div>

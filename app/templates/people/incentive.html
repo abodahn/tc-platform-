@@ -8,7 +8,7 @@
     <div class="sub" data-i18n="ppl.inc.sub">Earned-minute model: only minutes produced above the qualifying efficiency are paid.</div>
   </div>
   <div class="flex gap center">
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.export_csv', key='incentive') }}"
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('people.export_csv', key='incentive') }}"
        data-i18n="ppl.action.export">Export CSV</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('people.index') }}" data-i18n="ppl.nav.home">HR Core</a>
   </div>
@@ -57,7 +57,7 @@
 
 <div class="panel mt-4">
   <div class="panel-head"><h3 data-i18n="ppl.inc.summary">Operator ranking</h3>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('people.export_csv', key='incentive-summary') }}"
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('people.export_csv', key='incentive-summary') }}"
        data-i18n="ppl.action.export">Export CSV</a></div>
   <div class="panel-pad">
     <table class="tbl">

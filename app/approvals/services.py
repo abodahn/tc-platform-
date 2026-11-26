@@ -11,6 +11,7 @@ import hashlib
 import logging
 import math
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 
 from app.db import get_db
@@ -363,24 +364,93 @@ def _proc_admins(conn):
     return _perm_holders(conn, "proc_admin")
 
 
-def _step_signers(conn, pr, step):
+def _memo(cache, key, fn):
+    """fn() once per `cache` (a dict one batch job passes down), or every call
+    when cache is None. Roles and delegations do not change inside one pass."""
+    if cache is None:
+        return fn()
+    if key not in cache:
+        cache[key] = fn()
+    return cache[key]
+
+
+def _step_signers(conn, pr, step, cache=None):
     """Who may sign this pending step of this request — never the requester.
     Empty for a parked rung (esc_role '': the climb found nobody free) and for a
     rung whose roles have no active holder; both need an admin, not a prompt."""
+    if _pr_field(step, "stage") == C.ITEM_CONTROL_STAGE:
+        from app.approvals import item_control as IC
+        return IC.signers(conn, _pr_field(step, "assignee")) - {pr["requester"]}
     esc = _pr_field(step, "esc_role")
     if esc == "":
         return set()
-    people = eligible_approvers(conn, step["stage"], roles=_csv_set(esc) or None)
+    roles = frozenset(_csv_set(esc) or _memo(cache, "rmap", lambda: stage_roles_map(conn))
+                      .get(step["stage"], ()))
+    people = _memo(cache, ("signers", step["stage"], roles),
+                   lambda: set(stage_signers(conn, step["stage"], roles)))
     return set(people) - {pr["requester"]}
 
 
+def _step_notify(conn, pr, step, cache=None):
+    """Who to TELL that this pending step is on their desk — a subset of
+    _step_signers (who MAY sign; can_act and SoD are untouched).
+
+    A role that is also the dedicated signer of a LATER pending rung of the same
+    request (warehouse_manager on the 'warehouse' rung) is left out while anybody
+    else can sign this one, so the manager hears about the request when it reaches
+    THEIR rung. Nobody else (a site with no storekeeper, or the requester is the
+    only one) -> the full set, so the request still moves. An escalated step is
+    already pointed at its signers and is not narrowed. A person told here with an
+    active delegation to another signer of the rung is replaced by that delegate.
+
+    `cache` (a dict) lets a batch job (aging, escalations) share the role and
+    delegation lookups across rows: one pending-steps query per request remains."""
+    signers = _step_signers(conn, pr, step, cache)
+    people = signers
+    if signers and not _pr_field(step, "esc_role"):
+        rmap = _memo(cache, "rmap", lambda: stage_roles_map(conn))
+        roles = set(rmap.get(step["stage"]) or ())
+        pending = _memo(cache, ("pending", pr["id"]), lambda: conn.execute(
+            "SELECT stage, seq, esc_role FROM pr_steps WHERE pr_id=? "
+            "AND status='pending'", (pr["id"],)).fetchall())
+        seq = _pr_field(step, "seq")
+        if seq is None:   # a rung described by stage only (the submit prompt)
+            seq = min((r["seq"] for r in pending if r["stage"] == step["stage"]), default=None)
+        later = set()
+        for r in pending:
+            if seq is not None and r["seq"] > seq:
+                later |= step_roles(r, rmap)
+        if roles & later:
+            narrow = frozenset(roles - later)
+            people = (set(_memo(cache, ("signers", step["stage"], narrow),
+                                lambda: set(stage_signers(conn, step["stage"], narrow))))
+                      - {pr["requester"]}) or signers
+    if people:
+        # away: someone told here handed their signature (an active delegation) to
+        # another person who may sign this rung -> tell the delegate instead, even
+        # one the narrowing above left out. A delegation to the requester (who never
+        # signs their own request) or an expired one changes nothing.
+        today = _now()[:10]
+        frm, to = sorted(people), sorted(signers)
+        pairs = _memo(cache, ("away", tuple(frm), tuple(to)), lambda: [
+            (r["from_user"], r["to_user"]) for r in conn.execute(
+                f"SELECT from_user, to_user FROM proc_delegations WHERE is_active=1 "
+                f"AND from_user IN ({','.join('?' * len(frm))}) "
+                f"AND to_user IN ({','.join('?' * len(to))}) AND from_user <> to_user "
+                f"AND (from_date IS NULL OR from_date<=?) AND (to_date IS NULL OR to_date>=?)",
+                tuple(frm) + tuple(to) + (today, today)).fetchall()])
+        if pairs:
+            people = (set(people) - {f for f, _ in pairs}) | {t for _, t in pairs}
+    return set(people)
+
+
 def _prompt_rung(conn, pr, rows, message, exclude=(), alerted=()):
-    """'New request to sign' to everyone who may sign `rows` (the rung that just
-    became current). A step nobody may sign sends the proc admins one critical
-    alert instead, unless its stage is in `alerted` (already told this pass)."""
+    """'New request to sign' to the people whose turn `rows` (the rung that just
+    became current) is — _step_notify. A step nobody may sign sends the proc admins
+    one critical alert instead, unless its stage is in `alerted` (already told)."""
     targets, orphan = set(), []
     for r in rows:
-        people = _step_signers(conn, pr, r)
+        people = _step_notify(conn, pr, r)
         targets |= people
         if not people and r["stage"] not in alerted:
             orphan.append(r["stage"])
@@ -390,6 +460,10 @@ def _prompt_rung(conn, pr, rows, message, exclude=(), alerted=()):
 
 
 def _alert_no_signer(conn, pr, stages):
+    if C.ITEM_CONTROL_STAGE in stages:      # signed by assignment: the fix is a new assignee
+        from app.approvals import item_control as IC
+        IC.alert_no_signer(conn, pr)
+        stages = [s for s in stages if s != C.ITEM_CONTROL_STAGE]
     if not stages:
         return
     labels = " + ".join(stage_label(s) for s in stages)
@@ -410,6 +484,10 @@ def _clear_sign_prompts(conn, pr, steps, keep=()):
     def holders(rows):
         out = set(_proc_admins(conn)) if rows else set()
         for s in rows:
+            if _pr_field(s, "stage") == C.ITEM_CONTROL_STAGE:
+                from app.approvals import item_control as IC
+                out |= IC.signers(conn, _pr_field(s, "assignee"))
+                continue
             out |= set(eligible_approvers(
                 conn, s["stage"], roles=_csv_set(_pr_field(s, "esc_role")) or None))
         return out
@@ -436,7 +514,9 @@ def _requester_people(conn, pr):
     """Who hears 'your request' news: the requester when that is a real active
     account. A request raised by the maintenance bridge has a system requester
     ('auto-reorder'), so its news goes to the linked ticket's requester and
-    assignee plus the maintenance managers and storekeepers instead of nobody."""
+    assignee — the people waiting on the part. Only when there is no such person
+    (a spare-stock sweep, or the ticket's people left) does it go to the
+    maintenance managers and storekeepers, so it never reaches nobody."""
     who = _pr_field(pr, "requester")
     active = "is_active=1 AND COALESCE(account_status,'active')='active'"
     if who and conn.execute(f"SELECT 1 FROM users WHERE username=? AND {active}",
@@ -444,9 +524,7 @@ def _requester_people(conn, pr):
         return {who}
     if _pr_field(pr, "source_module") != "maintenance" and who != "auto-reorder":
         return {who} if who else set()
-    out = {r["username"] for r in conn.execute(
-        f"SELECT username FROM users WHERE {active} "
-        "AND role IN ('maintenance_manager','storekeeper')").fetchall()}
+    out = set()
     ref = str(_pr_field(pr, "source_ref") or "")
     if ref.startswith("ticket:") and ref[7:].isdigit():
         from app.maintenance.services import _requester_usernames, _usernames_for
@@ -454,7 +532,9 @@ def _requester_people(conn, pr):
                          (int(ref[7:]),)).fetchone()
         out |= set(_requester_usernames(conn, int(ref[7:])))
         out |= set(_usernames_for(conn, [t["assigned_to"]] if t else []))
-    return out
+    return out or {r["username"] for r in conn.execute(
+        f"SELECT username FROM users WHERE {active} "
+        "AND role IN ('maintenance_manager','storekeeper')").fetchall()}
 
 
 def _other_side(conn, user):
@@ -665,10 +745,13 @@ def step_roles(step, _roles=None):
     return set((_roles if _roles is not None else stage_roles_map()).get(stage) or ())
 
 
-def can_act_step(user, step, _deleg=None, _roles=None):
+def can_act_step(user, step, _deleg=None, _roles=None, _ic_from=None):
     """can_act for a CONCRETE ladder step — identical to can_act except that an
     escalated rung is signed by the superior role instead of the stage's own."""
     stage = _pr_field(step, "stage")
+    if stage == C.ITEM_CONTROL_STAGE:        # signed by assignment, not by role
+        from app.approvals import item_control as IC
+        return IC.can_sign(user, step, _deleg=_deleg, _ic_from=_ic_from)
     esc = _csv_set(_pr_field(step, "esc_role"))
     if not esc:
         return can_act(user, stage, _deleg=_deleg, _roles=_roles)
@@ -1444,18 +1527,22 @@ def waiting_on(prs):
     try:
         ph = ",".join("?" * len(pend))
         steps = conn.execute(
-            "SELECT s.pr_id, s.stage, s.esc_role FROM pr_steps s JOIN pr_requests r "
+            "SELECT s.pr_id, s.stage, s.esc_role, s.assignee FROM pr_steps s JOIN pr_requests r "
             "ON r.id=s.pr_id WHERE s.pr_id IN (%s) AND s.status='pending' "
             "AND s.seq=r.current_seq ORDER BY s.pr_id, s.id" % ph,
             tuple(p["id"] for p in pend)).fetchall()
         cache, names = {}, {}
         by_pr = {}
         for st in steps:
-            key = (st["stage"], st["esc_role"])
+            key = (st["stage"], st["esc_role"], st["assignee"])
             if key not in cache:
                 esc = st["esc_role"]
-                cache[key] = set() if esc == "" else set(
-                    eligible_approvers(conn, st["stage"], roles=_csv_set(esc) or None))
+                if st["stage"] == C.ITEM_CONTROL_STAGE:
+                    from app.approvals import item_control as IC
+                    cache[key] = IC.signers(conn, st["assignee"])
+                else:
+                    cache[key] = set() if esc == "" else set(
+                        eligible_approvers(conn, st["stage"], roles=_csv_set(esc) or None))
             by_pr.setdefault(st["pr_id"], []).append((st["stage"], cache[key]))
         users = set().union(*cache.values()) if cache else set()
         if users:
@@ -1531,11 +1618,13 @@ def my_queue(user, own_only=False):
         by_pr.setdefault(s["pr_id"], []).append(s)
     # own_only: the user's own rungs, not ones they hold only through someone's delegation
     deleg = set() if own_only else active_delegator_roles(user.get("username"))
+    from app.approvals import item_control as IC     # item-control delegations, one query
+    ic_from = IC.delegators(user.get("username")) if deleg else set()
     out = []
     for pr in prs:
         cur = [s for s in by_pr.get(pr["id"], []) if s["seq"] == pr["current_seq"]]
         mine = next((s for s in cur if can_act_step(user, s, _deleg=deleg,
-                                                    _roles=roles_map)), None)
+                                                    _roles=roles_map, _ic_from=ic_from)), None)
         if mine:
             pr = dict(pr)
             pr["_stage"] = mine["stage"]
@@ -2112,10 +2201,13 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
 def _record_in_place(conn, pr_id, step, roles, signer, ip=None):
     """A super admin just signed a rung its own role does not hold: stamp the
     step with WHO it stood in for, write a warning to the audit trail, and tell
-    those holders. Returns the "in place of" text."""
+    the people who were prompted for it. Returns the "in place of" text."""
     roles = set(roles or ())
     holders = []
-    if roles:
+    if _pr_field(step, "stage") == C.ITEM_CONTROL_STAGE and _pr_field(step, "assignee"):
+        holders = conn.execute("SELECT username, full_name FROM users WHERE username=?",
+                               (_pr_field(step, "assignee"),)).fetchall()
+    elif roles:
         marks = ",".join("?" * len(roles))
         holders = conn.execute(
             "SELECT username, full_name FROM users WHERE role IN (%s) "
@@ -2130,8 +2222,12 @@ def _record_in_place(conn, pr_id, step, roles, signer, ip=None):
         pass                    # pre-migration database: the audit row below still records it
     audit(conn, pr_id, signer, "signed_in_place",
           "\u26a0 Super admin %s signed %s IN PLACE OF %s." % (signer, label, who), ip)
-    pr = conn.execute("SELECT pr_no FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
-    notify_users(conn, [h["username"] for h in holders if h["username"] != signer],
+    pr = conn.execute("SELECT id, pr_no, requester FROM pr_requests WHERE id=?",
+                      (pr_id,)).fetchone()
+    # only the people who were prompted for this rung (_step_notify), not every
+    # holder of its roles: the warehouse manager was never asked to sign 'warehouse'
+    told = _step_notify(conn, pr, step) if pr else set()
+    notify_users(conn, sorted(told - {signer}),
                  "warning", "Signed in your place",
                  "%s: the super admin (%s) signed the %s step in your place."
                  % (pr["pr_no"] if pr else pr_id, signer, label), link=_pr_link(pr_id))
@@ -2369,6 +2465,14 @@ def submit_pr(pr_id, user, ip=None):
                     stage_roles_map(conn).get(C.HR_HEAD_STAGE, ())
                     and C.holds_authority(_req_role["role"], C.HR_HEAD_STAGE)):
                 _stages = [C.HR_HEAD_STAGE] + _stages
+        # Item control (2026-11-26): General Maintenance, Chemicals & Stones and
+        # Sewing & Cutting requests are signed by that department's assigned
+        # controller after the store. A rung nobody may sign is left off with a
+        # note rather than written to wait forever (see item_control.py).
+        from app.approvals import item_control as IC
+        _ic_group, _ic_who, _ic_why = IC.resolve(conn, pr["department"], pr["requester"])
+        if _ic_who:
+            _stages = IC.insert_stage(_stages)
         # DOAM §4.3 — a single-source award is signed one level above the value
         # tier. Applied here as well as in set_single_source(), because the
         # justification can be recorded on the draft before it is ever submitted.
@@ -2403,9 +2507,16 @@ def submit_pr(pr_id, user, ip=None):
         # to sign another rung — signing two rungs is refused by the dual-role
         # rule, so that would just move the deadlock one rung down.
         _holders = {s: stage_signers(conn, s, _roles.get(s) or ()) for s in flat_stages}
+        if _ic_who:
+            _holders[C.ITEM_CONTROL_STAGE] = {_ic_who}
         esc, blocked = {}, []
         _committed = set()
         for stage in flat_stages:
+            if stage == C.ITEM_CONTROL_STAGE and _ic_who in _committed:
+                # the controller is the only signer of an earlier rung: one person
+                # may not sign two, and nobody else may sign this one
+                _ic_who, _ic_why = None, "dual_role"
+                continue
             _free = _holders[stage] - {pr["requester"]}
             e_role, e_from, why = _esc_columns(conn, stage, pr["requester"], _roles,
                                                _chain, _holders=_holders,
@@ -2416,6 +2527,9 @@ def submit_pr(pr_id, user, ip=None):
                 esc[stage] = (e_role, e_from)
             elif why == "no_superior":
                 blocked.append(stage)
+        if _ic_group and not _ic_who and C.ITEM_CONTROL_STAGE in flat_stages:
+            rungs = [r for r in ([s for s in rung if s != C.ITEM_CONTROL_STAGE]
+                                 for rung in rungs) if r]
         if blocked:
             # A rung the climb cannot resolve is PARKED, not a reason to refuse the
             # whole submit. Refusing looked tidy but was far worse in practice: on a
@@ -2462,6 +2576,8 @@ def submit_pr(pr_id, user, ip=None):
         # the second rung exists.
         _absorbed, _prev = set(), None
         for _st in flat_stages:
+            if _st == C.ITEM_CONTROL_STAGE:     # never escalated; must not split the pair
+                continue
             _e = esc.get(_st)
             if _e and _prev and _e[0] and _e[0] == _prev[0]:
                 _absorbed.add(_st)
@@ -2487,11 +2603,12 @@ def submit_pr(pr_id, user, ip=None):
                 e_role, e_from = esc.get(stage, (None, None))
                 conn.execute(
                     """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role,
-                       activated_at, created_at, esc_role, esc_from, origin)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                       activated_at, created_at, esc_role, esc_from, origin, assignee)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (pr_id, i, stage, "pending", stage_label(stage),
                      now if i == 1 else None, now, e_role, e_from,
-                     _origin.get(stage, "ladder")))
+                     _origin.get(stage, "ladder"),
+                     _ic_who if stage == C.ITEM_CONTROL_STAGE else None))
                 if e_role:
                     audit(conn, pr_id, user.get("username") if user else "system",
                           "escalated_stage",
@@ -2522,6 +2639,8 @@ def submit_pr(pr_id, user, ip=None):
             audit(conn, pr_id, uname, "unbudgeted",
                   unbudgeted_note(_bud, pr["department"],
                                   _pr_field(pr, "expenditure_kind")), ip)
+        if _ic_group and not _ic_who:
+            audit(conn, pr_id, uname, "item_control_skipped", IC.skip_note(_ic_group, _ic_why), ip)
         flat = [s for rung in rungs for s in rung]
         audit(conn, pr_id, uname, "submitted",
               f"Routed through {len(flat)} approvals: "
@@ -2530,7 +2649,8 @@ def submit_pr(pr_id, user, ip=None):
         # the ESCALATED role when that rung was re-pointed, so the notification
         # reaches whoever actually has to sign it.
         first_label = " + ".join(stage_label(s) for s in rungs[0])
-        _prompt_rung(conn, pr, [{"stage": s, "esc_role": (esc.get(s) or (None,))[0]}
+        _prompt_rung(conn, pr, [{"stage": s, "esc_role": (esc.get(s) or (None,))[0],
+                                 "assignee": _ic_who if s == C.ITEM_CONTROL_STAGE else None}
                                 for s in rungs[0]],
                      f"{pr['pr_no']} ({pr['title'] or ''}) needs your {first_label} approval.",
                      alerted=blocked)
@@ -3494,11 +3614,13 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
         if decision == "approve" and _at_or_past_pricing_gate(conn, pr_id, step):
             ok_rfq, rfq_msg = rfq_gate_check(conn, pr)
             if not ok_rfq:
+                _quote_refusal_notice(conn, pr, step)
                 return False, rfq_msg
             # The chosen supplier's own quotation file is what the price rests
             # on. Only a quote recorded before files were required can be here.
             if conn.execute("SELECT 1 FROM pr_quotes WHERE pr_id=? AND is_chosen=1 AND NOT "
                             + _Q_HAS_FILE + " LIMIT 1", (pr_id,)).fetchone():
+                _quote_refusal_notice(conn, pr, step)
                 return False, "chosen_quote_no_file"
             # A chosen quotation in another currency than the request was never
             # applied (apply_chosen_quote refuses a foreign quote with no rate),
@@ -6096,7 +6218,7 @@ def cancel_pr(pr_id, user, ip=None, is_purchasing=False, is_admin=False):
                 "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
                 (pr_id, pr["current_seq"])).fetchall()
             for st in cur:
-                told |= _step_signers(conn, pr, st)
+                told |= _step_notify(conn, pr, st)   # the ones who were prompted
             _clear_sign_prompts(conn, pr, cur)
         on_order = pr["status"] in ("po_issued", "in_transit")
         if on_order:
@@ -7641,6 +7763,171 @@ def rfq_requirement(conn, pr):
     return out
 
 
+# --------------------------------------------------------------------------
+# Waiting for Purchasing (quotes): a rung ABOVE a signed Purchasing rung that
+# the quote rule blocks. Only Purchasing can fix it (quotes with files from
+# distinct suppliers, or a single-source justification), so the page says so
+# up front and Purchasing — nobody else — is told. act_on_step stays the guard.
+# --------------------------------------------------------------------------
+QUOTE_WAIT_NOTICE = "quotes_needed_notice"
+_QW_SWEEP_EVERY = 300           # seconds between quote-wait sweeps per process
+_QW_LAST = [float("-inf")]
+
+
+def _qw_since():
+    return (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def quote_wait(conn, pr):
+    """rfq_requirement()'s dict plus 'stage' (the blocked rung) when the CURRENT
+    rung sits past a signed Purchasing rung and the quote checks act_on_step
+    runs there would refuse it — same checks, same order, same numbers, msg in
+    needs_quotes / needs_quote_file / chosen_quote_no_file — else None. Read only."""
+    if _pr_field(pr, "status") != "pending":
+        return None
+    pr_id = _pr_field(pr, "id")
+    cur = conn.execute("SELECT stage FROM pr_steps WHERE pr_id=? AND seq=? AND status='pending'",
+                       (pr_id, _pr_field(pr, "current_seq"))).fetchall()
+    if (not cur or any(s["stage"] == PRICING_GATE_STAGE for s in cur)
+            or not _at_or_past_pricing_gate(conn, pr_id, cur[0])):
+        return None
+    r = rfq_requirement(conn, pr)
+    if r["ok"]:
+        if not conn.execute("SELECT 1 FROM pr_quotes WHERE pr_id=? AND is_chosen=1 AND NOT "
+                            + _Q_HAS_FILE + " LIMIT 1", (pr_id,)).fetchone():
+            return None
+        r["msg"] = "chosen_quote_no_file"
+    r["stage"] = cur[0]["stage"]
+    return r
+
+
+def _quote_wait_body(pr, w):
+    # English source; notif_text.BODIES carries the AR / TR patterns.
+    where = "%s cannot be signed at %s" % (_pr_field(pr, "pr_no"), stage_label(w["stage"]))
+    if w["msg"] == "needs_quotes" and w["required"] == 1:
+        return ("%s until it has a quotation with the supplier's file. "
+                "Add it or record a single-source justification." % where)
+    if w["msg"] == "needs_quotes":
+        return ("%s until it has %d quotes from different suppliers, each with its file "
+                "(it has %d). Add them or record a single-source justification."
+                % (where, w["required"], w["have"]))
+    if w["msg"] == "needs_quote_file":
+        return ("%s: a quotation on file has no supplier document. "
+                "Attach the file to each quotation." % where)
+    return "%s: the chosen quotation has no supplier file. Attach it." % where
+
+
+def quotes_needed_notice(conn, pr, w):
+    """Tell Purchasing that the rung past theirs waits on quotes `w` (quote_wait):
+    the person who signed THIS request's Purchasing rung while their account is
+    active and still signs Purchasing, else whoever may sign the Purchasing stage,
+    else (nobody there) the proc admins who fix the ladder — never the requester.
+    At most once per request per 24h — the audit row is the stamp, names who was
+    told and is written even when nobody could be. Returns the usernames told.
+    The caller commits."""
+    pr_id = _pr_field(pr, "id")
+    # shortcut: check-then-insert, so two workers in the same instant can both
+    # tell once; the stamp stops anything more. Lock the pr_requests row if it matters.
+    if conn.execute("SELECT 1 FROM pr_events WHERE pr_id=? AND action=? AND created_at>? LIMIT 1",
+                    (pr_id, QUOTE_WAIT_NOTICE, _qw_since())).fetchone():
+        return []
+    row = conn.execute(
+        "SELECT s.approver_user u FROM pr_steps s JOIN users x ON x.username=s.approver_user "
+        "WHERE s.pr_id=? AND s.stage=? AND s.status='approved' AND x.is_active=1 "
+        "AND COALESCE(x.account_status,'active')='active' ORDER BY s.id DESC LIMIT 1",
+        (pr_id, PRICING_GATE_STAGE)).fetchone()
+    me = {_pr_field(pr, "requester")}
+    staff = set(eligible_approvers(conn, PRICING_GATE_STAGE)) - me
+    told = (([row["u"]] if row and row["u"] in staff else sorted(staff))
+            or sorted(set(_proc_admins(conn)) - me))
+    if told:
+        notify_users(conn, told, "warning", "Quotes needed before the next signature",
+                     _quote_wait_body(pr, w), link=_pr_link(pr_id) + "#prQuotes")
+    audit(conn, pr_id, "system", QUOTE_WAIT_NOTICE,
+          "%s waits on quotes (%s) — Purchasing told: %s"
+          % (stage_label(w["stage"]), w["msg"], ", ".join(told) or "nobody"))
+    return told
+
+
+def _quote_refusal_notice(conn, pr, step):
+    """act_on_step refused a rung on the quote rule: when that rung is past
+    Purchasing, tell Purchasing (deduped). A notice failure never changes the refusal."""
+    if step["stage"] == PRICING_GATE_STAGE:
+        return
+    try:
+        w = quote_wait(conn, pr)
+        if w and quotes_needed_notice(conn, pr, w):
+            conn.commit()
+    except Exception:  # noqa: BLE001
+        log.warning("quotes-needed notice skipped", exc_info=True)
+
+
+def mark_quote_wait(rows, cap=10):
+    """Queue rows (my_queue dicts) waiting on Purchasing for quotes get
+    pr['_quote_wait'] (truthy). Cheap for any queue length: one IN query finds the
+    rows Purchasing was told about in the last 24h (the stamp the sweep and every
+    refusal write); only those rerun quote_wait, so a request Purchasing has just
+    fixed drops the badge at once. A brand-new wait shows from the next sweep."""
+    rows = [r for r in rows if r.get("_stage") != PRICING_GATE_STAGE]
+    if not rows:
+        return
+    conn = get_db()
+    try:
+        ids = [r["id"] for r in rows]
+        stamped = {x["pr_id"] for x in conn.execute(
+            "SELECT DISTINCT pr_id FROM pr_events WHERE action=? AND created_at>? "
+            "AND pr_id IN (%s)" % ",".join("?" * len(ids)),
+            [QUOTE_WAIT_NOTICE, _qw_since()] + ids)}
+        for i, r in enumerate([r for r in rows if r["id"] in stamped]):
+            # shortcut: stamped rows past `cap` keep the badge unchecked (stamp <= 24h old)
+            w = quote_wait(conn, r) if i < cap else {"msg": "stamped"}
+            if w:
+                r["_quote_wait"] = w["msg"]
+    except Exception:  # noqa: BLE001 — a hint must never cost the queue
+        log.warning("quote-wait queue badge skipped", exc_info=True)
+    finally:
+        conn.close()
+
+
+def run_quote_wait_sweep():
+    """Tell Purchasing about each pending request whose current rung, past a
+    signed Purchasing rung, waits on quotes. Requests already stamped in the last
+    24h are dropped in SQL before the rule runs. Own connection, one commit per
+    request: a failing check rolls back only itself (PostgreSQL aborts the whole
+    transaction on any error), never the SLA escalations. Returns how many told."""
+    conn = get_db()
+    n = 0
+    try:
+        prs = conn.execute(
+            "SELECT * FROM pr_requests p WHERE p.status='pending' "
+            "AND p.id IN (SELECT pr_id FROM pr_steps WHERE stage=? AND status='approved') "
+            "AND NOT EXISTS (SELECT 1 FROM pr_events e WHERE e.pr_id=p.id "
+            "AND e.action=? AND e.created_at>?)",
+            (PRICING_GATE_STAGE, QUOTE_WAIT_NOTICE, _qw_since())).fetchall()
+        for pr in prs:
+            try:
+                w = quote_wait(conn, pr)
+                if w and quotes_needed_notice(conn, pr, w):
+                    n += 1
+                conn.commit()
+            except Exception:  # noqa: BLE001
+                conn.rollback()
+                log.warning("quotes-needed sweep skipped %s", pr["id"], exc_info=True)
+    finally:
+        conn.close()
+    return n
+
+
+def maybe_run_quote_wait_sweep():
+    """Throttled entry for the notification feed's background pass — it may
+    email, so it never rides a page load."""
+    now = time.monotonic()
+    if now - _QW_LAST[0] < _QW_SWEEP_EVERY:
+        return 0
+    _QW_LAST[0] = now
+    return run_quote_wait_sweep()
+
+
 def attach_ejr(pr_id, ejr_id, user, ip=None):
     """Cite an APPROVED Engineering Justification Report on a requisition.
 
@@ -8116,7 +8403,7 @@ def run_escalations():
         reminders = {r["pr_id"] for r in conn.execute(
             "SELECT DISTINCT pr_id FROM pr_events WHERE action='pricing_reminder' "
             "AND pr_id IN (SELECT id FROM pr_requests WHERE status='pending')")}
-        pending_steps = {}
+        pending_steps, cache = {}, {}
         for r in conn.execute(
                 "SELECT * FROM pr_steps WHERE status='pending' AND pr_id IN "
                 "(SELECT id FROM pr_requests WHERE status='pending') ORDER BY id"):
@@ -8149,7 +8436,7 @@ def run_escalations():
                 audit(conn, pr["id"], "system", "escalated",
                       f"{stage_label(step['stage'])} overdue ({round(hrs)}h)")
                 # nobody may sign it (parked / unstaffed): the admins, never the requester
-                targets = _step_signers(conn, pr, step) or _proc_admins(conn)
+                targets = _step_notify(conn, pr, step, cache) or _proc_admins(conn)
                 notify_users(conn, targets, "warning", "Approval overdue",
                              f"{pr['pr_no']} has waited {round(hrs)}h at {stage_label(step['stage'])}.",
                              link=_pr_link(pr["id"]))
@@ -8160,8 +8447,10 @@ def run_escalations():
                              (_now(), step["id"]))
                 audit(conn, pr["id"], "system", "escalated2",
                       f"{stage_label(step['stage'])} critically overdue ({round(hrs)}h, >2x SLA)")
-                # one set, so a signer who is also an admin gets one row
-                targets = _step_signers(conn, pr, step) | set(_proc_admins(conn))
+                # critically late: EVERYONE who may sign it (not only whose turn it
+                # is — the storekeeper may be away), plus the admins; one set, so a
+                # signer who is also an admin gets one row
+                targets = _step_signers(conn, pr, step, cache) | set(_proc_admins(conn))
                 notify_users(conn, targets, "critical", "Approval overdue (level 2)",
                              f"{pr['pr_no']} has waited {round(hrs)}h at "
                              f"{stage_label(step['stage'])} — management attention needed.",
@@ -8842,6 +9131,15 @@ def workflow_view(department=None, lang="en"):
     matrix, thr_source = _effective_matrix(department, settings=settings)
     if C.is_hr_department(department):          # submit_pr puts it first for HR
         matrix = [(C.HR_HEAD_STAGE, 0.0)] + list(matrix)
+    from app.approvals import item_control as IC
+    _icc = get_db()
+    try:
+        _ic_who = IC.resolve(_icc, department, None)[1]
+        if _ic_who:                                 # submit_pr puts it after the store
+            _thr = dict(matrix)
+            matrix = [(s, _thr.get(s, 0.0)) for s in IC.insert_stage([s for s, _ in matrix])]
+    finally:
+        _icc.close()
     all_roles = effective_roles()
 
     from app.approvals import i18n_text as T
@@ -8868,6 +9166,9 @@ def workflow_view(department=None, lang="en"):
             "explanation": txt, "explanation_custom": custom,
             "edit": p["edit"],
             "updated_by": by, "updated_at": at,
+            # signed by the person assigned on /procurement/item-control, not a role
+            "assignee": (IC.assignee_name(_ic_who) if stage == C.ITEM_CONTROL_STAGE
+                         else None),
         })
 
     role_keys = set(C.ROLE_EXPLAIN)          # documented even if no stage points at one
@@ -9805,6 +10106,11 @@ def change_requester(pr_id, username, actor, reason="", ip=None):
                         "LOWER(COALESCE(approver_user,''))=LOWER(?)",
                         (pr_id, u["username"])).fetchone():
             return False, "signed_own"
+        # ...or hold its waiting Item control rung, which nobody else may sign.
+        if conn.execute("SELECT 1 FROM pr_steps WHERE pr_id=? AND stage=? AND status='pending' "
+                        "AND LOWER(COALESCE(assignee,''))=LOWER(?)",
+                        (pr_id, C.ITEM_CONTROL_STAGE, u["username"])).fetchone():
+            return False, "item_controller"
         conn.execute("UPDATE pr_requests SET requester=?, requester_name=?, requester_user_id=? "
                      "WHERE id=?", (u["username"], u["full_name"] or u["username"], u["id"], pr_id))
         audit(conn, pr_id, (actor or {}).get("username") or "system", "requester_changed",
@@ -9872,9 +10178,13 @@ def can_view_pr(user, pr):
     if not user or not pr:
         return False
     un = (user.get("username") or "").lower()
-    return bool(un) and ((_pr_field(pr, "requester") or "").lower() == un
-                         or (_pr_field(pr, "requester_user_id") is not None
-                             and _pr_field(pr, "requester_user_id") == user.get("id")))
+    if bool(un) and ((_pr_field(pr, "requester") or "").lower() == un
+                     or (_pr_field(pr, "requester_user_id") is not None
+                         and _pr_field(pr, "requester_user_id") == user.get("id"))):
+        return True
+    # The item controller opens the requests assigned to them and those they signed.
+    from app.approvals import item_control as IC
+    return IC.can_view(user, _pr_field(pr, "id"))
 
 
 # Route argument -> the table whose pr_id says which request a file/document belongs to.

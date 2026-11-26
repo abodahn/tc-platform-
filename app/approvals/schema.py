@@ -328,6 +328,9 @@ _STEP_MIGRATIONS = [
     # Manager)"). NULL = signed by the rung's own holder. Shown as a warning on
     # the ladder, the signature card and the audit trail.
     ("in_place_of", "ALTER TABLE pr_steps ADD COLUMN in_place_of TEXT"),
+    # Item control rung: the ONE person assigned to sign it (see item_control.py).
+    # NULL on every other rung.
+    ("assignee", "ALTER TABLE pr_steps ADD COLUMN assignee TEXT"),
 ]
 
 # Columns added to pr_requests after first release (tax + goods receipt + PO email
@@ -1163,6 +1166,8 @@ def create_and_seed(conn):
             conn.rollback()
     backfill_retention(conn)
     backfill_vendor_status(conn)
+    from app.approvals import item_control as _item_control
+    _item_control.ensure_schema(conn)          # Item control rung assignments
     # The DOAM authority roles used to be seeded into custom_roles here. They
     # are now registered in code (constants.PROC_ROLE_PERMS -> security's RBAC
     # merge), which is the registry can_act() reads: a role that exists only as

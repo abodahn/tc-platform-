@@ -10,9 +10,9 @@
   {% if exports %}
   <div class="flex gap center wrap">
     {% for key in exports %}
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('governance.export_csv', key=key) }}">
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('governance.export_csv', key=key) }}">
       <span data-i18n="gov.export.csv">CSV</span></a>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('governance.export_pdf', key=key) }}">
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('governance.export_pdf', key=key) }}">
       <span data-i18n="gov.export.pdf">PDF</span></a>
     {% endfor %}
   </div>

@@ -59,7 +59,7 @@
 
   <div class="panel">
     <div class="panel-head"><h3 data-i18n="wh.dash.recent">Recent movements</h3>
-      <a class="tag" href="{{ url_for('warehouse.export_csv', key='movements') }}" data-i18n="wh.action.export_ledger">Export ledger CSV</a></div>
+      <a data-file-download class="tag" href="{{ url_for('warehouse.export_csv', key='movements') }}" data-i18n="wh.action.export_ledger">Export ledger CSV</a></div>
     <div class="panel-pad">
       <table class="tbl whc-stack">
         <thead><tr><th data-i18n="wh.field.type">Type</th><th data-i18n="wh.field.material">Material</th>

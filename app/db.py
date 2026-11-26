@@ -107,7 +107,7 @@ def _pg_candidates():
 
 # Tables whose primary key is NOT `id` (so we never append RETURNING id).
 _NO_ID_TABLES = {"mnt_settings", "ai_system_settings", "prob_settings", "auth_settings",
-                  "wh_settings"}
+                  "wh_settings", "notification_reads"}
 
 
 def translate_ddl(sql, dialect):
@@ -676,6 +676,15 @@ CREATE TABLE IF NOT EXISTS notifications (
     ext_key    TEXT,                  -- dedup key for alerts pulled from the 4 systems (module:source_id)
     alerted    INTEGER DEFAULT 0,     -- 1 once an external alert (email/webhook) has been sent
     auto_ticket_ref TEXT              -- ITSM ticket_no if this alert was auto-ticketed
+);
+
+-- Per-reader read state for BROADCAST notifications (target_user NULL): one owner
+-- reading a broadcast must not hide it from the others (app/services/bell_scope.py).
+CREATE TABLE IF NOT EXISTS notification_reads (
+    notification_id INTEGER NOT NULL,
+    username        TEXT NOT NULL,
+    read_at         TEXT,
+    PRIMARY KEY (notification_id, username)
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (

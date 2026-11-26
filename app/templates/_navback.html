@@ -1,0 +1,12 @@
+{#- Top-bar Back button (lane navback). The href is the PARENT page, so it works
+    with no JavaScript; navback.js turns a click into history.back() when the
+    previous page in this tab was a page of this app. Absent on the home page.
+    A page may name its own parent: {% set back_parent = url_for('...') %} -#}
+{% set _nb_parent = navback_target(nav, back_parent) %}
+{% if _nb_parent %}
+<a class="icon-btn navback" id="navBack" href="{{ _nb_parent }}" data-navback data-parent="{{ _nb_parent }}"
+   data-i18n-title="navback.back" title="Back">
+  <svg class="ico" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+  <span class="sr-only" data-i18n="navback.back">Back</span>
+</a>
+{% endif %}

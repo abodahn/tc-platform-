@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{# In-app file viewer (app/services/file_view.py). Served by the file's OWN
+   download route with that route's checks; every user value is autoescaped. #}
+{% block title %}{{ fv.filename }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/file-view.css') }}?v={{ static_v('css/file-view.css') }}">{% endblock %}
+{% macro dl_icon() %}<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>{% endmacro %}
+{% macro sheet_note(s) %}
+  {% if s.more_rows %}<p class="fv-note" role="note"><span data-i18n="fv.more_rows">Showing the first 2,000 rows only. Download the file to see all of it.</span></p>{% endif %}
+  {% if s.more_cols %}<p class="fv-note" role="note"><span data-i18n="fv.more_cols">Showing the first 60 columns only. Download the file to see all of it.</span></p>{% endif %}
+{% endmacro %}
+{% block content %}
+<div class="fv" data-kind="{{ fv.kind }}">
+  <div class="fv-head">
+    <div class="fv-title">
+      <h1><bdi>{{ fv.filename }}</bdi></h1>
+      <span class="fv-meta">{{ fv.size|filesizeformat }}<span class="fv-count" hidden> · <span data-i18n="fv.pages">Pages</span>: <b></b></span></span>
+    </div>
+    <div class="fv-actions">
+      {% if fv.kind in ('pdf', 'image') %}
+      <a class="btn btn-ghost btn-sm" href="{{ fv.raw_url }}" target="_blank" rel="noopener" data-file-view>
+        <svg class="ico"><use href="#i-external"></use></svg><span data-i18n="fv.open">Open with…</span></a>
+      {% endif %}
+      <a class="btn btn-primary btn-sm" href="{{ fv.download_url }}" download>
+        {{ dl_icon() }}<span data-i18n="fv.download">Download</span></a>
+    </div>
+  </div>
+
+  {% if fv.kind == 'image' %}
+  <div class="fv-stage fv-img-stage">
+    <button type="button" class="fv-img-btn" data-i18n-title="fv.zoom" title="Tap to zoom">
+      <img class="fv-img" src="{{ fv.raw_url }}" alt="{{ fv.filename }}"></button>
+  </div>
+
+  {% elif fv.kind == 'pdf' %}
+  <div class="fv-pdf" id="fvPdf" data-src="{{ fv.raw_url }}">
+    <span id="fvPageLbl" hidden data-i18n="fv.page">Page</span>
+    <p class="fv-status" role="status"><span class="fv-spin" aria-hidden="true"></span><span data-i18n="fv.loading">Opening the file…</span></p>
+    <div class="fv-pages"></div>
+    <div class="fv-fallback" hidden>
+      <p class="fv-note" data-i18n="fv.pdf_fallback">The page-by-page preview couldn't load. Showing the browser's own viewer instead; if it stays blank, use Download.</p>
+      <iframe class="fv-frame" title="{{ fv.filename }}" data-src="{{ fv.raw_url }}"></iframe>
+    </div>
+  </div>
+
+  {% elif fv.sheets is not none %}
+    {% if fv.sheets|length > 1 %}
+    <span id="fvSheetsLbl" class="sr-only" data-i18n="fv.sheets">Sheets</span>
+    <div class="fv-tabs" role="tablist" aria-labelledby="fvSheetsLbl">
+      {% for s in fv.sheets %}
+      <button type="button" role="tab" class="fv-tab" id="fvt{{ loop.index }}" aria-controls="fvs{{ loop.index }}"
+              aria-selected="{{ 'true' if loop.first else 'false' }}" tabindex="{{ '0' if loop.first else '-1' }}"><bdi>{{ s.name }}</bdi></button>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% for s in fv.sheets %}
+    <section class="fv-sheet" id="fvs{{ loop.index }}" {% if fv.sheets|length > 1 %}role="tabpanel" aria-labelledby="fvt{{ loop.index }}"{% endif %} {{ 'hidden' if not loop.first }}>
+      {{ sheet_note(s) }}
+      {% if s.rows %}
+      <div class="tbl-wrap fv-grid" tabindex="0" aria-label="{{ s.name }}">
+        <table dir="ltr">
+          <thead><tr>{% for t, n in s.rows[0] %}<th dir="auto">{{ t }}</th>{% endfor %}</tr></thead>
+          <tbody>
+          {% for r in s.rows[1:] %}<tr>{% for t, n in r %}<td{% if n %} class="num"{% else %} dir="auto"{% endif %}>{{ t }}</td>{% endfor %}</tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="fv-empty" data-i18n="fv.empty_sheet">This sheet is empty.</p>
+      {% endif %}
+    </section>
+    {% endfor %}
+
+  {% elif fv.blocks is not none %}
+  <article class="fv-doc">
+    {% if fv.more %}<p class="fv-note" role="note" data-i18n="fv.more_doc">Only the beginning of this document is shown. Download the file to see all of it.</p>{% endif %}
+    {% for b in fv.blocks %}
+      {% if b.t == 'h' %}<p class="fv-h fv-h{{ b.level }}" role="heading" aria-level="{{ b.level + 1 }}" dir="auto">{{ b.text }}</p>
+      {% elif b.t == 'ul' %}<ul>{% for i in b.items %}<li dir="auto">{{ i }}</li>{% endfor %}</ul>
+      {% elif b.t == 'table' %}<div class="tbl-wrap fv-grid" tabindex="0"><table>{% for r in b.rows %}<tr>{% for c in r %}<td dir="auto">{{ c }}</td>{% endfor %}</tr>{% endfor %}</table></div>
+      {% else %}<p dir="auto">{{ b.text }}</p>{% endif %}
+    {% else %}
+      <p class="fv-empty" data-i18n="fv.empty_doc">This document has no text.</p>
+    {% endfor %}
+    <p class="fv-note fv-doc-foot" data-i18n="fv.doc_note">Simplified preview: pictures and formatting are not shown.</p>
+  </article>
+
+  {% elif fv.text is not none %}
+    {% if fv.more %}<p class="fv-note" role="note" data-i18n="fv.more_text">Only the beginning of this file is shown. Download the file to see all of it.</p>{% endif %}
+    <pre class="fv-text" dir="auto" tabindex="0">{{ fv.text }}</pre>
+
+  {% else %}
+  <div class="fv-card">
+    <svg class="ico fv-card-ico" aria-hidden="true"><use href="#i-report"></use></svg>
+    {% if fv.error == 'bad' %}
+    <b data-i18n="fv.bad_title">This file couldn't be read</b>
+    <p data-i18n="fv.bad_sub">It may be damaged or in an older format. You can still download it and open it on your device.</p>
+    {% elif fv.error == 'big' %}
+    <b data-i18n="fv.big_title">This file is too large to preview</b>
+    <p data-i18n="fv.big_sub">Download it to open it on your device.</p>
+    {% else %}
+    <b data-i18n="fv.none_title">This file type can't be previewed</b>
+    <p data-i18n="fv.none_sub">Download it to open it with an app on your device.</p>
+    {% endif %}
+    <a class="btn btn-primary" href="{{ fv.download_url }}" download>{{ dl_icon() }}<span data-i18n="fv.download">Download</span></a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/file-view.js') }}?v={{ static_v('js/file-view.js') }}"></script>{% endblock %}

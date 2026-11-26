@@ -351,7 +351,9 @@ def run():                                          # noqa: C901 — one linear 
         found = {}
         for m in re.finditer(r'/procurement/pr/%d/(pdf|pr\.xlsx|po\.pdf|po\.xlsx|rfq\.pdf|'
                              r'rfq\.xlsx)(\?[^"]*)?"' % pid, html):
-            found.setdefault(m.group(1), []).append((m.group(2) or "").replace("&amp;", "&"))
+            # view=1 opens the PDF in the in-app viewer; it is not a document parameter
+            q = [x for x in (m.group(2) or "").replace("&amp;", "&").lstrip("?").split("&") if x and x != "view=1"]
+            found.setdefault(m.group(1), []).append("?" + "&".join(q) if q else "")
         return found
 
     for who, cl in (("admin", adm), ("no-money user", nom)):

@@ -27,24 +27,41 @@ _OPS = {">": lambda a, b: a > b, "<": lambda a, b: a < b,
 _CADENCE_DAYS = {"daily": 1, "weekly": 7, "monthly": 30}
 
 
-def _insert_notification(severity, title, message, ext_key):
+def _insert_notification(severity, title, message, ext_key, target_user=None):
     conn = get_db()
     try:
-        # dedup: skip if an unread bi notification with this key already exists
+        # dedup: skip if this reader (or, owner-less, the broadcast) still has it unread
         existing = conn.execute(
-            "SELECT id FROM notifications WHERE ext_key=? AND is_read=0", (ext_key,)).fetchone()
+            "SELECT id FROM notifications WHERE ext_key=? AND is_read=0 "
+            "AND COALESCE(target_user, '')=?", (ext_key, target_user or "")).fetchone()
         if existing:
             return False
         conn.execute(
             """INSERT INTO notifications (severity, module, title, message, created_at,
-               is_read, ext_key, alerted) VALUES (?,?,?,?,?,0,?,0)""",
-            (severity, "bi", title, message, utcnow(), ext_key))
+               is_read, ext_key, alerted, target_user) VALUES (?,?,?,?,?,0,?,0,?)""",
+            (severity, "bi", title, message, utcnow(), ext_key, target_user or None))
         conn.commit()
         return True
     except Exception as exc:  # noqa: BLE001
         conn.rollback()
         log.warning("bi notification insert failed: %s", exc)
         return False
+    finally:
+        conn.close()
+
+
+def _resolve_broadcast(ext_key):
+    """The metric is back to ok: an owner-less (broadcast) breach row is resolved
+    for everyone, as notify.py does for "system offline" — reading a broadcast no
+    longer sets is_read, so without this it would block every later breach."""
+    conn = get_db()
+    try:
+        conn.execute("UPDATE notifications SET is_read=1 WHERE ext_key=? AND is_read=0 "
+                     "AND target_user IS NULL", (ext_key,))
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        conn.rollback()
+        log.warning("bi notification resolve failed: %s", exc)
     finally:
         conn.close()
 
@@ -70,8 +87,12 @@ def evaluate_alerts():
             title = f"BI alert: {a['name'] or a['column_name']}"
             msg = (f"{a['agg']} of {a['column_name']} = {round(val, 2)} "
                    f"{a['op']} {a['threshold']} (dataset {ds['meta'].get('name', a['dataset_id'])})")
-            if _insert_notification(sev, title, msg, ext_key=f"bi_alert:{a['id']}"):
+            # the alert's owner set it up; nobody else is waiting on it
+            if _insert_notification(sev, title, msg, ext_key=f"bi_alert:{a['id']}",
+                                    target_user=a.get("owner")):
                 created += 1
+        elif not breached and a.get("last_state") == "breach":
+            _resolve_broadcast(f"bi_alert:{a['id']}")
         store.update_alert_state(a["id"], val, state, fresh)
     if created:
         try:

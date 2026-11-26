@@ -302,6 +302,10 @@ def create_app():
     from app.proc_scope import init_app as _proc_scope_init
     _proc_scope_init(app)
 
+    # Top-bar Back button: the parent-page fallback (app/navback.py).
+    from app.navback import register as _navback_register
+    _navback_register(app)
+
     # --- Error handlers ---
     from flask import render_template
 

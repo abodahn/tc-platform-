@@ -18,11 +18,12 @@
       {% endif %}
       {% for pr in sign_queue[:15] %}
       <div class="porev-line">
-        {% if can_bulk %}<label class="porev-chk"><input type="checkbox" name="pr_id" value="{{ pr.id }}">
+        {% if can_bulk %}<label class="porev-chk"><input type="checkbox" name="pr_id" value="{{ pr.id }}"{% if pr._quote_wait %} disabled{% endif %}>
           <span class="sr-only">{{ pr.pr_no }}</span></label>{% endif %}
         <a class="row-line porev-row" href="{{ url_for('approvals.detail', pr_id=pr.id) }}">
           <span><b>{{ pr.pr_no }}</b> · {{ pr.title or '' }}</span>
-          <span class="tag">{{ pr._stage_label }}</span>
+          <span><span class="tag">{{ pr._stage_label }}</span>
+            {% if pr._quote_wait %}<span class="badge b-warning" data-i18n="proc.quotewait.badge">⏳ Waiting for Purchasing (quotes)</span>{% endif %}</span>
         </a>
       </div>
       {% endfor %}
@@ -54,9 +55,9 @@
   document.querySelectorAll('[data-porev-bulk]').forEach(function (f) {
     var all = f.querySelector('[data-porev-all]'), go = f.querySelector('[data-porev-go]'),
         n = f.querySelector('[data-porev-n]');
-    function boxes() { return f.querySelectorAll('input[name="pr_id"]'); }
+    function boxes() { return f.querySelectorAll('input[name="pr_id"]:not(:disabled)'); }
     function sync() {
-      var c = f.querySelectorAll('input[name="pr_id"]:checked').length;
+      var c = f.querySelectorAll('input[name="pr_id"]:checked:not(:disabled)').length;
       if (n) n.textContent = c;
       if (go) go.disabled = !c;
       if (all) all.checked = c && c === boxes().length;

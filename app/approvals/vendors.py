@@ -444,7 +444,7 @@ def add_comment(pr_id, body, user, ip=None):
         requester = svc._requester_people(conn, pr)
         signers = set()
         for st in _current_steps(conn, pr):
-            signers |= svc._step_signers(conn, pr, st)
+            signers |= svc._step_notify(conn, pr, st)
         held = (pr.get("hold_reason") or "").strip()
         told = set()
         if held:

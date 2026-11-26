@@ -11,7 +11,7 @@
   </div>
   <div class="flex gap center">
     {# the whole open plan, not just this form's order — labelled so nobody reads it as filtered #}
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.export_csv', key='allocations') }}" data-i18n="pln.action.export_allocs">Export all allocations</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('planning.export_csv', key='allocations') }}" data-i18n="pln.action.export_allocs">Export all allocations</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.index') }}" data-i18n="pln.nav.board">Load board</a>
   </div>
 </div>

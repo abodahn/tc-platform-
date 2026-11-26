@@ -6,6 +6,8 @@ import io
 
 from flask import abort, redirect, render_template, request, send_file, url_for
 
+from app.services.file_view import file_response
+
 from app.auth import login_required, permission_required, user_can
 from app.approvals import imports as imp
 from app.approvals import services as svc
@@ -146,8 +148,7 @@ def imp_charge_file(charge_id):
         raw = base64.b64decode(row["content_b64"])
     except Exception:
         abort(404)
-    return send_file(io.BytesIO(raw), mimetype=row["content_type"] or "application/octet-stream",
-                     as_attachment=True, download_name=row["filename"] or "charge")
+    return file_response(raw, row["content_type"], row["filename"] or "charge")
 
 
 # --------------------------------------------------------------------------

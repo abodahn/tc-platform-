@@ -9,7 +9,7 @@
   </div>
   <div class="flex gap center">
     {# every order's bulletin, not only this one — the label says so #}
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.export_csv', key='operation-bulletin') }}" data-i18n="pln.action.export_ops">Export all bulletins</a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('planning.export_csv', key='operation-bulletin') }}" data-i18n="pln.action.export_ops">Export all bulletins</a>
     <a class="btn btn-ghost btn-sm" href="{{ url_for('planning.order_detail', order_id=b.order.id) }}" data-i18n="pln.action.back">Back</a>
   </div>
 </div>

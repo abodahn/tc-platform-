@@ -25,7 +25,7 @@
     </select>
     <span class="tag"><span data-count-plain>{{ tickets|length }}</span> <span data-i18n="nav.maint_tickets">tickets</span></span>
     <div class="spacer"></div>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.report_export', key='tickets') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.export">Export CSV</span></a>
+    <a data-file-download class="btn btn-ghost btn-sm" href="{{ url_for('maintenance.report_export', key='tickets') }}"><svg class="ico"><use href="#i-report"></use></svg><span data-i18n="m.export">Export CSV</span></a>
   </div>
 </form>
 
