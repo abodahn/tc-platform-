@@ -259,9 +259,11 @@ def run_aging_alerts():
         sent = {r["detail"] for r in conn.execute(
             "SELECT detail FROM pr_events WHERE pr_id IN (%s) AND action='aging_alert'"
             % ph, tuple(pr_ids)).fetchall()}
+        cache = {}   # role / delegation lookups shared by every row of this pass
         for r in rows:
             # whose turn it is (not every holder of the rung's roles, nor the requester)
-            targets = svc._step_notify(conn, {"id": r["pr_id"], "requester": r["requester"]}, r)
+            targets = svc._step_notify(conn, {"id": r["pr_id"], "requester": r["requester"]},
+                                       r, cache)
             fresh = sorted(u for u in targets
                            if u and _alert_stamp(r["step_id"], u) not in sent)
             if not fresh:

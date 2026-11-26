@@ -30,9 +30,10 @@ _CADENCE_DAYS = {"daily": 1, "weekly": 7, "monthly": 30}
 def _insert_notification(severity, title, message, ext_key, target_user=None):
     conn = get_db()
     try:
-        # dedup: skip if an unread bi notification with this key already exists
+        # dedup: skip if this reader (or, owner-less, the broadcast) still has it unread
         existing = conn.execute(
-            "SELECT id FROM notifications WHERE ext_key=? AND is_read=0", (ext_key,)).fetchone()
+            "SELECT id FROM notifications WHERE ext_key=? AND is_read=0 "
+            "AND COALESCE(target_user, '')=?", (ext_key, target_user or "")).fetchone()
         if existing:
             return False
         conn.execute(
@@ -45,6 +46,22 @@ def _insert_notification(severity, title, message, ext_key, target_user=None):
         conn.rollback()
         log.warning("bi notification insert failed: %s", exc)
         return False
+    finally:
+        conn.close()
+
+
+def _resolve_broadcast(ext_key):
+    """The metric is back to ok: an owner-less (broadcast) breach row is resolved
+    for everyone, as notify.py does for "system offline" — reading a broadcast no
+    longer sets is_read, so without this it would block every later breach."""
+    conn = get_db()
+    try:
+        conn.execute("UPDATE notifications SET is_read=1 WHERE ext_key=? AND is_read=0 "
+                     "AND target_user IS NULL", (ext_key,))
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        conn.rollback()
+        log.warning("bi notification resolve failed: %s", exc)
     finally:
         conn.close()
 
@@ -74,6 +91,8 @@ def evaluate_alerts():
             if _insert_notification(sev, title, msg, ext_key=f"bi_alert:{a['id']}",
                                     target_user=a.get("owner")):
                 created += 1
+        elif not breached and a.get("last_state") == "breach":
+            _resolve_broadcast(f"bi_alert:{a['id']}")
         store.update_alert_state(a["id"], val, state, fresh)
     if created:
         try:

@@ -163,10 +163,7 @@ def inject_globals():
         from app.navigation import WIP_KEYS
         is_admin = user_has_permission(user, "access_admin")
         scope = system_scope(user)   # None = unrestricted; a set = only those keys
-        if scope is not None:
-            # Scope-locked users only see bell alerts for their own system(s).
-            notifs = [n for n in notifs if not n["module"] or n["module"] in scope]
-            unread = sum(1 for n in notifs if not n["is_read"])
+        # (scope-locked users' bell is narrowed in bell_scope.visible_where)
         # Company-wide procurement pages are not for a plain requester.
         from app.approvals.services import sees_all_prs
         _hide = () if sees_all_prs(user) else ("proc_analytics", "proc_agreements")
@@ -1133,13 +1130,7 @@ def notifications_feed():
     except Exception:
         pass
     user = current_user()
-    notifs, unread = _unread_notifications(user)
-    scope = system_scope(user) if user else None
-    if scope is not None:
-        # same rule inject_globals applies to the bell: scope-locked users only
-        # see alerts for their own system(s)
-        notifs = [n for n in notifs if not n["module"] or n["module"] in scope]
-        unread = sum(1 for n in notifs if not n["is_read"])
+    notifs, unread = _unread_notifications(user)   # scope applied in bell_scope
     items = [{
         "id": n["id"], "severity": n["severity"], "module": n["module"],
         "title": n["title"], "message": n["message"],
@@ -1477,10 +1468,7 @@ def my_work():
             pass
 
     try:
-        notifs, _unread = _unread_notifications(user)
-        scope = system_scope(user)
-        if scope is not None:
-            notifs = [n for n in notifs if (n["module"] or "") in scope or not n["module"]]
+        notifs, _unread = _unread_notifications(user)   # scope applied in bell_scope
         data["alerts"] = [n for n in notifs if not n["is_read"]][:8]
     except Exception:
         pass

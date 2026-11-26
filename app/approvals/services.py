@@ -363,18 +363,31 @@ def _proc_admins(conn):
     return _perm_holders(conn, "proc_admin")
 
 
-def _step_signers(conn, pr, step):
+def _memo(cache, key, fn):
+    """fn() once per `cache` (a dict one batch job passes down), or every call
+    when cache is None. Roles and delegations do not change inside one pass."""
+    if cache is None:
+        return fn()
+    if key not in cache:
+        cache[key] = fn()
+    return cache[key]
+
+
+def _step_signers(conn, pr, step, cache=None):
     """Who may sign this pending step of this request — never the requester.
     Empty for a parked rung (esc_role '': the climb found nobody free) and for a
     rung whose roles have no active holder; both need an admin, not a prompt."""
     esc = _pr_field(step, "esc_role")
     if esc == "":
         return set()
-    people = eligible_approvers(conn, step["stage"], roles=_csv_set(esc) or None)
+    roles = frozenset(_csv_set(esc) or _memo(cache, "rmap", lambda: stage_roles_map(conn))
+                      .get(step["stage"], ()))
+    people = _memo(cache, ("signers", step["stage"], roles),
+                   lambda: set(stage_signers(conn, step["stage"], roles)))
     return set(people) - {pr["requester"]}
 
 
-def _step_notify(conn, pr, step):
+def _step_notify(conn, pr, step, cache=None):
     """Who to TELL that this pending step is on their desk — a subset of
     _step_signers (who MAY sign; can_act and SoD are untouched).
 
@@ -383,15 +396,19 @@ def _step_notify(conn, pr, step):
     else can sign this one, so the manager hears about the request when it reaches
     THEIR rung. Nobody else (a site with no storekeeper, or the requester is the
     only one) -> the full set, so the request still moves. An escalated step is
-    already pointed at its signers and is not narrowed. A signer with an active
-    delegation to someone in the set is replaced by that delegate."""
-    signers = _step_signers(conn, pr, step)
+    already pointed at its signers and is not narrowed. A person told here with an
+    active delegation to another signer of the rung is replaced by that delegate.
+
+    `cache` (a dict) lets a batch job (aging, escalations) share the role and
+    delegation lookups across rows: one pending-steps query per request remains."""
+    signers = _step_signers(conn, pr, step, cache)
     people = signers
     if signers and not _pr_field(step, "esc_role"):
-        rmap = stage_roles_map(conn)
+        rmap = _memo(cache, "rmap", lambda: stage_roles_map(conn))
         roles = set(rmap.get(step["stage"]) or ())
-        pending = conn.execute("SELECT stage, seq, esc_role FROM pr_steps WHERE pr_id=? "
-                               "AND status='pending'", (pr["id"],)).fetchall()
+        pending = _memo(cache, ("pending", pr["id"]), lambda: conn.execute(
+            "SELECT stage, seq, esc_role FROM pr_steps WHERE pr_id=? "
+            "AND status='pending'", (pr["id"],)).fetchall())
         seq = _pr_field(step, "seq")
         if seq is None:   # a rung described by stage only (the submit prompt)
             seq = min((r["seq"] for r in pending if r["stage"] == step["stage"]), default=None)
@@ -400,16 +417,26 @@ def _step_notify(conn, pr, step):
             if seq is not None and r["seq"] > seq:
                 later |= step_roles(r, rmap)
         if roles & later:
-            people = (set(stage_signers(conn, step["stage"], roles - later))
+            narrow = frozenset(roles - later)
+            people = (set(_memo(cache, ("signers", step["stage"], narrow),
+                                lambda: set(stage_signers(conn, step["stage"], narrow))))
                       - {pr["requester"]}) or signers
-    if len(people) > 1:
+    if people:
+        # away: someone told here handed their signature (an active delegation) to
+        # another person who may sign this rung -> tell the delegate instead, even
+        # one the narrowing above left out. A delegation to the requester (who never
+        # signs their own request) or an expired one changes nothing.
         today = _now()[:10]
-        ph = ",".join("?" * len(people))
-        away = {r["from_user"] for r in conn.execute(
-            f"SELECT from_user FROM proc_delegations WHERE is_active=1 AND to_user IN ({ph}) "
-            f"AND from_user <> to_user AND (from_date IS NULL OR from_date<=?) "
-            f"AND (to_date IS NULL OR to_date>=?)", tuple(people) + (today, today)).fetchall()}
-        people = (people - away) or people
+        frm, to = sorted(people), sorted(signers)
+        pairs = _memo(cache, ("away", tuple(frm), tuple(to)), lambda: [
+            (r["from_user"], r["to_user"]) for r in conn.execute(
+                f"SELECT from_user, to_user FROM proc_delegations WHERE is_active=1 "
+                f"AND from_user IN ({','.join('?' * len(frm))}) "
+                f"AND to_user IN ({','.join('?' * len(to))}) AND from_user <> to_user "
+                f"AND (from_date IS NULL OR from_date<=?) AND (to_date IS NULL OR to_date>=?)",
+                tuple(frm) + tuple(to) + (today, today)).fetchall()])
+        if pairs:
+            people = (set(people) - {f for f, _ in pairs}) | {t for _, t in pairs}
     return set(people)
 
 
@@ -475,7 +502,9 @@ def _requester_people(conn, pr):
     """Who hears 'your request' news: the requester when that is a real active
     account. A request raised by the maintenance bridge has a system requester
     ('auto-reorder'), so its news goes to the linked ticket's requester and
-    assignee plus the maintenance managers and storekeepers instead of nobody."""
+    assignee — the people waiting on the part. Only when there is no such person
+    (a spare-stock sweep, or the ticket's people left) does it go to the
+    maintenance managers and storekeepers, so it never reaches nobody."""
     who = _pr_field(pr, "requester")
     active = "is_active=1 AND COALESCE(account_status,'active')='active'"
     if who and conn.execute(f"SELECT 1 FROM users WHERE username=? AND {active}",
@@ -483,9 +512,7 @@ def _requester_people(conn, pr):
         return {who}
     if _pr_field(pr, "source_module") != "maintenance" and who != "auto-reorder":
         return {who} if who else set()
-    out = {r["username"] for r in conn.execute(
-        f"SELECT username FROM users WHERE {active} "
-        "AND role IN ('maintenance_manager','storekeeper')").fetchall()}
+    out = set()
     ref = str(_pr_field(pr, "source_ref") or "")
     if ref.startswith("ticket:") and ref[7:].isdigit():
         from app.maintenance.services import _requester_usernames, _usernames_for
@@ -493,7 +520,9 @@ def _requester_people(conn, pr):
                          (int(ref[7:]),)).fetchone()
         out |= set(_requester_usernames(conn, int(ref[7:])))
         out |= set(_usernames_for(conn, [t["assigned_to"]] if t else []))
-    return out
+    return out or {r["username"] for r in conn.execute(
+        f"SELECT username FROM users WHERE {active} "
+        "AND role IN ('maintenance_manager','storekeeper')").fetchall()}
 
 
 def _other_side(conn, user):
@@ -2151,7 +2180,7 @@ def update_pr(pr_id, header, items, user, ip=None, can_price=True):
 def _record_in_place(conn, pr_id, step, roles, signer, ip=None):
     """A super admin just signed a rung its own role does not hold: stamp the
     step with WHO it stood in for, write a warning to the audit trail, and tell
-    those holders. Returns the "in place of" text."""
+    the people who were prompted for it. Returns the "in place of" text."""
     roles = set(roles or ())
     holders = []
     if roles:
@@ -2169,8 +2198,12 @@ def _record_in_place(conn, pr_id, step, roles, signer, ip=None):
         pass                    # pre-migration database: the audit row below still records it
     audit(conn, pr_id, signer, "signed_in_place",
           "\u26a0 Super admin %s signed %s IN PLACE OF %s." % (signer, label, who), ip)
-    pr = conn.execute("SELECT pr_no FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
-    notify_users(conn, [h["username"] for h in holders if h["username"] != signer],
+    pr = conn.execute("SELECT id, pr_no, requester FROM pr_requests WHERE id=?",
+                      (pr_id,)).fetchone()
+    # only the people who were prompted for this rung (_step_notify), not every
+    # holder of its roles: the warehouse manager was never asked to sign 'warehouse'
+    told = _step_notify(conn, pr, step) if pr else set()
+    notify_users(conn, sorted(told - {signer}),
                  "warning", "Signed in your place",
                  "%s: the super admin (%s) signed the %s step in your place."
                  % (pr["pr_no"] if pr else pr_id, signer, label), link=_pr_link(pr_id))
@@ -8155,7 +8188,7 @@ def run_escalations():
         reminders = {r["pr_id"] for r in conn.execute(
             "SELECT DISTINCT pr_id FROM pr_events WHERE action='pricing_reminder' "
             "AND pr_id IN (SELECT id FROM pr_requests WHERE status='pending')")}
-        pending_steps = {}
+        pending_steps, cache = {}, {}
         for r in conn.execute(
                 "SELECT * FROM pr_steps WHERE status='pending' AND pr_id IN "
                 "(SELECT id FROM pr_requests WHERE status='pending') ORDER BY id"):
@@ -8188,7 +8221,7 @@ def run_escalations():
                 audit(conn, pr["id"], "system", "escalated",
                       f"{stage_label(step['stage'])} overdue ({round(hrs)}h)")
                 # nobody may sign it (parked / unstaffed): the admins, never the requester
-                targets = _step_notify(conn, pr, step) or _proc_admins(conn)
+                targets = _step_notify(conn, pr, step, cache) or _proc_admins(conn)
                 notify_users(conn, targets, "warning", "Approval overdue",
                              f"{pr['pr_no']} has waited {round(hrs)}h at {stage_label(step['stage'])}.",
                              link=_pr_link(pr["id"]))
@@ -8199,8 +8232,10 @@ def run_escalations():
                              (_now(), step["id"]))
                 audit(conn, pr["id"], "system", "escalated2",
                       f"{stage_label(step['stage'])} critically overdue ({round(hrs)}h, >2x SLA)")
-                # one set, so a signer who is also an admin gets one row
-                targets = _step_notify(conn, pr, step) | set(_proc_admins(conn))
+                # critically late: EVERYONE who may sign it (not only whose turn it
+                # is — the storekeeper may be away), plus the admins; one set, so a
+                # signer who is also an admin gets one row
+                targets = _step_signers(conn, pr, step, cache) | set(_proc_admins(conn))
                 notify_users(conn, targets, "critical", "Approval overdue (level 2)",
                              f"{pr['pr_no']} has waited {round(hrs)}h at "
                              f"{stage_label(step['stage'])} — management attention needed.",

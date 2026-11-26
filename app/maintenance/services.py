@@ -112,13 +112,15 @@ def audit(conn, user, action, entity_type, entity_id,
 
 
 def notify(conn, target_role, title, message, entity_type, entity_id,
-           severity="info", action_url=None, exclude=None):
+           severity="info", action_url=None, exclude=None, bell=True):
+    """mnt_notifications row for the role's inbox; warning/critical also ring the
+    role's bells unless bell=False (the caller already told the person it is about)."""
     conn.execute(
         """INSERT INTO mnt_notifications (target_role,title,message,entity_type,
            entity_id,severity,action_url,is_read,created_at) VALUES (?,?,?,?,?,?,?,0,?)""",
         (target_role, title, message, entity_type, entity_id, severity, action_url, _now()))
     # also surface critical/warning items on the platform bell
-    if severity in ("critical", "warning"):
+    if bell and severity in ("critical", "warning"):
         # role-targeted, one row per user (own read state); nobody left -> super_admin
         usernames = ([u for u in _role_usernames(conn, target_role) if u != exclude]
                      or _role_usernames(conn, "super_admin"))
@@ -816,16 +818,23 @@ def decide_approval(approval_id, decision, comment, user, ip=None, is_admin=Fals
             conn.execute("UPDATE mnt_approvals SET status='cancelled' WHERE request_id=? AND status='pending'", (rid,))
             conn.execute("UPDATE mnt_requests SET status='rejected',decided_at=? WHERE id=?",
                          (_now(), rid))
-            req = conn.execute("SELECT ticket_id FROM mnt_requests WHERE id=?", (rid,)).fetchone()
+            req = conn.execute("SELECT ticket_id, technician FROM mnt_requests WHERE id=?",
+                               (rid,)).fetchone()
+            told = []
             if req:
                 set_ticket_status(conn, req["ticket_id"], "spare_required", user, ip, force=True,
                                   comment=comment)
                 ticket_id = req["ticket_id"]
-                _notify_people(conn, _requester_usernames(conn, ticket_id), "Spare request rejected",
+                # the ticket's requester and the technician who raised the spare request
+                told = [u for u in (list(_requester_usernames(conn, ticket_id))
+                                    + _usernames_for(conn, [req["technician"]]))
+                        if u != (user or {}).get("username")]
+                _notify_people(conn, told, "Spare request rejected",
                                "%s: %s", f"/maintenance/tickets/{ticket_id}",
                                args=(doc_no('SPR', rid), comment), actor=user)
+            # every technician's bell only when there is nobody to tell by name
             notify(conn, "maintenance_technician", "Spare request rejected",
-                   f"Request {rid}: {comment}", "request", rid, "warning")
+                   f"Request {rid}: {comment}", "request", rid, "warning", bell=not told)
             audit(conn, user, "approval_reject", "request", rid, None, "rejected",
                   comment=comment, ip=ip)
             conn.commit()
@@ -1084,10 +1093,13 @@ def record_test(ticket_id, d, user, ip=None):
         if failed:
             ticket = conn.execute("SELECT ticket_no,assigned_to FROM mnt_tickets WHERE id=?", (ticket_id,)).fetchone()
             audit(conn, user, "test_failed", "ticket", ticket_id, comment=reason, ip=ip)
+            who = [u for u in _usernames_for(conn, [ticket["assigned_to"]])
+                   if u != (user or {}).get("username")]
+            # the assigned technician by name; every technician only when there is none
             notify(conn, "maintenance_technician", "Repair test failed",
                    f"{ticket['ticket_no']} failed its test: {reason}", "ticket", ticket_id, "warning", link,
-                   exclude=(user or {}).get("username"))
-            _notify_people(conn, _usernames_for(conn, [ticket["assigned_to"]]), "Repair test failed",
+                   exclude=(user or {}).get("username"), bell=not who)
+            _notify_people(conn, who, "Repair test failed",
                            "%s failed its test: %s", link, args=(ticket["ticket_no"], reason), actor=user)
         else:
             audit(conn, user, "test_record", "ticket", ticket_id, None, "resolved", ip=ip)

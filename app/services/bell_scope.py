@@ -15,12 +15,26 @@ notification_reads and no longer hides it from the others. notifications.is_read
 on a broadcast still means "resolved for everyone" (notify.py's auto-resolve of
 a "system offline" alert sets it), so it still hides the row for all.
 
-Everything is one SQL WHERE fragment built from the reader's permissions — no
-per-row Python filtering — so the bell's LIMIT 30 query stays cheap.
-"""
-from app.security import user_has_permission
+A scope-locked account (security.system_scope: itsm_user, ...) additionally
+sees only rows of its own systems (or with no module), here, so the bell, the
+count, the feed, /my-work and mark-read share one definition.
 
-_IT = ("manage_integrations", "view_system_health")
+Everything is one SQL WHERE fragment built from the reader's permissions — no
+per-row Python filtering — so the bell's LIMIT 30 query stays cheap. The unread
+count stops at UNREAD_CAP (the badge shows "99+").
+
+Owners (final list): IT alerts (system offline, pulled ITSM / Assets /
+Monitoring / CommandTrack alerts, AI risk alerts, owner-less BI alerts, and any
+integrated system an admin adds later) -> manage_integrations only (it_manager,
+it_director) — not the read-only health viewers. warehouse -> wh_manage;
+maintenance -> maint_manage; orders -> pln_plan (production, not IT); quality ->
+qc_inspect + pln_plan (inspectors, and production who must fix the defect);
+the rest as mapped below. Unmapped -> super_admin only.
+"""
+from app.security import system_scope, user_has_permission
+
+_IT = ("manage_integrations",)
+UNREAD_CAP = 100
 
 # notifications.module -> the permission(s) that make a user an owner of that
 # module's broadcasts (holding ANY of them is enough).
@@ -28,13 +42,13 @@ MODULE_OWNERS = {
     # manufacturing modules (their _bell() helpers broadcast)
     "maintenance": ("maint_manage",),                 # rows are addressed already; legacy broadcasts
     "warehouse": ("wh_manage",),                      # low / out-of-stock sweep: storekeepers + managers
-    "orders": ("manage_production",),                 # orders routes write on manage_production
+    "orders": ("pln_plan",),                          # T&A slippage: production planning, not IT
     "planning": ("pln_plan",),
     "costing": ("cost_manage",),
     "cutroom": ("cut_manage",),
     "mes": ("mes_entry",),
     "plm": ("plm_manage", "plm_approve"),
-    "quality": ("qc_inspect",),
+    "quality": ("qc_inspect", "pln_plan"),            # AQL fail / DHU: QC + production fixes it
     "shipping": ("shp_manage",),
     "trace": ("trc_manage",),
     "wash": ("wsh_manage",),
@@ -68,12 +82,25 @@ def visible_where(user, alias="notifications"):
     me = (user or {}).get("username")
     mods = owned_modules(user)
     if mods is None:
-        return f"({alias}.target_user = ? OR {alias}.target_user IS NULL)", [me]
-    if not mods:
-        return f"{alias}.target_user = ?", [me]
-    ph = ",".join("?" * len(mods))
-    return (f"({alias}.target_user = ? OR ({alias}.target_user IS NULL "
-            f"AND {alias}.module IN ({ph})))", [me] + mods)
+        sql, params = f"({alias}.target_user = ? OR {alias}.target_user IS NULL)", [me]
+    else:
+        ors, params = [f"{alias}.target_user = ?"], [me]
+        if mods:
+            ors.append(f"({alias}.target_user IS NULL AND {alias}.module IN "
+                       f"({','.join('?' * len(mods))}))")
+            params += mods
+        if user_has_permission(user, _IT):
+            # an integrated system an admin registered later is IT's too
+            ors.append(f"({alias}.target_user IS NULL AND {alias}.module IN "
+                       f"(SELECT key FROM systems WHERE is_integrated = 1))")
+        sql = "(" + " OR ".join(ors) + ")"
+    scope = system_scope(user) if user else None
+    if scope is not None:
+        keys = sorted(scope)
+        inside = f" OR {alias}.module IN ({','.join('?' * len(keys))})" if keys else ""
+        sql += f" AND (COALESCE({alias}.module, '') = ''{inside})"
+        params += keys
+    return sql, params
 
 
 def _read_by_me(alias):
@@ -84,7 +111,7 @@ def _read_by_me(alias):
 def unread_where(user, alias="notifications"):
     """(sql, params): visible AND unread for this user."""
     vis, params = visible_where(user, alias)
-    sql = (f"{vis} AND COALESCE({alias}.is_read, 0) = 0 AND NOT ({alias}.target_user IS NULL "
+    sql = (f"{vis} AND {alias}.is_read = 0 AND NOT ({alias}.target_user IS NULL "
            f"AND {_read_by_me(alias)})")
     return sql, params + [(user or {}).get("username")]
 
@@ -106,8 +133,12 @@ def bell_rows(conn, user, limit=30):
 
 
 def unread_count(conn, user):
+    """Unread rows for this reader, capped at UNREAD_CAP (the badge says 99+), so
+    the count never walks every broadcast ever raised on each page render."""
     sql, params = unread_where(user)
-    return conn.execute(f"SELECT COUNT(*) AS c FROM notifications WHERE {sql}", params).fetchone()["c"]
+    return conn.execute(
+        f"SELECT COUNT(*) AS c FROM (SELECT notifications.id FROM notifications WHERE {sql} "
+        f"ORDER BY notifications.id DESC LIMIT {UNREAD_CAP}) capped", params).fetchone()["c"]
 
 
 def mark_read(conn, user, nid=None, now=None):
@@ -118,9 +149,9 @@ def mark_read(conn, user, nid=None, now=None):
     now = now or utcnow()
     one = " AND id = ?" if nid else ""
     extra = [int(nid)] if nid else []
-    conn.execute(f"UPDATE notifications SET is_read = 1 WHERE target_user = ? "
-                 f"AND COALESCE(is_read, 0) = 0{one}", [me] + extra)
     sql, params = unread_where(user)
+    conn.execute(f"UPDATE notifications SET is_read = 1 WHERE target_user = ? AND {sql}{one}",
+                 [me] + params + extra)
     conn.execute(
         f"INSERT OR IGNORE INTO notification_reads (notification_id, username, read_at) "
         f"SELECT id, ?, ? FROM notifications WHERE target_user IS NULL AND {sql}{one}",
