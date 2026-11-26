@@ -92,7 +92,8 @@ def run():
         oid = c.execute("SELECT id FROM ord_orders WHERE order_no='ORD-ZQX-1'").fetchone()["id"]
         c.execute("INSERT INTO ord_milestones (order_id, name, planned_date) VALUES (?, 'Zqx fabric', '2020-01-01')", (oid,))
         for mod, who, title in (("procurement", "t.req", "PROC-BELL"), ("maintenance", None, "MAINT-BELL"),
-                                ("itsm", None, "ITSM-BELL")):
+                                ("itsm", None, "ITSM-BELL"), ("itsm", "t.store", "ITSM-STORE"),
+                                ("itsm", "t.wide", "ITSM-WIDE"), ("itsm", "t.noview", "ITSM-NOVIEW")):
             c.execute("INSERT INTO notifications (severity, module, title, message, target_user, created_at) "
                       "VALUES ('info', ?, ?, 'x', ?, '2026-11-26 08:00:00')", (mod, title, who))
         c.commit()
@@ -201,6 +202,8 @@ def run():
             assert "orders" in keys and "command_center" in keys, (un, keys)
             assert any(x["type"] == "order" for x in cli.get("/search?q=zqx").get_json()["results"]), un
             mods = {i["module"] for i in cli.get("/notifications/feed").get_json()["items"]}
+            # Not narrowed to procurement: their own (addressed) ITSM notices still
+            # reach them. Unaddressed broadcasts now go to module owners only (bell_scope).
             assert "itsm" in mods, (un, mods)
             assert "ORD-ZQX-1" in cli.get("/my-work").get_data(as_text=True), un
         print("tests_proconly: all checks passed")
