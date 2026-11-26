@@ -165,6 +165,10 @@ def form_prefill(copy_id, stock_id, spare_id=""):
     if copy_id.isdigit():
         if not user_can("proc_view"):
             abort(403)
+        from app.approvals import services as _svc
+        # A plain requester copies only their own requests (they cannot see others').
+        if not _svc.can_view_pr(_u(), _svc.pr_for_args({"pr_id": int(copy_id)})):
+            abort(404)
         head, lines = porev.copy_prefill(int(copy_id))
         if head is None:
             abort(404)

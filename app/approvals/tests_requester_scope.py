@@ -65,6 +65,8 @@ def run():
                     "/procurement/attachment/%d" % att_b):
             assert a.get(url).status_code == 404, url
         assert a.get("/procurement/analytics").status_code == 403
+        assert a.get("/procurement/new?copy=%d" % pb).status_code == 404, "copy leaks another request"
+        assert a.get("/procurement/new?copy=%d" % pa).status_code == 200
         x = a.get("/procurement/list.xlsx")
         assert x.status_code == 200
         home = a.get("/procurement/").get_data(as_text=True)
