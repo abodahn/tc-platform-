@@ -1,0 +1,95 @@
+/* Online price comparison on the request page (price-search.js).
+   Mobile first: a bottom sheet on phones, a drawer on the inline-end side from
+   641px. Logical properties throughout, so Arabic mirrors without overrides. */
+.ps-line-btn { margin-block-start: 8px; }
+.ps-btn { min-height: 44px; }
+
+dialog.tc-dialog.ps-dlg {
+  box-sizing: border-box; padding: 0; width: 100vw; max-width: 100vw;
+  max-height: 90vh; max-height: 90dvh;
+  margin-block: auto 0; margin-inline: 0; border-block-end: 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+.ps-dlg[open] { display: flex; flex-direction: column; }
+@media (min-width: 641px) {
+  .ps-btn { min-height: 0; }
+  dialog.tc-dialog.ps-dlg {
+    width: min(560px, 100vw); height: 100vh; height: 100dvh; max-height: none;
+    margin-block: 0; margin-inline: auto 0; border-block-end: 1px solid var(--line);
+    border-radius: 0; border-start-start-radius: var(--r-lg); border-end-start-radius: var(--r-lg);
+  }
+}
+
+.ps-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px 6px; }
+.ps-head h3 { margin: 0; font-size: 16px; }
+.ps-x { flex: none; width: 44px; height: 44px; }
+.ps-form { padding: 0 16px 12px; border-block-end: 1px solid var(--line-2); }
+.ps-form[hidden] { display: none; }
+.ps-lbl { display: block; font-size: 12.5px; color: var(--muted); margin-block-end: 6px; }
+.ps-row { display: flex; gap: 8px; }
+.ps-row input { flex: 1; min-width: 0; min-height: 44px; }
+.ps-row .btn { flex: none; min-height: 44px; }
+.ps-ctx { font-size: 12.5px; margin-block-start: 6px; overflow-wrap: anywhere; }
+.ps-out { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain;
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
+
+/* waiting */
+.ps-wait { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+.ps-skel { display: flex; justify-content: space-between; gap: 12px; padding: 16px 4px; border-block-start: 1px solid var(--line-2); }
+.ps-skel span { height: 12px; border-radius: 6px; background: var(--line); animation: psPulse 1.2s ease-in-out infinite; }
+.ps-skel span:first-child { flex: 1; max-width: 60%; }
+.ps-skel span:last-child { width: 72px; }
+@keyframes psPulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .ps-skel span { animation: none; } }
+
+/* stats strip */
+.ps-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-block-end: 10px; }
+@media (min-width: 420px) { .ps-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.ps-stat { min-width: 0; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-sm); }
+.ps-stat-k { display: block; font-size: 11.5px; color: var(--muted); }
+.ps-stat b { font-size: 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+/* offers */
+.ps-list, .ps-all, .ps-src ul { list-style: none; margin: 0; padding: 0; }
+.ps-item + .ps-item { border-block-start: 1px solid var(--line-2); }
+.ps-offer { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  min-height: 44px; padding: 12px 4px; color: inherit; text-decoration: none; border-radius: var(--r-sm); }
+a.ps-offer:hover { background: var(--panel-2); }
+a.ps-offer:focus-visible { outline: 2px solid var(--tc-red); outline-offset: 2px; }
+.ps-main { flex: 1; min-width: 0; }
+.ps-store { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.ps-title { margin-block-start: 2px; font-size: 13px; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ps-pack { margin-block-start: 2px; font-size: 12px; color: var(--muted); }
+.ps-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-block-start: 6px; }
+.ps-chip { font-size: 11.5px; padding: 2px 8px; border-radius: var(--r-pill); border: 1px solid var(--line); color: var(--muted); background: var(--panel-2); }
+.ps-chip-ok { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.ps-chip-warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.ps-badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: var(--r-pill); background: var(--ok); color: #fff; }
+.ps-side { flex: none; text-align: end; }
+.ps-price { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ps-was { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ps-open { display: inline-block; margin-block-start: 4px; font-size: 12px; color: var(--info); }
+
+/* notes, states, sources */
+.ps-note { font-size: 12.5px; margin: 0 0 10px; }
+.ps-note-warn { padding: 8px 10px; border-radius: var(--r-sm); background: var(--warn-bg); color: var(--warn); }
+.ps-meta { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+.ps-linkbtn { min-height: 44px; padding: 0 4px; background: none; border: 0; color: var(--info); font: inherit; cursor: pointer; text-decoration: underline; }
+.ps-back { margin-block-end: 4px; }
+.ps-state { padding: 16px 4px; text-align: center; }
+.ps-state p { margin: 0 0 10px; font-size: 13.5px; }
+.ps-err p { color: var(--crit); }
+.ps-src { margin-block-start: 12px; font-size: 12.5px; }
+.ps-src summary { display: flex; align-items: center; min-height: 44px; color: var(--muted); cursor: pointer; }
+.ps-src li { padding: 4px 0; overflow-wrap: anywhere; }
+.ps-src a { color: var(--info); }
+
+/* compare all */
+.ps-all-row { display: flex; align-items: center; gap: 8px; border-block-start: 1px solid var(--line-2); }
+.ps-all-open { flex: 1; min-width: 0; min-height: 44px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 10px 4px; background: none; border: 0; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+.ps-all-open:disabled { cursor: progress; }
+.ps-all-item { font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.ps-all-sum { font-size: 12.5px; color: var(--muted); }
+.ps-all-link { flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; font-size: 12.5px; color: var(--info); }

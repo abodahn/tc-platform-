@@ -1542,7 +1542,100 @@ def detail(pr_id):
                            # Escalation stamps are DB-stored role keys: their names
                            # and the explanatory sentences are resolved server-side.
                            L=svc.labels(_lang),
+                           # Online price comparison: Financial Control and up.
+                           # The search text is prefilled from the line itself.
+                           ps_queries=({it["id"]: _ps_line_query(it) for it in bundle["items"]}
+                                       if user_can("proc_price_search") else None),
                            is_owner=(pr["requester"] == (user or {}).get("username")))
+
+
+# --------------------------------------------------------------------------
+# Online price comparison for a request's lines (proc_price_search)
+# --------------------------------------------------------------------------
+_PS_COUNT_UNITS = {"pcs", "pc", "piece", "pieces", "ea", "each", "unit", "units", "no", "nos"}
+_PS_MAX_LINES = 25
+
+
+def _ps_line_query(it):
+    """The search text for a line, built from what the request already says:
+    item + description (when it adds something) + a unit that means something."""
+    name = (it.get("item") or "").strip()
+    desc = (it.get("description") or "").strip()
+    unit = (it.get("unit") or "").strip()
+    parts = [name] + ([desc] if desc and desc != name else [])
+    if unit and unit.lower().rstrip(".") not in _PS_COUNT_UNITS:
+        parts.append(unit)
+    from app.services.garamento import clean_query
+    return clean_query(" ".join(parts)) or name[:120]
+
+
+def _ps_line_bundle(pr_id):
+    """The request bundle when this user may view it; aborts otherwise."""
+    bundle = svc.get_pr(pr_id)
+    if not bundle or not svc.can_view_pr(_u(), bundle["pr"]):
+        abort(404)
+    return bundle
+
+
+def _ps_audit(pr_id, results):
+    """Who looked up which price, on the request's own trail (fresh searches only)."""
+    done = [r for r in results if r.get("ok") and not r.get("cached")]
+    if not done:
+        return
+    conn = get_db()
+    try:
+        for r in done:
+            svc.audit(conn, pr_id, (_u() or {}).get("username"), "price_search",
+                      r.get("query") or "", ip=_ip())
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+
+
+@bp.route("/pr/<int:pr_id>/price-search", methods=["POST"])
+@login_required
+@permission_required("proc_price_search")
+def price_search(pr_id):
+    bundle = _ps_line_bundle(pr_id)
+    data = request.get_json(silent=True) or {}
+    it = next((i for i in bundle["items"] if str(i["id"]) == str(data.get("line_id"))), None)
+    if it is None:
+        return jsonify(ok=False, error="bad_line", message="That line is not on this request."), 404
+    from app.services import garamento as gm
+    q = str(data.get("query") or "").strip() or _ps_line_query(it)
+    res = gm.price_search(q, lang=(_u() or {}).get("lang_pref") or "en",
+                          fresh=bool(data.get("fresh")))
+    _ps_audit(pr_id, [res])
+    status = 400 if res.get("error") == "bad_query" else 200
+    return jsonify(dict(res, line_id=it["id"])), status
+
+
+@bp.route("/pr/<int:pr_id>/price-search-all", methods=["POST"])
+@login_required
+@permission_required("proc_price_search")
+def price_search_all(pr_id):
+    """Every line of the request (max 25). The page asks in small batches
+    (`line_ids`) so no single request runs for minutes on a phone network."""
+    from concurrent.futures import ThreadPoolExecutor
+    from app.services import garamento as gm
+    bundle = _ps_line_bundle(pr_id)
+    data = request.get_json(silent=True) or {}
+    items = bundle["items"][:_PS_MAX_LINES]
+    want = data.get("line_ids")
+    if isinstance(want, list):
+        want = {str(x) for x in want}
+        items = [it for it in items if str(it["id"]) in want]
+    fresh, lang = bool(data.get("fresh")), (_u() or {}).get("lang_pref") or "en"
+    # 3 at a time: each search already fans out 6 page checks of its own.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        results = list(pool.map(lambda it: gm.price_search(_ps_line_query(it), lang=lang,
+                                                           fresh=fresh), items))
+    _ps_audit(pr_id, results)
+    lines = [{"line_id": it["id"], "item": it.get("item") or "", "qty": it.get("qty"),
+              "unit": it.get("unit") or "", "result": r} for it, r in zip(items, results)]
+    return jsonify(ok=True, lines=lines, truncated=len(bundle["items"]) > _PS_MAX_LINES)
 
 
 @bp.route("/pr/<int:pr_id>/stock-postings/retry", methods=["POST"])

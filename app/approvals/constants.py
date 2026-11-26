@@ -860,6 +860,7 @@ PROC_PERMISSIONS = [
     "proc_pay",        # release payments to suppliers (DOAM 7.3.4)
     "proc_catalogue",  # maintain the item master (NOT cost price — pricing gate)
     "proc_admin",      # settings, approval matrix, act on any stage, vendors
+    "proc_price_search",  # compare a request line's price across online stores
 ]
 
 # Who may read request money (prices, totals, quotes, invoices, payments) beyond
@@ -880,9 +881,9 @@ PROC_ROLE_PERMS = {
     # be a requester"). That costs no control: DOAM §3.4 self-approval is
     # absolute, so their own rung goes one level up the escalation chain below
     # rather than to them.
-    "financial_controller": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
-    "cfo": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
-    "ceo": ["proc_view", "proc_create", "proc_approve"],
+    "financial_controller": ["proc_view", "proc_create", "proc_approve", "proc_pay", "proc_price_search"],
+    "cfo": ["proc_view", "proc_create", "proc_approve", "proc_pay", "proc_price_search"],
+    "ceo": ["proc_view", "proc_create", "proc_approve", "proc_price_search"],
     # proc_catalogue is the item master. The store is the only function that
     # handles the physical item every day, so it is the only one that notices the
     # unit is wrong or the name describes a part that has not been stocked for two
@@ -904,9 +905,9 @@ PROC_ROLE_PERMS = {
     # control". Releasing payment was gated on proc_purchasing, so the buyer who
     # committed the spend could also pay it and Finance could not — the exact
     # separation the clause exists to create, inverted. proc_pay moves it.
-    "financial_director": ["proc_view", "proc_create", "proc_approve", "proc_pay"],
-    "managing_director": ["proc_view", "proc_create", "proc_approve"],
-    "board": ["proc_view", "proc_create", "proc_approve"],
+    "financial_director": ["proc_view", "proc_create", "proc_approve", "proc_pay", "proc_price_search"],
+    "managing_director": ["proc_view", "proc_create", "proc_approve", "proc_price_search"],
+    "board": ["proc_view", "proc_create", "proc_approve", "proc_price_search"],
     # grants for roles that already exist on the platform:
     "storekeeper": ["proc_view", "proc_create", "proc_approve", "proc_catalogue", "proc_receive"],
     "factory_manager": ["proc_view", "proc_create", "proc_approve"],

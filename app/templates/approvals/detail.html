@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content_class %}proc{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">
+{% if ps_queries is not none %}<link rel="stylesheet" href="{{ url_for('static', filename='css/price-search.css') }}?v={{ static_v('css/price-search.css') }}">{% endif %}{% endblock %}
 {% block title %}{{ pr.pr_no }}{% endblock %}
 {% block content %}
 
@@ -1729,7 +1730,12 @@
   <!-- Items + details -->
   <div class="panel">
     <div class="panel-head"><h3 data-i18n="proc.items">Line items</h3>
-      <span class="muted">{{ pr.vendor or '' }}</span></div>
+      <span class="muted">{{ pr.vendor or '' }}</span>
+      {% if ps_queries is not none and b['items'] %}
+      <button type="button" class="btn btn-ghost btn-sm ps-btn" data-ps-all>
+        <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+        <span data-i18n="ps.compare_all">Compare all items online</span></button>
+      {% endif %}</div>
     <div class="panel-pad" style="overflow-x:auto">
       <table class="tbl pr-items">
         <thead><tr>
@@ -1772,7 +1778,14 @@
                   <b>{{ '%g'|format(spare_live[it.spare_id].available) }} {{ spare_live[it.spare_id].uom }}</b>
                   <span class="muted" data-i18n="proc.live_stock_hint">available</span></div>
                 {% endif %}
-                {{ item_history(it) }}</td>
+                {{ item_history(it) }}
+                {% if ps_queries is not none %}
+                <button type="button" class="btn btn-ghost btn-sm ps-btn ps-line-btn" data-ps-line="{{ it.id }}"
+                        data-ps-q="{{ ps_queries[it.id] }}" data-ps-item="{{ it.item }}"
+                        data-ps-qty="{{ '%g'|format(it.qty or 0) }}" data-ps-unit="{{ it.unit or '' }}">
+                  <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+                  <span data-i18n="ps.compare">Compare prices online</span></button>
+                {% endif %}</td>
             <td style="font-variant-numeric:tabular-nums">{{ it.qty }} {{ it.unit }}
               {#- What the store handed over off the shelf. Without this the line
                   just reads a smaller number than was asked for, and the only
@@ -2597,6 +2610,33 @@
   }).observe(btn);
 })();
 </script>
+{% endif %}
+
+{% if ps_queries is not none %}
+{#- Online price comparison. Every string the script prints is a data-i18n key
+    it reads through window.tcT, with the English below as the fallback. -#}
+<dialog class="tc-dialog ps-dlg" id="psDlg" aria-labelledby="psTitle"
+        data-url-line="{{ url_for('approvals.price_search', pr_id=pr.id) }}"
+        data-url-all="{{ url_for('approvals.price_search_all', pr_id=pr.id) }}"
+        data-csrf="{{ csrf_token }}">
+  <div class="ps-head">
+    <h3 id="psTitle" data-i18n="ps.title">Compare prices online</h3>
+    <button type="button" class="icon-btn ps-x" data-ps-close aria-label="Close"
+            data-i18n-title="ps.close" title="Close">&#x2715;</button>
+  </div>
+  <form class="ps-form" data-ps-form novalidate>
+    <label for="psQ" class="ps-lbl" data-i18n="ps.query_l">Search text — taken from the request, edit it if needed</label>
+    <div class="ps-row">
+      <input id="psQ" type="search" maxlength="120" autocomplete="off" enterkeyhint="search" dir="auto">
+      <button class="btn btn-primary" type="submit" data-ps-go>
+        <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+        <span data-i18n="ps.search">Search</span></button>
+    </div>
+    <div class="ps-ctx muted" data-ps-ctx></div>
+  </form>
+  <div class="ps-out" data-ps-out aria-live="polite"></div>
+</dialog>
+<script src="{{ url_for('static', filename='js/price-search.js') }}?v={{ static_v('js/price-search.js') }}" defer></script>
 {% endif %}
 
 {% endblock %}

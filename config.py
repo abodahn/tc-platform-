@@ -200,6 +200,9 @@ class Config:
     OPENROUTER_MODEL_WEB = (os.getenv("OPENROUTER_MODEL_WEB", "") or "").strip()
     OPENROUTER_TIMEOUT = float(os.getenv("OPENROUTER_TIMEOUT", "40"))
     AI_ENABLED = bool(OPENROUTER_API_KEY)
+    # Optional second engine for procurement price search (Google Shopping via
+    # SerpAPI). Environment only, never in source; blank -> silently skipped.
+    SERPAPI_API_KEY = (os.getenv("SERPAPI_API_KEY", "") or "").strip()
 
     # Writable data dir — local: project folder; Render: TC_DATA_DIR (a disk on
     # paid plans, or an ephemeral path like /tmp on free tier).

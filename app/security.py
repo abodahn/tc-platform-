@@ -358,6 +358,7 @@ PERMISSION_LABELS = {
     "proc_receive": "Procurement: book goods receipts against issued POs",
     "proc_pay": "Procurement: release payments to suppliers",
     "proc_catalogue": "Procurement: maintain the item master",
+    "proc_price_search": "Procurement: compare prices online",
     "proc_admin": "Procurement: admin (any stage, budgets)",
     "prob_view": "Probation: view",
     "prob_evaluate": "Probation: evaluate (manager)",
@@ -432,6 +433,7 @@ PERMISSION_DESC = {
                 "control with the Financial Director, deliberately NOT with the "
                 "buyer who committed the spend.",
     "proc_catalogue": "Add, correct and retire items in the item master. The store holds this because it handles the physical item daily. It does NOT include cost price, which is set only at the pricing gate.",
+    "proc_price_search": "Search a request line's current price across online stores and open the store page. Every price is re-checked on the store's own page before it is shown as confirmed. Financial Control and above.",
     "proc_admin": "Act on any stage; manage budgets/matrix.",
     "prob_view": "See probation dashboards and cases within your scope.",
     "prob_evaluate": "Evaluate employees assigned to you (draft, submit, correct).",

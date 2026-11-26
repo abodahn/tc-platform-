@@ -17,6 +17,10 @@ from __future__ import annotations
 
 import json
 import re
+import statistics
+import threading
+import time
+from urllib.parse import urlsplit
 
 import requests
 
@@ -85,8 +89,11 @@ def _headers() -> dict:
     }
 
 
-def _complete(messages, model=None, temperature=0.6, max_tokens=700, timeout=None):
-    """Call OpenRouter chat/completions and return the assistant text.
+def _complete(messages, model=None, temperature=0.6, max_tokens=700, timeout=None,
+              extra=None, full=False):
+    """Call OpenRouter chat/completions and return the assistant text — or, with
+    full=True, the whole message dict (its "annotations" carry the web citations).
+    `extra` is merged into the payload (e.g. the web plugin options).
 
     Raises GaramentoOffline if unconfigured; requests exceptions bubble up so
     callers can translate them into friendly errors.
@@ -99,6 +106,7 @@ def _complete(messages, model=None, temperature=0.6, max_tokens=700, timeout=Non
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    payload.update(extra or {})
     resp = requests.post(
         f"{Config.OPENROUTER_BASE}/chat/completions",
         headers=_headers(),
@@ -107,6 +115,8 @@ def _complete(messages, model=None, temperature=0.6, max_tokens=700, timeout=Non
     )
     resp.raise_for_status()
     data = resp.json()
+    if full:
+        return data["choices"][0]["message"]
     return (data["choices"][0]["message"]["content"] or "").strip()
 
 
@@ -359,17 +369,19 @@ def _local_block(area, radius_km, lang="en"):
     )
 
 
-def _web_call(messages, extra_timeout=0):
+def _web_call(messages, extra_timeout=0, **opts):
     """Shared web-search completion with friendly error translation.
-    Returns (text, error_dict). One of them is None."""
+    Returns (text, error_dict). One of them is None. `opts` override the
+    _complete() arguments (max_tokens, timeout, extra, full, ...)."""
     if not is_enabled():
         return None, {"ok": False, "offline": True,
                       "message": ("Garamento's price radar is offline — no OpenRouter API "
                                   "key configured. Ask your admin to set OPENROUTER_API_KEY.")}
     try:
-        text = _complete(messages, model=_web_model(), temperature=0.2,
-                         max_tokens=800 + extra_timeout,
-                         timeout=max(Config.OPENROUTER_TIMEOUT, 55) + extra_timeout / 20)
+        kw = dict(model=_web_model(), temperature=0.2, max_tokens=800 + extra_timeout,
+                  timeout=max(Config.OPENROUTER_TIMEOUT, 55) + extra_timeout / 20)
+        kw.update(opts)
+        text = _complete(messages, **kw)
         return text, None
     except requests.exceptions.Timeout:
         return None, {"ok": False, "error": "timeout", "message": "The web was slow to answer — try once more?"}
@@ -480,6 +492,236 @@ def market_research_bulk(items, currency="EGP", area="", radius_km=None, lang="e
         else:
             results.append({"index": c["index"], "ok": False, "item": c["item"]})
     return {"ok": True, "currency": currency, "results": results}
+
+
+# --------------------------------------------------------------------------
+# Product price search — a price-comparison view across stores. The model's
+# offers are only CANDIDATES: each is matched against the search citations and
+# then re-checked live on the store's own page (app/services/price_verify.py).
+# --------------------------------------------------------------------------
+_PS_SYS = (
+    "You are a meticulous price-comparison researcher for a company buyer. Use the "
+    "live web search results to find CURRENT offers for the product named. Report "
+    "ONLY offers you actually saw on a page in the search results: never invent a "
+    "store, a URL or a price, never estimate, never reuse a price from another "
+    "page. Fewer real offers beat many invented ones. Answer with JSON only."
+)
+_PS_STORES_EG = (
+    "Amazon.eg, Noon, Jumia, Carrefour Egypt, Spinneys, Talabat Mart, Breadfast, "
+    "B.TECH, 2B, Dubizzle/OLX, official brand stores, and B2B / wholesale suppliers")
+_PS_TTL = 2 * 3600      # prices move: a result is reused for two hours at most
+_PS_MAX = 200
+# shortcut: per-process cache, lost on restart and not shared across workers;
+# move to a DB table if search volume grows.
+_PS_CACHE = {}
+_PS_LOCK = threading.Lock()
+_GOOD = ("confirmed", "price_changed")
+_TRACKING = re.compile(r"^(utm_.*|gclid|fbclid|msclkid|yclid|srsltid|spm|ref_?)$", re.I)
+_SERPAPI_URL = "https://serpapi.com/search.json"
+
+
+def clean_query(q):
+    """Collapse whitespace, drop control characters, cap at 120; "" if < 2 chars."""
+    q = " ".join(re.sub(r"[\x00-\x1f\x7f]", " ", str(q or "")).split())[:120].strip()
+    return q if len(q) >= 2 else ""
+
+
+def _norm_url(u):
+    """Scheme-less, no www., no trailing slash, tracking params dropped."""
+    p = urlsplit(u)
+    host = (p.hostname or "").lower()
+    host = host[4:] if host.startswith("www.") else host
+    q = "&".join(sorted(kv for kv in p.query.split("&")
+                        if kv and not _TRACKING.match(kv.split("=", 1)[0])))
+    return host + p.path.rstrip("/") + ("?" + q if q else "")
+
+
+def _site(host):
+    """Registrable domain. shortcut: naive (no public-suffix list) — right for the
+    stores in play (amazon.eg, jumia.com.eg, noon.com); use a PSL if a shared
+    host ever produces a false site match."""
+    parts = [x for x in (host or "").lower().split(".") if x]
+    if parts and parts[0] == "www":
+        parts = parts[1:]
+    n = 3 if (len(parts) >= 3 and len(parts[-1]) == 2
+              and parts[-2] in ("com", "co", "org", "net", "gov", "edu", "ac")) else 2
+    return ".".join(parts[-n:])
+
+
+def _clean_offers(raw, currency, engine="ai"):
+    """Validate model / engine offers: http(s) URL with a host, a positive
+    numeric price, one per URL."""
+    out, seen = [], set()
+    for o in raw if isinstance(raw, list) else []:
+        if not isinstance(o, dict):
+            continue
+        url = str(o.get("url") or "").strip()
+        if not re.match(r"^https?://", url, re.I):
+            continue                      # javascript:, data:, relative, empty
+        try:
+            host = urlsplit(url).hostname
+        except ValueError:
+            continue
+        price = None if isinstance(o.get("price"), bool) else _num(o.get("price"))
+        if not host or price is None or price <= 0:
+            continue
+        key = _norm_url(url)
+        if key in seen:
+            continue
+        seen.add(key)
+        stock = o.get("in_stock")
+        out.append({
+            "title": str(o.get("title") or "")[:200],
+            "store": str(o.get("store") or host)[:80],
+            "price": price,
+            "currency": str(o.get("currency") or currency)[:8].upper(),
+            "pack": str(o.get("pack") or "")[:60],
+            "url": url[:1000],
+            "in_stock": stock if isinstance(stock, bool) else None,
+            "note": str(o.get("note") or "")[:160],
+            "engine": engine,
+        })
+    return out
+
+
+def _citations(msg):
+    """The url_citation annotations OpenRouter's web search returned: real pages."""
+    out, seen = [], set()
+    anns = msg.get("annotations") if isinstance(msg, dict) else None
+    for a in anns if isinstance(anns, list) else []:
+        c = a.get("url_citation") if isinstance(a, dict) else None
+        url = str((c or {}).get("url") or "").strip()
+        if not re.match(r"^https?://", url, re.I) or url in seen:
+            continue
+        seen.add(url)
+        out.append({"url": url[:1000], "title": str(c.get("title") or "")[:200]})
+    return out[:20]
+
+
+def _mark_cited(offers, urls):
+    """verified/page: the offer URL is a cited page; verified/site: same store as
+    a cited page; otherwise unverified."""
+    exact = {_norm_url(u) for u in urls}
+    sites = {_site(urlsplit(u).hostname) for u in urls}
+    for o in offers:
+        if _norm_url(o["url"]) in exact:
+            o["verified"], o["verified_level"] = True, "page"
+        elif _site(urlsplit(o["url"]).hostname) in sites:
+            o["verified"], o["verified_level"] = True, "site"
+        else:
+            o["verified"], o["verified_level"] = False, ""
+
+
+def _cite_rank(o):
+    return {"page": 0, "site": 1}.get(o.get("verified_level"), 2)
+
+
+def _rank(offers, currency):
+    """Sort (page-checked first by price, then unconfirmed by citation strength),
+    flag the lowest checked offer, and compute stats in `currency`."""
+    offers.sort(key=lambda o: (o["status"] not in _GOOD,
+                               0 if o["status"] in _GOOD else _cite_rank(o),
+                               o["currency"] != currency, o["price"]))
+    good = [o for o in offers if o["status"] in _GOOD and o["currency"] == currency]
+    for o in offers:
+        o["lowest"] = False
+    if good:
+        min(good, key=lambda o: o["price"])["lowest"] = True
+    pool = good or [o for o in offers if o["currency"] == currency]
+    prices = sorted(o["price"] for o in pool)
+    return {
+        "currency": currency, "count": len(pool), "confirmed": len(good),
+        "estimate": not good,             # only unchecked claims behind these numbers
+        "low": prices[0] if prices else None,
+        "median": round(statistics.median(prices), 2) if prices else None,
+        "high": prices[-1] if prices else None,
+    }
+
+
+def _serpapi_offers(q, lang, currency):
+    """Google Shopping via SerpAPI when SERPAPI_API_KEY is set; [] otherwise or on
+    any failure (the AI engine still answers)."""
+    key = getattr(Config, "SERPAPI_API_KEY", "")
+    if not key:
+        return []
+    try:
+        r = requests.get(_SERPAPI_URL, timeout=20, params={
+            "engine": "google_shopping", "q": q, "gl": "eg",
+            "hl": "ar" if lang == "ar" else "en", "api_key": key})
+        r.raise_for_status()
+        rows = r.json().get("shopping_results") or []
+    except Exception:  # noqa: BLE001
+        return []
+    raw = [{"title": it.get("title"), "store": it.get("source"),
+            "price": it.get("extracted_price"), "currency": currency,
+            "url": it.get("link") or it.get("product_link")}
+           for it in rows[:10] if isinstance(it, dict)]
+    return _clean_offers(raw, currency, engine="serpapi")
+
+
+def _ps_prompt(q, country, currency, lang):
+    stores = _PS_STORES_EG if country == "Egypt" else "major online stores and retailers"
+    say = {"ar": " Write summary in Arabic.", "tr": " Write summary in Turkish."}.get(lang, "")
+    return (
+        f"Product: {q}\n"
+        f"Find current prices in {country} ({currency}) across e-commerce sites and "
+        f"retailers, e.g. {stores}. Search in English AND in Arabic (translate the "
+        "product name).\n\n"
+        "Respond ONLY with JSON of this shape:\n"
+        '{"query": string, "currency": "' + currency + '", "offers": [{"title": product '
+        'name as listed, "store": site or store name, "price": number, "currency": ISO '
+        'code, "pack": e.g. "1.5L x 6" or "", "url": the exact product page URL, '
+        '"in_stock": true | false | null, "note": ""}], "summary": one line}\n'
+        "Up to 12 offers. price is the plain number shown on that page (no symbols or "
+        "separators). url is the product page where that price appears, copied exactly "
+        "from the search results. No real offer found -> an empty offers list." + say)
+
+
+def price_search(query, lang="en", country="Egypt", currency="EGP", fresh=False):
+    """Search current store prices for one product. Returns
+    {ok, query, currency, offers[], stats, sources[], summary, cached} or an
+    error dict ({ok:False, error|offline, message})."""
+    q = clean_query(query)
+    if not q:
+        return {"ok": False, "error": "bad_query",
+                "message": "Type at least two characters to search."}
+    currency = (currency or "EGP").strip().upper()[:8]
+    key = (q.lower(), lang, country)
+    now = time.time()
+    if not fresh:
+        with _PS_LOCK:
+            hit = _PS_CACHE.get(key)
+        if hit and now - hit[0] < _PS_TTL:
+            return dict(hit[1], cached=True, age_s=int(now - hit[0]))
+
+    messages = [{"role": "system", "content": _PS_SYS},
+                {"role": "user", "content": _ps_prompt(q, country, currency, lang)}]
+    msg, err = _web_call(messages, temperature=0.1, max_tokens=1800, timeout=60, full=True,
+                         extra={"plugins": [{"id": "web", "max_results": 10}]})
+    if err:
+        return err
+    msg = msg if isinstance(msg, dict) else {}
+    data = _extract_json(msg.get("content") or "") or {}
+    sources = _citations(msg)
+    offers = _clean_offers(data.get("offers"), currency)
+    serp = _serpapi_offers(q, lang, currency)
+    seen = {_norm_url(o["url"]) for o in offers}
+    offers += [o for o in serp if _norm_url(o["url"]) not in seen]
+    # an engine result's link came from the search engine, not the model
+    _mark_cited(offers, [s["url"] for s in sources] + [o["url"] for o in serp])
+    offers.sort(key=_cite_rank)          # the live check keeps the best-cited 12
+    from app.services import price_verify
+    offers = price_verify.verify_offers(offers)
+    stats = _rank(offers, currency)
+    res = {"ok": True, "query": q, "currency": currency, "offers": offers, "stats": stats,
+           "sources": sources, "summary": str(data.get("summary") or "")[:300],
+           "cached": False, "age_s": 0}
+    if offers:                            # never pin an empty answer for two hours
+        with _PS_LOCK:
+            _PS_CACHE[key] = (now, res)
+            while len(_PS_CACHE) > _PS_MAX:
+                _PS_CACHE.pop(next(iter(_PS_CACHE)))
+    return res
 
 
 # --------------------------------------------------------------------------
