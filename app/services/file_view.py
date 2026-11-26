@@ -24,16 +24,28 @@ from xml.etree import ElementTree as ET
 from flask import render_template, request, send_file
 
 MAX_PARSE = 15 * 1024 * 1024        # bytes we are willing to parse server-side
-MAX_UNZIPPED = 80 * 1024 * 1024     # zip-bomb guard for xlsx/docx
+MAX_UNZIPPED = 40 * 1024 * 1024     # zip-bomb guard for xlsx/docx (whole archive)
+MAX_PART = 20 * 1024 * 1024         # one XML part we parse fully in memory
 MAX_ZIP_ENTRIES = 5000
 MAX_ROWS, MAX_COLS = 2000, 60       # per sheet
 MAX_TEXT = 1024 * 1024              # characters of .txt/.csv shown
 MAX_BLOCKS = 5000                   # docx paragraphs/tables shown
 
 _RASTER = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"),
-           (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"), (b"BM", "image/bmp"))
+           (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
 _OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+class TooBig(ValueError):
+    """Over a parse cap: the viewer shows the 'too large' card."""
+
+
+def _is_bmp(raw):
+    # "BM" alone also starts plain text ("BMW parts..."): require the zero reserved
+    # field and a known DIB header size.
+    return (len(raw) >= 26 and raw[:2] == b"BM" and raw[6:10] == b"\0\0\0\0"
+            and int.from_bytes(raw[14:18], "little") in (12, 40, 52, 56, 64, 108, 124))
 
 
 def _ext(name):
@@ -46,11 +58,15 @@ def sniff(raw, content_type, filename):
     raw = raw or b""
     ext = _ext(filename)
     ct = (content_type or "").split(";")[0].strip().lower()
-    if raw.startswith(b"%PDF-") or b"%PDF-" in raw[:1024]:
+    # Leading junk before %PDF- is tolerated only for files that say they are PDFs,
+    # so a CSV/txt that merely mentions "%PDF-" is not sent to pdf.js.
+    if raw.startswith(b"%PDF-") or ((ext == "pdf" or ct == "application/pdf") and b"%PDF-" in raw[:1024]):
         return "pdf", "application/pdf"
     for magic, mime in _RASTER:
         if raw.startswith(magic):
             return "image", mime
+    if _is_bmp(raw):
+        return "image", "image/bmp"
     if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
         return "image", "image/webp"
     if raw[:4] == b"PK\x03\x04":
@@ -99,26 +115,33 @@ def _fmt(v):
 
 
 def _sheet(name, rows_iter, total_rows=None, total_cols=None):
-    rows, more = [], False
+    rows, more, wide = [], False, False
     for i, row in enumerate(rows_iter):
         if i >= MAX_ROWS:
             more = True
             break
-        rows.append([_fmt(v) for v in list(row)[:MAX_COLS]])
+        row = list(row)
+        wide = wide or len(row) > MAX_COLS
+        rows.append([_fmt(v) for v in row[:MAX_COLS]])
     while rows and not any(t for t, _n in rows[-1]):        # trailing blank rows
         rows.pop()
     width = max((max((j + 1 for j, (t, _n) in enumerate(r) if t), default=0) for r in rows), default=0)
     rows = [r[:width] + [("", False)] * (width - len(r[:width])) for r in rows]
     return {"name": name, "rows": rows,
             "more_rows": more or bool(total_rows and total_rows > MAX_ROWS),
-            "more_cols": bool(total_cols and total_cols > MAX_COLS)}
+            "more_cols": wide or bool(total_cols and total_cols > MAX_COLS)}
 
 
 def _zip_guard(raw):
     zf = zipfile.ZipFile(io.BytesIO(raw))
     infos = zf.infolist()
     if len(infos) > MAX_ZIP_ENTRIES or sum(i.file_size for i in infos) > MAX_UNZIPPED:
-        raise ValueError("archive too large")
+        raise TooBig("archive too large")
+    for i in infos:     # parts read whole into memory (sharedStrings via openpyxl, document.xml via ET)
+        n = i.filename
+        if (n in ("xl/sharedStrings.xml", "word/document.xml") or n.startswith("xl/worksheets/")) \
+                and i.file_size > MAX_PART:
+            raise TooBig("part too large")
     return zf
 
 
@@ -224,9 +247,13 @@ def docx_blocks(raw):
                     blocks.append({"t": "p", "text": text})
             elif el.tag == _W + "tbl":
                 rows = []
-                for tr in el.findall(_W + "tr")[:MAX_ROWS]:
+                trs = el.findall(_W + "tr")
+                more = more or len(trs) > MAX_ROWS
+                for tr in trs[:MAX_ROWS]:
+                    tcs = tr.findall(_W + "tc")
+                    more = more or len(tcs) > MAX_COLS
                     rows.append(["\n".join(_para_text(p) for p in tc.findall(_W + "p"))
-                                 for tc in tr.findall(_W + "tc")[:MAX_COLS]])
+                                 for tc in tcs[:MAX_COLS]])
                 blocks.append({"t": "table", "rows": rows})
             elif el.tag == _W + "sdt":
                 content = el.find(_W + "sdtContent")
@@ -278,6 +305,8 @@ def viewer_context(raw, content_type, filename):
         elif kind == "text":
             text = _decode(raw)
             fv["text"], fv["more"] = text[:MAX_TEXT], len(text) > MAX_TEXT
+    except TooBig:
+        fv.update(kind="other", error="big", sheets=None, blocks=None, text=None)
     except Exception:  # noqa: BLE001 — any malformed upload gets the friendly card, never a 500
         fv.update(kind="other", error="bad", sheets=None, blocks=None, text=None)
     return fv
@@ -297,7 +326,9 @@ def file_response(raw, content_type, filename, as_attachment=True):
         resp.headers["Cache-Control"] = "private, no-store"
         return resp
     if request.args.get("download") == "1":
-        return send_file(io.BytesIO(raw), mimetype=content_type or "application/octet-stream",
-                         as_attachment=True, download_name=filename or "file")
+        # never echo the uploader's claimed type (text/html, image/svg+xml...) back out
+        resp = _download(raw, filename)
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        return resp
     return send_file(io.BytesIO(raw), mimetype=content_type or "application/octet-stream",
                      as_attachment=as_attachment, download_name=filename or "file")

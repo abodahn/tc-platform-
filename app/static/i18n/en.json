@@ -5222,6 +5222,8 @@
   "proc.imports.voided": "Voided",
   "proc.imports.waived": "Quotes waived",
   "fv.pages": "Pages",
+  "fv.page": "Page",
+  "fv.sheets": "Sheets",
   "fv.open": "Open with…",
   "fv.download": "Download",
   "fv.zoom": "Tap to zoom",

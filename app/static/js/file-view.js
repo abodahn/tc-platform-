@@ -2,7 +2,9 @@
    PDF renderer. PDFs are drawn page by page with pdf.js onto canvases because
    iPhone Safari and Android Chrome show nothing useful for a PDF in an iframe.
    pdf.js comes from cdnjs at an exact version; offline (LAN without internet) the
-   page falls back to an iframe of the same file plus the Download button. */
+   page falls back to an iframe of the same file plus the Download button.
+   shortcut: no SRI hash and not vendored (no offline copy to hash); vendor pdf.js into
+   app/static when it is next upgraded. */
 (function () {
   "use strict";
   var PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
@@ -66,13 +68,20 @@
       s.onload = resolve;
       s.onerror = reject;
       document.head.appendChild(s);
-      setTimeout(reject, 12000);   // a blocked CDN can hang instead of failing
+      setTimeout(reject, 30000);   // a blocked CDN can hang instead of failing; phones on slow links need time
     });
   }
 
   function start(lib) {
     lib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js";
-    return lib.getDocument({ url: src, withCredentials: true }).promise.then(function (doc) {
+    return lib.getDocument({
+      url: src, withCredentials: true,
+      // SECURITY: keep isEvalSupported false. pdf.js < 4.2.67 runs a crafted font as
+      // script on our origin otherwise (CVE-2024-4367); uploads come from any user.
+      isEvalSupported: false,
+      // one plain fetch: every chunk request would re-run the route (DB read / PDF build)
+      disableRange: true, disableStream: true, disableAutoFetch: true
+    }).promise.then(function (doc) {
       return doc.getPage(1).then(function (first) {
         var vp1 = first.getViewport({ scale: 1 });
         if (done) return;
@@ -81,6 +90,7 @@
         var count = document.querySelector(".fv-count");
         if (count) { count.querySelector("b").textContent = doc.numPages; count.hidden = false; }
         // shortcut: lower pixel density on long files to stay inside iOS canvas memory; page-unloading would allow more.
+        var pageWord = (document.getElementById("fvPageLbl") || {}).textContent || "Page";
         var dpr = Math.min(window.devicePixelRatio || 1, doc.numPages > 30 ? 1.25 : 2);
         var slots = [];
         for (var n = 1; n <= doc.numPages; n++) {
@@ -105,14 +115,24 @@
             canvas.width = Math.floor(vp.width);
             canvas.height = Math.floor(vp.height);
             canvas.setAttribute("role", "img");
-            canvas.setAttribute("aria-label", "PDF " + slot.getAttribute("data-page") + " / " + doc.numPages);
+            canvas.setAttribute("aria-label", pageWord + " " + slot.getAttribute("data-page") + " / " + doc.numPages);
             slot.style.aspectRatio = base.width + " / " + base.height;
             slot.insertBefore(canvas, slot.firstChild);
             return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
-          }).catch(function () { slot.removeAttribute("data-drawn"); });
+          }).catch(function () {
+            // e.g. iOS out of canvas memory: drop the half-made canvas and let the
+            // observer try again when the page scrolls back into view (3 tries).
+            var c = slot.querySelector("canvas");
+            if (c) c.remove();
+            slot.removeAttribute("data-drawn");
+            var tries = +(slot.getAttribute("data-tries") || 0) + 1;
+            slot.setAttribute("data-tries", tries);
+            if (io && tries < 3) io.observe(slot);
+          });
         }
+        var io = null;
         if ("IntersectionObserver" in window) {
-          var io = new IntersectionObserver(function (entries) {
+          io = new IntersectionObserver(function (entries) {
             entries.forEach(function (e) { if (e.isIntersecting) { io.unobserve(e.target); draw(e.target); } });
           }, { rootMargin: "800px 0px" });
           slots.forEach(function (s) { io.observe(s); });

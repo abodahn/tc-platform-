@@ -20,19 +20,20 @@
       <a class="btn btn-ghost btn-sm" href="{{ fv.raw_url }}" target="_blank" rel="noopener" data-file-view>
         <svg class="ico"><use href="#i-external"></use></svg><span data-i18n="fv.open">Open with…</span></a>
       {% endif %}
-      <a class="btn btn-primary btn-sm" href="{{ fv.download_url }}" download data-file-view>
+      <a class="btn btn-primary btn-sm" href="{{ fv.download_url }}" download>
         {{ dl_icon() }}<span data-i18n="fv.download">Download</span></a>
     </div>
   </div>
 
   {% if fv.kind == 'image' %}
   <div class="fv-stage fv-img-stage">
-    <button type="button" class="fv-img-btn" aria-label="Zoom" data-i18n-title="fv.zoom" title="Tap to zoom">
+    <button type="button" class="fv-img-btn" data-i18n-title="fv.zoom" title="Tap to zoom">
       <img class="fv-img" src="{{ fv.raw_url }}" alt="{{ fv.filename }}"></button>
   </div>
 
   {% elif fv.kind == 'pdf' %}
   <div class="fv-pdf" id="fvPdf" data-src="{{ fv.raw_url }}">
+    <span id="fvPageLbl" hidden data-i18n="fv.page">Page</span>
     <p class="fv-status" role="status"><span class="fv-spin" aria-hidden="true"></span><span data-i18n="fv.loading">Opening the file…</span></p>
     <div class="fv-pages"></div>
     <div class="fv-fallback" hidden>
@@ -43,7 +44,8 @@
 
   {% elif fv.sheets is not none %}
     {% if fv.sheets|length > 1 %}
-    <div class="fv-tabs" role="tablist" aria-label="Sheets">
+    <span id="fvSheetsLbl" class="sr-only" data-i18n="fv.sheets">Sheets</span>
+    <div class="fv-tabs" role="tablist" aria-labelledby="fvSheetsLbl">
       {% for s in fv.sheets %}
       <button type="button" role="tab" class="fv-tab" id="fvt{{ loop.index }}" aria-controls="fvs{{ loop.index }}"
               aria-selected="{{ 'true' if loop.first else 'false' }}" tabindex="{{ '0' if loop.first else '-1' }}"><bdi>{{ s.name }}</bdi></button>
@@ -100,7 +102,7 @@
     <b data-i18n="fv.none_title">This file type can't be previewed</b>
     <p data-i18n="fv.none_sub">Download it to open it with an app on your device.</p>
     {% endif %}
-    <a class="btn btn-primary" href="{{ fv.download_url }}" download data-file-view>{{ dl_icon() }}<span data-i18n="fv.download">Download</span></a>
+    <a class="btn btn-primary" href="{{ fv.download_url }}" download>{{ dl_icon() }}<span data-i18n="fv.download">Download</span></a>
   </div>
   {% endif %}
 </div>

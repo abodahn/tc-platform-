@@ -5222,6 +5222,8 @@
   "proc.imports.voided": "ملغي",
   "proc.imports.waived": "معفي من عروض الأسعار",
   "fv.pages": "عدد الصفحات",
+  "fv.page": "صفحة",
+  "fv.sheets": "الشيتات",
   "fv.open": "افتح في برنامج تاني…",
   "fv.download": "تنزيل",
   "fv.zoom": "اضغط للتكبير",

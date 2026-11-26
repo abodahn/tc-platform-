@@ -70,6 +70,13 @@ def converters():
     assert fv.sniff(b"a,b\n1,2\n", "", "x.csv")[0] == "csv"
     assert fv.sniff(b"hello", "text/plain", "x")[0] == "text"
     assert fv.sniff(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 8, "", "old.doc")[0] == "other"
+    # weak magic: "BM" text is not a BMP, a mention of %PDF- is not a PDF
+    assert fv.sniff(b"BM,2\n", "text/csv", "x.csv")[0] == "csv"
+    assert fv.sniff(b"BMW parts list", "text/plain", "list.txt")[0] == "text"
+    bmp = b"BM" + (70).to_bytes(4, "little") + b"\0" * 4 + (54).to_bytes(4, "little") + (40).to_bytes(4, "little") + b"\0" * 16
+    assert fv.sniff(bmp, "", "a.bmp") == ("image", "image/bmp")
+    assert fv.sniff(b"a,b\nnote %PDF-1.4,1\n", "text/csv", "x.csv")[0] == "csv"
+    assert fv.sniff(b"\r\n" + PDF, "application/pdf", "a.pdf")[0] == "pdf"     # junk prefix ok when it claims PDF
 
     # -- xlsx: sheets, header, numbers, dates, escaping left to the template
     sheets = fv.xlsx_sheets(_xlsx())
@@ -94,6 +101,10 @@ def converters():
     assert s["rows"] == [[("name", False), ("qty", False)], [("قلم", False), ("3", False)]], s
     s = fv.csv_sheets("صنف,1\n".encode("cp1256"), "x.csv")[0]
     assert s["rows"][0][0][0] == "صنف", s
+    wide = ",".join("c%d" % i for i in range(100)).encode()
+    s = fv.csv_sheets(wide + b"\n" + wide + b"\n", "w.csv")[0]
+    assert len(s["rows"][0]) == fv.MAX_COLS and s["more_cols"], s["more_cols"]
+    assert not fv.csv_sheets(b"a,b\n1,2\n", "n.csv")[0]["more_cols"]
 
     # -- docx: heading, paragraph with break, bullets, table
     body = ('<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Title &lt;x&gt;</w:t></w:r></w:p>'
@@ -107,6 +118,13 @@ def converters():
                       {"t": "p", "text": "Line one\nLine two"},
                       {"t": "ul", "items": ["A", "B"]},
                       {"t": "table", "rows": [["c1", "c2"]]}] and not more, blocks
+    old = fv.MAX_ROWS, fv.MAX_COLS
+    fv.MAX_ROWS, fv.MAX_COLS = 1, 1
+    try:
+        blocks, more = fv.docx_blocks(_docx(body))
+        assert blocks[-1]["rows"] == [["c1"]] and more, (blocks, more)         # capped table -> note
+    finally:
+        fv.MAX_ROWS, fv.MAX_COLS = old
 
     # -- malformed / hostile files -> friendly fallback, never an exception
     junk = b"PK\x03\x04" + b"garbage" * 50
@@ -117,9 +135,16 @@ def converters():
     old = fv.MAX_UNZIPPED
     fv.MAX_UNZIPPED = 1000
     try:
-        assert fv.viewer_context(bomb, "", "bomb.docx")["error"] == "bad"
+        assert fv.viewer_context(bomb, "", "bomb.docx")["error"] == "big"
     finally:
         fv.MAX_UNZIPPED = old
+    old = fv.MAX_PART
+    fv.MAX_PART = 1000                       # one parsed part over the cap -> "too large" card
+    try:
+        assert fv.viewer_context(bomb, "", "bomb.docx")["error"] == "big"
+        assert fv.viewer_context(_docx("<w:p/>"), "", "ok.docx")["error"] is False
+    finally:
+        fv.MAX_PART = old
     dtd = _docx("").replace(b'<?xml version="1.0"?>', b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]>')
     assert fv.viewer_context(dtd, "", "dtd.docx")["error"] == "bad"
     old = fv.MAX_PARSE
@@ -141,13 +166,15 @@ def branches(app):
             ("?inline=1", SVG, "image/svg+xml", "e.svg", "application/octet-stream", "attachment"),
             ("?inline=1", HTML, "text/html", "e.html", "application/octet-stream", "attachment"),
             ("?inline=1", HTML, "image/png", "e.png", "application/octet-stream", "attachment"),
-            ("?download=1", PDF, "application/pdf", "a.pdf", "application/pdf", "attachment")):
+            ("?download=1", PDF, "application/pdf", "a.pdf", "application/octet-stream", "attachment"),
+            ("?download=1", HTML, "text/html", "e.html", "application/octet-stream", "attachment"),
+            ("?download=1", SVG, "image/svg+xml", "e.svg", "application/octet-stream", "attachment")):
         with app.test_request_context("/x" + qs):
             r = fv.file_response(raw, ct, name)
             r.direct_passthrough = False
             assert r.mimetype == want_ct, (qs, name, r.mimetype)
             assert r.headers["Content-Disposition"].startswith(want_disp), (qs, name, r.headers)
-            if want_disp == "inline":
+            if want_disp == "inline" or "download" in qs:
                 assert r.headers["X-Content-Type-Options"] == "nosniff"
     with app.test_request_context("/x"):
         r = fv.file_response(PDF, "application/pdf", "a.pdf", as_attachment=False)
@@ -199,6 +226,10 @@ def end_to_end(app):
         assert r.status_code == 200 and 'id="fvPdf"' in html and "q.pdf" in html, r.status_code
         assert "/procurement/attachment/%d?inline=1" % att["q.pdf"] in html
         assert 'class="topbar' in html or "<header" in html                              # app chrome kept
+        # Download links must NOT carry data-file-view (navback's iOS share path skips those)
+        import re
+        dl = re.findall(r'<a [^>]*\bdownload\b[^>]*>', html)
+        assert dl and all("data-file-view" not in a for a in dl), dl
         r = me.get("/procurement/attachment/%d?inline=1" % att["q.pdf"])
         assert r.mimetype == "application/pdf" and r.headers["Content-Disposition"].startswith("inline")
         r = me.get("/procurement/attachment/%d" % att["q.pdf"])                          # as before
@@ -226,7 +257,15 @@ def end_to_end(app):
     print("end to end ok")
 
 
+def pdfjs_guard():
+    js = (Path(__file__).resolve().parent / "static" / "js" / "file-view.js").read_text(encoding="utf-8")
+    # CVE-2024-4367: pdf.js 3.x must never run with eval on
+    assert "isEvalSupported: false" in js and "disableRange: true" in js
+    print("pdfjs guard ok")
+
+
 def run():
+    pdfjs_guard()
     app = _app()
     with app.test_request_context("/x?view=1"):
         converters()
