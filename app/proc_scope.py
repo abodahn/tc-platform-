@@ -13,9 +13,10 @@ URL (Orders, the command center, launcher, AI, Smart Factory, BI, registry, ...
 — all gated by the generic perms alone) sends them back to /procurement.
 
 Built-in roles affected: normal_user (the default/self-signup role),
-purchasing_manager, finance_manager, financial_controller, cfo, ceo,
-supply_chain_director, plant_director, hr_director, financial_director,
-managing_director, board (asserted in app/tests_proconly.py).
+purchasing_manager, finance_manager, financial_controller, cfo,
+supply_chain_director, hr_director, financial_director (asserted in
+app/tests_proconly.py). Top management (SENIOR_ROLES) keeps the whole platform,
+the Command Center dashboard included — owner decision 2026-11-26.
 
 Computed from permissions, never stored: grant a user any other module's
 permission (role or extra_perms) and they are unaffected. super_admin ('*') and
@@ -35,6 +36,8 @@ GENERIC_PERMS = frozenset({"view_dashboard", "open_module", "view_reports", "exp
 # Read-only companions of procurement: kept (nav + pages) when held, never a reason
 # to leave the scope. wh_manage / wh_approve are real warehouse work and are not here.
 COMPANION_PERMS = frozenset({"wh_view"})
+# Top management keeps the dashboard and every page it had (owner decision 2026-11-26).
+SENIOR_ROLES = frozenset({"ceo", "managing_director", "board", "plant_director"})
 
 # Sidebar keys a procurement-only user may see: the procurement section, My Work,
 # the IT Service Desk and the read-only warehouse pages (the nav builder still
@@ -68,7 +71,7 @@ OUT_OF_SCOPE_MSG = "This page is outside your procurement access, so you were ta
 
 
 def is_procurement_only(user):
-    if not user or system_scope(user) is not None:
+    if not user or system_scope(user) is not None or user.get("role") in SENIOR_ROLES:
         return False
     perms = user_permissions(user)
     if "*" in perms:

@@ -24,10 +24,11 @@ def _app():
 # purchasing_manager is in: its only non-procurement permission is the read-only
 # wh_view, which the scope keeps (warehouse pages stay open for it).
 EXPECTED_PROC_ONLY = {
-    "normal_user", "purchasing_manager", "finance_manager", "financial_controller", "cfo", "ceo",
-    "supply_chain_director", "plant_director", "hr_director", "financial_director",
-    "managing_director", "board",
+    "normal_user", "purchasing_manager", "finance_manager", "financial_controller", "cfo",
+    "supply_chain_director", "hr_director", "financial_director",
 }
+# Top management keeps the whole platform (owner decision 2026-11-26).
+SENIOR = ("ceo", "managing_director", "board", "plant_director")
 
 OTHER_NAV = ("command_center", "launcher", "orders", "orders_tna", "ai_center", "bi",
              "sf_cc", "registry", "roadmap", "reporting", "itsm", "production")
@@ -53,6 +54,7 @@ def run():
         got = {k for k in ROLES if is_procurement_only({"role": k})}
         assert got == EXPECTED_PROC_ONLY, sorted(got ^ EXPECTED_PROC_ONLY)
         assert not is_procurement_only({"role": "super_admin"})
+        assert not any(is_procurement_only({"role": r}) for r in SENIOR)
         assert not is_procurement_only({"role": "itsm_user"})          # own system scope
         assert is_procurement_only({"role": "purchasing_manager"})      # wh_view is a companion
         assert not is_procurement_only({"role": "warehouse_manager"})   # wh_manage is real work
