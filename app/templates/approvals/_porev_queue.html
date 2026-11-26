@@ -25,7 +25,7 @@
         <tbody>
         {% for pr in queue %}
           <tr>
-            {% if can_bulk %}<td class="porev-tick"><label class="porev-chk"><input type="checkbox" name="pr_id" value="{{ pr.id }}">
+            {% if can_bulk %}<td class="porev-tick"><label class="porev-chk"><input type="checkbox" name="pr_id" value="{{ pr.id }}"{% if pr._quote_wait %} disabled{% endif %}>
               <span class="sr-only">{{ pr.pr_no }}</span></label></td>{% endif %}
             <td><div style="font-weight:600">{{ pr.pr_no }}</div>
                 <div class="muted" style="font-size:12px">{{ pr.title }}</div>
@@ -67,9 +67,9 @@
   document.querySelectorAll('[data-porev-bulk]').forEach(function (f) {
     var all = f.querySelector('[data-porev-all]'), go = f.querySelector('[data-porev-go]'),
         n = f.querySelector('[data-porev-n]');
-    function boxes() { return f.querySelectorAll('input[name="pr_id"]'); }
+    function boxes() { return f.querySelectorAll('input[name="pr_id"]:not(:disabled)'); }
     function sync() {
-      var c = f.querySelectorAll('input[name="pr_id"]:checked').length;
+      var c = f.querySelectorAll('input[name="pr_id"]:checked:not(:disabled)').length;
       if (n) n.textContent = c;
       if (go) go.disabled = !c;
       if (all) all.checked = c && c === boxes().length;

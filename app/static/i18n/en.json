@@ -3015,6 +3015,7 @@
   "proc.quotewait.fix": "Go to supplier quotes",
   "proc.quotewait.needs_a": "This request needs",
   "proc.quotewait.needs_b": "quotes from different suppliers, each with its file — it has",
+  "proc.quotewait.needs_one": "This request needs a quotation with the supplier's file — it has none yet.",
   "proc.quotewait.no_file": "A quotation on file has no supplier document attached.",
   "proc.quotewait.why_file": "Approvers cannot sign until Purchasing attaches the supplier's file.",
   "proc.quotewait.why_quotes": "Approvers cannot sign until Purchasing adds them or records a single-source justification.",

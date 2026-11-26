@@ -122,7 +122,7 @@ def index():
     except Exception:
         pass
     queue = svc.my_queue(user)
-    svc.mark_quote_wait(queue)   # 'Waiting for Purchasing (quotes)' on the first rows
+    svc.mark_quote_wait(queue)   # 'Waiting for Purchasing (quotes)' badges (stamp-based, cheap)
     recent = svc.list_prs(limit=12, requester=(None if svc.sees_all_prs(user) else user["username"]))
     return render_template(
         "approvals/index.html", active="procurement",

@@ -110,6 +110,12 @@ BODIES = [
      r"\g<1> مستني \g<2> ساعة من غير تسعير — اكتب القيمة عشان يكمّل.",
      r"\g<1> \g<2> saattir fiyatlandırılmadan bekliyor — ilerlemesi için tutarı girin."),
     # services._quote_wait_body — a rung past Purchasing waiting on quotes
+    (r"(\S+) cannot be signed at (.+?) until it has a quotation with the supplier's file\. "
+     r"Add it or record a single-source justification\.",
+     r"\g<1> مش هيتوقّع عند \g<2> غير لما يبقى فيه عرض سعر بملف المورد. "
+     r"ضيفه أو سجّل مبرر المورد الوحيد.",
+     r"\g<1>, \g<2> aşamasında imzalanamaz: tedarikçi dosyasıyla bir teklif gerekli. "
+     r"Ekleyin veya tek kaynak gerekçesi kaydedin."),
     (r"(\S+) cannot be signed at (.+?) until it has (\d+) quotes from different suppliers, "
      r"each with its file \(it has (\d+)\)\. Add them or record a single-source justification\.",
      r"\g<1> مش هيتوقّع عند \g<2> غير لما يبقى فيه \g<3> عروض أسعار من موردين مختلفين، "

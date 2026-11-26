@@ -202,7 +202,10 @@
   <div class="panel-pad flex gap center wrap" style="gap:12px">
     <span class="badge b-pending" data-i18n="proc.quotewait.badge">⏳ Waiting for Purchasing (quotes)</span>
     <div style="flex:1 1 260px;min-width:0">
-      {% if quote_wait.msg == 'needs_quotes' %}
+      {% if quote_wait.msg == 'needs_quotes' and quote_wait.required == 1 %}
+      <div style="font-weight:600" data-i18n="proc.quotewait.needs_one">This request needs a quotation with the supplier's file — it has none yet.</div>
+      <div class="muted" style="font-size:12.5px" data-i18n="proc.quotewait.why_quotes">Approvers cannot sign until Purchasing adds them or records a single-source justification.</div>
+      {% elif quote_wait.msg == 'needs_quotes' %}
       <div style="font-weight:600"><span data-i18n="proc.quotewait.needs_a">This request needs</span>
         <bdi>{{ quote_wait.required }}</bdi>
         <span data-i18n="proc.quotewait.needs_b">quotes from different suppliers, each with its file — it has</span>
@@ -2577,7 +2580,7 @@
 {% if actionable and not pr.hold_reason %}
 <div class="sticky-actions pr-dock" id="prDock">
   <a class="btn btn-ghost" href="#prDecision"><span data-i18n="proc.your_action">Your decision</span></a>
-  <button class="btn btn-primary" type="submit" form="prApprove" data-advance>
+  <button class="btn btn-primary" type="submit" form="prApprove" data-advance{% if quote_wait %} disabled aria-describedby="prQwNote"{% endif %}>
     <svg class="ico"><use href="#i-check"></use></svg>
     <span data-i18n="proc.act.{{ actionable.action }}_sign">{{ act_sign }}</span></button>
 </div>

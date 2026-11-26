@@ -8,7 +8,11 @@ competitive-quote rule blocks.
   * Purchasing — and only Purchasing — is told: the person who signed THIS
     request's Purchasing rung, else the Purchasing-stage signers when that
     person is inactive; at most once per request per 24 hours;
-  * the approver's queue (/procurement and /my-work) carries the badge.
+  * nobody left in Purchasing -> the proc admins; the stamp is written anyway;
+  * the approver's queue (/procurement and /my-work) carries the badge once
+    Purchasing was told, and its bulk-sign box is disabled;
+  * the periodic sweep runs in the notification feed's background pass
+    (run_quote_wait_sweep), not inside run_escalations.
 
     python -m app.approvals.tests_quotewait
 """
@@ -138,14 +142,15 @@ def run():
         assert "<bdi>3</bdi>" in html and "<bdi>1</bdi>" in html, "banner numbers"
         assert 'id="prQwNote"' in html and 'disabled aria-describedby="prQwNote"' in html, \
             "the approver's Approve must say why"
+        assert 'form="prApprove" data-advance disabled aria-describedby="prQwNote"' in html, \
+            "the phone sign dock must be disabled too"
         assert 'href="#prQuotes" data-i18n="proc.quotewait.fix"' not in html, "fix link for a non-buyer"
         html = page("purchasing", pid)
         assert 'href="#prQuotes" data-i18n="proc.quotewait.fix"' in html, "Purchasing gets the jump link"
         assert "proc.quotewait.badge" in page("qw.staff", pid), "requester sees why it waits"
 
-        # queue badges, only for the approver's rows
-        assert "proc.quotewait.badge" in client(approver).get("/procurement/").get_data(as_text=True)
-        assert "proc.quotewait.badge" in client(approver).get("/my-work").get_data(as_text=True)
+        # no stamp yet -> no queue badge (the queue never runs the rule per row)
+        assert "proc.quotewait.badge" not in client(approver).get("/procurement/").get_data(as_text=True)
 
         # ---- 3. refusal stays; the Purchasing signer is told once --------------
         ok, msg = svc.act_on_step(pid, user[approver], "approve")
@@ -156,8 +161,16 @@ def run():
         ev = q("SELECT actor, detail FROM pr_events WHERE pr_id=? AND action='quotes_needed_notice'", pid)
         assert len(ev) == 1 and "Purchasing told: purchasing" in ev[0]["detail"], ev
         assert svc.act_on_step(pid, user[approver], "approve") == (False, "needs_quotes")
+        svc.run_quote_wait_sweep()
         svc.run_escalations()
         assert len(notices(pid)) == 1, "deduped within 24 hours"
+
+        # queue badges once Purchasing was told; the bulk box is off for that row
+        box = 'name="pr_id" value="%d" disabled' % pid
+        html = client(approver).get("/procurement/").get_data(as_text=True)
+        assert "proc.quotewait.badge" in html and box in html, "queue badge / bulk box"
+        html = client(approver).get("/my-work").get_data(as_text=True)
+        assert "proc.quotewait.badge" in html and box in html, "my-work badge / bulk box"
         t, m = localise(TITLE, n[0]["message"], "ar")
         assert t != TITLE and m != n[0]["message"] and "مش هيتوقّع" in m, (t, m)
         t, m = localise(TITLE, n[0]["message"], "tr")
@@ -165,18 +178,42 @@ def run():
 
         # 24h later the periodic pass tells them again
         run_sql("UPDATE pr_events SET created_at='2020-01-01 00:00:00' WHERE action='quotes_needed_notice'")
-        svc.run_escalations()
+        svc.run_quote_wait_sweep()
         assert [r["target_user"] for r in notices(pid)] == ["purchasing", "purchasing"]
 
         # signer inactive -> the Purchasing-stage signers instead
         run_sql("UPDATE pr_events SET created_at='2020-01-01 00:00:00' WHERE action='quotes_needed_notice'")
         run_sql("UPDATE users SET is_active=0 WHERE username='purchasing'")
-        svc.run_escalations()
+        svc.run_quote_wait_sweep()
         n = notices(pid)
         assert [r["target_user"] for r in n][2:] == ["qw.buyer2"], n
         run_sql("UPDATE users SET is_active=1 WHERE username='purchasing'")
         assert {r["target_user"] for r in notices()} <= {"purchasing", "qw.buyer2"}, \
             "nobody but Purchasing is told"
+
+        # signer moved out of Purchasing -> the Purchasing signers, not them
+        run_sql("UPDATE pr_events SET created_at='2020-01-01 00:00:00' WHERE action='quotes_needed_notice'")
+        prole = user["purchasing"]["role"]
+        run_sql("UPDATE users SET role='normal_user' WHERE username='purchasing'")
+        svc.run_quote_wait_sweep()
+        assert notices(pid)[-1]["target_user"] == "qw.buyer2", notices(pid)
+        run_sql("UPDATE users SET role=? WHERE username='purchasing'", prole)
+
+        # nobody in Purchasing at all -> the proc admins; the stamp is written
+        run_sql("UPDATE pr_events SET created_at='2020-01-01 00:00:00' WHERE action='quotes_needed_notice'")
+        run_sql("UPDATE users SET is_active=0 WHERE username IN ('purchasing','qw.buyer2')")
+        before = len(notices(pid))
+        svc.run_quote_wait_sweep()
+        c = get_db()
+        try:
+            admins = set(svc._proc_admins(c))
+        finally:
+            c.close()
+        told = {r["target_user"] for r in notices(pid)[before:]}
+        assert told and told <= admins, (told, admins)
+        assert len(q("SELECT 1 FROM pr_events WHERE pr_id=? AND action='quotes_needed_notice' "
+                     "AND created_at>'2021-01-01'", pid)) == 1, "stamp written"
+        run_sql("UPDATE users SET is_active=1 WHERE username IN ('purchasing','qw.buyer2')")
 
         # ---- 4. Purchasing adds the quotes -> banner gone ------------------------
         quote(pid, "Beta")
@@ -200,13 +237,21 @@ def run():
         # ---- 6. chosen quotation without its file --------------------------------
         pid3 = new_pr(10000)                         # one quote is enough
         past_purchasing(pid3)
+        w1 = wait(pid3)
+        assert w1 and w1["msg"] == "needs_quotes" and (w1["required"], w1["have"]) == (1, 0), w1
+        a3 = next(u for u in ("factory", "cfo", "ceo", "finance")
+                  if svc.can_act_step(user[u], {"stage": w1["stage"], "pr_id": pid3}))
+        html = page(a3, pid3)
+        assert "proc.quotewait.needs_one" in html and "proc.quotewait.needs_a" not in html
+        body = svc._quote_wait_body({"pr_no": "PR-1"}, w1)
+        assert "a quotation with the supplier's file" in body and "1 quotes" not in body, body
+        assert "بملف المورد" in localise(TITLE, body, "ar")[1]
+        assert "bir teklif gerekli" in localise(TITLE, body, "tr")[1]
         quote(pid3, "Alpha")
         assert wait(pid3) is None, "rule holds: one filed quote"
         quote(pid3, "Beta", with_file=False, chosen=1)
         w3 = wait(pid3)
         assert w3 and w3["msg"] == "chosen_quote_no_file", w3
-        a3 = next(u for u in ("factory", "cfo", "ceo", "finance")
-                  if svc.can_act_step(user[u], {"stage": w3["stage"], "pr_id": pid3}))
         assert "proc.quotewait.chosen_no_file" in page(a3, pid3)
         assert svc.act_on_step(pid3, user[a3], "approve") == (False, "chosen_quote_no_file")
         assert [r["target_user"] for r in notices(pid3)] == ["purchasing"]

@@ -11,6 +11,7 @@ import hashlib
 import logging
 import math
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 
 from app.db import get_db
@@ -7722,6 +7723,12 @@ def rfq_requirement(conn, pr):
 # up front and Purchasing — nobody else — is told. act_on_step stays the guard.
 # --------------------------------------------------------------------------
 QUOTE_WAIT_NOTICE = "quotes_needed_notice"
+_QW_SWEEP_EVERY = 300           # seconds between quote-wait sweeps per process
+_QW_LAST = [float("-inf")]
+
+
+def _qw_since():
+    return (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def quote_wait(conn, pr):
@@ -7750,6 +7757,9 @@ def quote_wait(conn, pr):
 def _quote_wait_body(pr, w):
     # English source; notif_text.BODIES carries the AR / TR patterns.
     where = "%s cannot be signed at %s" % (_pr_field(pr, "pr_no"), stage_label(w["stage"]))
+    if w["msg"] == "needs_quotes" and w["required"] == 1:
+        return ("%s until it has a quotation with the supplier's file. "
+                "Add it or record a single-source justification." % where)
     if w["msg"] == "needs_quotes":
         return ("%s until it has %d quotes from different suppliers, each with its file "
                 "(it has %d). Add them or record a single-source justification."
@@ -7763,28 +7773,32 @@ def _quote_wait_body(pr, w):
 def quotes_needed_notice(conn, pr, w):
     """Tell Purchasing that the rung past theirs waits on quotes `w` (quote_wait):
     the person who signed THIS request's Purchasing rung while their account is
-    active, else whoever may sign the Purchasing stage (never the requester).
-    At most once per request per 24h — the audit row is the stamp and names who
-    was told. Returns the usernames told. The caller commits."""
+    active and still signs Purchasing, else whoever may sign the Purchasing stage,
+    else (nobody there) the proc admins who fix the ladder — never the requester.
+    At most once per request per 24h — the audit row is the stamp, names who was
+    told and is written even when nobody could be. Returns the usernames told.
+    The caller commits."""
     pr_id = _pr_field(pr, "id")
-    since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    # shortcut: check-then-insert, so two workers in the same instant can both
+    # tell once; the stamp stops anything more. Lock the pr_requests row if it matters.
     if conn.execute("SELECT 1 FROM pr_events WHERE pr_id=? AND action=? AND created_at>? LIMIT 1",
-                    (pr_id, QUOTE_WAIT_NOTICE, since)).fetchone():
+                    (pr_id, QUOTE_WAIT_NOTICE, _qw_since())).fetchone():
         return []
     row = conn.execute(
         "SELECT s.approver_user u FROM pr_steps s JOIN users x ON x.username=s.approver_user "
         "WHERE s.pr_id=? AND s.stage=? AND s.status='approved' AND x.is_active=1 "
         "AND COALESCE(x.account_status,'active')='active' ORDER BY s.id DESC LIMIT 1",
         (pr_id, PRICING_GATE_STAGE)).fetchone()
-    told = ([row["u"]] if row else
-            sorted(set(eligible_approvers(conn, PRICING_GATE_STAGE)) - {_pr_field(pr, "requester")}))
-    if not told:
-        return []
-    notify_users(conn, told, "warning", "Quotes needed before the next signature",
-                 _quote_wait_body(pr, w), link=_pr_link(pr_id) + "#prQuotes")
+    me = {_pr_field(pr, "requester")}
+    staff = set(eligible_approvers(conn, PRICING_GATE_STAGE)) - me
+    told = (([row["u"]] if row and row["u"] in staff else sorted(staff))
+            or sorted(set(_proc_admins(conn)) - me))
+    if told:
+        notify_users(conn, told, "warning", "Quotes needed before the next signature",
+                     _quote_wait_body(pr, w), link=_pr_link(pr_id) + "#prQuotes")
     audit(conn, pr_id, "system", QUOTE_WAIT_NOTICE,
           "%s waits on quotes (%s) — Purchasing told: %s"
-          % (stage_label(w["stage"]), w["msg"], ", ".join(told)))
+          % (stage_label(w["stage"]), w["msg"], ", ".join(told) or "nobody"))
     return told
 
 
@@ -7801,23 +7815,70 @@ def _quote_refusal_notice(conn, pr, step):
         log.warning("quotes-needed notice skipped", exc_info=True)
 
 
-def mark_quote_wait(rows, cap=30):
-    """Queue rows (my_queue dicts) stuck waiting on Purchasing for quotes get
-    pr['_quote_wait'] = the quote_wait() msg. Only the first `cap` rows — what a
-    screen lists — and only rungs past Purchasing are checked, on one connection."""
-    rows = [r for r in rows[:cap] if r.get("_stage") != PRICING_GATE_STAGE]
+def mark_quote_wait(rows, cap=10):
+    """Queue rows (my_queue dicts) waiting on Purchasing for quotes get
+    pr['_quote_wait'] (truthy). Cheap for any queue length: one IN query finds the
+    rows Purchasing was told about in the last 24h (the stamp the sweep and every
+    refusal write); only those rerun quote_wait, so a request Purchasing has just
+    fixed drops the badge at once. A brand-new wait shows from the next sweep."""
+    rows = [r for r in rows if r.get("_stage") != PRICING_GATE_STAGE]
     if not rows:
         return
     conn = get_db()
     try:
-        for r in rows:
-            w = quote_wait(conn, r)
+        ids = [r["id"] for r in rows]
+        stamped = {x["pr_id"] for x in conn.execute(
+            "SELECT DISTINCT pr_id FROM pr_events WHERE action=? AND created_at>? "
+            "AND pr_id IN (%s)" % ",".join("?" * len(ids)),
+            [QUOTE_WAIT_NOTICE, _qw_since()] + ids)}
+        for i, r in enumerate([r for r in rows if r["id"] in stamped]):
+            # shortcut: stamped rows past `cap` keep the badge unchecked (stamp <= 24h old)
+            w = quote_wait(conn, r) if i < cap else {"msg": "stamped"}
             if w:
                 r["_quote_wait"] = w["msg"]
     except Exception:  # noqa: BLE001 — a hint must never cost the queue
         log.warning("quote-wait queue badge skipped", exc_info=True)
     finally:
         conn.close()
+
+
+def run_quote_wait_sweep():
+    """Tell Purchasing about each pending request whose current rung, past a
+    signed Purchasing rung, waits on quotes. Requests already stamped in the last
+    24h are dropped in SQL before the rule runs. Own connection, one commit per
+    request: a failing check rolls back only itself (PostgreSQL aborts the whole
+    transaction on any error), never the SLA escalations. Returns how many told."""
+    conn = get_db()
+    n = 0
+    try:
+        prs = conn.execute(
+            "SELECT * FROM pr_requests p WHERE p.status='pending' "
+            "AND p.id IN (SELECT pr_id FROM pr_steps WHERE stage=? AND status='approved') "
+            "AND NOT EXISTS (SELECT 1 FROM pr_events e WHERE e.pr_id=p.id "
+            "AND e.action=? AND e.created_at>?)",
+            (PRICING_GATE_STAGE, QUOTE_WAIT_NOTICE, _qw_since())).fetchall()
+        for pr in prs:
+            try:
+                w = quote_wait(conn, pr)
+                if w and quotes_needed_notice(conn, pr, w):
+                    n += 1
+                conn.commit()
+            except Exception:  # noqa: BLE001
+                conn.rollback()
+                log.warning("quotes-needed sweep skipped %s", pr["id"], exc_info=True)
+    finally:
+        conn.close()
+    return n
+
+
+def maybe_run_quote_wait_sweep():
+    """Throttled entry for the notification feed's background pass — it may
+    email, so it never rides a page load."""
+    now = time.monotonic()
+    if now - _QW_LAST[0] < _QW_SWEEP_EVERY:
+        return 0
+    _QW_LAST[0] = now
+    return run_quote_wait_sweep()
 
 
 def attach_ejr(pr_id, ejr_id, user, ip=None):
@@ -8300,9 +8361,6 @@ def run_escalations():
                 "SELECT * FROM pr_steps WHERE status='pending' AND pr_id IN "
                 "(SELECT id FROM pr_requests WHERE status='pending') ORDER BY id"):
             pending_steps.setdefault((r["pr_id"], r["seq"]), r)
-        past_purchasing = {r["pr_id"] for r in conn.execute(
-            "SELECT DISTINCT pr_id FROM pr_steps WHERE stage=? AND status='approved' AND pr_id IN "
-            "(SELECT id FROM pr_requests WHERE status='pending')", (PRICING_GATE_STAGE,))}
         for pr in prs:
             # ---- pricing-stall reminder (independent of the ladder position) ----
             if (pr["pricing_status"] or "priced") == "unpriced":
@@ -8321,14 +8379,6 @@ def run_escalations():
             step = pending_steps.get((pr["id"], pr["current_seq"]))
             if not step:
                 continue
-            # ---- a rung past Purchasing waiting on quotes: tell Purchasing ----
-            if pr["id"] in past_purchasing and step["stage"] != PRICING_GATE_STAGE:
-                try:
-                    w = quote_wait(conn, pr)
-                    if w and quotes_needed_notice(conn, pr, w):
-                        n += 1
-                except Exception:  # noqa: BLE001 — never costs the escalations
-                    log.warning("quotes-needed sweep skipped %s", pr["id"], exc_info=True)
             hrs = _age_hours(step["activated_at"] or pr["submitted_at"])
             if hrs is None:
                 continue

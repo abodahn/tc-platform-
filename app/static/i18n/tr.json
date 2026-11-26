@@ -3015,6 +3015,7 @@
   "proc.quotewait.fix": "Tedarikçi tekliflerine git",
   "proc.quotewait.needs_a": "Bu talep, her biri dosyasıyla farklı tedarikçilerden",
   "proc.quotewait.needs_b": "teklif gerektiriyor — mevcut:",
+  "proc.quotewait.needs_one": "Bu talep, tedarikçi dosyasıyla bir teklif gerektiriyor — henüz yok.",
   "proc.quotewait.no_file": "Kayıtlı bir teklifin tedarikçi belgesi ekli değil.",
   "proc.quotewait.why_file": "Satın Alma tedarikçi dosyasını ekleyene kadar onaycılar imzalayamaz.",
   "proc.quotewait.why_quotes": "Satın Alma eksik teklifleri ekleyene ya da tek kaynak gerekçesi kaydedene kadar onaycılar imzalayamaz.",
