@@ -31,6 +31,7 @@ next is not worth translating carefully.
 # module docstring for why, and tests_messages_i18n.py for the check that keeps
 # that choice honest.
 MESSAGES = {
+    "That purchase order is cancelled, so it cannot be revised.": {"ar": "أمر الشراء ده ملغي، فمش ممكن يتعدّل.", "tr": "Bu satın alma siparişi iptal edildi, revize edilemez."},
     # --- Imports + framework agreements (app/routes/approvals_imports.py) ---
     'Not found or no longer available.': {'ar': 'مش موجود أو مبقاش متاح.', 'tr': 'Bulunamadı veya artık mevcut değil.'},
     'That could not be done. Reload the page and try again.': {'ar': 'مقدرناش ننفذ ده. حدّث الصفحة وجرّب تاني.', 'tr': 'Bu işlem yapılamadı. Sayfayı yenileyip tekrar deneyin.'},

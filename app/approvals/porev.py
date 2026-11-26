@@ -276,6 +276,8 @@ def propose_revision(pr_id, po_id, posted_lines, delivery_date, reason, user,
               else (pos[0] if len(pos) == 1 else None))
         if not po:
             return False, "po_required"
+        if (po.get("status") or "") == "cancelled":
+            return False, "po_cancelled"   # cancelled by the delivery lane's per-PO cancel
         if len(pos) > 1 and _f(pr["disc_amount"]):
             return False, "split_discount"
         items = conn.execute("SELECT * FROM pr_items WHERE pr_id=? ORDER BY seq, id",

@@ -51,7 +51,7 @@
   {% endif %}
 
   {% if can_purchasing and rv.revisable and not pend %}
-  {% for p in rv.pos %}
+  {% for p in rv.pos if p.status != 'cancelled' %}
   <details class="porev-form">
     <summary><span data-i18n="proc.po.revise">Revise this PO</span> — {{ p.po_no }}{% if rv.pos|length > 1 %} · {{ p.vendor or '' }}{% endif %}</summary>
     <form method="post" action="{{ url_for('approvals.porev_propose', pr_id=pr.id) }}" data-once>

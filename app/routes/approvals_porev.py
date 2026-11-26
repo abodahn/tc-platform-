@@ -17,6 +17,7 @@ _REV_ERR = {
     "rev_pending": "This request already has a PO revision waiting for signatures. "
                    "Finish or withdraw it first.",
     "po_required": "Choose which supplier's purchase order you are revising.",
+    "po_cancelled": "That purchase order is cancelled, so it cannot be revised.",
     "bad_qty": "Enter each quantity as a number greater than zero.",
     "bad_price": "Enter each unit price as a number of zero or more.",
     "qty_below_received": "A quantity cannot go below what has already been received.",
