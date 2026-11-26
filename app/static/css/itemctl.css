@@ -1,0 +1,18 @@
+/* Item control settings (/procurement/item-control). Mobile first: one card per
+   department group, two across from tablet width. Tokens only. */
+.ictl-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .ictl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ictl-card { margin: 0; min-width: 0; }
+.ictl-card .panel-head { gap: 8px; flex-wrap: wrap; }
+.ictl-card select, .ictl-card input[type="text"], .ictl-card input:not([type]) { width: 100%; max-width: 100%; }
+.ictl-warn { background: var(--warn-bg); color: var(--warn); padding: 10px 12px;
+             border-radius: 10px; font-size: 13px; margin: 0 0 12px; }
+.ictl-pending { font-size: 13px; margin: 0 0 12px; }
+.ictl-hint { font-size: 12px; margin-top: 6px; overflow-wrap: anywhere; }
+.ictl-check { display: flex; align-items: center; gap: 10px; min-height: 44px;
+              font-size: 13.5px; cursor: pointer; margin-bottom: 10px; }
+.ictl-check input { width: 20px; height: 20px; flex: none; accent-color: var(--tc-red); }
+.ictl-check input:focus-visible { outline: 2px solid var(--tc-red); outline-offset: 2px; }
+.ictl-save { min-height: 44px; }
+@media (max-width: 560px) { .ictl-save { width: 100%; } }
+.ictl-rules { margin: 0; padding-inline-start: 20px; line-height: 1.7; font-size: 13.5px; }

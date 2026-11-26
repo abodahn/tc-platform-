@@ -93,7 +93,7 @@ DELIVERY_CONDITIONS = ["T&C Warehouse", "On-site / Factory floor", "Vendor premi
 # Default department list (admins can add more via the responsibility matrix
 # settings; any department already used by a budget or matrix is merged in too).
 DEPARTMENTS = ["General Maintenance", "Production", "Cutting", "Sewing", "Finishing",
-               "Embroidery", "Quality", "Warehouse", "IT", "Finance",
+               "Chemicals & Stones", "Embroidery", "Quality", "Warehouse", "IT", "Finance",
                "Human Resources", "Administration", "Procurement"]
 
 # --- The approval ladder ----------------------------------------------------
@@ -110,7 +110,7 @@ DOAM_LADDER = ["warehouse", "warehouse_manager", "purchasing", "factory_manager"
 RETIRED_STAGES = ("scd", "bod")
 # One signing order for every stage, current or legacy, whatever added the rung.
 # Re-pricing sorts pending rungs by it; any other stage sorts just before cfo.
-LADDER_RANK = ["hr_head", "warehouse", "warehouse_manager", "purchasing", "factory_manager",
+LADDER_RANK = ["hr_head", "warehouse", "item_control", "warehouse_manager", "purchasing", "factory_manager",
                "scd", "finance", "control", "cfo", "ceo", "bod"]
 
 
@@ -130,6 +130,15 @@ def is_hr_department(department):
     return re.sub(r"\s+", "", str(department or "")).lower() in HR_DEPARTMENTS
 
 
+# --- Item control rung (IT lead, 2026-11-26) ----------------------------------
+# Requests from General Maintenance, Chemicals & Stones and Sewing & Cutting are
+# signed by that department's own item controller AFTER the store and BEFORE the
+# Warehouse Manager. Signed by ASSIGNMENT (one named person per department group,
+# admin-editable in proc_item_control), not by role. submit_pr inserts it; see
+# app/approvals/item_control.py.
+ITEM_CONTROL_STAGE = "item_control"
+
+
 def ladder_rank(stage):
     return LADDER_RANK.index(stage) if stage in LADDER_RANK else LADDER_RANK.index("cfo") - 0.5
 
@@ -143,6 +152,7 @@ STAGE_LABELS = {
     "requester": "Requester",
     "hr_head": "HR Director",
     "warehouse": "Warehouse",
+    "item_control": "Item control",
     "warehouse_manager": "Warehouse Manager",
     "purchasing": "Procurement Manager",
     "factory_manager": "Plant Director",
@@ -163,6 +173,7 @@ STAGE_LABELS = {
 DOAM_LEVEL = {
     "hr_head": "L4",        # a demand-side signature, never above the store's
     "warehouse": "L4",
+    "item_control": "L4",   # a demand-side check, signed by assignment
     "warehouse_manager": "L4",
     "purchasing": "L4",
     "factory_manager": "L2",
@@ -248,7 +259,7 @@ CONTROL_ORIGINS = ("single_source", "unbudgeted", "deviation")
 #
 # Nothing here moves WHO signs or in what order; build_ladder is untouched.
 # CAPEX reviewers include the store, its manager, Purchasing and Financial Control.
-CAPEX_REVIEW_STAGES = ("hr_head", "warehouse", "warehouse_manager", "purchasing", "scd", "control")
+CAPEX_REVIEW_STAGES = ("hr_head", "warehouse", "item_control", "warehouse_manager", "purchasing", "scd", "control")
 # top rung of the value ladder -> the stages that commit ALONGSIDE it.
 OPEX_JOINT_APPROVERS = {"ceo": ("cfo",)}
 
@@ -1570,6 +1581,13 @@ OPTIONAL_FIELDS = (
 # Default explanation text per ladder stage. Seeded into proc_stage_meta and
 # used as the fallback whenever an admin resets a stage's explanation.
 STAGE_EXPLAIN = {
+    "item_control": (
+        "General Maintenance, Chemicals & Stones and Sewing & Cutting requests "
+        "only. After the store has checked the shelf, the department's own item "
+        "controller confirms the items and quantities are right before the "
+        "Warehouse Manager signs. Signed by the person assigned to that department "
+        "under Procurement settings, not by a role. Skipped, with a note on the "
+        "request, when nobody is assigned or the controller raised the request."),
     "hr_head": (
         "Human Resources requests only. The HR Director confirms the department "
         "really needs what was asked for before it reaches the store; the request "

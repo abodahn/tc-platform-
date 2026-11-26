@@ -1,0 +1,14 @@
+{#- Item control rung: why a controlled department's request has no Item control
+    step (nobody assigned / disabled account / the requester is the controller).
+    Needs: pr. -#}
+{%- set ic = itemctl_skip(pr.id) -%}
+{% if ic %}
+{% set ic_en = {
+  'unassigned': 'Item control skipped: no item controller is assigned for this department.',
+  'inactive': "Item control skipped: the assigned item controller's account is disabled.",
+  'requester': "Item control skipped: the requester is this department's item controller — raising the request is their signature."} %}
+<div class="mt-3" role="note" style="font-size:12.5px;line-height:1.6;color:var(--warn)">
+  <span data-i18n="proc.itemctl.skip.{{ ic.why }}">{{ ic_en.get(ic.why, ic_en.unassigned) }}</span>
+  {% if ic.group %}<span class="tag" data-i18n="proc.itemctl.g.{{ ic.group }}">{{ ic.group|replace('_', ' ')|title }}</span>{% endif %}
+</div>
+{% endif %}

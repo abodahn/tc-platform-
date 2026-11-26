@@ -3334,6 +3334,7 @@ from app.routes import approvals_porev as _porev  # noqa: E402,F401  PO lane rou
 
 
 from app.routes import approvals_analytics  # noqa: E402,F401  (analytics routes on bp)
+from app.routes import approvals_itemctl  # noqa: E402,F401  Item control rung (settings + access)
 
 
 # Requesters see only their own requests. One guard for every procurement URL

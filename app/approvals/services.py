@@ -367,6 +367,9 @@ def _step_signers(conn, pr, step):
     """Who may sign this pending step of this request — never the requester.
     Empty for a parked rung (esc_role '': the climb found nobody free) and for a
     rung whose roles have no active holder; both need an admin, not a prompt."""
+    if _pr_field(step, "stage") == C.ITEM_CONTROL_STAGE:
+        from app.approvals import item_control as IC
+        return IC.signers(conn, _pr_field(step, "assignee")) - {pr["requester"]}
     esc = _pr_field(step, "esc_role")
     if esc == "":
         return set()
@@ -410,6 +413,10 @@ def _clear_sign_prompts(conn, pr, steps, keep=()):
     def holders(rows):
         out = set(_proc_admins(conn)) if rows else set()
         for s in rows:
+            if _pr_field(s, "stage") == C.ITEM_CONTROL_STAGE:
+                from app.approvals import item_control as IC
+                out |= IC.signers(conn, _pr_field(s, "assignee"))
+                continue
             out |= set(eligible_approvers(
                 conn, s["stage"], roles=_csv_set(_pr_field(s, "esc_role")) or None))
         return out
@@ -669,6 +676,9 @@ def can_act_step(user, step, _deleg=None, _roles=None):
     """can_act for a CONCRETE ladder step — identical to can_act except that an
     escalated rung is signed by the superior role instead of the stage's own."""
     stage = _pr_field(step, "stage")
+    if stage == C.ITEM_CONTROL_STAGE:        # signed by assignment, not by role
+        from app.approvals import item_control as IC
+        return IC.can_sign(user, step, _deleg=_deleg)
     esc = _csv_set(_pr_field(step, "esc_role"))
     if not esc:
         return can_act(user, stage, _deleg=_deleg, _roles=_roles)
@@ -1444,18 +1454,22 @@ def waiting_on(prs):
     try:
         ph = ",".join("?" * len(pend))
         steps = conn.execute(
-            "SELECT s.pr_id, s.stage, s.esc_role FROM pr_steps s JOIN pr_requests r "
+            "SELECT s.pr_id, s.stage, s.esc_role, s.assignee FROM pr_steps s JOIN pr_requests r "
             "ON r.id=s.pr_id WHERE s.pr_id IN (%s) AND s.status='pending' "
             "AND s.seq=r.current_seq ORDER BY s.pr_id, s.id" % ph,
             tuple(p["id"] for p in pend)).fetchall()
         cache, names = {}, {}
         by_pr = {}
         for st in steps:
-            key = (st["stage"], st["esc_role"])
+            key = (st["stage"], st["esc_role"], st["assignee"])
             if key not in cache:
                 esc = st["esc_role"]
-                cache[key] = set() if esc == "" else set(
-                    eligible_approvers(conn, st["stage"], roles=_csv_set(esc) or None))
+                if st["stage"] == C.ITEM_CONTROL_STAGE:
+                    from app.approvals import item_control as IC
+                    cache[key] = IC.signers(conn, st["assignee"])
+                else:
+                    cache[key] = set() if esc == "" else set(
+                        eligible_approvers(conn, st["stage"], roles=_csv_set(esc) or None))
             by_pr.setdefault(st["pr_id"], []).append((st["stage"], cache[key]))
         users = set().union(*cache.values()) if cache else set()
         if users:
@@ -2115,7 +2129,10 @@ def _record_in_place(conn, pr_id, step, roles, signer, ip=None):
     those holders. Returns the "in place of" text."""
     roles = set(roles or ())
     holders = []
-    if roles:
+    if _pr_field(step, "stage") == C.ITEM_CONTROL_STAGE and _pr_field(step, "assignee"):
+        holders = conn.execute("SELECT username, full_name FROM users WHERE username=?",
+                               (_pr_field(step, "assignee"),)).fetchall()
+    elif roles:
         marks = ",".join("?" * len(roles))
         holders = conn.execute(
             "SELECT username, full_name FROM users WHERE role IN (%s) "
@@ -2369,6 +2386,14 @@ def submit_pr(pr_id, user, ip=None):
                     stage_roles_map(conn).get(C.HR_HEAD_STAGE, ())
                     and C.holds_authority(_req_role["role"], C.HR_HEAD_STAGE)):
                 _stages = [C.HR_HEAD_STAGE] + _stages
+        # Item control (2026-11-26): General Maintenance, Chemicals & Stones and
+        # Sewing & Cutting requests are signed by that department's assigned
+        # controller after the store. A rung nobody may sign is left off with a
+        # note rather than written to wait forever (see item_control.py).
+        from app.approvals import item_control as IC
+        _ic_group, _ic_who, _ic_why = IC.resolve(conn, pr["department"], pr["requester"])
+        if _ic_who:
+            _stages = IC.insert_stage(_stages)
         # DOAM §4.3 — a single-source award is signed one level above the value
         # tier. Applied here as well as in set_single_source(), because the
         # justification can be recorded on the draft before it is ever submitted.
@@ -2403,6 +2428,8 @@ def submit_pr(pr_id, user, ip=None):
         # to sign another rung — signing two rungs is refused by the dual-role
         # rule, so that would just move the deadlock one rung down.
         _holders = {s: stage_signers(conn, s, _roles.get(s) or ()) for s in flat_stages}
+        if _ic_who:
+            _holders[C.ITEM_CONTROL_STAGE] = {_ic_who}
         esc, blocked = {}, []
         _committed = set()
         for stage in flat_stages:
@@ -2487,11 +2514,12 @@ def submit_pr(pr_id, user, ip=None):
                 e_role, e_from = esc.get(stage, (None, None))
                 conn.execute(
                     """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role,
-                       activated_at, created_at, esc_role, esc_from, origin)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                       activated_at, created_at, esc_role, esc_from, origin, assignee)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (pr_id, i, stage, "pending", stage_label(stage),
                      now if i == 1 else None, now, e_role, e_from,
-                     _origin.get(stage, "ladder")))
+                     _origin.get(stage, "ladder"),
+                     _ic_who if stage == C.ITEM_CONTROL_STAGE else None))
                 if e_role:
                     audit(conn, pr_id, user.get("username") if user else "system",
                           "escalated_stage",
@@ -2522,6 +2550,8 @@ def submit_pr(pr_id, user, ip=None):
             audit(conn, pr_id, uname, "unbudgeted",
                   unbudgeted_note(_bud, pr["department"],
                                   _pr_field(pr, "expenditure_kind")), ip)
+        if _ic_group and not _ic_who:
+            audit(conn, pr_id, uname, "item_control_skipped", IC.skip_note(_ic_group, _ic_why), ip)
         flat = [s for rung in rungs for s in rung]
         audit(conn, pr_id, uname, "submitted",
               f"Routed through {len(flat)} approvals: "
@@ -2530,7 +2560,8 @@ def submit_pr(pr_id, user, ip=None):
         # the ESCALATED role when that rung was re-pointed, so the notification
         # reaches whoever actually has to sign it.
         first_label = " + ".join(stage_label(s) for s in rungs[0])
-        _prompt_rung(conn, pr, [{"stage": s, "esc_role": (esc.get(s) or (None,))[0]}
+        _prompt_rung(conn, pr, [{"stage": s, "esc_role": (esc.get(s) or (None,))[0],
+                                 "assignee": _ic_who if s == C.ITEM_CONTROL_STAGE else None}
                                 for s in rungs[0]],
                      f"{pr['pr_no']} ({pr['title'] or ''}) needs your {first_label} approval.",
                      alerted=blocked)
@@ -8842,6 +8873,14 @@ def workflow_view(department=None, lang="en"):
     matrix, thr_source = _effective_matrix(department, settings=settings)
     if C.is_hr_department(department):          # submit_pr puts it first for HR
         matrix = [(C.HR_HEAD_STAGE, 0.0)] + list(matrix)
+    from app.approvals import item_control as IC
+    _icc = get_db()
+    try:
+        if IC.resolve(_icc, department, None)[1]:   # submit_pr puts it after the store
+            _thr = dict(matrix)
+            matrix = [(s, _thr.get(s, 0.0)) for s in IC.insert_stage([s for s, _ in matrix])]
+    finally:
+        _icc.close()
     all_roles = effective_roles()
 
     from app.approvals import i18n_text as T
@@ -9872,9 +9911,13 @@ def can_view_pr(user, pr):
     if not user or not pr:
         return False
     un = (user.get("username") or "").lower()
-    return bool(un) and ((_pr_field(pr, "requester") or "").lower() == un
-                         or (_pr_field(pr, "requester_user_id") is not None
-                             and _pr_field(pr, "requester_user_id") == user.get("id")))
+    if bool(un) and ((_pr_field(pr, "requester") or "").lower() == un
+                     or (_pr_field(pr, "requester_user_id") is not None
+                         and _pr_field(pr, "requester_user_id") == user.get("id"))):
+        return True
+    # The item controller opens the requests assigned to them and those they signed.
+    from app.approvals import item_control as IC
+    return IC.can_view(user, _pr_field(pr, "id"))
 
 
 # Route argument -> the table whose pr_id says which request a file/document belongs to.

@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block content_class %}proc{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/itemctl.css') }}">{% endblock %}
+{% block title %}Item control{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.itemctl.title">Item control</h1>
+    <div class="sub" data-i18n="proc.itemctl.sub">Who signs the Item control step for each department. It comes after the Warehouse and before the Warehouse Manager, on new requests only.</div>
+  </div>
+</div>
+
+<div class="ictl-grid">
+  {% for g in groups %}
+  <section class="panel ictl-card" id="g-{{ g.group_key }}" aria-labelledby="gh-{{ g.group_key }}">
+    <div class="panel-head">
+      <h3 id="gh-{{ g.group_key }}" data-i18n="proc.itemctl.g.{{ g.group_key }}">{{ g.label }}</h3>
+      {% if g.active and g.user_name %}
+        <span class="badge b-approved" data-i18n="proc.itemctl.on">On</span>
+      {% else %}
+        <span class="badge b-cancelled" data-i18n="proc.itemctl.off">Skipped</span>
+      {% endif %}
+    </div>
+    <div class="panel-pad">
+      {% if g.user_inactive %}
+      <p class="ictl-warn" role="status" data-i18n="proc.itemctl.inactive_user">This account is disabled — requests skip the step until you pick someone else.</p>
+      {% elif not g.username %}
+      <p class="ictl-warn" role="status" data-i18n="proc.itemctl.unassigned">Nobody assigned — requests from this department skip the step.</p>
+      {% endif %}
+      {% if g.pending %}
+      <p class="muted ictl-pending"><span data-i18n="proc.itemctl.pending">Waiting at this step now</span>: <b data-num>{{ g.pending }}</b></p>
+      {% endif %}
+      <form method="post" action="{{ url_for('approvals.itemctl_save', group_key=g.group_key) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <div class="field">
+          <label for="u-{{ g.group_key }}" data-i18n="proc.itemctl.who">Item controller</label>
+          <select id="u-{{ g.group_key }}" name="username">
+            <option value="" data-i18n="proc.itemctl.none">— Nobody (step skipped) —</option>
+            {% for un, name in users %}
+            <option value="{{ un }}" {{ 'selected' if g.username and g.username|lower == un|lower }}>{{ name }} ({{ un }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="a-{{ g.group_key }}" data-i18n="proc.itemctl.names">Other department names for this group</label>
+          <input id="a-{{ g.group_key }}" name="aliases" value="{{ g.alias_list|join(', ') }}"
+                 autocomplete="off" maxlength="1400" aria-describedby="ah-{{ g.group_key }}">
+          <div class="muted ictl-hint" id="ah-{{ g.group_key }}">
+            <span data-i18n="proc.itemctl.names_hint">Separate names with commas. Always matched:</span>
+            <bdi>{{ g.builtin|join(' · ') }}</bdi>
+          </div>
+        </div>
+        <label class="ictl-check">
+          <input type="checkbox" name="active" value="1" {{ 'checked' if g.active }}>
+          <span data-i18n="proc.itemctl.active">Use the Item control step for this group</span>
+        </label>
+        <button class="btn btn-primary ictl-save" type="submit" data-i18n="proc.itemctl.save">Save</button>
+        {% if g.updated_by %}
+        <div class="muted ictl-hint"><span data-i18n="proc.itemctl.updated">Last changed by</span> {{ g.updated_by }} · {{ (g.updated_at or '')[:16] }}</div>
+        {% endif %}
+      </form>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="proc.itemctl.rules">How the step works</h3></div>
+  <div class="panel-pad">
+    <ul class="ictl-rules">
+      <li data-i18n="proc.itemctl.rule.1">Only the person picked here (or someone they delegated to) can sign the step — no role or admin can, except the super admin in place.</li>
+      <li data-i18n="proc.itemctl.rule.2">The requester never signs their own request: if the controller raises it, the step is skipped and the request says so.</li>
+      <li data-i18n="proc.itemctl.rule.3">One person cannot sign both Item control and Warehouse Manager on the same request.</li>
+      <li data-i18n="proc.itemctl.rule.4">Changing the person moves the requests already waiting at this step to the new person. Requests already in the approval ladder before the step existed keep their ladder.</li>
+    </ul>
+  </div>
+</div>
+
+{% endblock %}
