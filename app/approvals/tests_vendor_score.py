@@ -100,6 +100,13 @@ with app.app_context():
              "VS Delta": 3.0, "VS Epsilon": 1.5}
     for name, rating in HUMAN.items():
         svc.create_vendor({"name": name, "rating": rating}, buyer)
+    # a buyer's new supplier starts pending; Finance approves it (vendors lane)
+    from app.approvals import vendors as _V
+    _c = get_db()
+    _vids = [r["id"] for r in _c.execute("SELECT id FROM proc_vendors WHERE status='pending'").fetchall()]
+    _c.close()
+    for _vid in _vids:
+        assert _V.approve_vendor(_vid, {"username": "vsc_fin", "role": "finance_manager"})[0]
 
     def current_stage(pr_id):
         conn = get_db()

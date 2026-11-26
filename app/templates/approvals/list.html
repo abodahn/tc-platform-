@@ -93,7 +93,7 @@
     <div class="flex gap center wrap pl-chips">
       <a class="btn btn-sm {{ 'btn-primary' if status=='all' else 'btn-ghost' }}" href="{{ url_for('approvals.listing', **dict(keep, status=None)) }}" data-i18n="proc.f_all">All</a>
       {% for s in statuses %}
-      <a class="btn btn-sm {{ 'btn-primary' if status==s else 'btn-ghost' }}" href="{{ url_for('approvals.listing', **dict(keep, status=s)) }}">{{ s|replace('_',' ')|title }}</a>
+      <a class="btn btn-sm {{ 'btn-primary' if status==s else 'btn-ghost' }}" href="{{ url_for('approvals.listing', **dict(keep, status=s)) }}"><span{% if proc_i18n_has('proc.status.' ~ s) %} data-i18n="proc.status.{{ s }}"{% endif %}>{{ s|replace('_',' ')|title }}</span></a>
       {% endfor %}
       <span style="flex:1"></span>
       <a class="btn btn-sm {{ 'btn-primary' if mine else 'btn-ghost' }}" href="{{ url_for('approvals.listing', **dict(keep, mine=(None if mine else 1))) }}" data-i18n="proc.mine">Mine only</a>
@@ -146,7 +146,7 @@
               {{ items_line(items.get(pr.id)) }}</td>
           <td>{{ pr.requester_name or pr.requester }}</td>
           <td>{{ pr.department or '—' }}</td>
-          <td><span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span></td>
+          <td><span class="badge b-{{ pr.status }}"{% if proc_i18n_has('proc.status.' ~ pr.status) %} data-i18n="proc.status.{{ pr.status }}"{% endif %}>{{ pr.status|replace('_',' ')|title }}</span></td>
           {% set w = waiting.get(pr.id) %}
           <td style="font-size:12.5px;min-width:160px">
             {% if not w %}<span class="muted">—</span>

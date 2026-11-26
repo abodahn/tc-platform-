@@ -1,0 +1,47 @@
+{#- Comments thread on a request (vendors lane). Included twice from detail.html:
+    cm_where='top' renders only while the request is ON HOLD (the latest few,
+    with the requester's Reply box, right under the hold banner); the bottom
+    copy renders otherwise. Text is autoescaped; length capped by the service. -#}
+{% set cm_top = cm_where == 'top' %}
+{% if (cm_top and pr.hold_reason) or (not cm_top and not pr.hold_reason) %}
+{% set cm = proc_comments(pr) %}
+{% if cm.rows or cm.can_post %}
+{% set shown = cm.rows[:3] if cm_top else cm.rows %}
+<div class="panel mt-4" id="prComments">
+  <div class="panel-head"><h3 data-i18n="proc.vendors.cm_title">Comments</h3>
+    {% if cm.rows %}<span class="tag">{{ cm.rows|length }}</span>{% endif %}</div>
+  <div class="panel-pad">
+    {% if shown %}
+    <ul class="cm-list">
+      {% for c in shown %}
+      <li class="cm-item{% if cu and c.author == cu.username %} is-mine{% endif %}">
+        <div class="cm-meta"><b>{{ c.author }}</b>{% if c.author == pr.requester %} · <span data-i18n="proc.vendors.cm_requester">requester</span>{% endif %}
+          · <bdi dir="ltr">{{ (c.created_at or '')[:16] }}</bdi></div>
+        <div class="cm-body">{{ c.body }}</div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if cm_top and cm.rows|length > 3 %}
+    <div class="muted" style="font-size:12px;margin-top:6px"><span data-i18n="proc.vendors.cm_more">Older comments are in the audit trail.</span></div>
+    {% endif %}
+    {% else %}
+    <div class="muted" style="font-size:12.5px" data-i18n="proc.vendors.cm_none">No comments yet. Ask or answer a question about this request here.</div>
+    {% endif %}
+    {% if cm.can_post %}
+    <form method="post" action="{{ url_for('approvals.add_comment', pr_id=pr.id) }}" class="cm-form">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      {% set reply = cm_top and cm.is_requester %}
+      <label for="cmBody" class="sr-only" data-i18n="proc.vendors.{{ 'cm_reply_l' if reply else 'cm_add_l' }}">{{ 'Reply to the approver' if reply else 'Add a comment' }}</label>
+      <textarea id="cmBody" name="body" required maxlength="{{ cm.max|default(1000) }}"
+                placeholder="{{ 'Answer the question that put this on hold…' if reply else 'Write a comment…' }}"
+                data-i18n-ph="proc.vendors.{{ 'cm_reply_ph' if reply else 'cm_ph' }}"></textarea>
+      <div class="cm-foot">
+        <span class="muted" style="font-size:12px" data-i18n="proc.vendors.cm_note">Everyone on this request can read it; the people concerned are notified.</span>
+        <button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.vendors.{{ 'cm_reply' if reply else 'cm_post' }}">{{ 'Reply' if reply else 'Post comment' }}</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endif %}

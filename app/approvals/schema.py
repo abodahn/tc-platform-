@@ -714,6 +714,62 @@ _MONEY_MIGRATIONS = [
     ("po_id", "ALTER TABLE pr_payments ADD COLUMN po_id INTEGER"),
 ]
 
+# Vendor approval + master data (lane vendors). status: pending -> approved ->
+# blocked. NULL = a row from before this column: it reads from is_active (see
+# vendors.status_of) and backfill_vendor_status() stamps it once, so every
+# supplier already in use stays approved and every inactive one blocked.
+_VENDOR_MIGRATIONS = [
+    ("status", "ALTER TABLE proc_vendors ADD COLUMN status TEXT"),
+    ("created_by", "ALTER TABLE proc_vendors ADD COLUMN created_by TEXT"),
+    ("submitted_by", "ALTER TABLE proc_vendors ADD COLUMN submitted_by TEXT"),
+    ("status_by", "ALTER TABLE proc_vendors ADD COLUMN status_by TEXT"),
+    ("status_at", "ALTER TABLE proc_vendors ADD COLUMN status_at TEXT"),
+    ("block_reason", "ALTER TABLE proc_vendors ADD COLUMN block_reason TEXT"),
+    ("bank_name", "ALTER TABLE proc_vendors ADD COLUMN bank_name TEXT"),
+    ("bank_account_name", "ALTER TABLE proc_vendors ADD COLUMN bank_account_name TEXT"),
+    ("bank_account_no", "ALTER TABLE proc_vendors ADD COLUMN bank_account_no TEXT"),
+    ("cr_no", "ALTER TABLE proc_vendors ADD COLUMN cr_no TEXT"),
+    ("cr_expiry", "ALTER TABLE proc_vendors ADD COLUMN cr_expiry TEXT"),
+    ("tax_card_expiry", "ALTER TABLE proc_vendors ADD COLUMN tax_card_expiry TEXT"),
+]
+
+# Supplier documents (commercial register, tax card, bank letter) and the
+# comments thread on a request. Base64 in the row, like every other attachment.
+_VENDOR_DDL = """
+CREATE TABLE IF NOT EXISTS proc_vendor_docs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor_id INTEGER NOT NULL,
+    doc_type TEXT,
+    filename TEXT, content_type TEXT, size INTEGER DEFAULT 0,
+    content_b64 TEXT,
+    uploaded_by TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_proc_vendor_docs_v ON proc_vendor_docs(vendor_id);
+
+CREATE TABLE IF NOT EXISTS pr_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER NOT NULL,
+    author TEXT,
+    body TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_pr_comments_pr ON pr_comments(pr_id);
+"""
+
+
+def backfill_vendor_status(conn):
+    """Stamp a status on vendors created before the column existed (and on the
+    demo seed, which inserts without one). Fills NULLs only; never rewrites."""
+    try:
+        conn.execute("UPDATE proc_vendors SET status='approved' "
+                     "WHERE status IS NULL AND is_active=1")
+        conn.execute("UPDATE proc_vendors SET status='blocked' "
+                     "WHERE status IS NULL AND (is_active IS NULL OR is_active<>1)")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+
+
 _CORRECTION_MIGRATIONS = [
     ("reversal_of", "ALTER TABLE pr_invoices ADD COLUMN reversal_of INTEGER"),
     ("reversal_of", "ALTER TABLE pr_payments ADD COLUMN reversal_of INTEGER"),
@@ -957,17 +1013,19 @@ def create_and_seed(conn):
     conn.executescript(_PO_REV_DDL)
     conn.executescript(_GRN_DDL)
     conn.executescript(_RFQ_DDL)
+    conn.executescript(_VENDOR_DDL)
     conn.commit()
     # Idempotent column migrations (safe on already-deployed databases).
     for _col, _ddl in (_STEP_MIGRATIONS + _PR_MIGRATIONS + _ITEM_MIGRATIONS
                        + _QUOTE_MIGRATIONS + _MONEY_MIGRATIONS + _PROSE_MIGRATIONS
-                       + _CORRECTION_MIGRATIONS):
+                       + _CORRECTION_MIGRATIONS + _VENDOR_MIGRATIONS):
         try:
             conn.execute(_ddl)
             conn.commit()
         except Exception:
             conn.rollback()
     backfill_retention(conn)
+    backfill_vendor_status(conn)
     # The DOAM authority roles used to be seeded into custom_roles here. They
     # are now registered in code (constants.PROC_ROLE_PERMS -> security's RBAC
     # merge), which is the registry can_act() reads: a role that exists only as

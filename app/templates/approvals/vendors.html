@@ -36,8 +36,23 @@
   {% endif %}
 {%- endmacro %}
 
+{#- Status badge + document warnings, shared by every vendor card. -#}
+{% macro vstatus_badge(vs) -%}
+  <span class="badge {{ {'approved': 'b-approved', 'pending': 'b-pending', 'blocked': 'b-rejected'}[vs] }}"
+        data-i18n="proc.vendors.st_{{ vs }}">{{ vs|title }}</span>
+{%- endmacro %}
+{% macro doc_warn(w) -%}
+  <span class="badge {{ 'b-rejected' if w.state == 'expired' else 'b-warning' }}">
+    <span data-i18n="proc.vendors.doc_{{ w.doc }}">{{ 'Commercial register' if w.doc == 'cr' else 'Tax card' }}</span>
+    <span data-i18n="proc.vendors.{{ w.state }}">{{ 'expired' if w.state == 'expired' else 'expires soon' }}</span>
+    <bdi dir="ltr">{{ w.date }}</bdi></span>
+{%- endmacro %}
+
 {% block content %}
 {% set scores = scores|default({}, true) %}
+{% set v_counts = v_counts|default({}, true) %}
+{% set v_status = v_status|default('', true) %}
+{% set v_q = v_q|default('', true) %}
 
 <div class="page-head">
   <div>
@@ -46,31 +61,65 @@
   </div>
 </div>
 
+{#- Filter: status chips + search. GET, so a filtered view can be bookmarked. -#}
+<form method="get" action="{{ url_for('approvals.vendors') }}" class="vnd-filter" role="search">
+  <div class="vnd-chips" role="group" aria-label="Status" data-i18n-title="proc.vendors.filter">
+    {% for key, label in [('', 'All'), ('pending', 'Pending'), ('approved', 'Approved'), ('blocked', 'Blocked'), ('warn', 'Documents expiring')] %}
+    <a class="btn btn-sm {{ 'btn-primary' if v_status == key else 'btn-ghost' }}"
+       href="{{ url_for('approvals.vendors', status=key or None, q=v_q or None) }}"
+       {% if v_status == key %}aria-current="true"{% endif %}>
+      <span data-i18n="proc.vendors.f_{{ key or 'all' }}">{{ label }}</span>
+      <span class="tag">{{ v_total|default(vendors|length) if not key else v_counts.get(key, 0) }}</span></a>
+    {% endfor %}
+  </div>
+  {% if v_status %}<input type="hidden" name="status" value="{{ v_status }}">{% endif %}
+  <div class="vnd-search">
+    <label for="vndQ" class="sr-only" data-i18n="proc.vendors.search">Search suppliers</label>
+    <input id="vndQ" type="search" name="q" value="{{ v_q }}" autocomplete="off"
+           placeholder="Name, category, email, tax ID…" data-i18n-ph="proc.vendors.search_ph">
+    <button class="btn btn-sm" type="submit" data-i18n="proc.vendors.search_btn">Search</button>
+  </div>
+</form>
+
 <div class="grid cols-2 split-main" style="align-items:start">
   <div class="panel">
     <div class="panel-head"><h3 data-i18n="proc.vendor_list">Supplier directory</h3>
       <span class="badge b-info">{{ vendors|length }}</span></div>
-    <div class="panel-pad" style="overflow-x:auto">
+    <div class="panel-pad">
       {% if vendors %}
-      <table class="tbl">
-        <thead><tr>
-          <th data-i18n="proc.vendor_name">Vendor</th>
-          <th data-i18n="proc.contact">Contact</th>
-          <th data-i18n="proc.terms">Terms</th>
-          <th data-i18n="vsc.manual">Manual rating</th>
-          <th data-i18n="vsc.title">Measured performance</th>
-          {% if money_full %}<th data-i18n="proc.rtv.dues">Outstanding dues</th>{% endif %}{% if can_manage %}<th></th>{% endif %}
-        </tr></thead>
-        <tbody>
+      <ul class="vnd-list">
         {% for v in vendors %}
           {% set s = scores.get(v.name|trim|lower) %}
-          <tr>
-            <td><div style="font-weight:600">{{ v.name }}{% if not v.is_active %} <span class="badge b-pending" data-i18n="proc.vendor.inactive">Inactive</span>{% endif %}</div>
-                <div class="muted" style="font-size:12px">{{ v.category or '' }}{% if v.email %} · {{ v.email }}{% endif %}</div></td>
-            <td>{{ v.contact_person or '—' }}<div class="muted" style="font-size:12px">{{ v.phone or '' }}</div></td>
-            <td>{{ v.payment_terms or '—' }}</td>
-            <td>{% if v.rating %}<span class="tag">★ {{ '%.1f'|format(v.rating) }}</span>{% else %}—{% endif %}</td>
-            <td>
+          {% set vs = v.vstatus or ('approved' if v.is_active else 'blocked') %}
+          <li class="vnd-item">
+            <div class="vnd-head">
+              <div class="vnd-name">{{ v.name }}</div>
+              <div class="vnd-badges">{{ vstatus_badge(vs) }}
+                {% for w in v.warnings or [] %}{{ doc_warn(w) }}{% endfor %}</div>
+            </div>
+            <div class="muted vnd-sub">{{ v.category or '' }}{% if v.email %}{% if v.category %} · {% endif %}<bdi>{{ v.email }}</bdi>{% endif %}</div>
+            {% if vs == 'blocked' and v.block_reason %}
+            <div class="vnd-reason"><b data-i18n="proc.vendors.block_reason">Blocked because</b>: {{ v.block_reason }}
+              {% if v.status_by %}<span class="muted">· {{ v.status_by }} · {{ (v.status_at or '')[:10] }}</span>{% endif %}</div>
+            {% endif %}
+
+            <dl class="vnd-facts">
+              <div><dt data-i18n="proc.contact">Contact</dt>
+                <dd>{{ v.contact_person or '—' }}{% if v.phone %} · <bdi dir="ltr">{{ v.phone }}</bdi>{% endif %}</dd></div>
+              <div><dt data-i18n="proc.terms">Terms</dt><dd>{{ v.payment_terms or '—' }}</dd></div>
+              <div><dt data-i18n="vsc.manual">Manual rating</dt>
+                <dd>{% if v.rating %}<span class="tag">★ {{ '%.1f'|format(v.rating) }}</span>{% else %}—{% endif %}</dd></div>
+              {% if money_full %}<div><dt data-i18n="proc.rtv.dues">Outstanding dues</dt>
+                <dd>{% if v.dues %}<span style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(v.dues) }}</span>
+                  <span class="muted" style="font-size:12px">· {{ v.dues_count }} <span data-i18n="proc.rtv.open_dn">open debit note(s)</span></span>
+                  {% else %}—{% endif %}</dd></div>{% endif %}
+              {% if v.tax_id or v.cr_no %}<div><dt data-i18n="proc.vendors.reg">Registration</dt>
+                <dd>{% if v.cr_no %}<span data-i18n="proc.vendors.cr_short">CR</span> <bdi dir="ltr">{{ v.cr_no }}</bdi>{% endif %}
+                  {% if v.tax_id %}{% if v.cr_no %} · {% endif %}<span data-i18n="proc.vendors.tax_short">Tax</span> <bdi dir="ltr">{{ v.tax_id }}</bdi>{% endif %}</dd></div>{% endif %}
+            </dl>
+
+            <div class="vnd-score">
+              <div class="muted" style="font-size:12px;margin-bottom:4px" data-i18n="vsc.title">Measured performance</div>
               {% if s and s.score is not none %}
                 <div style="margin-bottom:4px">
                   <span class="badge {{ 'b-approved' if s.score >= 85 else ('b-warning' if s.score >= 65 else 'b-rejected') }}"
@@ -81,44 +130,121 @@
                 <div style="margin-bottom:4px"><span class="badge b-pending" data-i18n="vsc.thin">Not enough history</span></div>
               {% endif %}
               {{ scorecard(s) }}
-            </td>
-            {% if money_full %}<td>{% if v.dues %}<span style="color:var(--crit);font-weight:600">{{ '{:,.2f}'.format(v.dues) }}</span>
-                <div class="muted" style="font-size:12px">{{ v.dues_count }} <span data-i18n="proc.rtv.open_dn">open debit note(s)</span></div>
-                {% else %}—{% endif %}</td>{% endif %}
-            {% if can_manage %}<td>
-              <details><summary style="cursor:pointer;font-weight:600" data-i18n="proc.vendor.edit">Edit vendor</summary>
-                <form method="post" action="{{ url_for('approvals.update_vendor', vendor_id=v.id) }}">
+            </div>
+
+            {#- Approval: Finance / admin approves; never whoever created it or
+                changed its email / bank details (the service enforces it too). -#}
+            {% if can_approve_vendor and vs != 'approved' %}
+              {% set mine = me and me in (v.created_by, v.submitted_by) and cu and cu.role != 'super_admin' %}
+              <form method="post" action="{{ url_for('approvals.approve_vendor', vendor_id=v.id) }}" class="vnd-act">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button class="btn btn-primary btn-sm" type="submit" {% if mine %}disabled aria-describedby="vndSelf{{ v.id }}"{% endif %}>
+                  <span data-i18n="proc.vendors.{{ 'unblock' if vs == 'blocked' else 'approve' }}">{{ 'Unblock & approve' if vs == 'blocked' else 'Approve supplier' }}</span></button>
+                {% if mine %}<span class="muted" id="vndSelf{{ v.id }}" style="font-size:12px" data-i18n="proc.vendors.self_note">You created or changed this supplier — someone else approves it.</span>{% endif %}
+              </form>
+            {% elif vs == 'pending' %}
+              <div class="muted vnd-act" style="font-size:12px" data-i18n="proc.vendors.pending_note">Waiting for Finance or a procurement admin to approve. It can receive RFQs and quote, but cannot be chosen, awarded or ordered from yet.</div>
+            {% endif %}
+
+            {% if can_manage or can_see_bank %}
+            <div class="vnd-more">
+              {% if can_manage %}
+              <details><summary data-i18n="proc.vendor.edit">Edit vendor</summary>
+                <form method="post" action="{{ url_for('approvals.update_vendor', vendor_id=v.id) }}" class="vnd-form">
                   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
                   <div class="field"><label data-i18n="proc.vendor.name">Name</label><input name="name" value="{{ v.name or '' }}" required></div>
-                  <div class="field"><label data-i18n="proc.vendor.contact_person">Contact person</label><input name="contact_person" value="{{ v.contact_person or '' }}"></div>
-                  <div class="field"><label data-i18n="proc.vendor.phone">Phone</label><input name="phone" value="{{ v.phone or '' }}"></div>
-                  <div class="field"><label data-i18n="proc.vendor.email">Email</label><input name="email" value="{{ v.email or '' }}"></div>
+                  <div class="vnd-grid">
+                    <div class="field"><label data-i18n="proc.vendor.contact_person">Contact person</label><input name="contact_person" value="{{ v.contact_person or '' }}"></div>
+                    <div class="field"><label data-i18n="proc.vendor.phone">Phone</label><input name="phone" value="{{ v.phone or '' }}" inputmode="tel" dir="ltr"></div>
+                    <div class="field"><label data-i18n="proc.vendor.email">Email</label><input name="email" value="{{ v.email or '' }}" type="email" dir="ltr"></div>
+                    <div class="field"><label data-i18n="proc.vendor.category">Category</label><input name="category" value="{{ v.category or '' }}"></div>
+                  </div>
                   <div class="field"><label data-i18n="proc.vendor.address">Address</label><input name="address" value="{{ v.address or '' }}"></div>
-                  <div class="field"><label data-i18n="proc.vendor.payment_terms">Payment terms</label><input name="payment_terms" value="{{ v.payment_terms or '' }}"></div>
-                  <div class="field"><label data-i18n="proc.vendor.category">Category</label><input name="category" value="{{ v.category or '' }}"></div>
-                  <div class="field"><label data-i18n="proc.vendor.rating">Rating (0–5)</label><input name="rating" value="{{ v.rating or '' }}" type="number" min="0" max="5" step="0.1"></div>
+                  <div class="vnd-grid">
+                    <div class="field"><label data-i18n="proc.vendor.payment_terms">Payment terms</label><input name="payment_terms" value="{{ v.payment_terms or '' }}"></div>
+                    <div class="field"><label data-i18n="proc.vendor.rating">Rating (0–5)</label><input name="rating" value="{{ v.rating or '' }}" type="number" min="0" max="5" step="0.1"></div>
+                  </div>
                   <div class="field"><label data-i18n="proc.vendor.notes">Notes</label><input name="notes" value="{{ v.notes or '' }}"></div>
-                  <div class="field"><label data-i18n="proc.vendor.tax_id">Tax ID</label><input name="tax_id" value="{{ v.tax_id or '' }}"></div>
+                  <fieldset class="vnd-set"><legend data-i18n="proc.vendors.reg_docs">Registration</legend>
+                    <div class="vnd-grid">
+                      <div class="field"><label data-i18n="proc.vendors.cr_no">Commercial register no.</label><input name="cr_no" value="{{ v.cr_no or '' }}" dir="ltr"></div>
+                      <div class="field"><label data-i18n="proc.vendors.cr_expiry">Register expiry</label><input name="cr_expiry" value="{{ v.cr_expiry or '' }}" type="date"></div>
+                      <div class="field"><label data-i18n="proc.vendors.tax_card_no">Tax ID / tax card no.</label><input name="tax_id" value="{{ v.tax_id or '' }}" dir="ltr"></div>
+                      <div class="field"><label data-i18n="proc.vendors.tax_card_expiry">Tax card expiry</label><input name="tax_card_expiry" value="{{ v.tax_card_expiry or '' }}" type="date"></div>
+                    </div>
+                  </fieldset>
+                  <fieldset class="vnd-set"><legend data-i18n="proc.vendors.bank">Bank details</legend>
+                    <div class="vnd-grid">
+                      <div class="field"><label data-i18n="proc.vendors.bank_name">Bank name</label><input name="bank_name" value="{{ v.bank_name or '' }}"></div>
+                      <div class="field"><label data-i18n="proc.vendors.bank_account_name">Account name</label><input name="bank_account_name" value="{{ v.bank_account_name or '' }}"></div>
+                    </div>
+                    <div class="field"><label data-i18n="proc.vendors.bank_account_no">IBAN / account number</label><input name="bank_account_no" value="{{ v.bank_account_no or '' }}" dir="ltr" autocomplete="off" spellcheck="false"></div>
+                    <div class="muted" style="font-size:12px" data-i18n="proc.vendors.resubmit_note">Changing the email or bank details sends an approved supplier back for approval.</div>
+                  </fieldset>
                   <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.vendor.save">Save vendor</button>
                 </form>
               </details>
-              <form method="post" action="{{ url_for('approvals.set_vendor_active', vendor_id=v.id) }}">
-                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-                <input type="hidden" name="active" value="{{ 0 if v.is_active else 1 }}">
-                {% if v.is_active %}<button class="btn btn-ghost btn-sm" type="submit" data-advance data-i18n="proc.vendor.deactivate">Deactivate</button>
-                {% else %}<button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.vendor.activate">Activate</button>{% endif %}
-              </form>
-            </td>{% endif %}
-          </tr>
+              {% endif %}
+
+              {% if can_see_bank %}
+              <details><summary><span data-i18n="proc.vendors.docs">Documents</span> <span class="tag">{{ (v.docs or [])|length }}</span></summary>
+                <div class="vnd-form">
+                  {% if v.bank_name or v.bank_account_no %}
+                  <div class="vnd-bank"><b data-i18n="proc.vendors.bank">Bank details</b>:
+                    {{ v.bank_name or '—' }}{% if v.bank_account_name %} · {{ v.bank_account_name }}{% endif %}
+                    {% if v.bank_account_no %} · <bdi dir="ltr">{{ v.bank_account_no }}</bdi>{% endif %}</div>
+                  {% endif %}
+                  {% if v.docs %}
+                  <ul class="vnd-docs">
+                    {% for d in v.docs %}
+                    <li><a href="{{ url_for('approvals.vendor_doc', doc_id=d.id) }}"><bdi>{{ d.filename }}</bdi></a>
+                      <span class="tag" data-i18n="proc.vendors.dt_{{ d.doc_type or 'other' }}">{{ (d.doc_type or 'other')|replace('_',' ') }}</span>
+                      <span class="muted" style="font-size:12px">{{ d.uploaded_by }} · {{ (d.created_at or '')[:10] }}</span></li>
+                    {% endfor %}
+                  </ul>
+                  {% else %}
+                  <div class="muted" style="font-size:12.5px" data-i18n="proc.vendors.no_docs">No documents uploaded yet.</div>
+                  {% endif %}
+                  <form method="post" enctype="multipart/form-data" action="{{ url_for('approvals.add_vendor_doc', vendor_id=v.id) }}" class="vnd-upload">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                    <div class="field"><label for="vdt{{ v.id }}" data-i18n="proc.vendors.doc_type">Document</label>
+                      <select id="vdt{{ v.id }}" name="doc_type" data-no-search>
+                        <option value="cr" data-i18n="proc.vendors.dt_cr">Commercial register</option>
+                        <option value="tax_card" data-i18n="proc.vendors.dt_tax_card">Tax card</option>
+                        <option value="bank_letter" data-i18n="proc.vendors.dt_bank_letter">Bank letter</option>
+                        <option value="other" data-i18n="proc.vendors.dt_other">Other</option>
+                      </select></div>
+                    <div class="field"><label for="vdf{{ v.id }}" data-i18n="proc.vendors.file">File (PDF or image, max 3 MB)</label>
+                      <input id="vdf{{ v.id }}" type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp" required></div>
+                    <button class="btn btn-ghost btn-sm" type="submit" data-i18n="proc.vendors.upload">Upload</button>
+                  </form>
+                </div>
+              </details>
+              {% endif %}
+
+              {% if can_block_vendor and vs != 'blocked' %}
+              <details><summary data-i18n="proc.vendors.block">Block supplier</summary>
+                <form method="post" action="{{ url_for('approvals.block_vendor', vendor_id=v.id) }}" class="vnd-form">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <div class="field"><label for="vbr{{ v.id }}" data-i18n="proc.vendors.block_reason_l">Why is it being blocked?</label>
+                    <input id="vbr{{ v.id }}" name="reason" required maxlength="500" autocomplete="off"></div>
+                  <button class="btn btn-ghost btn-sm" type="submit" data-advance data-i18n="proc.vendors.block_btn">Block</button>
+                </form>
+              </details>
+              {% endif %}
+            </div>
+            {% endif %}
+          </li>
         {% endfor %}
-        </tbody>
-      </table>
+      </ul>
       <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="vsc.manual_note">Manual rating is a person's judgement typed on this screen. The measured score is computed from goods receipts, returns and invoices — the two are shown side by side and are never mixed.</div>
       <div class="muted" style="font-size:11px;margin-top:4px" data-i18n="vsc.legend">On-time is measured per goods receipt against the promised delivery date. Quantity accuracy is measured per order line that is already past that date. Rejection covers goods refused on receipt or held in quarantine. Price variance is invoiced against ordered, per purchase order — a positive figure means the supplier billed above the order. Every figure states how many observations it rests on; below {n} the platform reports no number.</div>
       <div class="muted" style="font-size:11px;margin-top:4px">
         <span data-i18n="vsc.window">Window</span>: {{ score_months|default(12) }}
         <span data-i18n="vsc.months">months</span></div>
       <div class="muted" style="font-size:11px;margin-top:6px" data-i18n="proc.rtv.dues_note">Outstanding dues are the open debit notes raised for goods rejected on receipt and returned — value the supplier still owes back.</div>
+      {% elif v_status or v_q %}
+      <div class="muted" data-i18n="proc.vendors.none_match">No suppliers match this filter.</div>
       {% else %}
       <div class="muted" data-i18n="proc.no_vendors">No vendors yet.</div>
       {% endif %}
@@ -132,20 +258,35 @@
       <form method="post" action="{{ url_for('approvals.create_vendor') }}">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <div class="field"><label data-i18n="proc.vendor_name">Name *</label><input name="name" required autocomplete="off"></div>
-        <div class="grid cols-2">
+        <div class="vnd-grid">
           <div class="field"><label data-i18n="proc.contact">Contact person</label><input name="contact_person" autocomplete="off"></div>
-          <div class="field"><label data-i18n="proc.phone">Phone</label><input name="phone" autocomplete="off"></div>
-          <div class="field"><label data-i18n="proc.email">Email</label><input name="email" autocomplete="off"></div>
+          <div class="field"><label data-i18n="proc.phone">Phone</label><input name="phone" autocomplete="off" inputmode="tel" dir="ltr"></div>
+          <div class="field"><label data-i18n="proc.email">Email</label><input name="email" autocomplete="off" type="email" dir="ltr"></div>
           <div class="field"><label data-i18n="proc.category">Category</label><input name="category" autocomplete="off"></div>
         </div>
-        <div class="field"><label data-i18n="proc.vendor.tax_id">Tax ID</label><input name="tax_id" autocomplete="off"></div>
         <div class="field"><label data-i18n="proc.vendor.notes">Notes</label><input name="notes" autocomplete="off"></div>
         <div class="field"><label data-i18n="proc.address">Address</label><input name="address" autocomplete="off"></div>
-        <div class="grid cols-2">
+        <div class="vnd-grid">
           <div class="field"><label data-i18n="proc.terms">Payment terms</label><input name="payment_terms" autocomplete="off"></div>
           <div class="field"><label data-i18n="proc.rating">Rating (0–5)</label><input name="rating" type="number" min="0" max="5" step="0.1"></div>
         </div>
-        <div class="muted" style="font-size:11px;margin:-4px 0 8px" data-i18n="vsc.manual_note">Manual rating is a person's judgement typed on this screen. The measured score is computed from goods receipts, returns and invoices — the two are shown side by side and are never mixed.</div>
+        <fieldset class="vnd-set"><legend data-i18n="proc.vendors.reg_docs">Registration</legend>
+          <div class="vnd-grid">
+            <div class="field"><label data-i18n="proc.vendors.cr_no">Commercial register no.</label><input name="cr_no" autocomplete="off" dir="ltr"></div>
+            <div class="field"><label data-i18n="proc.vendors.cr_expiry">Register expiry</label><input name="cr_expiry" type="date"></div>
+            <div class="field"><label data-i18n="proc.vendors.tax_card_no">Tax ID / tax card no.</label><input name="tax_id" autocomplete="off" dir="ltr"></div>
+            <div class="field"><label data-i18n="proc.vendors.tax_card_expiry">Tax card expiry</label><input name="tax_card_expiry" type="date"></div>
+          </div>
+        </fieldset>
+        <fieldset class="vnd-set"><legend data-i18n="proc.vendors.bank">Bank details</legend>
+          <div class="vnd-grid">
+            <div class="field"><label data-i18n="proc.vendors.bank_name">Bank name</label><input name="bank_name" autocomplete="off"></div>
+            <div class="field"><label data-i18n="proc.vendors.bank_account_name">Account name</label><input name="bank_account_name" autocomplete="off"></div>
+          </div>
+          <div class="field"><label data-i18n="proc.vendors.bank_account_no">IBAN / account number</label><input name="bank_account_no" autocomplete="off" dir="ltr" spellcheck="false"></div>
+        </fieldset>
+        <div class="muted" style="font-size:12px;margin:-4px 0 8px" data-i18n="proc.vendors.new_pending">A new supplier starts as Pending. Finance or a procurement admin approves it before it can be chosen or ordered from.</div>
+        <div class="muted" style="font-size:11px;margin:0 0 8px" data-i18n="vsc.manual_note">Manual rating is a person's judgement typed on this screen. The measured score is computed from goods receipts, returns and invoices — the two are shown side by side and are never mixed.</div>
         <button class="btn btn-primary" type="submit" data-i18n="proc.save_vendor">Save vendor</button>
       </form>
     </div>

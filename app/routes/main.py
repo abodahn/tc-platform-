@@ -82,7 +82,13 @@ def _unread_notifications(username=None):
             "AND (target_user IS NULL OR target_user = ?)", (username,)).fetchone()["c"]
     finally:
         conn.close()
-    return rows, unread
+    # Procurement rows are stored in English; shown in the reader's language.
+    from app.approvals.notif_text import localise_rows
+    try:
+        lang = (current_user() or {}).get("lang_pref") or "en"
+    except Exception:
+        lang = "en"
+    return localise_rows(rows, lang), unread
 
 
 # --------------------------------------------------------------------------

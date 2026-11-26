@@ -397,7 +397,10 @@ with app.app_context():
     print("\n-- i18n: en / ar / tr --")
     D = i18n_dicts()
     mine = ROOT / "app" / "templates" / "approvals" / "index.html"
-    tmpl_keys = set(re.findall(r'data-i18n="([^"]+)"', mine.read_text(encoding="utf-8")))
+    # a key built from a stored code (proc.status.{{ pr.status }}) is guarded by
+    # proc_i18n_has() in the template; only literal keys are checked here
+    tmpl_keys = {k for k in re.findall(r'data-i18n="([^"]+)"', mine.read_text(encoding="utf-8"))
+                 if "{{" not in k}
     missing_mine = {lang: sorted(k for k in tmpl_keys if k not in D[lang]) for lang in D}
     ok(f"every data-i18n key on the procurement page resolves in en/ar/tr "
        f"({len(tmpl_keys)} keys)", not any(missing_mine.values()))

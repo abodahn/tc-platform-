@@ -2902,10 +2902,12 @@ def download_attachment(att_id):
 @login_required
 @permission_required("proc_view")
 def vendors():
+    from app.approvals import vendors as V
     return render_template("approvals/vendors.html", active="proc_vendors",
-                           vendors=svc.list_vendors(active_only=False),
                            money_full=(svc.money_view(_u()) == "full"),
-                           can_manage=user_can("proc_purchasing"))
+                           can_manage=user_can("proc_purchasing"),
+                           **V.page_context(svc.list_vendors(active_only=False),
+                                            request.args, _u()))
 
 
 @bp.route("/vendors", methods=["POST"])
@@ -3190,7 +3192,8 @@ def update_vendor(vendor_id):
 @login_required
 @permission_required("proc_purchasing")
 def set_vendor_active(vendor_id):
-    ok, code = svc.set_vendor_active(vendor_id, request.form.get("active") == "1", _u(), ip=_ip())
+    ok, code = svc.set_vendor_active(vendor_id, request.form.get("active") == "1", _u(), ip=_ip(),
+                                     reason=request.form.get("reason"))
     ui = svc.labels((_u() or {}).get("lang_pref") or "en")["ui"]
     flash(ui["vendor_saved_flash"] if ok else ui.get(str(code) + "_flash") or
           f"Could not update vendor ({code}).", "success" if ok else "error")
@@ -3277,3 +3280,7 @@ def change_requester(pr_id):
     else:
         flash(_REQUESTER_ERRORS.get(msg, "Request not found."), "error")
     return redirect(url_for("approvals.detail", pr_id=pr_id))
+
+
+# Vendor approval / supplier documents / request comments (registers on bp).
+from app.routes import approvals_vendors as _approvals_vendors  # noqa: E402,F401

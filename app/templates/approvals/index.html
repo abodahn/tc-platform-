@@ -108,7 +108,7 @@
             <td><div style="font-weight:600">{{ pr.pr_no }}</div>
                 <div class="muted" style="font-size:12px">{{ pr.title }}</div>
                 {{ items_line(items.get(pr.id)) }}</td>
-            <td><span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span></td>
+            <td><span class="badge b-{{ pr.status }}"{% if proc_i18n_has('proc.status.' ~ pr.status) %} data-i18n="proc.status.{{ pr.status }}"{% endif %}>{{ pr.status|replace('_',' ')|title }}</span></td>
             <td style="font-variant-numeric:tabular-nums">{% if money.get(pr.id) %}{{ '{:,.0f}'.format(pr.total or 0) }} {{ pr.currency }}{% else %}—{% endif %}</td>
           </tr>
         {% endfor %}

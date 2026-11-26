@@ -1254,3 +1254,8 @@ UI = {
         "vendor_saved_flash": "Tedarikçi kaydedildi.",
     }
 }
+
+# Vendors lane: vendor approval / documents / comments refusals ("*_flash").
+from app.approvals.vendors_text import UI_FLASH as _VUI  # noqa: E402
+for _l, _m in _VUI.items():
+    UI[_l].update(_m)

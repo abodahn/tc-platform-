@@ -63,7 +63,7 @@
       <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
          style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
         <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}{% if pr.po_no %} &middot; {{ pr.po_no }}{% endif %}</span>
-        <span class="tag">{{ pr.status }}</span>
+        <span class="tag"{% if proc_i18n_has('proc.status.' ~ pr.status) %} data-i18n="proc.status.{{ pr.status }}"{% endif %}>{{ pr.status }}</span>
       </a>
       {% endfor %}
       <a href="{{ url_for('approvals.listing') }}" data-i18n="mywork.view_all">View all</a>
@@ -101,7 +101,7 @@
       <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
          style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
         <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}</span>
-        <span class="tag">{{ pr.status }}</span>
+        <span class="tag"{% if proc_i18n_has('proc.status.' ~ pr.status) %} data-i18n="proc.status.{{ pr.status }}"{% endif %}>{{ pr.status }}</span>
       </a>
       {% endfor %}
       <a href="{{ url_for('approvals.listing', status='approved') }}" data-i18n="mywork.view_all">View all</a>
@@ -120,7 +120,7 @@
       <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
          style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
         <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}</span>
-        <span class="tag">{{ pr.status }}</span>
+        <span class="tag"{% if proc_i18n_has('proc.status.' ~ pr.status) %} data-i18n="proc.status.{{ pr.status }}"{% endif %}>{{ pr.status }}</span>
       </a>
       {% endfor %}
     </div>
@@ -138,7 +138,7 @@
       <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
          style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
         <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}</span>
-        <span class="tag">{{ pr.payment_status or 'unpaid' }}</span>
+        <span class="tag"{% if proc_i18n_has('proc.status.' ~ (pr.payment_status or 'unpaid')) %} data-i18n="proc.status.{{ (pr.payment_status or 'unpaid') }}"{% endif %}>{{ pr.payment_status or 'unpaid' }}</span>
       </a>
       {% endfor %}
       <a href="{{ url_for('approvals.listing') }}" data-i18n="mywork.view_all">View all</a>
@@ -282,7 +282,7 @@
           {% if w and w.kind == 'sign' and w.who %}<span class="muted" style="display:block;font-size:12px"><span data-i18n="mywork.waiting_for">Waiting for</span>: {{ w.who|join(', ') }}</span>{% endif %}</span>
         {% if w and w.kind == 'requester' %}<span class="badge b-rejected" data-i18n="mywork.needs_you">Needs your action</span>
         {% elif w and w.kind == 'hold' %}<span class="badge b-pending" data-i18n="proc.waiting_hold">On hold</span>
-        {% else %}<span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span>{% endif %}
+        {% else %}<span class="badge b-{{ pr.status }}"{% if proc_i18n_has('proc.status.' ~ pr.status) %} data-i18n="proc.status.{{ pr.status }}"{% endif %}>{{ pr.status|replace('_',' ')|title }}</span>{% endif %}
       </a>
       {% endfor %}
     </div>

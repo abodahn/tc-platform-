@@ -1,0 +1,31 @@
+{#- Supplier checks on the request page (vendors lane): every supplier on this
+    request — header, lines, quotations, RFQs — that is not APPROVED yet, is
+    blocked, or whose commercial register / tax card is expired or expires
+    within 30 days. Only approved suppliers can be chosen, awarded, ordered
+    from or paid an advance; this says so before the refusal does. -#}
+{% set vflags = proc_vendor_flags(b) %}
+{% if vflags %}
+<div class="panel mt-4" id="prVendorFlags" style="border-color:var(--warn)">
+  <div class="panel-head"><h3 data-i18n="proc.vendors.checks">Supplier checks</h3>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('approvals.vendors') }}" data-i18n="proc.vendors_title">Vendors</a></div>
+  <div class="panel-pad">
+    <ul class="vflag-list">
+      {% for f in vflags %}
+      <li><b>{{ f.name }}</b>
+        {% if f.status != 'approved' %}
+        <span class="badge {{ 'b-rejected' if f.status == 'blocked' else 'b-pending' }}" data-i18n="proc.vendors.st_{{ f.status }}">{{ f.status|title }}</span>
+        {% endif %}
+        {% for w in f.warnings %}
+        <span class="badge {{ 'b-rejected' if w.state == 'expired' else 'b-warning' }}">
+          <span data-i18n="proc.vendors.doc_{{ w.doc }}">{{ 'Commercial register' if w.doc == 'cr' else 'Tax card' }}</span>
+          <span data-i18n="proc.vendors.{{ w.state }}">{{ 'expired' if w.state == 'expired' else 'expires soon' }}</span>
+          <bdi dir="ltr">{{ w.date }}</bdi></span>
+        {% endfor %}
+        {% if f.reason %}<span class="muted" style="font-size:12.5px">— {{ f.reason }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="muted" style="font-size:12px;margin-top:8px" data-i18n="proc.vendors.checks_note">Only an approved supplier can be chosen, awarded a line, get a purchase order or an advance. Pending suppliers can still receive RFQs and send quotations.</div>
+  </div>
+</div>
+{% endif %}

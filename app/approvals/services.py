@@ -3854,12 +3854,15 @@ def issue_po(pr_id, user, ip=None, force=False):
         if pr["status"] not in ("approved",):
             return False, "not_approved"
         items = conn.execute("SELECT * FROM pr_items WHERE pr_id=?", (pr_id,)).fetchall()
-        active = {C.vendor_key(r["name"]) for r in conn.execute(
-            "SELECT name FROM proc_vendors WHERE is_active=1").fetchall()}
+        from app.approvals import vendors as V
+        state = {C.vendor_key(r["name"]): V.status_of(r) for r in conn.execute(
+            "SELECT * FROM proc_vendors").fetchall()}
         for vendor in po_groups(items, pr):
             if not C.vendor_key(vendor):
                 return False, "vendor_required"
-            if C.vendor_key(vendor) not in active:
+            if state.get(C.vendor_key(vendor)) == "pending":
+                return False, "vendor_pending"      # on the master, not yet approved
+            if state.get(C.vendor_key(vendor)) != "approved":
                 return False, "vendor_not_in_master"
     finally:
         conn.close()
@@ -5584,13 +5587,12 @@ def apply_deviation_stages(conn, pr_id, pr):
 
 def vendor_approved(conn, name):
     """DOAM §4.3 — "No advance to a supplier off the approved vendor list."
-    The approved list IS the active vendor master; an inactive or unknown
-    supplier is off it."""
+    The approved list is the vendor master's APPROVED suppliers; a pending,
+    blocked or unknown supplier is off it (see app/approvals/vendors.py)."""
     if not str(name or "").strip():
         return False
-    row = conn.execute("SELECT is_active FROM proc_vendors WHERE name=?",
-                       (name,)).fetchone()
-    return bool(row and row["is_active"])
+    from app.approvals import vendors as V
+    return V.vendor_state(conn, name) == "approved"
 
 
 def advance_required_authority(pr, pct):
@@ -6268,7 +6270,14 @@ def _save_vendor(vendor_id, data, user, ip):
             if r["id"] != vendor_id and (C.vendor_key(r["name"]) == C.vendor_key(name)
                     or (tax_id and tax_id.casefold() == (r["tax_id"] or "").strip().casefold())):
                 return False, "duplicate_vendor"
+        from app.approvals import vendors as V
+        extra, bad = V.master_values(data)
+        if bad:
+            return False, bad
+        old = None
         if vendor_id is not None:
+            old = dict(conn.execute("SELECT * FROM proc_vendors WHERE id=?",
+                                    (vendor_id,)).fetchone())
             old_name = next(r["name"] for r in rows if r["id"] == vendor_id)
             # History is joined by the exact name string (dues, approval, scores), so any
             # change - even case or spacing - orphans it. Compare in Python: SQLite LOWER()
@@ -6290,17 +6299,30 @@ def _save_vendor(vendor_id, data, user, ip):
         values = tuple(name if k == "name" else tax_id if k == "tax_id" else
                        float(data.get(k) or 0) if k == "rating" else (data.get(k) or "").strip() or None
                        for k in fields)
+        uname = (user or {}).get("username") or "system"
         if vendor_id is None:
-            cur = conn.execute("INSERT INTO proc_vendors (" + ",".join(fields)
-                               + ",created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", values + (_now(),))
+            # A new supplier starts PENDING: Finance or an admin approves it.
+            ecols = tuple(extra) + ("status", "created_by", "submitted_by")
+            evals = tuple(extra.values()) + ("pending", uname, uname)
+            cur = conn.execute("INSERT INTO proc_vendors (" + ",".join(fields + ecols)
+                               + ",created_at) VALUES ("
+                               + ",".join("?" * (len(fields) + len(ecols) + 1)) + ")",
+                               values + evals + (_now(),))
             vendor_id = cur.lastrowid
             action = "vendor_created"
         else:
-            conn.execute("UPDATE proc_vendors SET " + ",".join(k + "=?" for k in fields)
-                         + " WHERE id=?", values + (vendor_id,))
+            conn.execute("UPDATE proc_vendors SET "
+                         + ",".join(k + "=?" for k in fields + tuple(extra))
+                         + " WHERE id=?", values + tuple(extra.values()) + (vendor_id,))
             action = "vendor_updated"
-        _wf_audit(conn, (user or {}).get("username"), action,
-                  f"Vendor #{vendor_id}: {name}; fields={_json_dumps(dict(zip(fields, values)))}", ip)
+            changes = V.sensitive_changes(old, dict(zip(fields, values), **extra))
+            if changes:
+                V.back_to_pending(conn, vendor_id, old, changes, user, ip)
+        # bank numbers never reach the audit in clear (masked to the last 4)
+        shown = dict(zip(fields, values), **{k: (V.mask(v) if k == "bank_account_no" else v)
+                                             for k, v in extra.items()})
+        _wf_audit(conn, uname, action,
+                  f"Vendor #{vendor_id}: {name}; fields={_json_dumps(shown)}", ip)
         conn.commit()
         return True, ""
     finally:
@@ -6315,19 +6337,13 @@ def update_vendor(vendor_id, data, user, ip=None):
     return _save_vendor(vendor_id, data, user, ip)
 
 
-def set_vendor_active(vendor_id, active, user, ip=None):
-    conn = get_db()
-    try:
-        row = conn.execute("SELECT name FROM proc_vendors WHERE id=?", (vendor_id,)).fetchone()
-        if not row:
-            return False, "not_found"
-        conn.execute("UPDATE proc_vendors SET is_active=? WHERE id=?", (int(bool(active)), vendor_id))
-        _wf_audit(conn, (user or {}).get("username"), "vendor_active",
-                  f"Vendor #{vendor_id} {row['name']}: active={bool(active)}", ip)
-        conn.commit()
-        return True, ""
-    finally:
-        conn.close()
+def set_vendor_active(vendor_id, active, user, ip=None, reason=None):
+    """Activate = approve / unblock (Finance or an admin, never the creator);
+    deactivate = block, with a reason. See app/approvals/vendors.py."""
+    from app.approvals import vendors as V
+    if active:
+        return V.approve_vendor(vendor_id, user, ip=ip)
+    return V.block_vendor(vendor_id, reason, user, ip=ip)
 
 
 # --------------------------------------------------------------------------
@@ -6781,6 +6797,10 @@ def choose_quote(pr_id, quote_id, user, ip=None):
         if pr["status"] in ("approved", "po_issued", "in_transit",
                             "partially_received", "received", "closed", "cancelled"):
             return False, "locked"   # the vendor is fixed once the PR is approved
+        from app.approvals import vendors as V
+        _bad = V.award_refusal(conn, q["vendor"])   # only an APPROVED supplier wins
+        if _bad:
+            return False, _bad
         before = _commercial_terms(conn, pr_id)
         conn.execute("UPDATE pr_quotes SET is_chosen=0 WHERE pr_id=?", (pr_id,))
         conn.execute("UPDATE pr_quotes SET is_chosen=1 WHERE id=?", (quote_id,))
@@ -6819,6 +6839,10 @@ def apply_chosen_quote(pr_id, quote_id, user, ip=None):
                          (quote_id, pr_id)).fetchone()
         if not q:
             return False, "not_found"
+        from app.approvals import vendors as V
+        _bad = V.award_refusal(conn, q["vendor"])
+        if _bad:
+            return False, _bad
         pr = conn.execute("SELECT currency, fx_rate FROM pr_requests WHERE id=?",
                           (pr_id,)).fetchone()
         items = conn.execute("SELECT id, qty, unit_price FROM pr_items WHERE pr_id=? "
@@ -6935,6 +6959,10 @@ def award_quote_line(pr_id, item_id, quote_id, user, ip=None):
             return False, "locked"
         if not q["content_b64"]:
             return False, "no_attachment"
+        from app.approvals import vendors as V
+        _bad = V.award_refusal(conn, q["vendor"])   # only an APPROVED supplier wins a line
+        if _bad:
+            return False, _bad
         ln = None
         for cols in (", disc_type, disc_value", ""):
             try:

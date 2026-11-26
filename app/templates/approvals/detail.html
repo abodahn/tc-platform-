@@ -167,7 +167,7 @@
   <div>
     <div class="flex gap center wrap" style="margin-bottom:4px">
       <h1 style="margin:0">{{ pr.pr_no }}</h1>
-      <span class="badge b-{{ pr.status }}">{{ pr.status|replace('_',' ')|title }}</span>
+      <span class="badge b-{{ pr.status }}"{% if proc_i18n_has('proc.status.' ~ pr.status) %} data-i18n="proc.status.{{ pr.status }}"{% endif %}>{{ pr.status|replace('_',' ')|title }}</span>
       {#- Beside the status, because an approver decides what to do with a
           request from the two together. Normal is left unbadged on purpose. -#}
       {% if pr.priority and pr.priority != 'normal' %}
@@ -378,6 +378,9 @@
   </div>
 </div>
 {% endif %}
+
+{% with cm_where = 'top' %}{% include "approvals/_comments.html" %}{% endwith %}
+{% include "approvals/_vendor_flags.html" %}
 
 <!-- Action box (only when the current user can act on the active step) -->
 {% if actionable and not pr.hold_reason %}
@@ -1137,7 +1140,7 @@
       {% if money_full and match and match.has_invoice %}
       <span class="badge {{ 'b-approved' if match.status=='matched' else 'b-rejected' }}">
         {{ '✓ 3-way matched' if match.status=='matched' else '⚠ mismatch' }}</span>{% endif %}
-      {% if money_full %}<span class="badge b-{{ pr.payment_status or 'unpaid' }}">{{ (pr.payment_status or 'unpaid')|title }}</span>{% endif %}
+      {% if money_full %}<span class="badge b-{{ pr.payment_status or 'unpaid' }}"{% if proc_i18n_has('proc.status.' ~ (pr.payment_status or 'unpaid')) %} data-i18n="proc.status.{{ (pr.payment_status or 'unpaid') }}"{% endif %}>{{ (pr.payment_status or 'unpaid')|title }}</span>{% endif %}
     </div>
   </div>
   <div class="panel-pad">
@@ -2510,6 +2513,8 @@
 </div>
 {% endif %}
 
+{% with cm_where = 'bottom' %}{% include "approvals/_comments.html" %}{% endwith %}
+
 <!-- Audit timeline -->
 <div class="panel mt-4">
   <details>
@@ -2521,7 +2526,7 @@
     <ul class="tl">
       {% for e in b.events %}
       <li{% if e.action == 'signed_in_place' %} style="color:var(--warn)"{% endif %}>
-        <div class="tl-act">{% if e.action == 'signed_in_place' %}&#9888; <span data-i18n="proc.in_place_tag">Super admin signed in place of</span>{% else %}{{ e.action|replace('_',' ')|title }}{% endif %}{% if e.detail and (money_full or (money and e.action not in ('invoice_added','payment','debit_note_settled'))) %} — <span style="font-weight:400">{{ e.detail }}</span>{% endif %}</div>
+        <div class="tl-act">{% if e.action == 'signed_in_place' %}&#9888; <span data-i18n="proc.in_place_tag">Super admin signed in place of</span>{% elif proc_i18n_has('proc.audit.' ~ e.action) %}<span data-i18n="proc.audit.{{ e.action }}">{{ e.action|replace('_',' ')|title }}</span>{% else %}{{ e.action|replace('_',' ')|title }}{% endif %}{% if e.detail and (money_full or (money and e.action not in ('invoice_added','payment','debit_note_settled'))) %} — <span style="font-weight:400">{{ e.detail }}</span>{% endif %}</div>
         <div class="tl-meta">{{ e.actor }} · {{ (e.created_at or '')[:16] }}</div>
       </li>
       {% endfor %}

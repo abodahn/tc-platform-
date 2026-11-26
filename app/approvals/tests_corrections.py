@@ -60,6 +60,9 @@ def run():
 
         # ---- 2. vendor master -------------------------------------------------
         assert svc.create_vendor({"name": VENDOR, "tax_id": "TX-1"}, buyer) == (True, "")
+        # a buyer's new supplier starts pending; Finance approves it (vendors lane)
+        assert svc.set_vendor_active(q("SELECT id FROM proc_vendors WHERE name=?", VENDOR)["id"],
+                                     True, payer) == (True, "")
         assert svc.create_vendor({"name": "  corr VENDOR "}, buyer) == (False, "duplicate_vendor")
         assert svc.create_vendor({"name": "Other", "tax_id": "tx-1"}, buyer) == (False, "duplicate_vendor")
         assert svc.create_vendor({"name": " "}, buyer) == (False, "name_required")
@@ -70,7 +73,7 @@ def run():
         assert svc.update_vendor(v2, {"name": "Renamed Vendor"}, buyer)[0]
         assert q("SELECT name FROM proc_vendors WHERE id=?", v2)["name"] == "Renamed Vendor"
         assert svc.update_vendor(v2, {"name": "Second Vendor"}, buyer)[0]
-        assert svc.set_vendor_active(v2, False, buyer)[0]
+        assert svc.set_vendor_active(v2, False, buyer, reason="test block")[0]
         assert "Second Vendor" not in [v["name"] for v in svc.list_vendors()]
 
         def current_stage(pr_id):
@@ -108,7 +111,8 @@ def run():
         assert svc.issue_po(p_bad, buyer) == (False, "vendor_not_in_master")
         assert svc.create_vendor({"name": "Third Vendor"}, buyer)[0]
         p_inact, _ = approve("Inactive supplier", vendor="Third Vendor")
-        svc.set_vendor_active(q("SELECT id FROM proc_vendors WHERE name='Third Vendor'")["id"], False, buyer)
+        svc.set_vendor_active(q("SELECT id FROM proc_vendors WHERE name='Third Vendor'")["id"], False, buyer,
+                              reason="test block")
         assert svc.issue_po(p_inact, buyer, force=True) == (False, "vendor_not_in_master")
         assert svc.add_quote(p_inact, {"payment_terms": "30 days", "vendor": "third vendor", "amount": 5}, buyer, filename="q.pdf", content_type="application/pdf", content_b64="JVBERi0xLjQK") \
             == (False, "vendor_inactive")

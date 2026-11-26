@@ -1076,3 +1076,8 @@ def translate(text, lang):
             tail = s[len(src):] if s.startswith(src) else ""
             return (MESSAGES[src].get(lang) or s) + tail
     return text
+
+
+# Vendors lane: the two new quote-route refusals (vendor pending / blocked).
+from app.approvals.vendors_text import MESSAGES as _VMSG  # noqa: E402
+MESSAGES.update(_VMSG)
