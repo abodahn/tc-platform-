@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block content_class %}proc{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/procurement.css') }}">{% endblock %}
+{% block title %}Framework agreements{% endblock %}
+{%- macro state_badge(s) -%}
+  {%- if s == 'active' %}<span class="badge b-approved" data-i18n="proc.imports.st_active">Active</span>
+  {%- elif s == 'draft' %}<span class="badge b-pending" data-i18n="proc.imports.st_draft">Draft — awaiting approval</span>
+  {%- elif s == 'scheduled' %}<span class="badge b-in_transit" data-i18n="proc.imports.st_scheduled">Not started yet</span>
+  {%- elif s == 'expired' %}<span class="badge b-rejected" data-i18n="proc.imports.st_expired">Expired</span>
+  {%- else %}<span class="badge b-closed" data-i18n="proc.imports.st_closed">Closed</span>{% endif -%}
+{%- endmacro -%}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 data-i18n="proc.imports.agr_page">Framework agreements</h1>
+    <div class="sub" data-i18n="proc.imports.agr_sub">Agreed prices with one supplier for a period and up to a ceiling. A request line drawn against an active agreement needs no competitive quotes; every approval signature is still collected.</div>
+  </div>
+</div>
+
+{% set soon = rows|selectattr('expiring')|list %}
+{% if soon %}
+<div class="panel mt-2 imp-warn"><div class="panel-pad">
+  <b data-i18n="proc.imports.expiring">Expiring within 30 days</b>:
+  {% for a in soon %}<a href="{{ url_for('approvals.agreement_detail', agr_id=a.id) }}" class="tag">{{ a.ref }} · {{ a.vendor }} · {{ a.valid_to }}</a> {% endfor %}
+</div></div>
+{% endif %}
+
+<div class="panel mt-2">
+  <div class="panel-pad">
+    <form method="get" class="imp-filter">
+      <div class="field"><label for="f-vendor" data-i18n="proc.imports.supplier">Supplier</label>
+        <select id="f-vendor" name="vendor">
+          <option value="" data-i18n="proc.imports.all">All</option>
+          {% for v in vendors %}<option value="{{ v.name }}" {{ 'selected' if v.name|lower == vendor|lower }}>{{ v.name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label for="f-status" data-i18n="proc.imports.status">Status</label>
+        <select id="f-status" name="status" data-no-search>
+          <option value="" data-i18n="proc.imports.all">All</option>
+          <option value="active" {{ 'selected' if status == 'active' }} data-i18n="proc.imports.st_active">Active</option>
+          <option value="draft" {{ 'selected' if status == 'draft' }} data-i18n="proc.imports.st_draft">Draft — awaiting approval</option>
+          <option value="scheduled" {{ 'selected' if status == 'scheduled' }} data-i18n="proc.imports.st_scheduled">Not started yet</option>
+          <option value="expired" {{ 'selected' if status == 'expired' }} data-i18n="proc.imports.st_expired">Expired</option>
+          <option value="closed" {{ 'selected' if status == 'closed' }} data-i18n="proc.imports.st_closed">Closed</option>
+        </select></div>
+      <div class="imp-filter-btns">
+        <button class="btn btn-primary btn-sm" type="submit" data-i18n="proc.imports.filter">Filter</button>
+        <a class="btn btn-ghost btn-sm" download href="{{ url_for('approvals.agreements_xlsx', vendor=vendor, status=status) }}" data-i18n="proc.imports.excel">Excel</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="panel mt-4">
+  <div class="panel-head"><h3 data-i18n="proc.imports.register">Agreement register</h3>
+    <span class="muted">{{ rows|length }}</span></div>
+  <div class="panel-pad">
+    {% if rows %}
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="proc.imports.ref_l">Reference</th>
+          <th data-i18n="proc.imports.supplier">Supplier</th>
+          <th data-i18n="proc.imports.validity">Valid</th>
+          <th data-i18n="proc.imports.status">Status</th>
+          <th data-i18n="proc.imports.used">Used</th>
+        </tr></thead>
+        <tbody>
+        {% for a in rows %}
+          <tr>
+            <td><a href="{{ url_for('approvals.agreement_detail', agr_id=a.id) }}"><b>{{ a.ref }}</b></a>
+              {% if a.title %}<div class="muted imp-small">{{ a.title }}</div>{% endif %}</td>
+            <td>{{ a.vendor }}</td>
+            <td class="nw"><bdi>{{ a.valid_from }}</bdi> – <bdi>{{ a.valid_to }}</bdi>
+              {% if a.expiring %}<div class="imp-small imp-warn-t"><span data-i18n="proc.imports.days_left">Days left</span>: {{ a.days_left }}</div>{% endif %}</td>
+            <td>{{ state_badge(a.state) }}</td>
+            <td class="imp-used">
+              <div class="imp-bar{{ ' is-high' if a.used_pct >= 90 }}" role="img" aria-label="{{ a.used_pct }}%">
+                <span style="width:{{ [a.used_pct, 100]|min }}%"></span></div>
+              <span class="num imp-small">{{ a.used_pct }}%{% if money_full and a.ceiling_value %} · {{ '{:,.0f}'.format(a.used_value) }} / {{ '{:,.0f}'.format(a.ceiling_value) }} {{ a.currency }}{% endif %}</span>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted" data-i18n="proc.imports.none">No agreements match.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if can_add %}
+<div class="panel mt-4" id="agr-new">
+  <div class="panel-head"><h3 data-i18n="proc.imports.new">New agreement</h3></div>
+  <div class="panel-pad">
+    <form method="post" action="{{ url_for('approvals.agreement_create') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="grid cols-3 imp-grid">
+        <div class="field"><label for="n-vendor" data-i18n="proc.imports.supplier_req">Supplier (approved vendor list) *</label>
+          <select id="n-vendor" name="vendor" required>
+            <option value=""></option>
+            {% for v in vendors %}<option value="{{ v.name }}">{{ v.name }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label for="n-title" data-i18n="proc.imports.agr_name">Title</label>
+          <input id="n-title" name="title" maxlength="160" autocomplete="off"></div>
+        <div class="field"><label for="n-cur" data-i18n="proc.imports.currency">Currency</label>
+          <select id="n-cur" name="currency" data-no-search>
+            {% for cu in currencies %}<option>{{ cu }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label for="n-from" data-i18n="proc.imports.from">Valid from *</label>
+          <input id="n-from" type="date" name="valid_from" required value="{{ today }}"></div>
+        <div class="field"><label for="n-to" data-i18n="proc.imports.to">Valid to *</label>
+          <input id="n-to" type="date" name="valid_to" required></div>
+        <div class="field"><label for="n-cv" data-i18n="proc.imports.ceiling_value">Ceiling value</label>
+          <input id="n-cv" name="ceiling_value" type="number" step="0.01" min="0" inputmode="decimal"></div>
+        <div class="field"><label for="n-cq" data-i18n="proc.imports.ceiling_qty">Ceiling quantity</label>
+          <input id="n-cq" name="ceiling_qty" type="number" step="any" min="0" inputmode="decimal"></div>
+        <div class="field span-2"><label for="n-notes" data-i18n="proc.imports.notes">Notes</label>
+          <input id="n-notes" name="notes" maxlength="500" autocomplete="off"></div>
+      </div>
+      <p class="muted imp-note" data-i18n="proc.imports.ceiling_hint">Give a ceiling value, a ceiling quantity, or both. Once a ceiling is reached, further lines go through the normal quotation process.</p>
+
+      <h5 class="imp-sub" data-i18n="proc.imports.lines">Agreement lines</h5>
+      <p class="muted imp-note" data-i18n="proc.imports.lines_hint">Type the catalogue code for a catalogue item, or leave it blank and type the item name. Empty rows are ignored.</p>
+      {% for n in range(5) %}
+      <div class="imp-line">
+        <div class="field"><label for="l-code-{{ n }}" data-i18n="proc.imports.code">Catalogue code</label>
+          <input id="l-code-{{ n }}" name="code" maxlength="60" autocomplete="off"></div>
+        <div class="field"><label for="l-item-{{ n }}" data-i18n="proc.imports.item_free">Item (free text)</label>
+          <input id="l-item-{{ n }}" name="item" maxlength="200" autocomplete="off"></div>
+        <div class="field"><label for="l-unit-{{ n }}" data-i18n="proc.imports.unit">Unit</label>
+          <input id="l-unit-{{ n }}" name="unit" maxlength="20" autocomplete="off" placeholder="Pcs"></div>
+        <div class="field"><label for="l-price-{{ n }}" data-i18n="proc.imports.agreed_price">Agreed unit price</label>
+          <input id="l-price-{{ n }}" name="unit_price" type="number" step="0.0001" min="0" inputmode="decimal"></div>
+      </div>
+      {% endfor %}
+      <button class="btn btn-primary" type="submit" data-i18n="proc.imports.save_draft">Save as draft</button>
+      <p class="muted imp-note" data-i18n="proc.imports.approve_hint">A draft draws nothing. A Procurement admin or Finance who did not create it must approve it.</p>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

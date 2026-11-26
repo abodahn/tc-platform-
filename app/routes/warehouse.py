@@ -302,6 +302,10 @@ def receive_post():
         _proc_flash("That reference belongs to a purchase request that was rejected. Nothing "
                     "can be received against it - receive here without the reference.", "error")
         return redirect(url_for("warehouse.receive"))
+    if line and line.get("cancelled"):
+        _proc_flash("That purchase order was cancelled. Nothing can be received against it - "
+                    "receive here without the reference.", "error")
+        return redirect(url_for("warehouse.receive"))
     if line and line.get("no_po"):
         _proc_flash("That reference belongs to a purchase request that has no purchase order yet. "
                     "Issue the PO first, or receive here without the reference.", "error")

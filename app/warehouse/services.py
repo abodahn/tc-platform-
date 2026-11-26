@@ -852,7 +852,8 @@ def po_line_for(grn_ref, material_id):
     procurement receiving tab — capped at the outstanding quantity, over-delivery
     quarantined, one numbered GRN per delivery — instead of booking free stock the
     order never hears about (which is what broke the three-way match).
-    Returns {pr_id, item_id, outstanding}, or {no_po: True, pr_id} for pre-PO requests.
+    Returns {pr_id, item_id, outstanding}, {no_po: True, pr_id} for pre-PO requests,
+    or {cancelled: True, pr_id} when the line's supplier order was cancelled.
     Never raises: no procurement tables, no
     match, no reference -> plain unreferenced stock-in, exactly as before."""
     ref = (grn_ref or "").strip()
@@ -873,10 +874,14 @@ def po_line_for(grn_ref, material_id):
             return {"rejected": True, "pr_id": pr["id"]}
         if pr["status"] not in ("po_issued", "in_transit", "partially_received", "received"):
             return {"no_po": True, "pr_id": pr["id"]}
+        from app.approvals.delivery import cancelled_item_ids
+        dead = cancelled_item_ids(conn, pr["id"])
         for it in conn.execute("SELECT id, item, qty, received_qty FROM pr_items "
                                "WHERE pr_id=? ORDER BY seq, id", (pr["id"],)).fetchall():
             mat = _resolve_material(conn, it["item"])
             if mat and mat["id"] == material_id:
+                if it["id"] in dead:      # that supplier's order was cancelled alone
+                    return {"cancelled": True, "pr_id": pr["id"]}
                 return {"pr_id": pr["id"], "item_id": it["id"],
                         "outstanding": max(0.0, _f(it["qty"]) - _f(it["received_qty"]))}
         return None

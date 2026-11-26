@@ -62,8 +62,10 @@
       {% for pr in recv_queue %}
       <a class="row-line" href="{{ url_for('approvals.detail', pr_id=pr.id) }}"
          style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit">
-        <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}{% if pr.po_no %} &middot; {{ pr.po_no }}{% endif %}</span>
-        <span class="tag">{{ pr.status }}</span>
+        <span><b>{{ pr.pr_no }}</b> &middot; {{ pr.title or '' }}{% if pr.po_no %} &middot; {{ pr.po_no }}{% endif %}
+          {% if pr.promised %}<span class="muted nw" style="font-size:12px">&middot; <span data-i18n="proc.delivery.promised">Promised delivery</span>: {{ pr.promised }}</span>{% endif %}</span>
+        {% if pr.days_late %}<span class="badge b-rejected nw"><span data-i18n="proc.delivery.overdue">Overdue</span> {{ pr.days_late }} <span data-i18n="proc.delivery.days">days</span></span>
+        {% else %}<span class="tag">{{ pr.status }}</span>{% endif %}
       </a>
       {% endfor %}
       <a href="{{ url_for('approvals.listing') }}" data-i18n="mywork.view_all">View all</a>
@@ -145,6 +147,8 @@
     </div>
   </div>
   {% endif %}
+
+  {% include "approvals/_imports_mywork.html" %}
 
   {# ── Approvals waiting for my signature (bulk sign) + PO revisions to sign ── #}
   {% include "approvals/_porev_my_work.html" %}
@@ -319,7 +323,7 @@
 
 {% if not (wh_issues or wh_counts or sign_queue or rev_queue or maint_approvals or prob_pending or alerts or my_prs or my_tickets or my_pm
            or late_milestones or cmp_caps or cmp_expiring
-           or recv_queue or store_issue or po_queue or stuck_postings or pay_queue) %}
+           or recv_queue or store_issue or po_queue or stuck_postings or pay_queue or agr_queue) %}
 <div class="panel"><div class="panel-pad muted" data-i18n="mywork.empty">
   Nothing to show yet — new approvals, tickets and alerts assigned to you will appear here.
 </div></div>
