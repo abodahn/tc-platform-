@@ -11,15 +11,28 @@ controller confirms the items and quantities before the store's manager signs.
 
 Unlike every other rung it is signed by ASSIGNMENT, not by role: the person is
 picked per department group on /procurement/item-control (proc_admin), stored in
-proc_item_control, and copied onto the rung (pr_steps.assignee) when the request
-is submitted. Only NEW submissions get the rung; a request already in the ladder
-keeps the ladder it was built with.
+proc_item_control, and copied onto the rung (pr_steps.assignee, with the group in
+pr_steps.ic_group) when the request is submitted.
+
+Chemicals (2026-11-28): a request with any CHM line (catalogue code or item text
+carrying the token, e.g. "00-CHM-0001") is also signed by the Chemicals & Stones
+controller, whatever its department. A General Maintenance request that orders a
+chemical therefore carries TWO Item control rungs — the department's controller
+first, then the chemicals controller — both after the store and before the
+Warehouse Manager. Same group or same person -> one rung. Each rung is told
+apart by its own assignee / ic_group.
+
+Open requests (the ones submitted before a controller or the CHM rule existed)
+get the rung through backfill(): run on every save of a group with an active
+controller and from the settings page's "Add to open requests" button. It never
+touches a signed rung and never adds the rung after the Warehouse Manager signed.
 
 A rung nobody may sign is never written: when the department has no active
 controller, or the requester IS the controller (raising the request is their
 signature, DOAM §3.4 — same rule as the HR Director rung), submit_pr leaves the
 rung off and writes an 'item_control_skipped' note the request page shows.
 """
+import logging
 import re
 import time
 from datetime import datetime, timezone
@@ -59,6 +72,10 @@ CREATE TABLE IF NOT EXISTS proc_item_control (
 """
 
 _ACTIVE_USER = "is_active=1 AND COALESCE(account_status,'active')='active'"
+CHEM_GROUP = "chemicals_stones"
+# CHM as a token: not inside a run of letters ("00-CHM-0001", "CHM 5" yes; "ACHME" no).
+_CHM = re.compile(r"(?<![^\W\d_])CHM(?![^\W\d_])", re.I)
+_log = logging.getLogger(__name__)
 
 
 def _now():
@@ -136,6 +153,53 @@ def _active(conn, username):
                         "AND " + _ACTIVE_USER, (username,)).fetchone()
 
 
+def is_chm(text):
+    """True when `text` carries the CHM token (a chemicals item code)."""
+    return bool(_CHM.search(str(text or "")))
+
+
+def _chm_ids(conn, pr_id=None):
+    """Ids of requests with a CHM line — one request, or every pending one."""
+    where, args = ("i.pr_id=?", [pr_id]) if pr_id else (
+        "i.pr_id IN (SELECT id FROM pr_requests WHERE status='pending')", [])
+    return {r["pr_id"] for r in conn.execute(
+        "SELECT i.pr_id, i.item, p.code FROM pr_items i LEFT JOIN proc_items p ON p.id=i.item_id "
+        "WHERE " + where + " AND (UPPER(COALESCE(p.code,'')) LIKE ? OR UPPER(COALESCE(i.item,'')) "
+        "LIKE ?)", args + ["%CHM%", "%CHM%"]).fetchall() if is_chm(r["code"]) or is_chm(r["item"])}
+
+
+def has_chm_items(conn, pr_id):
+    """Does any line of this request link to a CHM catalogue item or name one?"""
+    return bool(pr_id) and pr_id in _chm_ids(conn, pr_id)
+
+
+def _resolve_group(conn, g, requester):
+    if not g.get("active") or not g.get("username"):
+        return g, None, "unassigned"
+    u = _active(conn, g["username"])
+    if not u:
+        return g, None, "inactive"
+    if u["username"].lower() == str(requester or "").lower():
+        return g, None, "requester"
+    return g, u["username"], ""
+
+
+def resolve_all(conn, department, requester, pr_id=None):
+    """[group, assignee, why] per Item control rung this request gets, in ladder
+    order: the department's group (resolve()), then Chemicals & Stones when a line
+    is a CHM item. Same group, or the same person, -> one entry."""
+    g, who, why = resolve(conn, department, requester)
+    out = [[g, who, why]] if g else []
+    if (pr_id and not (g and g["group_key"] == CHEM_GROUP)
+            and has_chm_items(conn, pr_id)):
+        c = next((r for r in rows(conn) if r["group_key"] == CHEM_GROUP), None)
+        if c:
+            _, cw, cy = _resolve_group(conn, c, requester)
+            if not (cw and who and cw.lower() == who.lower()):
+                out.append([c, cw, cy])
+    return out
+
+
 def resolve(conn, department, requester):
     """(group, assignee, why) for a request about to be submitted.
 
@@ -148,14 +212,7 @@ def resolve(conn, department, requester):
     g = group_for(conn, department)
     if not g:
         return None, None, "not_controlled"
-    if not g.get("active") or not g.get("username"):
-        return g, None, "unassigned"
-    u = _active(conn, g["username"])
-    if not u:
-        return g, None, "inactive"
-    if u["username"].lower() == str(requester or "").lower():
-        return g, None, "requester"
-    return g, u["username"], ""
+    return _resolve_group(conn, g, requester)
 
 
 SKIP_NOTES = {
@@ -181,6 +238,19 @@ def insert_stage(stages):
     rank = C.ladder_rank(STAGE)
     at = next((i for i, s in enumerate(out) if C.ladder_rank(s) > rank), len(out))
     return out[:at] + [STAGE] + out[at:]
+
+
+def expand_rungs(rungs, n):
+    """`rungs` with n Item control rungs instead of one (rungs_from_stages keeps a
+    stage once): the extra ones follow the first, one stage each."""
+    if n <= 1:
+        return rungs
+    out = []
+    for r in rungs:
+        out.append(r)
+        if STAGE in r:
+            out.extend([[STAGE] for _ in range(n - 1)])
+    return out
 
 
 def delegates(conn, username):
@@ -335,12 +405,15 @@ def view(lang="en"):
             r["alias_list"] = _split(r.get("aliases"))
             r["pending"] = 0
         pend = conn.execute(
-            "SELECT r.department FROM pr_steps s JOIN pr_requests r ON r.id=s.pr_id "
+            "SELECT r.department, s.ic_group FROM pr_steps s JOIN pr_requests r ON r.id=s.pr_id "
             "WHERE s.stage=? AND s.status='pending' AND r.status='pending'", (STAGE,)).fetchall()
         for p in pend:
-            g = group_for(conn, p["department"], _rows=out)
+            g = _rung_group(conn, p, out)
             if g:
                 g["pending"] += 1
+        for r in out:     # bf_n None = nobody may sign the rung: no button
+            bf = backfill(conn, r, None, dry_run=True) if r.get("active") and r["user_name"] else None
+            r["bf_n"] = None if bf is None else sum(1 for x in bf if x["result"] == "would_add")
         return out
     except Exception:                                        # noqa: BLE001
         conn.rollback()
@@ -397,18 +470,37 @@ def save(group_key, username, aliases, active, actor, ip=None):
             _repoint(conn, dict(g, aliases=", ".join(names)), username, who, ip)
         conn.commit()
         _CTL_CACHE[0] = 0.0                     # this worker sees it at once
+        if username and active:
+            # the open requests of this group get the rung too (each its own
+            # transaction); the assignment itself is already saved either way
+            try:
+                backfill(conn, next(r for r in rows(conn) if r["group_key"] == group_key),
+                         who, ip)
+            except Exception:                                # noqa: BLE001
+                conn.rollback()
+                _log.exception("item control backfill after save failed (%s)", group_key)
         return True, "saved"
     finally:
         conn.close()
 
 
+def _rung_group(conn, step, groups):
+    """The group (from `groups`) an Item control rung belongs to: its ic_group, or
+    for a rung written before that column, the request's department group."""
+    key = _f(step, "ic_group")
+    if key:
+        return next((g for g in groups if g["group_key"] == key), None)
+    return group_for(conn, _f(step, "department"), _rows=groups)
+
+
 def _waiting(conn, group):
-    """Pending item-control rungs on pending requests of this group's departments."""
+    """Pending item-control rungs of this group on pending requests."""
     return [p for p in conn.execute(
-        "SELECT s.id, s.seq, s.assignee, r.id AS pr_id, r.pr_no, r.title, r.requester, "
-        "r.department, r.current_seq FROM pr_steps s JOIN pr_requests r ON r.id=s.pr_id "
-        "WHERE s.stage=? AND s.status='pending' AND r.status='pending'", (STAGE,)).fetchall()
-        if group_for(conn, p["department"], _rows=[group])]
+        "SELECT s.id, s.seq, s.assignee, s.ic_group, r.id AS pr_id, r.pr_no, r.title, "
+        "r.requester, r.department, r.current_seq FROM pr_steps s JOIN pr_requests r "
+        "ON r.id=s.pr_id WHERE s.stage=? AND s.status='pending' AND r.status='pending'",
+        (STAGE,)).fetchall()
+        if _rung_group(conn, p, [group])]
 
 
 def _repoint(conn, group, username, actor, ip=None):
@@ -425,6 +517,13 @@ def _repoint(conn, group, username, actor, ip=None):
             svc.audit(conn, p["pr_id"], actor, "item_control_kept",
                       "Item control not moved to %s: they already signed another step of this "
                       "request, and one person may not sign two steps." % username, ip)
+            continue
+        if conn.execute("SELECT 1 FROM pr_steps WHERE pr_id=? AND stage=? AND id<>? AND "
+                        "LOWER(COALESCE(assignee,''))=LOWER(?) LIMIT 1",
+                        (p["pr_id"], STAGE, p["id"], username)).fetchone():
+            svc.audit(conn, p["pr_id"], actor, "item_control_kept",
+                      "Item control not moved to %s: they already hold the other Item control "
+                      "step of this request, and one person may not sign two steps." % username, ip)
             continue
         conn.execute("UPDATE pr_steps SET assignee=? WHERE id=?", (username, p["id"]))
         svc.audit(conn, p["pr_id"], actor, "item_control_reassigned",
@@ -490,24 +589,191 @@ def assignee_name(username):
 
 
 def skip_info(pr_id):
-    """{why, group} when the latest submission of this request left the rung off
-    (the 'item_control_skipped' note is written just before 'submitted')."""
+    """[{why, group}] for each rung the latest submission of this request left off
+    (the 'item_control_skipped' notes are written just before 'submitted'); [] when
+    none was."""
     conn = get_db()
     try:
         ev = conn.execute("SELECT detail, action FROM pr_events WHERE pr_id=? AND action IN "
-                          "('item_control_skipped','submitted') ORDER BY id DESC LIMIT 2",
+                          "('item_control_skipped','submitted') ORDER BY id DESC LIMIT 3",
                           (pr_id,)).fetchall()
-        if not (len(ev) == 2 and ev[0]["action"] == "submitted"
-                and ev[1]["action"] == "item_control_skipped"):
-            return None
+        if not ev or ev[0]["action"] != "submitted":
+            return []
+        notes = []
+        for e in ev[1:]:
+            if e["action"] != "item_control_skipped":
+                break
+            notes.insert(0, e["detail"] or "")
+        if not notes:
+            return []
+        groups = rows(conn)
         pr = conn.execute("SELECT department FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
-        g = group_for(conn, pr["department"] if pr else "")
+        dept = group_for(conn, pr["department"] if pr else "", _rows=groups)
+        # a rung added since (backfill) answers that note
+        have = {(s["ic_group"] or (dept or {}).get("group_key")) for s in conn.execute(
+            "SELECT ic_group FROM pr_steps WHERE pr_id=? AND stage=?", (pr_id, STAGE)).fetchall()}
     finally:
         conn.close()
-    note = ev[1]["detail"] or ""
-    why = next((k for k, v in SKIP_NOTES.items() if note.startswith(v.split("%s")[0])),
-               "unassigned")
-    return {"why": why, "group": g["group_key"] if g else ""}
+    out = []
+    for note in notes:
+        why = next((k for k, v in SKIP_NOTES.items() if note.startswith(v.split("%s")[0])),
+                   "unassigned")
+        g = next((r for r in groups if (" %s" % r.get("label")) in note), dept)
+        if not (g and g["group_key"] in have):
+            out.append({"why": why, "group": g["group_key"] if g else ""})
+    return out
+
+
+# Why backfill() left a request out (shown on the settings page).
+BF_REASONS = {
+    "requester": "The requester is this group's item controller.",
+    "signed": "The item controller already signed another step of this request.",
+    "dual_role": "The item controller is the only person who can sign another step of it.",
+    "past_whm": "Already past the Warehouse Manager.",
+    "error": "Could not be updated; try again.",
+}
+
+
+def _plan(conn, pr, steps, g, who, groups, cache):
+    """What backfill() would do to one pending request: None when it already has
+    this group's rung (or one for this person), else (why, anchor) — why '' means
+    add the rung in front of `anchor` (None = after the last rung)."""
+    from app.approvals import services as svc
+    key, wl = g["group_key"], who.lower()
+    dept = group_for(conn, pr["department"], _rows=groups)
+    dept_key = dept["group_key"] if dept else None
+    for s in steps:
+        if s["stage"] == STAGE and ((s.get("ic_group") or dept_key) == key
+                                    or str(s.get("assignee") or "").lower() == wl):
+            return None
+    if str(pr["requester"] or "").lower() == wl:
+        return "requester", None
+    if any(str(s.get("approver_user") or "").lower() == wl
+           and s["status"] in ("approved", "rejected") for s in steps):
+        return "signed", None
+    rank = C.ladder_rank(STAGE)
+    if any(s["status"] == "approved" and C.ladder_rank(s["stage"]) > rank for s in steps):
+        return "past_whm", None
+    # the department's controller signs before the chemicals one
+    anchor = next((s for s in steps if s["status"] == "pending" and (
+        C.ladder_rank(s["stage"]) > rank or (key != CHEM_GROUP and s["stage"] == STAGE
+                                             and s.get("ic_group") == CHEM_GROUP))), None)
+    if anchor and anchor["seq"] < (pr["current_seq"] or 0):
+        return "past_whm", None
+    if any(s["status"] == "pending" and svc._step_signers(conn, pr, s, cache) == {who}
+           for s in steps):
+        return "dual_role", None
+    return "", anchor
+
+
+def _insert(conn, pr, steps, anchor, g, who, actor, ip):
+    """Write the rung in front of `anchor` (shifting it and every later rung one
+    seq on) or after the last rung. Returns True when it is now the current rung.
+    Signed rungs sit below current_seq <= anchor seq, so the shift never moves one."""
+    from app.approvals import services as svc
+    pid, cur = pr["id"], pr["current_seq"] or 0
+    if anchor:
+        seq = anchor["seq"]
+        conn.execute("UPDATE pr_steps SET seq=seq+1 WHERE pr_id=? AND seq>=?", (pid, seq))
+    else:
+        seq = max([s["seq"] for s in steps] or [0]) + 1
+    now = svc._now()
+    is_cur = seq == cur
+    if is_cur:      # the rung that was waiting waits again later: restart its clock
+        conn.execute("UPDATE pr_steps SET activated_at=NULL, escalated=0, escalated_at=NULL, "
+                     "escalated2_at=NULL WHERE pr_id=? AND seq=? AND status='pending'",
+                     (pid, seq + 1))
+    conn.execute(
+        "INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role, activated_at, "
+        "created_at, origin, assignee, ic_group) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (pid, seq, STAGE, "pending", svc.stage_label(STAGE), now if is_cur else None, now,
+         "ladder", who, g["group_key"]))
+    svc.stamp_step_actions(conn, pid)
+    svc.audit(conn, pid, actor or "system", "item_control_added",
+              "Item control for %s added to this open request: %s signs it after the store "
+              "and before the Warehouse Manager%s." % (
+                  g.get("label") or g["group_key"], who,
+                  "; the request now waits for their signature" if is_cur else ""), ip)
+    if is_cur:
+        svc._clear_sign_prompts(conn, pr, [s for s in steps if s["seq"] == seq
+                                           and s["status"] == "pending"])
+        svc.notify_users(conn, [who], "warning", "New request to sign",
+                         "%s (%s) needs your Item control approval."
+                         % (pr["pr_no"], pr["title"] or ""), link=svc._pr_link(pid))
+    return is_cur
+
+
+def backfill(conn, group_row, actor, ip=None, dry_run=False):
+    """Add this group's Item control rung to the OPEN requests that should carry
+    it — pending ones of the group's departments, and for Chemicals & Stones every
+    pending one with a CHM line — but do not yet. Drafts get it at submit; closed
+    requests are history. Idempotent; each request is its own transaction, so the
+    caller commits its own work first.
+
+    Returns [{pr_id, pr_no, result: 'added'|'would_add'|'skipped', why, current}]
+    (no entry for a request that already has the rung). [] when the group has no
+    active controller: nobody could sign the rung."""
+    g = dict(group_row)
+    u = _active(conn, g.get("username")) if g.get("active") else None
+    if not u:
+        return []
+    who, key = u["username"], g["group_key"]
+    groups = rows(conn)
+    chm = _chm_ids(conn) if key == CHEM_GROUP else set()
+    cand = [dict(r) for r in conn.execute(
+        "SELECT id, pr_no, title, requester, department, current_seq, status "
+        "FROM pr_requests WHERE status='pending' ORDER BY id").fetchall()
+        if r["id"] in chm or group_for(conn, r["department"], _rows=[g])]
+    steps = {}
+    for i in range(0, len(cand), 500):
+        part = [p["id"] for p in cand[i:i + 500]]
+        for s in conn.execute("SELECT * FROM pr_steps WHERE pr_id IN (%s) ORDER BY seq, id"
+                              % ",".join("?" * len(part)), tuple(part)).fetchall():
+            steps.setdefault(s["pr_id"], []).append(dict(s))
+    cache, out = {}, []
+    for pr in cand:
+        plan = _plan(conn, pr, steps.get(pr["id"], []), g, who, groups, cache)
+        if plan is None:
+            continue
+        res = {"pr_id": pr["id"], "pr_no": pr["pr_no"], "why": plan[0],
+               "result": "skipped" if plan[0] else ("would_add" if dry_run else "added"),
+               "current": bool(plan[1]) and plan[1]["seq"] == pr["current_seq"]}
+        if plan[0] or dry_run:
+            out.append(res)
+            continue
+        try:   # re-read inside this request's own transaction, then write
+            fresh = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr["id"],)).fetchone()
+            if not fresh or fresh["status"] != "pending":
+                continue
+            fresh = dict(fresh)
+            st = [dict(s) for s in conn.execute(
+                "SELECT * FROM pr_steps WHERE pr_id=? ORDER BY seq, id", (pr["id"],)).fetchall()]
+            plan = _plan(conn, fresh, st, g, who, groups, cache)
+            if plan is None:
+                continue
+            if plan[0]:
+                res.update(result="skipped", why=plan[0])
+            else:
+                res["current"] = _insert(conn, fresh, st, plan[1], g, who, actor, ip)
+                conn.commit()
+        except Exception:                                    # noqa: BLE001
+            conn.rollback()
+            _log.exception("item control backfill failed on request %s", pr["id"])
+            res.update(result="skipped", why="error")
+        out.append(res)
+    return out
+
+
+def run_backfill(group_key, actor, ip=None, dry_run=False):
+    """backfill() for one group by key, on its own connection. None = no such group."""
+    conn = get_db()
+    try:
+        g = next((r for r in rows(conn) if r["group_key"] == group_key), None)
+        if not g:
+            return None
+        return backfill(conn, g, (actor or {}).get("username") or "system", ip, dry_run)
+    finally:
+        conn.close()
 
 
 # Settings-page messages, merged into messages.MESSAGES (translated flash()).
@@ -533,4 +799,7 @@ MESSAGES = {
     "That department group does not exist.": {
         "ar": "مجموعة الأقسام دي مش موجودة.",
         "tr": "Bu departman grubu yok."},
+    "Item control added to open requests. Added / skipped:": {
+        "ar": "اتضافت مراقبة الأصناف للطلبات المفتوحة. اتضاف / اتساب:",
+        "tr": "Malzeme kontrolü açık taleplere eklendi. Eklenen / atlanan:"},
 }

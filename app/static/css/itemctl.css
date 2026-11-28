@@ -16,3 +16,10 @@
 .ictl-save { min-height: 44px; }
 @media (max-width: 560px) { .ictl-save { width: 100%; } }
 .ictl-rules { margin: 0; padding-inline-start: 20px; line-height: 1.7; font-size: 13.5px; }
+/* Add to open requests (backfill) + the reasons a request was left out. */
+.ictl-bf { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line, rgba(0,0,0,.08)); }
+.ictl-bf .btn { min-height: 44px; }
+@media (max-width: 560px) { .ictl-bf .btn { width: 100%; } }
+.ictl-skips { margin-top: 10px; font-size: 13px; }
+.ictl-skips summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+.ictl-skips ul { margin: 4px 0 0; padding-inline-start: 20px; line-height: 1.6; overflow-wrap: anywhere; }

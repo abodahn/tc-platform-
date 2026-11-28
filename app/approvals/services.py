@@ -2467,11 +2467,13 @@ def submit_pr(pr_id, user, ip=None):
                 _stages = [C.HR_HEAD_STAGE] + _stages
         # Item control (2026-11-26): General Maintenance, Chemicals & Stones and
         # Sewing & Cutting requests are signed by that department's assigned
-        # controller after the store. A rung nobody may sign is left off with a
+        # controller after the store; a request with a CHM line is also signed by
+        # the Chemicals & Stones controller (2026-11-28) — up to two rungs, one
+        # per person, department first. A rung nobody may sign is left off with a
         # note rather than written to wait forever (see item_control.py).
         from app.approvals import item_control as IC
-        _ic_group, _ic_who, _ic_why = IC.resolve(conn, pr["department"], pr["requester"])
-        if _ic_who:
+        _ic = IC.resolve_all(conn, pr["department"], pr["requester"], pr_id)
+        if any(x[1] for x in _ic):
             _stages = IC.insert_stage(_stages)
         # DOAM §4.3 — a single-source award is signed one level above the value
         # tier. Applied here as well as in set_single_source(), because the
@@ -2493,7 +2495,7 @@ def submit_pr(pr_id, user, ip=None):
             if _ux:
                 _stages = _stages + [_ux]
                 _origin[_ux] = "unbudgeted"
-        rungs = rungs_from_stages(_stages)
+        rungs = IC.expand_rungs(rungs_from_stages(_stages), sum(1 for x in _ic if x[1]))
         # SoD escalation, resolved BEFORE anything is written: a rung whose only
         # eligible signer is the requester or committed to an earlier rung climbs
         # one level up the org chart. A
@@ -2507,15 +2509,22 @@ def submit_pr(pr_id, user, ip=None):
         # to sign another rung — signing two rungs is refused by the dual-role
         # rule, so that would just move the deadlock one rung down.
         _holders = {s: stage_signers(conn, s, _roles.get(s) or ()) for s in flat_stages}
-        if _ic_who:
-            _holders[C.ITEM_CONTROL_STAGE] = {_ic_who}
+        _ic_live = [x for x in _ic if x[1]]       # one per Item control rung, in order
+        for _k, x in enumerate(_ic_live):          # each controller is that rung's sole signer
+            _holders[C.ITEM_CONTROL_STAGE if _k == 0 else (C.ITEM_CONTROL_STAGE, _k)] = {x[1]}
         esc, blocked = {}, []
         _committed = set()
+        _k = 0
         for stage in flat_stages:
-            if stage == C.ITEM_CONTROL_STAGE and _ic_who in _committed:
-                # the controller is the only signer of an earlier rung: one person
-                # may not sign two, and nobody else may sign this one
-                _ic_who, _ic_why = None, "dual_role"
+            if stage == C.ITEM_CONTROL_STAGE and _k < len(_ic_live):
+                x = _ic_live[_k]
+                _k += 1
+                if x[1] in _committed:
+                    # the controller is the only signer of an earlier rung: one person
+                    # may not sign two, and nobody else may sign this one
+                    x[1], x[2] = None, "dual_role"
+                else:
+                    _committed.add(x[1])
                 continue
             _free = _holders[stage] - {pr["requester"]}
             e_role, e_from, why = _esc_columns(conn, stage, pr["requester"], _roles,
@@ -2527,9 +2536,11 @@ def submit_pr(pr_id, user, ip=None):
                 esc[stage] = (e_role, e_from)
             elif why == "no_superior":
                 blocked.append(stage)
-        if _ic_group and not _ic_who and C.ITEM_CONTROL_STAGE in flat_stages:
-            rungs = [r for r in ([s for s in rung if s != C.ITEM_CONTROL_STAGE]
+        if any(not x[1] for x in _ic_live):        # drop the rungs the loop above skipped
+            _keep = iter([bool(x[1]) for x in _ic_live])
+            rungs = [r for r in ([s for s in rung if s != C.ITEM_CONTROL_STAGE or next(_keep, True)]
                                  for rung in rungs) if r]
+        _ic_live = [x for x in _ic_live if x[1]]
         if blocked:
             # A rung the climb cannot resolve is PARKED, not a reason to refuse the
             # whole submit. Refusing looked tidy but was far worse in practice: on a
@@ -2598,17 +2609,21 @@ def submit_pr(pr_id, user, ip=None):
         # clear any prior steps (resubmit after rejection)
         conn.execute("DELETE FROM pr_steps WHERE pr_id=?", (pr_id,))
         now = _now()
+        _ic_seq = iter(_ic_live)                  # Item control rungs, in ladder order
+        _ic_row = [[next(_ic_seq, None) if s == C.ITEM_CONTROL_STAGE else None for s in rung]
+                   for rung in rungs]
         for i, rung in enumerate(rungs, start=1):
-            for stage in rung:
+            for j, stage in enumerate(rung):
                 e_role, e_from = esc.get(stage, (None, None))
+                _icx = _ic_row[i - 1][j]
                 conn.execute(
                     """INSERT INTO pr_steps (pr_id, seq, stage, status, approver_role,
-                       activated_at, created_at, esc_role, esc_from, origin, assignee)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                       activated_at, created_at, esc_role, esc_from, origin, assignee,
+                       ic_group) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (pr_id, i, stage, "pending", stage_label(stage),
                      now if i == 1 else None, now, e_role, e_from,
                      _origin.get(stage, "ladder"),
-                     _ic_who if stage == C.ITEM_CONTROL_STAGE else None))
+                     _icx[1] if _icx else None, _icx[0]["group_key"] if _icx else None))
                 if e_role:
                     audit(conn, pr_id, user.get("username") if user else "system",
                           "escalated_stage",
@@ -2639,8 +2654,9 @@ def submit_pr(pr_id, user, ip=None):
             audit(conn, pr_id, uname, "unbudgeted",
                   unbudgeted_note(_bud, pr["department"],
                                   _pr_field(pr, "expenditure_kind")), ip)
-        if _ic_group and not _ic_who:
-            audit(conn, pr_id, uname, "item_control_skipped", IC.skip_note(_ic_group, _ic_why), ip)
+        for x in _ic:
+            if not x[1]:
+                audit(conn, pr_id, uname, "item_control_skipped", IC.skip_note(x[0], x[2]), ip)
         flat = [s for rung in rungs for s in rung]
         audit(conn, pr_id, uname, "submitted",
               f"Routed through {len(flat)} approvals: "
@@ -2650,8 +2666,8 @@ def submit_pr(pr_id, user, ip=None):
         # reaches whoever actually has to sign it.
         first_label = " + ".join(stage_label(s) for s in rungs[0])
         _prompt_rung(conn, pr, [{"stage": s, "esc_role": (esc.get(s) or (None,))[0],
-                                 "assignee": _ic_who if s == C.ITEM_CONTROL_STAGE else None}
-                                for s in rungs[0]],
+                                 "assignee": _ic_row[0][j][1] if _ic_row[0][j] else None}
+                                for j, s in enumerate(rungs[0])],
                      f"{pr['pr_no']} ({pr['title'] or ''}) needs your {first_label} approval.",
                      alerted=blocked)
         conn.commit()

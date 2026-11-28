@@ -16,8 +16,9 @@ Proves:
   * no controller / disabled controller / requester == controller -> the rung
     is left off with an audit note the request page shows;
   * one person cannot sign both Item control and Warehouse Manager;
-  * requests already in the ladder keep their ladder; re-pricing keeps the rung
-    in place; reassigning moves the waiting rungs to the new person;
+  * a request already in the ladder gets the rung when the group is assigned
+    (backfill; the CHM / backfill rules are in tests_itemctl_chm); re-pricing
+    keeps the rung in place; reassigning moves the waiting rungs to the new person;
   * the settings page is proc_admin only and CSRF protected;
   * review fixes: a lone warehouse person's request is absorbed as before (no
     deadlock at Warehouse Manager); a group with waiting rungs cannot be
@@ -175,7 +176,7 @@ with app.app_context():
     ok("'Production' and 'IT' match no group",
        IC.group_for(conn, "Production") is None and IC.group_for(conn, "IT") is None)
 
-    print("\n--- in flight before the assignment keeps its ladder --------------------")
+    print("\n--- in flight before the assignment gets the rung -----------------------")
     IC.save("sewing_cutting", "", "", True, padmin)
     early = raise_pr(req, "Sewing", "early")
     ok("unassigned Sewing request: no item_control rung", "item_control" not in stages(early))
@@ -185,7 +186,9 @@ with app.app_context():
        in client(root).get("/procurement/pr/%d" % early).get_data(as_text=True))
     before = stages(early)
     IC.save("sewing_cutting", "ic.ctl_s", "", True, padmin)
-    ok("assigning later does not change a request already in the ladder", stages(early) == before)
+    ok("assigning later adds the rung to a request already in the ladder (backfill)",
+       stages(early) == IC.insert_stage(before) and current(early)["stage"] == "warehouse"
+       and next(s for s in steps(early) if s["stage"] == "item_control")["assignee"] == "ic.ctl_s")
 
     print("\n--- maintenance request: the rung, its signer and the refusals ----------")
     pm = raise_pr(req, "General Maintenance", "pump")

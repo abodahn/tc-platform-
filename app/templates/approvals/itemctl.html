@@ -8,7 +8,7 @@
 <div class="page-head">
   <div>
     <h1 data-i18n="proc.itemctl.title">Item control</h1>
-    <div class="sub" data-i18n="proc.itemctl.sub">Who signs the Item control step for each department. It comes after the Warehouse and before the Warehouse Manager, on new requests only.</div>
+    <div class="sub" data-i18n="proc.itemctl.sub">Who signs the Item control step for each department. It comes after the Warehouse and before the Warehouse Manager. A request with a CHM item is also signed by the Chemicals &amp; Stones controller.</div>
   </div>
 </div>
 
@@ -62,6 +62,24 @@
         <div class="muted ictl-hint"><span data-i18n="proc.itemctl.updated">Last changed by</span> {{ g.updated_by }} · {{ (g.updated_at or '')[:16] }}</div>
         {% endif %}
       </form>
+      {% if g.bf_n is not none %}
+      <form method="post" class="ictl-bf" action="{{ url_for('approvals.itemctl_backfill', group_key=g.group_key) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button class="btn btn-ghost btn-sm" type="submit" {{ 'disabled' if not g.bf_n }}
+                aria-describedby="bfh-{{ g.group_key }}"><span data-i18n="proc.itemctl.bf.btn">Add to open requests</span> (<b data-num>{{ g.bf_n }}</b>)</button>
+        <div class="muted ictl-hint" id="bfh-{{ g.group_key }}" data-i18n="proc.itemctl.bf.hint">Adds the step to requests already in the approval ladder that have not reached the Warehouse Manager.</div>
+      </form>
+      {% endif %}
+      {% if bf and bf.g == g.group_key and bf.skips %}
+      <details class="ictl-skips">
+        <summary><span data-i18n="proc.itemctl.bf.skipped">Skipped requests</span> (<span data-num>{{ bf.skips|length }}</span>)</summary>
+        <ul>
+          {% for no, why in bf.skips %}
+          <li><bdi>{{ no }}</bdi> — <span data-i18n="proc.itemctl.bf.why.{{ why }}">{{ bf_reasons.get(why, why) }}</span></li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
     </div>
   </section>
   {% endfor %}
@@ -74,7 +92,8 @@
       <li data-i18n="proc.itemctl.rule.1">Only the person picked here (or someone they delegated to) can sign the step — no role or admin can, except the super admin in place.</li>
       <li data-i18n="proc.itemctl.rule.2">The requester never signs their own request: if the controller raises it, the step is skipped and the request says so.</li>
       <li data-i18n="proc.itemctl.rule.3">One person cannot sign both Item control and Warehouse Manager on the same request.</li>
-      <li data-i18n="proc.itemctl.rule.4">Changing the person moves the requests already waiting at this step to the new person. Requests already in the approval ladder before the step existed keep their ladder.</li>
+      <li data-i18n="proc.itemctl.rule.4">Changing the person moves the requests already waiting at this step to the new person. Saving a person also adds the step to this group's open requests that have not reached the Warehouse Manager.</li>
+      <li data-i18n="proc.itemctl.rule.5">A request with a CHM item (code like 00-CHM-0001) is also signed by the Chemicals &amp; Stones controller, before the Warehouse Manager. If its department has its own controller, both sign — the department's first.</li>
     </ul>
   </div>
 </div>

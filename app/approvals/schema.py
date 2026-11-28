@@ -331,6 +331,10 @@ _STEP_MIGRATIONS = [
     # Item control rung: the ONE person assigned to sign it (see item_control.py).
     # NULL on every other rung.
     ("assignee", "ALTER TABLE pr_steps ADD COLUMN assignee TEXT"),
+    # Which Item control group that rung is for (a request with a CHM line can
+    # carry two: its department's and Chemicals & Stones). NULL = older rung:
+    # read as the request department's group.
+    ("ic_group", "ALTER TABLE pr_steps ADD COLUMN ic_group TEXT"),
 ]
 
 # Columns added to pr_requests after first release (tax + goods receipt + PO email
