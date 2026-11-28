@@ -5298,6 +5298,7 @@
   "proc.itemctl.bf.why.requester": "Talep sahibi bu grubun malzeme kontrol sorumlusu.",
   "proc.itemctl.bf.why.signed": "Malzeme kontrol sorumlusu bu talebin başka bir adımını zaten imzaladı.",
   "proc.itemctl.bf.why.dual_role": "Bu talebin başka bir adımını imzalayabilecek tek kişi malzeme kontrol sorumlusu.",
+  "proc.itemctl.bf.why.held": "Beklemede. Bekleme kaldırıldıktan sonra eklenir: o zaman düğmeye tekrar basın.",
   "proc.itemctl.bf.why.error": "Güncellenemedi; tekrar deneyin.",
   "proc.guide.ictl.who": "Genel Bakım, Kimyasallar ve Taşlar ile Dikim ve Kesim talepleri ve CHM kalemi içeren her talep — gruba atanan kişi imzalar.",
   "proc.guide.ictl.reach.1": "«İmzalanacak yeni talep» bildirimi, departmanınızdan bir talebin Depo'yu geçtiğini söyler. [[ui:nav.my_work]] sayfasında [[ui:mywork.sign_queue]] altında da listelenir.",

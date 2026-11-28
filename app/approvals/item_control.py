@@ -28,7 +28,8 @@ controller and from the settings page's "Add to open requests" button, BF_BATCH
 requests per run (the button counts the rest). It never touches a signed rung. A
 request already past the Warehouse Manager (owner, 2026-11-28) still gets it: the
 rung goes in AT the current step, so the request waits for the controller and
-then carries on with the rest of its ladder. While a person is the
+then carries on with the rest of its ladder (a request on hold there is left for
+a run after the hold is lifted). While a person is the
 assignee of a pending Item control rung, act_on_step keeps them off the request's
 other rungs that somebody else can sign, so their own rung stays signable.
 
@@ -634,6 +635,7 @@ BF_REASONS = {
     "requester": "The requester is this group's item controller.",
     "signed": "The item controller already signed another step of this request.",
     "dual_role": "The item controller is the only person who can sign another step of it.",
+    "held": "On hold. It is added after the hold is lifted: press the button again then.",
     "error": "Could not be updated; try again.",
 }
 
@@ -665,6 +667,10 @@ def _plan(conn, pr, steps, g, who, groups, cache):
     if any(s["status"] == "pending" and svc._step_signers(conn, pr, s, cache) == {who}
            for s in steps):
         return "dual_role", None
+    # a held request at the current step: only the current rung's signers may lift
+    # the hold, so putting the controller there would strand it
+    if anchor and anchor["seq"] == cur and (svc._pr_field(pr, "hold_reason") or "").strip():
+        return "held", None
     return "", anchor
 
 
@@ -704,9 +710,9 @@ def _insert(conn, pr, steps, anchor, g, who, actor, ip):
     if is_cur:
         svc._clear_sign_prompts(conn, pr, [s for s in steps if s["seq"] == seq
                                            and s["status"] == "pending"])
-        svc.notify_users(conn, [who], "warning", "New request to sign",
-                         "%s (%s) needs your Item control approval."
-                         % (pr["pr_no"], pr["title"] or ""), link=svc._pr_link(pid))
+        svc._prompt_rung(conn, pr, conn.execute(     # via _step_notify: an away controller's delegate
+            "SELECT * FROM pr_steps WHERE pr_id=? AND seq=? AND stage=?", (pid, seq, STAGE)).fetchall(),
+            "%s (%s) needs your Item control approval." % (pr["pr_no"], pr["title"] or ""))
     return is_cur
 
 
@@ -732,7 +738,7 @@ def backfill(conn, group_row, actor, ip=None, dry_run=False, limit=BF_BATCH):
     groups = rows(conn)
     chm = _chm_ids(conn) if key == CHEM_GROUP else set()
     cand = [dict(r) for r in conn.execute(
-        "SELECT id, pr_no, title, requester, department, current_seq, status "
+        "SELECT id, pr_no, title, requester, department, current_seq, status, hold_reason "
         "FROM pr_requests WHERE status='pending' ORDER BY id").fetchall()
         if r["id"] in chm or group_for(conn, r["department"], _rows=[g])]
     steps = {}

@@ -2794,11 +2794,12 @@ def _withdraw_signatures_on_changed_terms(conn, pr, before, uname, ip, why):
                               (pr["id"],)).fetchall()
         pivot = max((r["seq"] for r in demand if r["stage"] in C.DEMAND_STAGES), default=0)
     # Demand rungs below pricing signed the need; pricing makes the change.
-    # Every rung above it signed the old commercial terms.
+    # Every rung above it signed the old commercial terms — except a late Item
+    # control rung (backfill), which, like the Warehouse Manager, signed the need.
     steps = conn.execute(
         "SELECT id, seq, stage, approver_user FROM pr_steps "
-        "WHERE pr_id=? AND seq>? AND status='approved' ORDER BY seq",
-        (pr["id"], pivot)).fetchall()
+        "WHERE pr_id=? AND seq>? AND status='approved' AND stage<>? ORDER BY seq",
+        (pr["id"], pivot, C.ITEM_CONTROL_STAGE)).fetchall()
     if not steps:
         return 0
     now = _now()
@@ -3717,6 +3718,9 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
 
         sig_png, sig_name = _user_sig(uname)
         now = _now()
+        # lock the request row before any pr_steps row: the order backfill takes
+        # them in, so the two never deadlock on PostgreSQL
+        conn.execute("UPDATE pr_requests SET current_seq=current_seq WHERE id=?", (pr_id,))
 
         if decision == "reject":
             cur = conn.execute(

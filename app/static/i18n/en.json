@@ -5298,6 +5298,7 @@
   "proc.itemctl.bf.why.requester": "The requester is this group's item controller.",
   "proc.itemctl.bf.why.signed": "The item controller already signed another step of this request.",
   "proc.itemctl.bf.why.dual_role": "The item controller is the only person who can sign another step of it.",
+  "proc.itemctl.bf.why.held": "On hold. It is added after the hold is lifted: press the button again then.",
   "proc.itemctl.bf.why.error": "Could not be updated; try again.",
   "proc.guide.ictl.who": "General Maintenance, Chemicals & Stones and Sewing & Cutting requests, plus any request with a CHM item — signed by the person assigned to the group.",
   "proc.guide.ictl.reach.1": "A bell «New request to sign» tells you a request from your department passed the Warehouse. It is also listed on [[ui:nav.my_work]] under [[ui:mywork.sign_queue]].",

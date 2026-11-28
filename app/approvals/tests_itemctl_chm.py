@@ -14,7 +14,9 @@ Proves:
     the Warehouse Manager (added at the current seq, request now waits at Item
     control, the manager's prompt cleared), past the Warehouse Manager (added AT
     the current rung: it waits for the controller, then carries on; two late rungs
-    go department first), draft / approved / requester / controller-already-signed
+    go department first; one on hold there is left until the hold is lifted; the
+    controller's delegate is told; its signature past Purchasing survives a
+    re-price), draft / approved / requester / controller-already-signed
     (left alone, reported), idempotent; the department rung is placed before an
     existing chemicals rung;
   * a run is capped at BF_BATCH: the flash says how many are still to add;
@@ -561,6 +563,61 @@ with app.app_context():
     ok("p2: the GM controller signs, then the chemicals one, then the waiting rung is back",
        sign(p2, ctl_gm) == (True, "advanced") and current(p2)["assignee"] == "t.chm"
        and sign(p2, ctl_ch) == (True, "advanced") and current(p2)["id"] == w2["id"])
+
+    print("\n--- past the Warehouse Manager and on hold: added after the hold ---------")
+    set_ctl("chemicals_stones", None)
+    hq, hw = past_whm("hq-held", dept="Production")
+    ok("hq: the buyer holds it at %s" % hw["stage"],
+       svc.hold_request(hq, "supplier query", buyer) == (True, "held"))
+    set_ctl("chemicals_stones", "t.chm")
+    res = [(r["result"], r["why"]) for r in IC.run_backfill("chemicals_stones", padmin)
+           if r["pr_id"] == hq]
+    ok("...backfill skips it as held, nothing written",
+       res == [("skipped", "held")] and not ics(hq) and current(hq)["id"] == hw["id"])
+    ok("...the buyer can still lift the hold", svc.resume_request(hq, "", buyer) == (True, "resumed"))
+    ok("...the next run adds it at the current rung", [r["current"] for r in IC.run_backfill(
+        "chemicals_stones", padmin) if r["pr_id"] == hq and r["result"] == "added"] == [True]
+       and current(hq)["assignee"] == "t.chm")
+    ok("the held reason has en/ar/tr text", all(
+        '"proc.itemctl.bf.why.held"' in (REPO / "app" / "static" / "i18n" / (lang + ".json"))
+        .read_text(encoding="utf-8") for lang in ("en", "ar", "tr")))
+
+    print("\n--- a late rung: an away controller's delegate is told ------------------")
+    set_ctl("chemicals_stones", None)
+    dq, _dw = past_whm("dq-away", dept="Production")
+    ok("delegation from the chemicals controller",
+       svc.add_delegation("t.chm", "t.deleg", None, None, "leave", user=padmin)[0])
+    set_ctl("chemicals_stones", "t.chm")
+    IC.run_backfill("chemicals_stones", padmin)
+    ok("...the delegate gets the prompt, not the controller",
+       current(dq)["assignee"] == "t.chm" and unread("t.deleg", dq) == 1 and unread("t.chm", dq) == 0)
+    conn.execute("UPDATE proc_delegations SET is_active=0 WHERE from_user='t.chm'")
+    conn.commit()
+
+    print("\n--- a late rung past Purchasing keeps its signature on a re-price -------")
+    set_ctl("chemicals_stones", None)
+    q, _qw = past_whm("q-past-purchasing", dept="Production")
+    qids = [r["id"] for r in conn.execute("SELECT id FROM pr_items WHERE pr_id=?", (q,)).fetchall()]
+    ok("q priced", svc.price_pr(q, {i: 10 for i in qids}, meta, buyer)[0])
+    conn.execute("UPDATE pr_steps SET status='approved', approver_user='t.buyer', "
+                 "acted_at='2026-01-01' WHERE id=?", (current(q)["id"],))   # Purchasing signed
+    conn.execute("UPDATE pr_requests SET current_seq=(SELECT MIN(seq) FROM pr_steps WHERE "
+                 "pr_id=? AND status='pending') WHERE id=?", (q, q))
+    conn.commit()
+    qa = current(q)
+    set_ctl("chemicals_stones", "t.chm")
+    IC.run_backfill("chemicals_stones", padmin)
+    gate, svc.rfq_gate_check = svc.rfq_gate_check, lambda c, pr: (True, "")
+    try:
+        ok("...late rung at %s, the controller signs, back to it" % qa["stage"],
+           sign(q, ctl_ch) == (True, "advanced") and current(q)["id"] == qa["id"])
+    finally:
+        svc.rfq_gate_check = gate
+    ok("...re-priced", svc.price_pr(q, {i: 12 for i in qids}, meta, buyer)[0])
+    ok("...the Item control signature stands, the request stays where it was",
+       ics(q) == [("t.chm", "chemicals_stones", "approved")] and current(q)["id"] == qa["id"]
+       and unread("t.chm", q) == 0
+       and not any("Item control" in d for d in events(q, "signatures_recollected")))
 
     print("\n--- a capped run: the flash says how many are still to add -------------")
     set_ctl("chemicals_stones", None)
