@@ -3617,6 +3617,15 @@ def act_on_step(pr_id, user, decision, comment=None, ip=None):
                 (pr_id, step["id"], uname)).fetchone()
             if other:
                 return False, "dual_role"
+            # the assignee of a pending Item control rung keeps their signature for
+            # it: signing another rung first would leave theirs unsignable (dual role,
+            # and only they may sign it) — unless nobody else can sign this one
+            if (step["stage"] != C.ITEM_CONTROL_STAGE and conn.execute(
+                    "SELECT 1 FROM pr_steps WHERE pr_id=? AND stage=? AND status='pending' "
+                    "AND LOWER(COALESCE(assignee,''))=LOWER(?) LIMIT 1",
+                    (pr_id, C.ITEM_CONTROL_STAGE, uname)).fetchone()
+                    and _step_signers(conn, pr, step) - {uname}):
+                return False, "dual_role"
 
         # Pricing gate: the purchasing stage cannot be signed off until Purchasing
         # has entered the commercial value. Approving it unpriced would let a

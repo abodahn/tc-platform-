@@ -24,8 +24,11 @@ apart by its own assignee / ic_group.
 
 Open requests (the ones submitted before a controller or the CHM rule existed)
 get the rung through backfill(): run on every save of a group with an active
-controller and from the settings page's "Add to open requests" button. It never
-touches a signed rung and never adds the rung after the Warehouse Manager signed.
+controller and from the settings page's "Add to open requests" button, BF_BATCH
+requests per run (the button counts the rest). It never touches a signed rung and
+never adds the rung after the Warehouse Manager signed. While a person is the
+assignee of a pending Item control rung, act_on_step keeps them off the request's
+other rungs that somebody else can sign, so their own rung stays signable.
 
 A rung nobody may sign is never written: when the department has no active
 controller, or the requester IS the controller (raising the request is their
@@ -674,7 +677,8 @@ def _insert(conn, pr, steps, anchor, g, who, actor, ip):
     pid, cur = pr["id"], pr["current_seq"] or 0
     if anchor:
         seq = anchor["seq"]
-        conn.execute("UPDATE pr_steps SET seq=seq+1 WHERE pr_id=? AND seq>=?", (pid, seq))
+        conn.execute("UPDATE pr_steps SET seq=seq+1 WHERE pr_id=? AND seq>=? AND status='pending'",
+                     (pid, seq))
     else:
         seq = max([s["seq"] for s in steps] or [0]) + 1
     now = svc._now()
@@ -703,7 +707,10 @@ def _insert(conn, pr, steps, anchor, g, who, actor, ip):
     return is_cur
 
 
-def backfill(conn, group_row, actor, ip=None, dry_run=False):
+BF_BATCH = 20   # adds per call: each costs ~20 round trips, and it runs inside a web request
+
+
+def backfill(conn, group_row, actor, ip=None, dry_run=False, limit=BF_BATCH):
     """Add this group's Item control rung to the OPEN requests that should carry
     it — pending ones of the group's departments, and for Chemicals & Stones every
     pending one with a CHM line — but do not yet. Drafts get it at submit; closed
@@ -712,7 +719,8 @@ def backfill(conn, group_row, actor, ip=None, dry_run=False):
 
     Returns [{pr_id, pr_no, result: 'added'|'would_add'|'skipped', why, current}]
     (no entry for a request that already has the rung). [] when the group has no
-    active controller: nobody could sign the rung."""
+    active controller: nobody could sign the rung. Stops after `limit` adds (None =
+    all); the rest are what the next dry run counts."""
     g = dict(group_row)
     u = _active(conn, g.get("username")) if g.get("active") else None
     if not u:
@@ -730,7 +738,7 @@ def backfill(conn, group_row, actor, ip=None, dry_run=False):
         for s in conn.execute("SELECT * FROM pr_steps WHERE pr_id IN (%s) ORDER BY seq, id"
                               % ",".join("?" * len(part)), tuple(part)).fetchall():
             steps.setdefault(s["pr_id"], []).append(dict(s))
-    cache, out = {}, []
+    cache, out, added = {}, [], 0
     for pr in cand:
         plan = _plan(conn, pr, steps.get(pr["id"], []), g, who, groups, cache)
         if plan is None:
@@ -741,21 +749,37 @@ def backfill(conn, group_row, actor, ip=None, dry_run=False):
         if plan[0] or dry_run:
             out.append(res)
             continue
-        try:   # re-read inside this request's own transaction, then write
-            fresh = conn.execute("SELECT * FROM pr_requests WHERE id=?", (pr["id"],)).fetchone()
-            if not fresh or fresh["status"] != "pending":
+        if limit is not None and added >= limit:
+            break                   # the rest: the next press (the button shows how many)
+        try:
+            # claim the request first (PG row lock / SQLite write lock): a signature
+            # or another backfill landing between the re-read and the write would
+            # otherwise shift the ladder from a stale snapshot
+            if conn.execute("UPDATE pr_requests SET current_seq=current_seq WHERE id=? AND "
+                            "status='pending'", (pr["id"],)).rowcount != 1:
+                conn.rollback()
                 continue
-            fresh = dict(fresh)
+            fresh = dict(conn.execute("SELECT * FROM pr_requests WHERE id=?",
+                                      (pr["id"],)).fetchone())
             st = [dict(s) for s in conn.execute(
                 "SELECT * FROM pr_steps WHERE pr_id=? ORDER BY seq, id", (pr["id"],)).fetchall()]
             plan = _plan(conn, fresh, st, g, who, groups, cache)
-            if plan is None:
-                continue
-            if plan[0]:
+            if plan is None or plan[0]:
+                conn.rollback()                              # release the claim
+                if plan is None:
+                    continue
                 res.update(result="skipped", why=plan[0])
             else:
                 res["current"] = _insert(conn, fresh, st, plan[1], g, who, actor, ip)
+                n = conn.execute("SELECT COUNT(*) AS n FROM pr_steps WHERE pr_id=? AND stage=? "
+                                 "AND LOWER(COALESCE(assignee,''))=LOWER(?)",
+                                 (pr["id"], STAGE, who)).fetchone()["n"]
+                now_at = conn.execute("SELECT status FROM pr_steps WHERE pr_id=? AND seq=?",
+                                      (pr["id"], fresh["current_seq"])).fetchall()
+                if n != 1 or not now_at or any(r["status"] != "pending" for r in now_at):
+                    raise RuntimeError("ladder check failed after insert")
                 conn.commit()
+                added += 1
         except Exception:                                    # noqa: BLE001
             conn.rollback()
             _log.exception("item control backfill failed on request %s", pr["id"])
@@ -764,14 +788,14 @@ def backfill(conn, group_row, actor, ip=None, dry_run=False):
     return out
 
 
-def run_backfill(group_key, actor, ip=None, dry_run=False):
+def run_backfill(group_key, actor, ip=None, dry_run=False, limit=BF_BATCH):
     """backfill() for one group by key, on its own connection. None = no such group."""
     conn = get_db()
     try:
         g = next((r for r in rows(conn) if r["group_key"] == group_key), None)
         if not g:
             return None
-        return backfill(conn, g, (actor or {}).get("username") or "system", ip, dry_run)
+        return backfill(conn, g, (actor or {}).get("username") or "system", ip, dry_run, limit)
     finally:
         conn.close()
 

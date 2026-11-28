@@ -345,6 +345,136 @@ with app.app_context():
     ok("reassign chemicals back", IC.save("chemicals_stones", "t.chm", "", True, padmin)
        == (True, "saved"))
 
+    def set_ctl(key, user):            # a direct write, as an assignment from before this rule
+        conn.execute("UPDATE proc_item_control SET username=? WHERE group_key=?", (user, key))
+        conn.commit()
+        IC._CTL_CACHE[0] = 0.0
+
+    def active(names, on):
+        for n in names:
+            conn.execute("UPDATE users SET is_active=? WHERE username=?", (1 if on else 0, n))
+        conn.commit()
+
+    def only_signer(stage, keep):
+        roles = svc.stage_roles_map(conn).get(stage) or ()
+        others = set(svc.stage_signers(conn, stage, roles)) - {keep}
+        active(others, False)
+        return others
+
+    def reprice(pid):
+        ids = [r["id"] for r in conn.execute("SELECT id FROM pr_items WHERE pr_id=? ORDER BY id",
+                                             (pid,)).fetchall()]
+        return all(svc.price_pr(pid, {i: v for i in ids}, meta, buyer)[0] for v in (900000, 10))
+
+    def added(pid):
+        return [r for k in ("general_maintenance", "chemicals_stones")
+                for r in IC.run_backfill(k, padmin) if r["pr_id"] == pid and r["result"] == "added"]
+
+    print("\n--- the controller is one of several store signers ---------------------")
+    f2 = raise_pr(req, "Production", title="f2-two-stores")
+    ok("f2 carries the chemicals rung", ics(f2) == [("t.chm", "chemicals_stones", "pending")])
+    ok("...its controller may not take the store rung (others can)",
+       sign(f2, ctl_ch) == (False, "dual_role") and current(f2)["stage"] == "warehouse")
+    ok("...the other storekeeper signs it, then the controller signs theirs",
+       sign(f2, store) == (True, "advanced") and sign(f2, ctl_ch) == (True, "advanced")
+       and current(f2)["stage"] == "warehouse_manager")
+
+    print("\n--- re-price with two rungs / a rung added at the current seq -----------")
+    x = raise_pr(req, "General Maintenance", title="x-two-reprice")
+    two = [("t.ctl", "general_maintenance", "pending"), ("t.chm", "chemicals_stones", "pending")]
+    head = ["warehouse", "item_control", "item_control", "warehouse_manager"]
+    ok("x: two rungs at the store", ics(x) == two and stages(x)[:4] == head)
+    ok("...re-priced high then low at the store", reprice(x))
+    ok("...still GM, chemicals, manager in order", ics(x) == two and stages(x)[:4] == head)
+    sign(x, store)
+    at = current(x)["id"]
+    ok("...re-priced again while waiting at the GM rung", reprice(x))
+    ok("...still waits at the same GM rung, order kept", current(x)["id"] == at
+       and current(x)["assignee"] == "t.ctl" and ics(x) == two and stages(x)[:4] == head)
+    ok("...and neither backfill adds to it", not added(x))
+    set_ctl("chemicals_stones", None)
+    y = raise_pr(req, "Production", title="y-at-whm-reprice")
+    sign(y, store)
+    set_ctl("chemicals_stones", "t.chm")
+    ok("y: added AT the Warehouse Manager", [r["current"] for r in IC.run_backfill(
+        "chemicals_stones", padmin) if r["pr_id"] == y] == [True]
+       and current(y)["stage"] == "item_control")
+    at = current(y)["id"]
+    ok("...re-priced high then low", reprice(y))
+    ok("...still waits at that rung, before the manager", current(y)["id"] == at
+       and ics(y) == [("t.chm", "chemicals_stones", "pending")]
+       and stages(y)[:3] == ["warehouse", "item_control", "warehouse_manager"])
+    ok("...and a re-run adds nothing", not added(y))
+
+    print("\n--- the GM rung added while the request waits at the chemicals rung ------")
+    set_ctl("general_maintenance", None)
+    z = raise_pr(req, "General Maintenance", title="z-gm-late")
+    ok("z: only the chemicals rung", ics(z) == [("t.chm", "chemicals_stones", "pending")])
+    sign(z, store)
+    ok("...the store signs, it waits at the chemicals controller",
+       current(z)["assignee"] == "t.chm" and unread("t.chm", z) == 1)
+    ok("assign General Maintenance again", IC.save("general_maintenance", "t.ctl", "", True, padmin)
+       == (True, "saved"))
+    ok("...the GM rung takes the current seq, before the chemicals rung",
+       current(z)["assignee"] == "t.ctl" and ics(z) == two)
+    ok("...the chemicals prompt is cleared, the GM controller told",
+       unread("t.chm", z) == 0 and unread("t.ctl", z) == 1)
+    ok("...the GM controller signs, the chemicals controller is told again",
+       sign(z, ctl_gm) == (True, "advanced") and current(z)["assignee"] == "t.chm"
+       and unread("t.chm", z) == 1)
+
+    print("\n--- submit: a controller who is the store's only signer -----------------")
+    off = only_signer("warehouse", "t.chm")
+    a5 = raise_pr(req, "General Maintenance", title="a5-chm-sole-store")
+    ok("chemicals controller is the sole store signer: only the GM rung",
+       ics(a5) == [("t.ctl", "general_maintenance", "pending")])
+    notes = events(a5, "item_control_skipped")
+    ok("...one note, naming Chemicals & Stones", len(notes) == 1 and "dual role" in notes[0]
+       and "Chemicals & Stones" in notes[0])
+    ok("...skip_info names the group",
+       IC.skip_info(a5) == [{"why": "dual_role", "group": "chemicals_stones"}])
+    ok("...and they still sign the store rung", sign(a5, ctl_ch) == (True, "advanced"))
+    active(off, True)
+    conn.execute("UPDATE users SET role='storekeeper' WHERE username='t.ctl'")
+    conn.execute("UPDATE users SET role='normal_user' WHERE username='t.chm'")
+    conn.commit()
+    off = only_signer("warehouse", "t.ctl")
+    b5 = raise_pr(req, "General Maintenance", title="b5-gm-sole-store")
+    ok("GM controller is the sole store signer: only the chemicals rung",
+       ics(b5) == [("t.chm", "chemicals_stones", "pending")])
+    notes = events(b5, "item_control_skipped")
+    ok("...one note, naming General Maintenance", len(notes) == 1 and "dual role" in notes[0]
+       and "General Maintenance" in notes[0])
+    ok("...skip_info names the group",
+       IC.skip_info(b5) == [{"why": "dual_role", "group": "general_maintenance"}])
+    active(off, True)
+    conn.execute("UPDATE users SET role='maintenance_manager' WHERE username='t.ctl'")
+    conn.execute("UPDATE users SET role='storekeeper' WHERE username='t.chm'")
+    conn.commit()
+
+    print("\n--- backfill: a capped run leaves the rest for the next press -----------")
+    set_ctl("chemicals_stones", None)
+    l1, l2 = (raise_pr(req, "Production", title=t) for t in ("l1", "l2"))
+    set_ctl("chemicals_stones", "t.chm")
+    run = IC.run_backfill("chemicals_stones", padmin, limit=1)
+    ok("limit=1: one added", [r["pr_id"] for r in run if r["result"] == "added"] == [l1])
+    ok("...the dry run counts the other",
+       [r["pr_id"] for r in IC.run_backfill("chemicals_stones", padmin, dry_run=True)
+        if r["result"] == "would_add"] == [l2])
+    IC.run_backfill("chemicals_stones", padmin)
+
+    print("\n--- backfill: controller is the only signer of a later rung --------------")
+    set_ctl("chemicals_stones", None)
+    w = raise_pr(req, "Production", title="w-dual")
+    w0 = stages(w)
+    off = only_signer("warehouse_manager", "t.whm")
+    set_ctl("chemicals_stones", "t.whm")
+    res = [r for r in IC.run_backfill("chemicals_stones", padmin) if r["pr_id"] == w]
+    ok("sole Warehouse Manager as controller: skipped as dual_role, nothing written",
+       [(r["result"], r["why"]) for r in res] == [("skipped", "dual_role")] and stages(w) == w0)
+    active(off, True)
+    set_ctl("chemicals_stones", "t.chm")
+
 conn.close()
 print("\n%d checks, %d passed, %d failed" % (len(PASS), sum(PASS), len(PASS) - sum(PASS)))
 sys.exit(0 if all(PASS) else 1)
