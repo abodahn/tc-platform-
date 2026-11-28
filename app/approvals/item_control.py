@@ -22,6 +22,14 @@ first, then the chemicals controller — both after the store and before the
 Warehouse Manager. Same group or same person -> one rung. Each rung is told
 apart by its own assignee / ic_group.
 
+Requester accounts (owner, 2026-11-28): a group may also list requester accounts
+(proc_item_control.requesters). Every request raised by a listed account is signed
+by that group's controller, whatever department it is filed under — e.g. a
+chemicals team account that files under Production or Warehouse. groups_for() is
+the one answer to "which groups does this request belong to": the department's
+group first, then the other groups in GROUPS order (listed requester, or CHM line
+for Chemicals & Stones). One rung per group and per person, same skip rules.
+
 Open requests (the ones submitted before a controller or the CHM rule existed)
 get the rung through backfill(): run on every save of a group with an active
 controller and from the settings page's "Add to open requests" button, BF_BATCH
@@ -62,6 +70,7 @@ GROUPS = (
       "Sewing / Cutting", "الخياطة والقص", "الخياطة", "القص")),
 )
 _BUILTIN = {k: names for k, _, names in GROUPS}
+_ORDER = {k: i for i, (k, _, _) in enumerate(GROUPS)}
 ALIAS_MAX = 20          # extra names per group
 ALIAS_LEN = 60
 
@@ -73,9 +82,12 @@ CREATE TABLE IF NOT EXISTS proc_item_control (
     aliases TEXT,
     username TEXT,
     active INTEGER DEFAULT 1,
-    updated_by TEXT, updated_at TEXT
+    updated_by TEXT, updated_at TEXT,
+    requesters TEXT DEFAULT ''
 );
 """
+# Added after first release: requester accounts whose every request needs the group.
+_MIGRATIONS = ("ALTER TABLE proc_item_control ADD COLUMN requesters TEXT DEFAULT ''",)
 
 _ACTIVE_USER = "is_active=1 AND COALESCE(account_status,'active')='active'"
 CHEM_GROUP = "chemicals_stones"
@@ -118,6 +130,15 @@ def ensure_schema(conn):
     try:
         conn.executescript(DDL)
         conn.commit()
+    except Exception:                                        # noqa: BLE001
+        conn.rollback()
+    for ddl in _MIGRATIONS:          # guarded: the column already exists on a fresh table
+        try:
+            conn.execute(ddl)
+            conn.commit()
+        except Exception:                                    # noqa: BLE001
+            conn.rollback()
+    try:
         have = {r["group_key"] for r in conn.execute(
             "SELECT group_key FROM proc_item_control").fetchall()}
         for key, label, _ in GROUPS:
@@ -190,19 +211,43 @@ def _resolve_group(conn, g, requester):
     return g, u["username"], ""
 
 
+def requester_list(row):
+    """The requester accounts a group lists (as saved: canonical usernames)."""
+    return _split(_f(row, "requesters"))
+
+
+def _listed(row, requester):
+    r = str(requester or "").strip().lower()
+    return bool(r) and r in {u.lower() for u in requester_list(row)}
+
+
+def groups_for(conn, department, requester, pr_id=None, _rows=None, _chm=None):
+    """The groups whose controller this request needs, in ladder order: the
+    department's group first, then (GROUPS order) every other group that lists the
+    requester's account, and Chemicals & Stones when a line is a CHM item. `_chm`
+    is a prefetched set of CHM request ids (else one query for `pr_id`)."""
+    groups = rows(conn) if _rows is None else _rows
+    dept = group_for(conn, department, _rows=groups)
+    out = [dept] if dept else []
+    for g in sorted(groups, key=lambda r: _ORDER.get(r["group_key"], len(_ORDER))):
+        if dept and g["group_key"] == dept["group_key"]:
+            continue
+        if _listed(g, requester) or (g["group_key"] == CHEM_GROUP and pr_id and (
+                pr_id in _chm if _chm is not None else has_chm_items(conn, pr_id))):
+            out.append(g)
+    return out
+
+
 def resolve_all(conn, department, requester, pr_id=None):
     """[group, assignee, why] per Item control rung this request gets, in ladder
-    order: the department's group (resolve()), then Chemicals & Stones when a line
-    is a CHM item. Same group, or the same person, -> one entry."""
-    g, who, why = resolve(conn, department, requester)
-    out = [[g, who, why]] if g else []
-    if (pr_id and not (g and g["group_key"] == CHEM_GROUP)
-            and has_chm_items(conn, pr_id)):
-        c = next((r for r in rows(conn) if r["group_key"] == CHEM_GROUP), None)
-        if c:
-            _, cw, cy = _resolve_group(conn, c, requester)
-            if not (cw and who and cw.lower() == who.lower()):
-                out.append([c, cw, cy])
+    order (groups_for()). The same person for two groups -> one entry."""
+    out, seen = [], set()
+    for g in groups_for(conn, department, requester, pr_id):
+        _, who, why = _resolve_group(conn, g, requester)
+        if who and who.lower() in seen:
+            continue
+        seen.add(str(who or "").lower())
+        out.append([g, who, why])
     return out
 
 
@@ -409,6 +454,7 @@ def view(lang="en"):
             r["user_inactive"] = bool(r.get("username")) and not u
             r["builtin"] = list(_BUILTIN.get(r["group_key"], ()))
             r["alias_list"] = _split(r.get("aliases"))
+            r["requester_list"] = requester_list(r)
             r["pending"] = 0
         pend = conn.execute(
             "SELECT r.department, s.ic_group FROM pr_steps s JOIN pr_requests r ON r.id=s.pr_id "
@@ -428,11 +474,12 @@ def view(lang="en"):
         conn.close()
 
 
-def save(group_key, username, aliases, active, actor, ip=None):
-    """Assign a group's controller / names / on-off. Returns (ok, code).
-    Re-points the group's PENDING rungs to the new person, so a request is not
-    left waiting on somebody who has moved on (signed rungs are history and are
-    never touched)."""
+def save(group_key, username, aliases, active, actor, ip=None, requesters=None):
+    """Assign a group's controller / names / requester accounts / on-off. Returns
+    (ok, code); code 'bad_requesters:<names>' names the accounts refused.
+    `requesters` None keeps the saved list. Re-points the group's PENDING rungs to
+    the new person, so a request is not left waiting on somebody who has moved on
+    (signed rungs are history and are never touched)."""
     from app.approvals import services as svc
     username = str(username or "").strip()
     names = []
@@ -459,6 +506,18 @@ def save(group_key, username, aliases, active, actor, ip=None):
             if not u:
                 return False, "bad_user"
             username = u["username"]
+        req_names = requester_list(g)
+        if requesters is not None:
+            # active accounts only, stored as spelt in users; one already on the list
+            # stays even if since disabled (it cannot raise anything anyway)
+            known = {r["username"].lower(): r["username"] for r in conn.execute(
+                "SELECT username FROM users WHERE " + _ACTIVE_USER).fetchall()}
+            known.update({n.lower(): n for n in req_names if n.lower() not in known})
+            asked = list(dict.fromkeys(_split(requesters)))
+            bad = [n for n in asked if n.lower() not in known]
+            if bad:
+                return False, "bad_requesters:" + ", ".join(bad)[:300]
+            req_names = list(dict.fromkeys(known[n.lower()] for n in asked))
         # Unassigning or switching off would strand the rungs already waiting on
         # this person (nobody else may sign them): hand them over first.
         if before and (not username or not active) and any(
@@ -466,12 +525,14 @@ def save(group_key, username, aliases, active, actor, ip=None):
             return False, "pending_waiting"
         who = (actor or {}).get("username") or "system"
         conn.execute("UPDATE proc_item_control SET username=?, aliases=?, active=?, "
-                     "updated_by=?, updated_at=? WHERE id=?",
-                     (username or None, ", ".join(names), 1 if active else 0, who, _now(), g["id"]))
+                     "requesters=?, updated_by=?, updated_at=? WHERE id=?",
+                     (username or None, ", ".join(names), 1 if active else 0,
+                      ", ".join(req_names), who, _now(), g["id"]))
         svc._wf_audit(conn, who, "item_control_set",
-                      "%s: %s -> %s%s; names: %s" % (g["label"], before or "—", username or "—",
-                                                     "" if active else " (switched off)",
-                                                     ", ".join(names) or "—"), ip)
+                      "%s: %s -> %s%s; names: %s; requester accounts: %s" % (
+                          g["label"], before or "—", username or "—",
+                          "" if active else " (switched off)", ", ".join(names) or "—",
+                          ", ".join(req_names) or "—"), ip)
         if username and active and username.lower() != before.lower():
             _repoint(conn, dict(g, aliases=", ".join(names)), username, who, ip)
         conn.commit()
@@ -543,7 +604,8 @@ def _repoint(conn, group, username, actor, ip=None):
 def preview_names(username=None):
     """Normalised department names that currently get the rung — for the
     new-request ladder preview. A group the viewer controls is left out: their
-    own request skips it."""
+    own request skips it. "*" = the viewer is a listed requester account of a live
+    group, so every department gets it."""
     conn = get_db()
     try:
         out = []
@@ -553,7 +615,7 @@ def preview_names(username=None):
             if username and r["username"].lower() == str(username).lower():
                 continue
             if _active(conn, r["username"]):
-                out.extend(sorted(_names(r)))
+                out.extend(sorted(_names(r)) + (["*"] if _listed(r, username) else []))
         return out
     finally:
         conn.close()
@@ -601,8 +663,8 @@ def skip_info(pr_id):
     conn = get_db()
     try:
         ev = conn.execute("SELECT detail, action FROM pr_events WHERE pr_id=? AND action IN "
-                          "('item_control_skipped','submitted') ORDER BY id DESC LIMIT 3",
-                          (pr_id,)).fetchall()
+                          "('item_control_skipped','submitted') ORDER BY id DESC LIMIT %d"
+                          % (len(GROUPS) + 1), (pr_id,)).fetchall()
         if not ev or ev[0]["action"] != "submitted":
             return []
         notes = []
@@ -659,11 +721,14 @@ def _plan(conn, pr, steps, g, who, groups, cache):
         return "signed", None
     rank, cur = C.ladder_rank(STAGE), pr["current_seq"] or 0
     # in front of the first rung still to come that ranks above it (the Warehouse
-    # Manager, or the current rung once that one has signed: owner, 2026-11-28);
-    # the department's controller signs before the chemicals one
+    # Manager, or the current rung once that one has signed: owner, 2026-11-28),
+    # or that is the Item control rung of a group that signs after this one
+    # (groups_for() order: the department's group, then GROUPS order)
+    order = {k: (0 if k == dept_key else 1, _ORDER.get(k, len(_ORDER))) for k in _ORDER}
+    mine = order.get(key, (1, len(_ORDER)))
     anchor = next((s for s in steps if s["status"] == "pending" and s["seq"] >= cur and (
-        C.ladder_rank(s["stage"]) > rank or (key != CHEM_GROUP and s["stage"] == STAGE
-                                             and s.get("ic_group") == CHEM_GROUP))), None)
+        C.ladder_rank(s["stage"]) > rank or (s["stage"] == STAGE and order.get(
+            s.get("ic_group") or dept_key, (0, -1)) > mine))), None)
     if any(s["status"] == "pending" and svc._step_signers(conn, pr, s, cache) == {who}
            for s in steps):
         return "dual_role", None
@@ -719,28 +784,30 @@ def _insert(conn, pr, steps, anchor, g, who, actor, ip):
 BF_BATCH = 20   # adds per call: each costs ~20 round trips, and it runs inside a web request
 
 
-def backfill(conn, group_row, actor, ip=None, dry_run=False, limit=BF_BATCH):
+def backfill(conn, group_row, actor, ip=None, dry_run=False, limit=BF_BATCH, pr_id=None):
     """Add this group's Item control rung to the OPEN requests that should carry
-    it — pending ones of the group's departments, and for Chemicals & Stones every
-    pending one with a CHM line — but do not yet. Drafts get it at submit; closed
-    requests are history. Idempotent; each request is its own transaction, so the
+    it — pending ones groups_for() puts in this group: its departments, its listed
+    requester accounts, and for Chemicals & Stones a CHM line — but do not yet.
+    Drafts get it at submit; closed requests are history. Idempotent; each request is its own transaction, so the
     caller commits its own work first.
 
     Returns [{pr_id, pr_no, result: 'added'|'would_add'|'skipped', why, current}]
     (no entry for a request that already has the rung). [] when the group has no
     active controller: nobody could sign the rung. Stops after `limit` adds (None =
-    all); the rest are what the next dry run counts."""
+    all); the rest are what the next dry run counts. `pr_id`: that request only."""
     g = dict(group_row)
     u = _active(conn, g.get("username")) if g.get("active") else None
     if not u:
         return []
     who, key = u["username"], g["group_key"]
-    groups = rows(conn)
+    groups = [g if r["group_key"] == key else r for r in rows(conn)]
     chm = _chm_ids(conn) if key == CHEM_GROUP else set()
     cand = [dict(r) for r in conn.execute(
         "SELECT id, pr_no, title, requester, department, current_seq, status, hold_reason "
-        "FROM pr_requests WHERE status='pending' ORDER BY id").fetchall()
-        if r["id"] in chm or group_for(conn, r["department"], _rows=[g])]
+        "FROM pr_requests WHERE status='pending'" + (" AND id=?" if pr_id else "")
+        + " ORDER BY id", (pr_id,) if pr_id else ()).fetchall()
+        if any(x["group_key"] == key for x in groups_for(
+            conn, r["department"], r["requester"], r["id"], _rows=groups, _chm=chm))]
     steps = {}
     for i in range(0, len(cand), 500):
         part = [p["id"] for p in cand[i:i + 500]]
@@ -829,6 +896,9 @@ MESSAGES = {
     "Up to 20 extra department names per group.": {
         "ar": "أقصى حاجة 20 اسم قسم إضافي لكل مجموعة.",
         "tr": "Grup başına en fazla 20 ek departman adı."},
+    "Requester accounts must be active users. Not found:": {
+        "ar": "حسابات مقدّمي الطلبات لازم تكون مستخدمين شغّالين. مش موجود:",
+        "tr": "Talep eden hesaplar aktif kullanıcılar olmalı. Bulunamadı:"},
     "Requests are waiting on this person at Item control. Pick another person to take them over first.": {
         "ar": "فيه طلبات مستنية الشخص ده في مراقبة الأصناف. اختار حد تاني ياخدها الأول.",
         "tr": "Malzeme kontrolünde bu kişiyi bekleyen talepler var. Önce bunları devralacak başka birini seçin."},

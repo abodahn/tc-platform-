@@ -7,6 +7,7 @@ so every URL lives under /procurement and every message leaves through the same
 translating flash().
 """
 import json
+import re
 
 from flask import render_template, request, redirect, url_for, session
 
@@ -25,6 +26,7 @@ _SAVE_MSG = {
     "alias_taken": "One of those department names already belongs to another group.",
     "too_many_aliases": "Up to 20 extra department names per group.",
     "unknown_group": "That department group does not exist.",
+    "bad_requesters": "Requester accounts must be active users. Not found:",
     "pending_waiting": "Requests are waiting on this person at Item control. "
                        "Pick another person to take them over first.",
 }
@@ -118,8 +120,11 @@ def itemctl_settings():
 def itemctl_save(group_key):
     ok, code = IC.save(group_key, request.form.get("username", ""),
                        request.form.get("aliases", ""), request.form.get("active") == "1",
-                       _u(), ip=_ip())
-    flash(_SAVE_MSG.get(code, _SAVE_MSG["unknown_group"]), "success" if ok else "error")
+                       _u(), ip=_ip(), requesters=request.form.get("requesters"))
+    code, _, names = code.partition(":")          # bad_requesters:<the refused names>
+    names = re.sub(r"[^\w.@, -]", "?", names)    # echoed into an inline <script> by base.html
+    flash(_SAVE_MSG.get(code, _SAVE_MSG["unknown_group"]) + (" " + names if names else ""),
+          "success" if ok else "error")
     if ok:
         _flash_left(group_key)
     anchor = ("#g-" + group_key) if group_key in {k for k, _, _ in IC.GROUPS} else ""

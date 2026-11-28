@@ -23,3 +23,4 @@
 .ictl-skips { margin-top: 10px; font-size: 13px; }
 .ictl-skips summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
 .ictl-skips ul { margin: 4px 0 0; padding-inline-start: 20px; line-height: 1.6; overflow-wrap: anywhere; }
+.ictl-req-add { margin-top: 6px; min-height: 44px; }

@@ -10119,7 +10119,8 @@ def change_requester(pr_id, username, actor, reason="", ip=None):
         return False, "reason_required"
     conn = get_db()
     try:
-        pr = conn.execute("SELECT id, requester FROM pr_requests WHERE id=?", (pr_id,)).fetchone()
+        pr = conn.execute("SELECT id, requester, department FROM pr_requests WHERE id=?",
+                          (pr_id,)).fetchone()
         if not pr:
             return False, "not_found"
         u = conn.execute("SELECT id, username, full_name, is_active FROM users "
@@ -10145,6 +10146,12 @@ def change_requester(pr_id, username, actor, reason="", ip=None):
         audit(conn, pr_id, (actor or {}).get("username") or "system", "requester_changed",
               "%s -> %s: %s" % (pr["requester"], u["username"], reason), ip)
         conn.commit()
+        # The new requester may be listed on an Item control group: add its rung now
+        # (backfill: own transaction per request, idempotent, skip rules included).
+        from app.approvals import item_control as IC
+        for g in IC.groups_for(conn, pr["department"], u["username"], pr_id):
+            IC.backfill(conn, g, (actor or {}).get("username") or "system", ip,
+                        limit=None, pr_id=pr_id)
         return True, u["full_name"] or u["username"]
     finally:
         conn.close()

@@ -336,7 +336,7 @@
     return t.replace(/[^\p{L}\p{N}]+/gu,' ').trim();
   }
   function icChip(stage, dept){
-    return (stage === 'warehouse' && ITEMCTL.indexOf(icNorm(dept)) >= 0)
+    return (stage === 'warehouse' && (ITEMCTL.indexOf(icNorm(dept)) >= 0 || ITEMCTL.indexOf('*') >= 0))
       ? '<span class="arrow">›</span><span class="lc">'+(LABELS.item_control||'Item control')+'</span>' : '';
   }
   var DEPT_MATRICES = {{ dept_matrices|tojson }}; // department -> {stage: threshold} (custom matrices)

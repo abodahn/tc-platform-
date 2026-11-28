@@ -53,6 +53,17 @@
             <bdi>{{ g.builtin|join(' · ') }}</bdi>
           </div>
         </div>
+        <div class="field">
+          <label for="r-{{ g.group_key }}" data-i18n="proc.itemctl.req">Requester accounts</label>
+          <input id="r-{{ g.group_key }}" name="requesters" value="{{ g.requester_list|join(', ') }}"
+                 autocomplete="off" autocapitalize="none" spellcheck="false"
+                 maxlength="2000" aria-describedby="rh-{{ g.group_key }}">
+          <select class="ictl-req-add" data-for="r-{{ g.group_key }}" title="Add an account" data-i18n-title="proc.itemctl.req_add">
+            <option value="" data-i18n="proc.itemctl.req_add">+ Add an account</option>
+            {% for un, name in users %}<option value="{{ un }}">{{ name }} ({{ un }})</option>{% endfor %}
+          </select>
+          <div class="muted ictl-hint" id="rh-{{ g.group_key }}" data-i18n="proc.itemctl.req_hint">Every request raised by these accounts goes to this group's controller, whatever department it is filed under. Usernames, separated by commas.</div>
+        </div>
         <label class="ictl-check">
           <input type="checkbox" name="active" value="1" {{ 'checked' if g.active }}>
           <span data-i18n="proc.itemctl.active">Use the Item control step for this group</span>
@@ -94,8 +105,25 @@
       <li data-i18n="proc.itemctl.rule.3">One person cannot sign both Item control and Warehouse Manager on the same request.</li>
       <li data-i18n="proc.itemctl.rule.4">Changing the person moves the requests already waiting at this step to the new person. Saving a person also adds the step to this group's open requests; one already past the Warehouse Manager waits for the item controller before it continues.</li>
       <li data-i18n="proc.itemctl.rule.5">A request with a CHM item (code like 00-CHM-0001) is also signed by the Chemicals &amp; Stones controller, before the Warehouse Manager. If its department has its own controller, both sign — the department's first.</li>
+      <li data-i18n="proc.itemctl.rule.6">A group can also list requester accounts: every request raised by one of them is signed by that group's controller, whatever department it is filed under, after the department's own controller. One step per group and per person.</li>
     </ul>
   </div>
 </div>
 
+{% endblock %}
+{% block scripts %}
+<script>
+/* Append the picked account to the comma list (a datalist would replace the whole value). */
+document.querySelectorAll(".ictl-req-add").forEach(function (sel) {
+  sel.addEventListener("change", function () {
+    var box = document.getElementById(sel.dataset.for), un = sel.value;
+    sel.value = "";
+    if (!box || !un) return;
+    var have = box.value.split(/[,\n]/).map(function (s) { return s.trim(); }).filter(Boolean);
+    if (have.some(function (s) { return s.toLowerCase() === un.toLowerCase(); })) return;
+    have.push(un);
+    box.value = have.join(", ");
+  });
+});
+</script>
 {% endblock %}

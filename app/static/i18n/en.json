@@ -5347,5 +5347,9 @@
   "ps.all_done": "Done: %(n)s items checked.",
   "ps.all_capped": "Only the first %(n)s lines are compared here; open the others one by one.",
   "ps.all_prog": "Checked %(d)s of %(n)s items… (each can take up to a minute)",
-  "proc.audit.price_search": "Online price search"
+  "proc.audit.price_search": "Online price search",
+  "proc.itemctl.req": "Requester accounts",
+  "proc.itemctl.req_add": "+ Add an account",
+  "proc.itemctl.req_hint": "Every request raised by these accounts goes to this group's controller, whatever department it is filed under. Usernames, separated by commas.",
+  "proc.itemctl.rule.6": "A group can also list requester accounts: every request raised by one of them is signed by that group's controller, whatever department it is filed under, after the department's own controller. One step per group and per person."
 }
