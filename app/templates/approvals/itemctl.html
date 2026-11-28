@@ -30,7 +30,7 @@
       <p class="ictl-warn" role="status" data-i18n="proc.itemctl.unassigned">Nobody assigned — requests from this department skip the step.</p>
       {% endif %}
       {% if g.pending %}
-      <p class="muted ictl-pending"><span data-i18n="proc.itemctl.pending">Waiting at this step now</span>: <b data-num>{{ g.pending }}</b></p>
+      <p class="muted ictl-pending"><span data-i18n="proc.itemctl.pending">Waiting at this step now</span>: <b data-num="{{ g.pending }}">{{ g.pending }}</b></p>
       {% endif %}
       <form method="post" action="{{ url_for('approvals.itemctl_save', group_key=g.group_key) }}">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -77,13 +77,13 @@
       <form method="post" class="ictl-bf" action="{{ url_for('approvals.itemctl_backfill', group_key=g.group_key) }}">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <button class="btn btn-ghost btn-sm" type="submit" {{ 'disabled' if not g.bf_n }}
-                aria-describedby="bfh-{{ g.group_key }}"><span data-i18n="proc.itemctl.bf.btn">Add to open requests</span> (<b data-num>{{ g.bf_n }}</b>)</button>
+                aria-describedby="bfh-{{ g.group_key }}"><span data-i18n="proc.itemctl.bf.btn">Add to open requests</span> (<b data-num="{{ g.bf_n }}">{{ g.bf_n }}</b>)</button>
         <div class="muted ictl-hint" id="bfh-{{ g.group_key }}" data-i18n="proc.itemctl.bf.hint">Adds the step to requests already in the approval ladder. One already past the Warehouse Manager waits for the item controller at its current step, then continues.</div>
       </form>
       {% endif %}
       {% if bf and bf.g == g.group_key and bf.skips %}
       <details class="ictl-skips">
-        <summary><span data-i18n="proc.itemctl.bf.skipped">Skipped requests</span> (<span data-num>{{ bf.skips|length }}</span>)</summary>
+        <summary><span data-i18n="proc.itemctl.bf.skipped">Skipped requests</span> (<span data-num="{{ bf.skips|length }}">{{ bf.skips|length }}</span>)</summary>
         <ul>
           {% for no, why in bf.skips %}
           <li><bdi>{{ no }}</bdi> — <span data-i18n="proc.itemctl.bf.why.{{ why }}">{{ bf_reasons.get(why, why) }}</span></li>
