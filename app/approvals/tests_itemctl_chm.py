@@ -201,7 +201,7 @@ with app.app_context():
     ok("dry run wrote nothing", all(stages(p) == s for p, s in before.items()))
     page = client(padmin).get("/procurement/item-control").get_data(as_text=True)
     m = re.search(r'id="g-chemicals_stones".*?proc\.itemctl\.bf\.btn">[^<]*</span> '
-                  r'\(<b data-num>(\d+)</b>\)', page, re.S)
+                  r'\(<b data-num="(\d+)">\1</b>\)', page, re.S)
     ok("settings page: 'Add to open requests (5)' on Chemicals & Stones", m and m.group(1) == "5")
     ok("...no button for a group nobody may sign",
        not re.search(r'id="g-sewing_cutting".*?</section>', page, re.S).group(0).count("bf.btn"))

@@ -190,7 +190,7 @@ with app.app_context():
     ok("...dry run wrote nothing", not any(ics(p) for p in (o1, o2, o3)))
     page = cp.get("/procurement/item-control").get_data(as_text=True)
     m = re.search(r'id="g-chemicals_stones".*?proc\.itemctl\.bf\.btn">[^<]*</span> '
-                  r'\(<b data-num>(\d+)</b>\)', page, re.S)
+                  r'\(<b data-num="(\d+)">\1</b>\)', page, re.S)
     ok("settings page: 'Add to open requests (3)'", m and m.group(1) == "3")
     ok("...the field shows the list, an add-account picker per card (no datalist), keyed",
        re.search(r'name="requesters" value="t\.chemreq"', page)
