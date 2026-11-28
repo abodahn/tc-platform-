@@ -120,8 +120,18 @@ def itemctl_save(group_key):
                        request.form.get("aliases", ""), request.form.get("active") == "1",
                        _u(), ip=_ip())
     flash(_SAVE_MSG.get(code, _SAVE_MSG["unknown_group"]), "success" if ok else "error")
+    if ok:
+        _flash_left(group_key)
     anchor = ("#g-" + group_key) if group_key in {k for k, _, _ in IC.GROUPS} else ""
     return redirect(url_for("approvals.itemctl_settings") + anchor)
+
+
+def _flash_left(group_key):
+    """A run adds at most IC.BF_BATCH: say how many open requests are still to do."""
+    left = IC.still_to_add(group_key)
+    if left:
+        flash("Item control still has to be added to more open requests. Press "
+              "\"Add to open requests\" again. Still to add: %d" % left, "warning")
 
 
 @bp.route("/item-control/<group_key>/backfill", methods=["POST"])
@@ -139,4 +149,5 @@ def itemctl_backfill(group_key):
     # the reasons, for the collapsible list on the page (capped: the session is a cookie)
     session["itemctl_bf"] = {"g": group_key, "skips": [
         [r["pr_no"] or "#%s" % r["pr_id"], r["why"]] for r in skipped[:40]]}
+    _flash_left(group_key)
     return redirect(url_for("approvals.itemctl_settings") + "#g-" + group_key)

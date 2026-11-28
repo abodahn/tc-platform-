@@ -12,9 +12,12 @@ Proves:
     requester who is the chemicals controller -> that rung skipped with a note;
   * backfill() on open requests: waiting at the store (added ahead), waiting AT
     the Warehouse Manager (added at the current seq, request now waits at Item
-    control, the manager's prompt cleared), past the Warehouse Manager / draft /
-    approved / requester / controller-already-signed (left alone, reported),
-    idempotent; the department rung is placed before an existing chemicals rung;
+    control, the manager's prompt cleared), past the Warehouse Manager (added AT
+    the current rung: it waits for the controller, then carries on; two late rungs
+    go department first), draft / approved / requester / controller-already-signed
+    (left alone, reported), idempotent; the department rung is placed before an
+    existing chemicals rung;
+  * a run is capped at BF_BATCH: the flash says how many are still to add;
   * save() runs it; the settings page shows the dry-run count and runs it for
     proc_admin only (CSRF, 403 for others) with the skipped reasons listed;
   * a re-price after backfill keeps exactly one rung per controller in place;
@@ -172,23 +175,32 @@ with app.app_context():
     ok("b2 waits at warehouse_manager, its managers were told",
        current(b2)["stage"] == "warehouse_manager" and unread("t.whm", b2) >= 1)
     before = {p: stages(p) for p in (b1, b2, b3, b4, b5, b6, b9, plain)}
+    b3_wait, approved = current(b3), b5
+    b3_whm = next(s for s in steps(b3) if s["stage"] == "warehouse_manager")
+    ok("b3 is past the manager, waiting at %s" % b3_wait["stage"],
+       b3_whm["status"] == "approved" and b3_wait["stage"] not in ("warehouse_manager",
+                                                                    "item_control"))
+    b3_signers = svc._step_signers(conn, dict(conn.execute(
+        "SELECT * FROM pr_requests WHERE id=?", (b3,)).fetchone()), b3_wait)
+    ok("...its signers were told", b3_signers and all(unread(u, b3) >= 1 for u in b3_signers))
 
     print("\n--- settings page: dry-run count, refusal, run ---------------------------")
     # an assignment made before the CHM rule existed: no save, so no auto-run
     conn.execute("UPDATE proc_item_control SET username='t.chm' WHERE group_key='chemicals_stones'")
     conn.commit()
     dry = {r["pr_id"]: r for r in IC.run_backfill("chemicals_stones", padmin, dry_run=True)}
-    ok("dry run: b1, b2, bft, b10 would get it",
-       {p for p, r in dry.items() if r["result"] == "would_add"} == {b1, b2, bft, b10})
-    ok("dry run: b3 past WHM, b6 signed, b9 requester",
-       (dry[b3]["why"], dry[b6]["why"], dry[b9]["why"]) == ("past_whm", "signed", "requester"))
+    ok("dry run: b1, b2, b3 (past WHM), bft, b10 would get it",
+       {p for p, r in dry.items() if r["result"] == "would_add"} == {b1, b2, b3, bft, b10}
+       and dry[b3]["current"])
+    ok("dry run: b6 signed, b9 requester",
+       (dry[b6]["why"], dry[b9]["why"]) == ("signed", "requester"))
     ok("dry run: draft, approved and non-CHM requests are not even candidates",
        not {b4, b5, plain, b8} & set(dry))
     ok("dry run wrote nothing", all(stages(p) == s for p, s in before.items()))
     page = client(padmin).get("/procurement/item-control").get_data(as_text=True)
     m = re.search(r'id="g-chemicals_stones".*?proc\.itemctl\.bf\.btn">[^<]*</span> '
                   r'\(<b data-num>(\d+)</b>\)', page, re.S)
-    ok("settings page: 'Add to open requests (4)' on Chemicals & Stones", m and m.group(1) == "4")
+    ok("settings page: 'Add to open requests (5)' on Chemicals & Stones", m and m.group(1) == "5")
     ok("...no button for a group nobody may sign",
        not re.search(r'id="g-sewing_cutting".*?</section>', page, re.S).group(0).count("bf.btn"))
     for u in (req, buyer, ctl_ch):
@@ -202,13 +214,14 @@ with app.app_context():
     ok("proc_admin runs it (302 to the group)", r.status_code == 302
        and r.headers["Location"].endswith("#g-chemicals_stones"))
     page = cp.get("/procurement/item-control").get_data(as_text=True)
-    ok("flash: added / skipped 4 / 3",
-       "Item control added to open requests. Added / skipped: 4 / 3" in page)
+    ok("flash: added / skipped 5 / 2",
+       "Item control added to open requests. Added / skipped: 5 / 2" in page)
+    ok("...and no 'still to add' (nothing left)", "Still to add" not in page)
     ok("skipped list names each request and reason", all(
-        k in page for k in ("proc.itemctl.bf.why.past_whm", "proc.itemctl.bf.why.signed",
-                            "proc.itemctl.bf.why.requester"))
+        k in page for k in ("proc.itemctl.bf.why.signed", "proc.itemctl.bf.why.requester"))
+       and "past_whm" not in page
        and all(conn.execute("SELECT pr_no FROM pr_requests WHERE id=?", (p,)).fetchone()[0] in page
-               for p in (b3, b6, b9)))
+               for p in (b6, b9)))
     ok("the flash is translated", M.translate("Item control added to open requests. Added / "
                                               "skipped: 4 / 3", "ar").endswith(" 4 / 3")
        and M.translate("Item control added to open requests. Added / skipped: 4 / 3", "tr")
@@ -239,13 +252,32 @@ with app.app_context():
     ok("...the manager cannot sign it now", sign(b2, whm) == (False, "forbidden"))
     ok("...the controller signs, then the manager", sign(b2, ctl_ch) == (True, "advanced")
        and current(b2)["stage"] == "warehouse_manager" and sign(b2, whm) == (True, "advanced"))
-    ok("b3 (past the manager), b6, b9, draft, approved: untouched",
-       all(stages(p) == before[p] for p in (b3, b4, b5, b6, b9)))
+    cur = current(b3)
+    ok("b3 (past the manager): now waits at item_control, at the same seq",
+       cur["stage"] == "item_control" and cur["assignee"] == "t.chm"
+       and cur["seq"] == b3_wait["seq"] and ics(b3) == [("t.chm", "chemicals_stones", "pending")])
+    moved = next(s for s in steps(b3) if s["id"] == b3_wait["id"])
+    ok("...the rung that was waiting moved one seq on, clock reset",
+       moved["seq"] == cur["seq"] + 1 and moved["status"] == "pending"
+       and moved["activated_at"] is None and not moved["escalated"])
+    ok("...the signed manager rung is untouched",
+       next(s for s in steps(b3) if s["id"] == b3_whm["id"]) == b3_whm)
+    ok("...the waiting rung's prompts are cleared, the controller told",
+       all(unread(u, b3) == 0 for u in b3_signers) and unread("t.chm", b3) == 1)
+    ok("...audited: added after the Warehouse Manager had already signed", any(
+        "after the Warehouse Manager had already signed" in d and "before the request continues"
+        in d for d in events(b3, "item_control_added")))
+    ok("...the waiting rung's signer cannot sign it now", sign(b3, buyer) == (False, "forbidden"))
+    ok("...the controller signs: back to the rung that was waiting",
+       sign(b3, ctl_ch) == (True, "advanced") and current(b3)["id"] == b3_wait["id"]
+       and all(unread(u, b3) >= 1 for u in b3_signers))
+    ok("b6, b9, draft, approved: untouched",
+       all(stages(p) == before[p] for p in (b4, b5, b6, b9)))
     ok("free-text CHM line got the rung too", "item_control" in stages(bft))
     again = IC.run_backfill("chemicals_stones", padmin)
     ok("a second run adds nothing (idempotent)",
        not [r for r in again if r["result"] == "added"]
-       and stages(b1).count("item_control") == 1 and stages(b10).count("item_control") == 1)
+       and all(stages(p).count("item_control") == 1 for p in (b1, b3, b10)))
 
     print("\n--- re-price after backfill -------------------------------------------------")
     line = conn.execute("SELECT id FROM pr_items WHERE pr_id=? ORDER BY id", (b1,)).fetchall()
@@ -474,6 +506,83 @@ with app.app_context():
        [(r["result"], r["why"]) for r in res] == [("skipped", "dual_role")] and stages(w) == w0)
     active(off, True)
     set_ctl("chemicals_stones", "t.chm")
+
+    print("\n--- past the Warehouse Manager: the request carries on afterwards ---------")
+    ok("b3 (after the late chemicals signature) is priced", reprice(b3))
+    ok("...and still waits at its own rung, which now applies only its own gate",
+       current(b3)["id"] == b3_wait["id"] and sign(b3, buyer) == (False, "needs_quotes"))
+
+    def past_whm(title, dept="General Maintenance"):
+        pid = raise_pr(req, dept, title=title)
+        sign(pid, store)
+        sign(pid, whm)
+        return pid, current(pid)
+
+    set_ctl("general_maintenance", None)
+    set_ctl("chemicals_stones", None)
+    p1, w1 = past_whm("p1-late-gm-then-chm")
+    ok("p1: no rung, past the manager", not ics(p1)
+       and w1["stage"] not in ("warehouse_manager", "item_control"))
+    set_ctl("general_maintenance", "t.ctl")
+    g1 = [r for r in IC.run_backfill("general_maintenance", padmin) if r["pr_id"] == p1]
+    set_ctl("chemicals_stones", "t.chm")
+    c1 = [r for r in IC.run_backfill("chemicals_stones", padmin) if r["pr_id"] == p1]
+    ok("p1: GM added at the current rung, then chemicals after it",
+       [(r["result"], r["current"]) for r in g1 + c1] == [("added", True), ("added", False)])
+    set_ctl("general_maintenance", None)
+    set_ctl("chemicals_stones", None)
+    p2, w2 = past_whm("p2-late-chm-then-gm")
+    set_ctl("chemicals_stones", "t.chm")
+    c2 = [r for r in IC.run_backfill("chemicals_stones", padmin) if r["pr_id"] == p2]
+    set_ctl("general_maintenance", "t.ctl")
+    g2 = [r for r in IC.run_backfill("general_maintenance", padmin) if r["pr_id"] == p2]
+    ok("p2: chemicals added at the current rung, then GM in front of it",
+       [(r["result"], r["current"]) for r in c2 + g2] == [("added", True), ("added", True)])
+
+    def late_order(pid, w):
+        st = steps(pid)
+        cur = current(pid)
+        i = next(k for k, s in enumerate(st) if s["id"] == cur["id"])
+        return (ics(pid) == two and cur["assignee"] == "t.ctl"
+                and [s["assignee"] for s in st[i:i + 2]] == ["t.ctl", "t.chm"]
+                and st[i + 2]["id"] == w["id"]
+                and [s["seq"] for s in st[i:i + 3]] == [w["seq"], w["seq"] + 1, w["seq"] + 2])
+
+    for pid, w, n in ((p1, w1, "p1"), (p2, w2, "p2")):
+        ok("%s: GM rung, chemicals rung, then the rung that was waiting" % n, late_order(pid, w))
+    ok("p2: the chemicals prompt is cleared, the GM controller told",
+       unread("t.chm", p2) == 0 and unread("t.ctl", p2) == 1)
+    ok("a re-run of both adds nothing", not added(p1) and not added(p2))
+    at = current(p1)["id"]
+    ok("p1: re-priced high then low while waiting at the late GM rung", reprice(p1))
+    ok("...one rung per controller, still waits at the same rung, order kept",
+       current(p1)["id"] == at and late_order(p1, w1))
+    ok("...and a re-run adds nothing", not added(p1))
+    ok("p2: the GM controller signs, then the chemicals one, then the waiting rung is back",
+       sign(p2, ctl_gm) == (True, "advanced") and current(p2)["assignee"] == "t.chm"
+       and sign(p2, ctl_ch) == (True, "advanced") and current(p2)["id"] == w2["id"])
+
+    print("\n--- a capped run: the flash says how many are still to add -------------")
+    set_ctl("chemicals_stones", None)
+    many = [raise_pr(req, "Production", title="cap%d" % i) for i in range(IC.BF_BATCH + 2)]
+    ok("%d open requests without the rung" % len(many), not any(ics(p) for p in many))
+    r = cp.post("/procurement/item-control/chemicals_stones",
+                data={"_csrf": "tok", "username": "t.chm", "aliases": "", "active": "1"})
+    page = cp.get("/procurement/item-control").get_data(as_text=True)
+    page = page.replace("&#34;", '"').replace("&quot;", '"')
+    ok("save adds %d and says 2 are still to add" % IC.BF_BATCH, r.status_code == 302
+       and sum(1 for p in many if ics(p)) == IC.BF_BATCH
+       and 'Press "Add to open requests" again. Still to add: 2' in page)
+    r = cp.post("/procurement/item-control/chemicals_stones/backfill", data={"_csrf": "tok"})
+    page = cp.get("/procurement/item-control").get_data(as_text=True)
+    ok("the button adds the last 2, no 'still to add'", all(ics(p) for p in many)
+       and "Added / skipped: 2 / " in page and "Still to add" not in page)
+    msg = ('Item control still has to be added to more open requests. Press "Add to open '
+           'requests" again. Still to add: 2')
+    ok("the 'still to add' flash is translated (ar, tr)", all(
+        M.translate(msg, lang) != msg and M.translate(msg, lang).endswith(" 2")
+        for lang in ("ar", "tr")))
+    ok("the approved request is still untouched", stages(approved) == before[approved])
 
 conn.close()
 print("\n%d checks, %d passed, %d failed" % (len(PASS), sum(PASS), len(PASS) - sum(PASS)))

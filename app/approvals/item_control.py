@@ -25,8 +25,10 @@ apart by its own assignee / ic_group.
 Open requests (the ones submitted before a controller or the CHM rule existed)
 get the rung through backfill(): run on every save of a group with an active
 controller and from the settings page's "Add to open requests" button, BF_BATCH
-requests per run (the button counts the rest). It never touches a signed rung and
-never adds the rung after the Warehouse Manager signed. While a person is the
+requests per run (the button counts the rest). It never touches a signed rung. A
+request already past the Warehouse Manager (owner, 2026-11-28) still gets it: the
+rung goes in AT the current step, so the request waits for the controller and
+then carries on with the rest of its ladder. While a person is the
 assignee of a pending Item control rung, act_on_step keeps them off the request's
 other rungs that somebody else can sign, so their own rung stays signable.
 
@@ -632,7 +634,6 @@ BF_REASONS = {
     "requester": "The requester is this group's item controller.",
     "signed": "The item controller already signed another step of this request.",
     "dual_role": "The item controller is the only person who can sign another step of it.",
-    "past_whm": "Already past the Warehouse Manager.",
     "error": "Could not be updated; try again.",
 }
 
@@ -654,15 +655,13 @@ def _plan(conn, pr, steps, g, who, groups, cache):
     if any(str(s.get("approver_user") or "").lower() == wl
            and s["status"] in ("approved", "rejected") for s in steps):
         return "signed", None
-    rank = C.ladder_rank(STAGE)
-    if any(s["status"] == "approved" and C.ladder_rank(s["stage"]) > rank for s in steps):
-        return "past_whm", None
+    rank, cur = C.ladder_rank(STAGE), pr["current_seq"] or 0
+    # in front of the first rung still to come that ranks above it (the Warehouse
+    # Manager, or the current rung once that one has signed: owner, 2026-11-28);
     # the department's controller signs before the chemicals one
-    anchor = next((s for s in steps if s["status"] == "pending" and (
+    anchor = next((s for s in steps if s["status"] == "pending" and s["seq"] >= cur and (
         C.ladder_rank(s["stage"]) > rank or (key != CHEM_GROUP and s["stage"] == STAGE
                                              and s.get("ic_group") == CHEM_GROUP))), None)
-    if anchor and anchor["seq"] < (pr["current_seq"] or 0):
-        return "past_whm", None
     if any(s["status"] == "pending" and svc._step_signers(conn, pr, s, cache) == {who}
            for s in steps):
         return "dual_role", None
@@ -693,9 +692,13 @@ def _insert(conn, pr, steps, anchor, g, who, actor, ip):
         (pid, seq, STAGE, "pending", svc.stage_label(STAGE), now if is_cur else None, now,
          "ladder", who, g["group_key"]))
     svc.stamp_step_actions(conn, pid)
+    late = any(s["status"] == "approved" and C.ladder_rank(s["stage"]) > C.ladder_rank(STAGE)
+               for s in steps)
     svc.audit(conn, pid, actor or "system", "item_control_added",
-              "Item control for %s added to this open request: %s signs it after the store "
-              "and before the Warehouse Manager%s." % (
+              ("Item control for %s added to this open request after the Warehouse Manager "
+               "had already signed: %s must sign it before the request continues%s." if late else
+               "Item control for %s added to this open request: %s signs it after the store "
+               "and before the Warehouse Manager%s.") % (
                   g.get("label") or g["group_key"], who,
                   "; the request now waits for their signature" if is_cur else ""), ip)
     if is_cur:
@@ -788,6 +791,12 @@ def backfill(conn, group_row, actor, ip=None, dry_run=False, limit=BF_BATCH):
     return out
 
 
+def still_to_add(group_key):
+    """How many open requests the next backfill run of this group would add to."""
+    return sum(1 for r in run_backfill(group_key, None, dry_run=True) or ()
+               if r["result"] == "would_add")
+
+
 def run_backfill(group_key, actor, ip=None, dry_run=False, limit=BF_BATCH):
     """backfill() for one group by key, on its own connection. None = no such group."""
     conn = get_db()
@@ -823,6 +832,9 @@ MESSAGES = {
     "That department group does not exist.": {
         "ar": "مجموعة الأقسام دي مش موجودة.",
         "tr": "Bu departman grubu yok."},
+    "Item control still has to be added to more open requests. Press \"Add to open requests\" again. Still to add:": {
+        "ar": "لسه فيه طلبات مفتوحة محتاجة تتضاف لها مراقبة الأصناف. دوس \"ضيفها للطلبات المفتوحة\" تاني. لسه فاضل:",
+        "tr": "Malzeme kontrolü daha fazla açık talebe eklenmeli. \"Açık taleplere ekle\" düğmesine tekrar basın. Eklenecek kalan:"},
     "Item control added to open requests. Added / skipped:": {
         "ar": "اتضافت مراقبة الأصناف للطلبات المفتوحة. اتضاف / اتساب:",
         "tr": "Malzeme kontrolü açık taleplere eklendi. Eklenen / atlanan:"},
